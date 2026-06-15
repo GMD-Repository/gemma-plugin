@@ -1,0 +1,35 @@
+# This file contains metadata for your plugin.
+
+# This file should be included when you package your plugin.# Mandatory items:
+
+[general]
+name=GMD Pipeline
+qgisMinimumVersion=3.0
+description=General Processing Pipelines for GMD Activities
+version=1.0.0
+author=Geospatial Management Division
+email=gmd.support@psa.gov.ph
+
+about=The GMD Plugin shall be...
+
+changelog=1.0.0: Initial release with Gaps and Overlaps Checker.
+
+#tracker=
+#repository=
+hasProcessingProvider=yes
+tags=GMD,1Map,overlap,gap
+category=Processing Provider
+icon=icons/icon.png
+# experimental flag
+experimental=False
+
+# deprecated flag (applies to the whole plugin, not just a single version)
+deprecated=False
+
+# Since QGIS 3.8, a comma separated list of plugins to be installed
+# (or upgraded) can be specified.
+# Check the documentation for more information.
+# plugin_dependencies=
+
+# If the plugin can run on QGIS Server.
+server=False
