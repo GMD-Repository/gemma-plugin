@@ -15,6 +15,7 @@ from .gmd_scripts.gaps_overlaps_checker import GapsOverlaps
 from .gmd_scripts.export_preliminary_polygons import ExportPreliminaryPolygons
 from .gmd_scripts.fill_polygon_gaps import FillPolygonGapsAlgorithm
 from .gmd_scripts.update_metadata_modified import UpdateLguPsgcMetadataAlgorithm
+from .gmd_scripts.lgu_fix_processing import FixLGUCRSAlgorithm
 #from .gmd_scripts.gsheet_csv import
 
 class GmdPipelineProvider(QgsProcessingProvider):
@@ -40,6 +41,7 @@ class GmdPipelineProvider(QgsProcessingProvider):
         self.addAlgorithm(ExportPreliminaryPolygons())
         self.addAlgorithm(FillPolygonGapsAlgorithm())
         self.addAlgorithm(UpdateLguPsgcMetadataAlgorithm())
+        self.addAlgorithm(FixLGUCRSAlgorithm())
 
     def id(self):
         return 'gmd_pipeline'
