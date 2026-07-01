@@ -55,7 +55,7 @@ class ExportPreliminaryPolygons(QgsProcessingAlgorithm):
         return (
             "This tool shall be used to merge the barangay layers after resolving the Topological Layers \n"
             "Changelogs \n"
-            "-Initial release"
+            "-This is the initial release"
         )
 
     def initAlgorithm(self, config=None):

@@ -3,21 +3,22 @@
 # This file should be included when you package your plugin.# Mandatory items:
 
 [general]
-name=GMD Pipeline
+name=GMD Pipeline v2
 qgisMinimumVersion=3.0
-description=General Processing Pipelines for GMD Activities
-version=1.0.0
+description=General Processing Pipelines for GMD Activities with QField Packaging
+version=1.1.0
 author=Geospatial Management Division
 email=gmd.support@psa.gov.ph
 
-about=The GMD Plugin shall be...
+about=The GMD Plugin provides processing pipelines and QField packaging tools for GMD activities.
 
-changelog=1.0.0: Initial release with Gaps and Overlaps Checker.
+changelog=1.1.0: Integrated Package for QField from qfieldmod plugin.
+    1.0.0: Initial release with Gaps and Overlaps Checker.
 
 #tracker=
 #repository=
 hasProcessingProvider=yes
-tags=GMD,1Map,overlap,gap
+tags=GMD,1Map,overlap,gap,QField,packaging
 category=Processing Provider
 icon=icons/icon.png
 # experimental flag
