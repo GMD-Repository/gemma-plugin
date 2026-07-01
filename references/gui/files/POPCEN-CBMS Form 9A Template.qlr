@@ -1,0 +1,692 @@
+<!DOCTYPE qgis-layer-definition>
+<qlr>
+  <layer-tree-group expanded="1" groupLayer="" checked="Qt::Checked" name="">
+    <customproperties>
+      <Option/>
+    </customproperties>
+    <layer-tree-layer id="POPCEN_CBMS_Form_9A_Template_c69675e1_33dd_4292_a807_b2eae15404d1" expanded="1" legend_exp="" legend_split_behavior="0" patch_size="-1,-1" providerKey="ogr" checked="Qt::Checked" name="POPCEN-CBMS Form 9A Template" source="./POPCEN-CBMS Form 9A Template.gpkg|layername=POPCEN-CBMS Form 9A Template">
+      <customproperties>
+        <Option type="Map">
+          <Option value="1" name="showFeatureCount" type="int"/>
+        </Option>
+      </customproperties>
+    </layer-tree-layer>
+  </layer-tree-group>
+  <maplayers>
+    <maplayer minScale="1e+08" autoRefreshTime="0" refreshOnNotifyEnabled="0" geometry="No geometry" legendPlaceholderImage="" refreshOnNotifyMessage="" hasScaleBasedVisibilityFlag="0" autoRefreshEnabled="0" maxScale="0" styleCategories="AllStyleCategories" readOnly="0" wkbType="NoGeometry" type="vector">
+      <id>POPCEN_CBMS_Form_9A_Template_c69675e1_33dd_4292_a807_b2eae15404d1</id>
+      <datasource>./POPCEN-CBMS Form 9A Template.gpkg|layername=POPCEN-CBMS Form 9A Template</datasource>
+      <keywordList>
+        <value></value>
+      </keywordList>
+      <layername>POPCEN-CBMS Form 9A Template</layername>
+      <srs>
+        <spatialrefsys nativeFormat="Wkt">
+          <wkt></wkt>
+          <proj4></proj4>
+          <srsid>0</srsid>
+          <srid>0</srid>
+          <authid></authid>
+          <description></description>
+          <projectionacronym></projectionacronym>
+          <ellipsoidacronym></ellipsoidacronym>
+          <geographicflag>false</geographicflag>
+        </spatialrefsys>
+      </srs>
+      <resourceMetadata>
+        <identifier></identifier>
+        <parentidentifier></parentidentifier>
+        <language></language>
+        <type>dataset</type>
+        <title></title>
+        <abstract></abstract>
+        <contact>
+          <name></name>
+          <organization></organization>
+          <position></position>
+          <voice></voice>
+          <fax></fax>
+          <email></email>
+          <role></role>
+        </contact>
+        <links/>
+        <fees></fees>
+        <encoding></encoding>
+        <crs>
+          <spatialrefsys nativeFormat="Wkt">
+            <wkt></wkt>
+            <proj4></proj4>
+            <srsid>0</srsid>
+            <srid>0</srid>
+            <authid></authid>
+            <description></description>
+            <projectionacronym></projectionacronym>
+            <ellipsoidacronym></ellipsoidacronym>
+            <geographicflag>false</geographicflag>
+          </spatialrefsys>
+        </crs>
+        <extent>
+          <spatial maxx="0" dimensions="2" miny="0" minz="0" minx="0" maxy="0" crs="" maxz="0"/>
+          <temporal>
+            <period>
+              <start></start>
+              <end></end>
+            </period>
+          </temporal>
+        </extent>
+      </resourceMetadata>
+      <provider encoding="UTF-8">ogr</provider>
+      <vectorjoins/>
+      <layerDependencies/>
+      <dataDependencies/>
+      <expressionfields/>
+      <map-layer-style-manager current="default">
+        <map-layer-style name="default"/>
+      </map-layer-style-manager>
+      <auxiliaryLayer/>
+      <metadataUrls/>
+      <flags>
+        <Identifiable>1</Identifiable>
+        <Removable>1</Removable>
+        <Searchable>1</Searchable>
+        <Private>0</Private>
+      </flags>
+      <temporal fixedDuration="0" limitMode="0" mode="0" endField="" durationField="fid" accumulate="0" enabled="0" startField="" startExpression="" durationUnit="min" endExpression="">
+        <fixedRange>
+          <start></start>
+          <end></end>
+        </fixedRange>
+      </temporal>
+      <elevation binding="Centroid" respectLayerSymbol="1" zoffset="0" extrusion="0" clamping="Terrain" zscale="1" extrusionEnabled="0" symbology="Line" showMarkerSymbolInSurfacePlots="0" type="IndividualFeatures">
+        <data-defined-properties>
+          <Option type="Map">
+            <Option value="" name="name" type="QString"/>
+            <Option name="properties"/>
+            <Option value="collection" name="type" type="QString"/>
+          </Option>
+        </data-defined-properties>
+        <profileLineSymbol>
+          <symbol is_animated="0" clip_to_extent="1" force_rhr="0" frame_rate="10" alpha="1" name="" type="line">
+            <data_defined_properties>
+              <Option type="Map">
+                <Option value="" name="name" type="QString"/>
+                <Option name="properties"/>
+                <Option value="collection" name="type" type="QString"/>
+              </Option>
+            </data_defined_properties>
+            <layer class="SimpleLine" enabled="1" locked="0" pass="0">
+              <Option type="Map">
+                <Option value="0" name="align_dash_pattern" type="QString"/>
+                <Option value="square" name="capstyle" type="QString"/>
+                <Option value="5;2" name="customdash" type="QString"/>
+                <Option value="3x:0,0,0,0,0,0" name="customdash_map_unit_scale" type="QString"/>
+                <Option value="MM" name="customdash_unit" type="QString"/>
+                <Option value="0" name="dash_pattern_offset" type="QString"/>
+                <Option value="3x:0,0,0,0,0,0" name="dash_pattern_offset_map_unit_scale" type="QString"/>
+                <Option value="MM" name="dash_pattern_offset_unit" type="QString"/>
+                <Option value="0" name="draw_inside_polygon" type="QString"/>
+                <Option value="bevel" name="joinstyle" type="QString"/>
+                <Option value="196,60,57,255" name="line_color" type="QString"/>
+                <Option value="solid" name="line_style" type="QString"/>
+                <Option value="0.6" name="line_width" type="QString"/>
+                <Option value="MM" name="line_width_unit" type="QString"/>
+                <Option value="0" name="offset" type="QString"/>
+                <Option value="3x:0,0,0,0,0,0" name="offset_map_unit_scale" type="QString"/>
+                <Option value="MM" name="offset_unit" type="QString"/>
+                <Option value="0" name="ring_filter" type="QString"/>
+                <Option value="0" name="trim_distance_end" type="QString"/>
+                <Option value="3x:0,0,0,0,0,0" name="trim_distance_end_map_unit_scale" type="QString"/>
+                <Option value="MM" name="trim_distance_end_unit" type="QString"/>
+                <Option value="0" name="trim_distance_start" type="QString"/>
+                <Option value="3x:0,0,0,0,0,0" name="trim_distance_start_map_unit_scale" type="QString"/>
+                <Option value="MM" name="trim_distance_start_unit" type="QString"/>
+                <Option value="0" name="tweak_dash_pattern_on_corners" type="QString"/>
+                <Option value="0" name="use_custom_dash" type="QString"/>
+                <Option value="3x:0,0,0,0,0,0" name="width_map_unit_scale" type="QString"/>
+              </Option>
+              <data_defined_properties>
+                <Option type="Map">
+                  <Option value="" name="name" type="QString"/>
+                  <Option name="properties"/>
+                  <Option value="collection" name="type" type="QString"/>
+                </Option>
+              </data_defined_properties>
+            </layer>
+          </symbol>
+        </profileLineSymbol>
+        <profileFillSymbol>
+          <symbol is_animated="0" clip_to_extent="1" force_rhr="0" frame_rate="10" alpha="1" name="" type="fill">
+            <data_defined_properties>
+              <Option type="Map">
+                <Option value="" name="name" type="QString"/>
+                <Option name="properties"/>
+                <Option value="collection" name="type" type="QString"/>
+              </Option>
+            </data_defined_properties>
+            <layer class="SimpleFill" enabled="1" locked="0" pass="0">
+              <Option type="Map">
+                <Option value="3x:0,0,0,0,0,0" name="border_width_map_unit_scale" type="QString"/>
+                <Option value="196,60,57,255" name="color" type="QString"/>
+                <Option value="bevel" name="joinstyle" type="QString"/>
+                <Option value="0,0" name="offset" type="QString"/>
+                <Option value="3x:0,0,0,0,0,0" name="offset_map_unit_scale" type="QString"/>
+                <Option value="MM" name="offset_unit" type="QString"/>
+                <Option value="140,43,41,255" name="outline_color" type="QString"/>
+                <Option value="solid" name="outline_style" type="QString"/>
+                <Option value="0.2" name="outline_width" type="QString"/>
+                <Option value="MM" name="outline_width_unit" type="QString"/>
+                <Option value="solid" name="style" type="QString"/>
+              </Option>
+              <data_defined_properties>
+                <Option type="Map">
+                  <Option value="" name="name" type="QString"/>
+                  <Option name="properties"/>
+                  <Option value="collection" name="type" type="QString"/>
+                </Option>
+              </data_defined_properties>
+            </layer>
+          </symbol>
+        </profileFillSymbol>
+        <profileMarkerSymbol>
+          <symbol is_animated="0" clip_to_extent="1" force_rhr="0" frame_rate="10" alpha="1" name="" type="marker">
+            <data_defined_properties>
+              <Option type="Map">
+                <Option value="" name="name" type="QString"/>
+                <Option name="properties"/>
+                <Option value="collection" name="type" type="QString"/>
+              </Option>
+            </data_defined_properties>
+            <layer class="SimpleMarker" enabled="1" locked="0" pass="0">
+              <Option type="Map">
+                <Option value="0" name="angle" type="QString"/>
+                <Option value="square" name="cap_style" type="QString"/>
+                <Option value="196,60,57,255" name="color" type="QString"/>
+                <Option value="1" name="horizontal_anchor_point" type="QString"/>
+                <Option value="bevel" name="joinstyle" type="QString"/>
+                <Option value="diamond" name="name" type="QString"/>
+                <Option value="0,0" name="offset" type="QString"/>
+                <Option value="3x:0,0,0,0,0,0" name="offset_map_unit_scale" type="QString"/>
+                <Option value="MM" name="offset_unit" type="QString"/>
+                <Option value="140,43,41,255" name="outline_color" type="QString"/>
+                <Option value="solid" name="outline_style" type="QString"/>
+                <Option value="0.2" name="outline_width" type="QString"/>
+                <Option value="3x:0,0,0,0,0,0" name="outline_width_map_unit_scale" type="QString"/>
+                <Option value="MM" name="outline_width_unit" type="QString"/>
+                <Option value="diameter" name="scale_method" type="QString"/>
+                <Option value="3" name="size" type="QString"/>
+                <Option value="3x:0,0,0,0,0,0" name="size_map_unit_scale" type="QString"/>
+                <Option value="MM" name="size_unit" type="QString"/>
+                <Option value="1" name="vertical_anchor_point" type="QString"/>
+              </Option>
+              <data_defined_properties>
+                <Option type="Map">
+                  <Option value="" name="name" type="QString"/>
+                  <Option name="properties"/>
+                  <Option value="collection" name="type" type="QString"/>
+                </Option>
+              </data_defined_properties>
+            </layer>
+          </symbol>
+        </profileMarkerSymbol>
+      </elevation>
+      <customproperties>
+        <Option type="Map">
+          <Option value="copy" name="QFieldSync/action" type="QString"/>
+          <Option value="{}" name="QFieldSync/attachment_naming" type="QString"/>
+          <Option value="offline" name="QFieldSync/cloud_action" type="QString"/>
+          <Option value="" name="QFieldSync/geometry_locked_expression" type="QString"/>
+          <Option value="{}" name="QFieldSync/photo_naming" type="QString"/>
+          <Option value="{}" name="QFieldSync/relationship_maximum_visible" type="QString"/>
+          <Option value="30" name="QFieldSync/tracking_distance_requirement_minimum_meters" type="int"/>
+          <Option value="1" name="QFieldSync/tracking_erroneous_distance_safeguard_maximum_meters" type="int"/>
+          <Option value="0" name="QFieldSync/tracking_measurement_type" type="int"/>
+          <Option value="30" name="QFieldSync/tracking_time_requirement_interval_seconds" type="int"/>
+          <Option value="0" name="QFieldSync/value_map_button_interface_threshold" type="int"/>
+          <Option name="dualview/previewExpressions" type="List">
+            <Option value="COALESCE( &quot;FACILITY_NAME&quot;, '&lt;NULL>' )" type="QString"/>
+            <Option value="COALESCE( &quot;FACILITY_NAME&quot;, '&lt;NULL>' )" type="QString"/>
+            <Option value="COALESCE( &quot;FACILITY_NAME&quot;, '&lt;NULL>' )" type="QString"/>
+            <Option value="COALESCE( &quot;FACILITY_NAME&quot;, '&lt;NULL>' )" type="QString"/>
+            <Option value="COALESCE( &quot;FACILITY_NAME&quot;, '&lt;NULL>' )" type="QString"/>
+            <Option value="COALESCE( &quot;FACILITY_NAME&quot;, '&lt;NULL>' )" type="QString"/>
+            <Option value="COALESCE( &quot;FACILITY_NAME&quot;, '&lt;NULL>' )" type="QString"/>
+            <Option value="COALESCE( &quot;FACILITY_NAME&quot;, '&lt;NULL>' )" type="QString"/>
+            <Option value="COALESCE( &quot;FACILITY_NAME&quot;, '&lt;NULL>' )" type="QString"/>
+          </Option>
+          <Option value="0" name="embeddedWidgets/count" type="int"/>
+          <Option name="variableNames" type="invalid"/>
+          <Option name="variableValues" type="invalid"/>
+        </Option>
+      </customproperties>
+      <geometryOptions geometryPrecision="0" removeDuplicateNodes="0">
+        <activeChecks/>
+        <checkConfiguration/>
+      </geometryOptions>
+      <legend showLabelLegend="0" type="default-vector"/>
+      <referencedLayers/>
+      <fieldConfiguration>
+        <field configurationFlags="None" name="fid">
+          <editWidget type="TextEdit">
+            <config>
+              <Option type="Map">
+                <Option value="false" name="IsMultiline" type="bool"/>
+                <Option value="false" name="UseHtml" type="bool"/>
+              </Option>
+            </config>
+          </editWidget>
+        </field>
+        <field configurationFlags="None" name="FSN">
+          <editWidget type="TextEdit">
+            <config>
+              <Option type="Map">
+                <Option value="false" name="IsMultiline" type="bool"/>
+                <Option value="false" name="UseHtml" type="bool"/>
+              </Option>
+            </config>
+          </editWidget>
+        </field>
+        <field configurationFlags="None" name="GEOTAGGING_STATUS">
+          <editWidget type="ValueMap">
+            <config>
+              <Option type="Map">
+                <Option name="map" type="List">
+                  <Option type="Map">
+                    <Option value="1 - GEOTAGGED" name="1 - GEOTAGGED" type="QString"/>
+                  </Option>
+                  <Option type="Map">
+                    <Option value="0 - NOT GEOTAGGED" name="0 - NOT GEOTAGGED" type="QString"/>
+                  </Option>
+                </Option>
+              </Option>
+            </config>
+          </editWidget>
+        </field>
+        <field configurationFlags="None" name="BLDG_STATUS">
+          <editWidget type="ValueMap">
+            <config>
+              <Option type="Map">
+                <Option name="map" type="List">
+                  <Option type="Map">
+                    <Option value="1_EXISTING - 2022/2023 CBMS" name="1_EXISTING - 2022/2023 CBMS" type="QString"/>
+                  </Option>
+                  <Option type="Map">
+                    <Option value="2_EXISTING - SF LISTING" name="2_EXISTING - SF LISTING" type="QString"/>
+                  </Option>
+                  <Option type="Map">
+                    <Option value="3_NEW FACILITY" name="3_NEW FACILITY" type="QString"/>
+                  </Option>
+                </Option>
+              </Option>
+            </config>
+          </editWidget>
+        </field>
+        <field configurationFlags="None" name="FACILITY_NAME">
+          <editWidget type="TextEdit">
+            <config>
+              <Option type="Map">
+                <Option value="false" name="IsMultiline" type="bool"/>
+                <Option value="false" name="UseHtml" type="bool"/>
+              </Option>
+            </config>
+          </editWidget>
+        </field>
+        <field configurationFlags="None" name="ADDRESS">
+          <editWidget type="TextEdit">
+            <config>
+              <Option type="Map">
+                <Option value="false" name="IsMultiline" type="bool"/>
+                <Option value="false" name="UseHtml" type="bool"/>
+              </Option>
+            </config>
+          </editWidget>
+        </field>
+        <field configurationFlags="None" name="OPERATING_INSTITUTION">
+          <editWidget type="ValueMap">
+            <config>
+              <Option type="Map">
+                <Option name="map" type="List">
+                  <Option type="Map">
+                    <Option value="1_BARANGAY GOVERNMENT" name="1_BARANGAY GOVERNMENT" type="QString"/>
+                  </Option>
+                  <Option type="Map">
+                    <Option value="2_CITY/MUNICIPAL GOVERNMENT" name="2_CITY/MUNICIPAL GOVERNMENT" type="QString"/>
+                  </Option>
+                  <Option type="Map">
+                    <Option value="3_PROVINCIAL GOVERNMENT" name="3_PROVINCIAL GOVERNMENT" type="QString"/>
+                  </Option>
+                  <Option type="Map">
+                    <Option value="4_NATIONAL GOVERNMENT" name="4_NATIONAL GOVERNMENT" type="QString"/>
+                  </Option>
+                  <Option type="Map">
+                    <Option value="5_PRIVATE (BUSINESS/PROFIT-ORIENTED)" name="5_PRIVATE (BUSINESS/PROFIT-ORIENTED)" type="QString"/>
+                  </Option>
+                  <Option type="Map">
+                    <Option value="6_GOVERNMENT-OWNED AND CONTROLLED CORP (GOCC)" name="6_GOVERNMENT-OWNED AND CONTROLLED CORP (GOCC)" type="QString"/>
+                  </Option>
+                  <Option type="Map">
+                    <Option value="7_NGO/NON-PROFIT INSTITUTION SERVING HOUSEHOLD (NPISH)" name="7_NGO/NON-PROFIT INSTITUTION SERVING HOUSEHOLD (NPISH)" type="QString"/>
+                  </Option>
+                </Option>
+              </Option>
+            </config>
+          </editWidget>
+        </field>
+        <field configurationFlags="None" name="SECTOR">
+          <editWidget type="ValueMap">
+            <config>
+              <Option type="Map">
+                <Option name="map" type="List">
+                  <Option type="Map">
+                    <Option value="01_HEALTHCARE" name="01_HEALTHCARE" type="QString"/>
+                  </Option>
+                  <Option type="Map">
+                    <Option value="02_EDUCATION AND LITERACY" name="02_EDUCATION AND LITERACY" type="QString"/>
+                  </Option>
+                  <Option type="Map">
+                    <Option value="03_PUBLIC BUILDING AND OPEN SPACE" name="03_PUBLIC BUILDING AND OPEN SPACE" type="QString"/>
+                  </Option>
+                  <Option type="Map">
+                    <Option value="04_PUBLIC SAFETY" name="04_PUBLIC SAFETY" type="QString"/>
+                  </Option>
+                  <Option type="Map">
+                    <Option value="05_AGRICULTURE AND PUBLIC ENTERPRISE" name="05_AGRICULTURE AND PUBLIC ENTERPRISE" type="QString"/>
+                  </Option>
+                  <Option type="Map">
+                    <Option value="06_UTILITY SERVICE" name="06_UTILITY SERVICE" type="QString"/>
+                  </Option>
+                  <Option type="Map">
+                    <Option value="07_FINANCIAL AND CREDIT INSTITUTION" name="07_FINANCIAL AND CREDIT INSTITUTION" type="QString"/>
+                  </Option>
+                  <Option type="Map">
+                    <Option value="08_GARBAGE AND WASTE DISPOSAL" name="08_GARBAGE AND WASTE DISPOSAL" type="QString"/>
+                  </Option>
+                  <Option type="Map">
+                    <Option value="09_TRANSPORT" name="09_TRANSPORT" type="QString"/>
+                  </Option>
+                </Option>
+              </Option>
+            </config>
+          </editWidget>
+        </field>
+        <field configurationFlags="None" name="SPECIFIC_TYPE">
+          <editWidget type="ValueRelation">
+            <config>
+              <Option type="Map">
+                <Option value="false" name="AllowMulti" type="bool"/>
+                <Option value="false" name="AllowNull" type="bool"/>
+                <Option value="" name="Description" type="QString"/>
+                <Option value="CASE&#xa;&#x9;WHEN CURRENT_VALUE('BLDG_STATUS') IS NOT NULL THEN&#xa;&#x9;&#x9;&quot;sector&quot; = current_value('SECTOR')&#xa;&#x9;ELSE&#xa;&#x9;&#x9;NULL&#xa;END " name="FilterExpression" type="QString"/>
+                <Option value="spectype" name="Key" type="QString"/>
+                <Option value="2024_POPCEN_CBMS_SF_Specific_Types_00acb470_fe86_4c4d_abf6_0f8f0f97d9fe" name="Layer" type="QString"/>
+                <Option value="2024 POPCEN-CBMS SF Specific Types" name="LayerName" type="QString"/>
+                <Option value="delimitedtext" name="LayerProviderName" type="QString"/>
+                <Option value="file:///C:/PSA-GIS/ProvinceName/2024%20POPCEN-CBMS/6_Form%208/5_Processed/5_2024%20MDP%20Working%20File/pppmmbbb_bgyname/2024%20POPCEN-CBMS%20SF%20Specific%20Types.csv?delimiter=,&amp;encoding=UTF-8" name="LayerSource" type="QString"/>
+                <Option value="1" name="NofColumns" type="int"/>
+                <Option value="false" name="OrderByValue" type="bool"/>
+                <Option value="false" name="UseCompleter" type="bool"/>
+                <Option value="spectype" name="Value" type="QString"/>
+              </Option>
+            </config>
+          </editWidget>
+        </field>
+        <field configurationFlags="None" name="OTHER_USAGE">
+          <editWidget type="ValueRelation">
+            <config>
+              <Option type="Map">
+                <Option value="true" name="AllowMulti" type="bool"/>
+                <Option value="false" name="AllowNull" type="bool"/>
+                <Option value="" name="Description" type="QString"/>
+                <Option value="" name="FilterExpression" type="QString"/>
+                <Option value="spectype" name="Key" type="QString"/>
+                <Option value="2024_POPCEN_CBMS_SF_Specific_Types_7afc952f_a688_40a2_95b6_24fcf041e6cf" name="Layer" type="QString"/>
+                <Option value="2024 POPCEN-CBMS SF Specific Types" name="LayerName" type="QString"/>
+                <Option value="delimitedtext" name="LayerProviderName" type="QString"/>
+                <Option value="file:///C:\Users/franc/AppData/Roaming/QGIS/QGIS3\profiles\default/python/plugins\qfieldmod\gui\files\2024 POPCEN-CBMS SF Specific Types.csv?delimiter=,&amp;encoding=UTF-8" name="LayerSource" type="QString"/>
+                <Option value="2" name="NofColumns" type="int"/>
+                <Option value="true" name="OrderByValue" type="bool"/>
+                <Option value="false" name="UseCompleter" type="bool"/>
+                <Option value="spectype" name="Value" type="QString"/>
+              </Option>
+            </config>
+          </editWidget>
+        </field>
+        <field configurationFlags="None" name="REMARKS">
+          <editWidget type="TextEdit">
+            <config>
+              <Option type="Map">
+                <Option value="false" name="IsMultiline" type="bool"/>
+                <Option value="false" name="UseHtml" type="bool"/>
+              </Option>
+            </config>
+          </editWidget>
+        </field>
+        <field configurationFlags="None" name="OTHER_SPEC">
+          <editWidget type="TextEdit">
+            <config>
+              <Option type="Map">
+                <Option value="false" name="IsMultiline" type="bool"/>
+                <Option value="false" name="UseHtml" type="bool"/>
+              </Option>
+            </config>
+          </editWidget>
+        </field>
+      </fieldConfiguration>
+      <aliases>
+        <alias index="0" field="fid" name=""/>
+        <alias index="1" field="FSN" name=""/>
+        <alias index="2" field="GEOTAGGING_STATUS" name="GEOTAGGING STATUS"/>
+        <alias index="3" field="BLDG_STATUS" name="BUILDING STATUS"/>
+        <alias index="4" field="FACILITY_NAME" name="SERVICE FACILITY NAME"/>
+        <alias index="5" field="ADDRESS" name="ADDRESS/LOCATION"/>
+        <alias index="6" field="OPERATING_INSTITUTION" name="TYPE OF OPERATING INSTITUTION"/>
+        <alias index="7" field="SECTOR" name="SF SECTORAL TYPE"/>
+        <alias index="8" field="SPECIFIC_TYPE" name="SPECIFIC TYPE OF FACILITY"/>
+        <alias index="9" field="OTHER_USAGE" name="OTHER USAGE/S OF THE FACILITY"/>
+        <alias index="10" field="REMARKS" name=""/>
+        <alias index="11" field="OTHER_SPEC" name=""/>
+      </aliases>
+      <defaults>
+        <default expression="" applyOnUpdate="0" field="fid"/>
+        <default expression="" applyOnUpdate="0" field="FSN"/>
+        <default expression="" applyOnUpdate="0" field="GEOTAGGING_STATUS"/>
+        <default expression="" applyOnUpdate="0" field="BLDG_STATUS"/>
+        <default expression="" applyOnUpdate="0" field="FACILITY_NAME"/>
+        <default expression="" applyOnUpdate="0" field="ADDRESS"/>
+        <default expression="" applyOnUpdate="0" field="OPERATING_INSTITUTION"/>
+        <default expression="" applyOnUpdate="0" field="SECTOR"/>
+        <default expression="" applyOnUpdate="0" field="SPECIFIC_TYPE"/>
+        <default expression="" applyOnUpdate="0" field="OTHER_USAGE"/>
+        <default expression="" applyOnUpdate="0" field="REMARKS"/>
+        <default expression="" applyOnUpdate="0" field="OTHER_SPEC"/>
+      </defaults>
+      <constraints>
+        <constraint notnull_strength="1" field="fid" constraints="3" exp_strength="0" unique_strength="1"/>
+        <constraint notnull_strength="1" field="FSN" constraints="5" exp_strength="1" unique_strength="0"/>
+        <constraint notnull_strength="1" field="GEOTAGGING_STATUS" constraints="1" exp_strength="0" unique_strength="0"/>
+        <constraint notnull_strength="1" field="BLDG_STATUS" constraints="1" exp_strength="0" unique_strength="0"/>
+        <constraint notnull_strength="1" field="FACILITY_NAME" constraints="5" exp_strength="1" unique_strength="0"/>
+        <constraint notnull_strength="1" field="ADDRESS" constraints="5" exp_strength="1" unique_strength="0"/>
+        <constraint notnull_strength="1" field="OPERATING_INSTITUTION" constraints="1" exp_strength="0" unique_strength="0"/>
+        <constraint notnull_strength="1" field="SECTOR" constraints="5" exp_strength="2" unique_strength="0"/>
+        <constraint notnull_strength="1" field="SPECIFIC_TYPE" constraints="1" exp_strength="0" unique_strength="0"/>
+        <constraint notnull_strength="0" field="OTHER_USAGE" constraints="0" exp_strength="0" unique_strength="0"/>
+        <constraint notnull_strength="0" field="REMARKS" constraints="0" exp_strength="0" unique_strength="0"/>
+        <constraint notnull_strength="0" field="OTHER_SPEC" constraints="0" exp_strength="0" unique_strength="0"/>
+      </constraints>
+      <constraintExpressions>
+        <constraint field="fid" desc="" exp=""/>
+        <constraint field="FSN" desc="Only allow to input 5 Digit" exp="regexp_match(to_string(&quot;FSN&quot;), '^[0-9]{5}$')&#xd;&#xa;"/>
+        <constraint field="GEOTAGGING_STATUS" desc="" exp=""/>
+        <constraint field="BLDG_STATUS" desc="" exp=""/>
+        <constraint field="FACILITY_NAME" desc="Capital letters only" exp="regexp_match(&quot;FACILITY_NAME&quot;, '^[^ ][A-Z0-9!@#$%^&amp;*()_+=\`~&#xd;&#xa;&#xd;&#xa;\[\]&#xd;&#xa;&#xd;&#xa;{}|\\-:;&quot;\'&lt;>,.?/ ]*[^ñÑ ]$')"/>
+        <constraint field="ADDRESS" desc="CAPITAL LETTERS ONLY" exp="regexp_match(&quot;ADDRESS&quot;, '^[^ ][A-Z0-9!@#$%^&amp;*()_+=\`~&#xd;&#xa;&#xd;&#xa;\[\]&#xd;&#xa;&#xd;&#xa;{}|\\-:;&quot;\'&lt;>,.?/ ]*[^ñÑ ]$')"/>
+        <constraint field="OPERATING_INSTITUTION" desc="" exp=""/>
+        <constraint field="SECTOR" desc="" exp="&#xd;&#xa;CASE&#x9;&#xd;&#xa;WHEN &quot;BLDG_STATUS&quot; IS NOT NULL THEN&#x9;&#xd;&#xa;CASE&#x9;&#xd;&#xa;WHEN&#x9;&quot;FACILITY_NAME&quot; LIKE '%BIRTHING CLINIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BLOOD SERVICE CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BLOOD SERVICE FACILITY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BOTIKA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BOTIKA NG BARANGAY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BOTIKA NG BAYAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CHILD CLINIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CLINIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DENTAL CLINIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DIAGNOSTIC CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DIALYSIS CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DOCTORS HOSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DRUG TREATMENT CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%GENERAL CLINIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%HABILITATION CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%HEALTH CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%HEALTH POST%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%HEALTH STATION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%HOSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LABORATORY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LYING-IN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LYING-IN CLINIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MATERNITY CLINIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MEDICAL DIAGNOSTIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MENTAL HEALTH CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PEDIA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PEDIATRIC CLINIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%POLYCLINIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PRIVATE MEDICAL CLINIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PUROK CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%REHABILITATION CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%RHU%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%RURAL HEALTH UNIT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%URBAN HEALTH CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%REFORMATION CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%HEALTH%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KALUSUGAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MEDICAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MEDIKAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%OSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KLINIKA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SENTRO NG KALUSUGAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WELLNESS CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SENTRO NG KAGALINGAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%INFIRMARY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MEDICAL FACILITY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PASILIDAD MEDIKAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PASILIDAD PANGKALUSUGAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%HEALTH INSTITUTION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%INSTITUSYON PANGKALUSUGAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%GENERAL HOSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PAMPUBLIKONG OSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PRIBADONG OSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KOMUNIDAD NA OSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%REGIONAL HOSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%REHIYONAL NA OSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DISTRICT HOSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PANGDISTRITONG OSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PROVINCIAL HOSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PANGLALAWIGANG OSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CHILDREN HOSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%OSPITAL NG MGA BATA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MATERNITY HOSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%OSPITAL NG PANGANGANAK%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PSYCHIATRIC HOSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%OSPITAL PANGKAISIPAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%REHABILITATION HOSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%OSPITAL SA REHABILITASYON%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CANCER CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SENTRO NG KANSER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CARDIOLOGY HOSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%OSPITAL NG PUSO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%EYE HOSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%OSPITAL SA MATA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ORTHOPEDIC HOSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%OSPITAL NG ORTOPEDIKO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ENT HOSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%OSPITAL SA ENT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%NEUROLOGY HOSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%OSPITAL SA NEUROLOGY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WALK-IN CLINIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FAMILY CLINIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PAMPAMILYANG KLINIKA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DENTAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KLINIKA PANGNGIPIN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SKIN CLINIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KLINIKA SA BALAT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%EYE CLINIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KLINIKA SA MATA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%THERAPY CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SENTRO NG THERAPY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SENTRO NG DIYAGNOSTIKO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WELLNESS CLINIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KLINIKA NG KAGALINGAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%EMERGENCY ROOM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SILID PANG-EMERHENSIYA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TRAUMA CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SENTRO NG TRAUMA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%URGENT CARE CLINIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KLINIKA PARA SA AGARANG PANGANGALAGA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BARANGAY HEALTH CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KOMUNIDAD NA SENTRO NG KALUSUGAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BAHAY ALAGAAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%NURSING HOME%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%HOSPICE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SENTRO NG PALLIATIVE CARE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%GERIATRIC HOSPITAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%OSPITAL PARA SA MATATANDA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ASSISTED LIVING FACILITY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PASILIDAD PARA SA ASSISTED LIVING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MEDICAL RESEARCH CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SENTRO NG PANANALIKSIK MEDIKAL%'&#xd;&#xa;THEN&#x9;&#xd;&#xa;&#x9;&quot;SECTOR&quot; IN ('01_HEALTHCARE')&#xd;&#xa;&#x9;&#xd;&#xa;WHEN&#x9;&quot;FACILITY_NAME&quot; LIKE '%ACADEMY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ALS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ALTERNATIVE LEARNING CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CHILD DEVELOPMENT CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CHINESE SCHOOL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%COLLEGE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DAY CARE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DAYCARE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DAYCARE CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DAY CARE CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ELEMENTARY SCHOOL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%GRADE SCHOOL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%JUNIOR HIGH SCHOOL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%JHS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KINDERGARTEN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LEARNING CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LIBRARY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MONTESSORI%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%NURSERY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PAARALAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PRESCHOOL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%READING CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SCHOOL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SEMINARY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SENIOR HIGH SCHOOL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SHS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SPED%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SPED CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TRAINING INSTITUTE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TVET%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TVET INSTITUTION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%UNIVERSITY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SNED%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ALTERNATIVE LEARNING SYSTEM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%INSTITUTE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%EDUCATION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LITERACY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LEARNING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TEACHING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TRAINING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TUTORING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%COACHING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MENTORING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CURRICULUM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CLASSROOM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ELEMENTARY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PRIMARY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SECONDARY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%HIGH SCHOOL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MIDDLE SCHOOL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TECHNICAL SCHOOL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%VOCATIONAL SCHOOL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%POLYTECHNIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%GRADUATE SCHOOL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%POSTGRADUATE SCHOOL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SPECIAL EDUCATION CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CHARTER SCHOOL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BOARDING SCHOOL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LABORATORY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CAMPUS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%AUDITORIUM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LECTURE HALL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SEMINAR ROOM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WORKSHOP%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%STUDY CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%READING ROOM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%RESEARCH FACILITY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SCIENCE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TECHNOLOGY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ENGINEERING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MATH%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%HUMANITIES%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ARTS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%HISTORY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%GEOGRAPHY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LITERATURE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LANGUAGE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PHYSICAL EDUCATION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%COMPUTER SCIENCE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BIOLOGY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CHEMISTRY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PHYSICS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SOCIAL STUDIES%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%READING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WRITING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%NUMERACY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TESTING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%EXAMS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ASSIGNMENTS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LECTURES%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PRESENTATIONS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PROJECTS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WORKSHOPS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FIELD TRIPS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SEMINARS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DISCUSSIONS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CERTIFICATIONS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ACCREDITATION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DIPLOMA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BACHELOR’S DEGREE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MASTER’S DEGREE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DOCTORATE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CERTIFICATE PROGRAM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SHORT COURSES%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PROFESSIONAL DEVELOPMENT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LIFELONG LEARNING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ADULT EDUCATION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CONTINUING EDUCATION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%E-LEARNING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ONLINE LEARNING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DISTANCE LEARNING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TEACHER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TUTOR%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PROFESSOR%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%EDUCATOR%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%INSTRUCTOR%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MENTOR%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%STUDENT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PUPIL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LEARNER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FACULTY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ADMINISTRATOR%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DEAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PRINCIPAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%COUNSELOR%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LIBRARIAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LITERACY PROGRAM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FUNCTIONAL LITERACY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DIGITAL LITERACY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BASIC LITERACY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ADVANCED LITERACY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%READING PROGRAM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WRITING PROGRAM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SKILLS DEVELOPMENT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%NUMERACY TRAINING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%COMMUNITY LITERACY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FAMILY LITERACY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SCHOLARSHIP%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%GRANT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BURSARY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FELLOWSHIP%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%INTERNSHIP%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%RESEARCH%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%THESIS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DISSERTATION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CERTIFICATION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LICENSE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CREDENTIAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%EXAM CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ADMISSION OFFICE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ESKUWELAHAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%AKADEMYA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%UNIBERSIDAD%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KOLEHIYO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%INSTITUTO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%EDUKASYON%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LITERASIYA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PAG-AARAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PAGTUTURO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PAGSASANAY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%GURO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MAG-AARAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ELEMENTARYA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KURIKULUM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SILID-ARALAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%AKLATAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LABORATORYO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KAMPUS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%AWDITORYUM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SENTRO NG PANANALIKSIK%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ARALING PANLIPUNAN%'&#xd;&#xa;THEN&#x9;&#xd;&#xa;&#x9;&quot;SECTOR&quot; IN ('02_EDUCATION AND LITERACY')&#xd;&#xa;&#x9;&#xd;&#xa;&#x9;WHEN &quot;FACILITY_NAME&quot; LIKE '%ADOLESCENT FACILITY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BARANGAY HALL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BRGY. HALL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CEMETERY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CITY HALL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CITY VETERINARY OFFICE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CONFERENCE HALL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%COURT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%COVERED COURT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DILG%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ECO-PARK%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ENGINEERING OFFICE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FEEDING CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%GARDEN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%GYMNASIUM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%INDIGENOUS PEOPLE BUILDING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MEMORIAL PARK%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MULTI-PURPOSE HALL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MULTI-PURPOSE BUILDING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PARK%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PENRO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PLAZA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%POST OFFICE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%POSTAL OFFICE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PROVINCIAL CAPITOL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PUBLIC CEMETERY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PUBLIC PLAZA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%REGIONAL OFFICE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SK HALL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SPORTS CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SPORTS FACILITY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TOWN HALL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TRIAL COURT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PUBLIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BUILDING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SPACE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FACILITY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TOWN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CITY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PROVINCIAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CAPITOL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%OFFICE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%GOVERNMENT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MULTI-PURPOSE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SPORTS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PLAYGROUND%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MEMORIAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%HERITAGE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%AMPHITHEATER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%AUDITORIUM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%RECREATION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%COMMUNITY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MARKET%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SQUARE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LIBRARY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%POST%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%POSTAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SERVICE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TOWNHALL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CITYHALL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%GYM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PAMPUBLIKO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%GUSALI%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LUGAR%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PASILIDAD%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MUNISIPYO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BULWAGAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LIWASAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%HARDIN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PALARUAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SEMENTERYO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ALAALANG%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KOMUNIDAD%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SENTRO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%EVACUATION CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PALENGKE%'&#xd;&#xa;THEN&#x9;&#xd;&#xa;&#x9;&quot;SECTOR&quot; IN ('03_PUBLIC BUILDING AND OPEN SPACE')&#xd;&#xa;&#x9;&#xd;&#xa;WHEN&#x9;&quot;FACILITY_NAME&quot; LIKE '%BDRRM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BDRRMO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BUREAU OF JAIL MANAGEMENT AND PENOLOGY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BJMP%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CAMP%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%COMMAND CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DRRMO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FIRE STATION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FIRE SUBSTATION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%JAIL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MDRRMO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MUNICIPAL DISASTER RISK REDUCTION AND MANAGEMENT OFFICE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%POLICE HEADQUARTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%POLICE STATION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%POLICE SUBSTATION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%EMERGENCY OPERATIONS CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DEFENSE CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PUBLIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SAFETY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%POLICE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%STATION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SUBSTATION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PENAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%INSTITUTION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FIRE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%EVACUATION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DISASTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%RISK%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%REDUCTION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MANAGEMENT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%OFFICE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%EMERGENCY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SITES%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PAMPUBLIKO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KALIGTASAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PULIS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%HIMPUILAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KULUNGAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PANGPARUSA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%INSTITUSYON%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%APOY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PAGLIKAS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SENTRO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SAKUNA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PANGANIB%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PAGBABA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PAMAMAHALA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TANGGAPAN%'&#xd;&#xa;THEN&#x9;&#xd;&#xa;&#x9;&quot;SECTOR&quot; IN ('04_PUBLIC SAFETY')&#xd;&#xa;&#x9;&#xd;&#xa;WHEN&#x9;&quot;FACILITY_NAME&quot; LIKE '%ABATTOIR%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%AGRICULTURE WAREHOUSE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BAGSAKAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CORN MILL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DRESSING PLANT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DRYER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FISH LANDING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FISHPORT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%GO NEGOSYO CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%IRRIGATION SYSTEM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PUBLIC MARKET%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%RICE MILL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SATELLITE MARKET%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SLAUGHTERHOUSE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SOLAR DRYER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%STORAGE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TALIPAPA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WAREHOUSE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WET MARKET%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DRY MARKET%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%AGRICULTURE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PUBLIC%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ENTERPRISE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MARKET%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PRODUCE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FISH%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LANDING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CENTER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%NEGOSYO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BUSINESS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%AGRIKULTURA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PAMPUBLIKO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PAMILIHAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PALENGKE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PRODUKTO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SENTRO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ISDA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BABOYAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KATAYAN%'&#xd;&#xa;THEN&#x9;&#xd;&#xa;&#x9;&quot;SECTOR&quot; IN ('05_AGRICULTURE AND PUBLIC ENTERPRISE')&#xd;&#xa;&#x9;&#xd;&#xa;WHEN&#x9;&quot;FACILITY_NAME&quot; LIKE '%ARTESIAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ARTESIAN WELL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BARANGAY STORAGE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%COMMON TAP%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%COMMUNAL FAUCET%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DAM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DEEP WELL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DUG WELL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%RAINWATER COLLECTION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%RESERVOIR%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SALINTUBIG%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%STANDPIPE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%STANDPOST%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%STOCKROOM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%STORAGE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SUBSTATION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TANK%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WAREHOUSE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WATER IMPOUNDING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WATER SPRING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WATER SUBSTATION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WATER SYSTEM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WATERSHED%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WATERWORKS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WATERWORKS SYSTEM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WELL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WINDMILL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%UTILITY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SERVICE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LEVEL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%COMMUNAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FAUCET%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SYSTEM%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PIPED%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DISTRIBUTION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%NETWORK%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%RAINWATER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%COLLECTION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%IMPOUNDING%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FACILITY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WATER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SERBISYO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PASILIDAD%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TUBIG%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%GRIPO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%IMBAKAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KOMUNAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%ULAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SISTEMA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KALIPUNAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PANLIPUNAN%'&#xd;&#xa;THEN&#x9;&#xd;&#xa;&#x9;&quot;SECTOR&quot; IN ('06_UTILITY SERVICE')&#xd;&#xa;&#x9;&#xd;&#xa;WHEN&#x9;&quot;FACILITY_NAME&quot; LIKE '%AL AMANAH ISLAMIC INVESTMENT BANK OF THE PHILIPPINES%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BARANGAY COOPERATIVE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%COOP%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%COOPERATIVE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DEVELOPMENT BANK OF THE PHILIPPINES%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LAND BANK OF THE PHILIPPINES%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MULTI-PURPOSE COOP%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%OVERSEAS FILIPINO BANK%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PHILIPPINE POSTAL SAVINGS BANK%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PHILIPPINE VETERANS BANK%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%UNITED COCONUT PLANTERS BANK%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MULTI-PURPOSE COOPERATIVE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FINANCIAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%CREDIT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%INSTITUTION%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%GOVERNMENT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DEPOSITORY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BANK%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%COMMUNITY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FINANSYAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KREDITO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%INSTITUSYON%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PAMAHALAAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BANGKO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KOOPERATIBA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KOMUNIDAD%'&#xd;&#xa;THEN&#x9;&#xd;&#xa;&#x9;&quot;SECTOR&quot; IN ('07_FINANCIAL AND CREDIT INSTITUTION')&#xd;&#xa;&#x9;&#xd;&#xa;WHEN&#x9;&quot;FACILITY_NAME&quot; LIKE '%COMPOST%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%COMPOST PIT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LANDFILL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MATERIALS RECOVERY FACILITY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%RECOVERY FACILITY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MATERIAL RECOVERY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MRF%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SANITARY LANDFILL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WASTE WATER TREATMENT FACILITY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SOLID WASTE MATERIAL RECOVERY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SWMF%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%GARBAGE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WASTE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DISPOSAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%MATERIALS%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%RECOVERY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FACILITY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SANITARY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PIT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%BASURA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KALAT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PAGTAPON%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%KAGAMITAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PAGKUHA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PASILIDAD%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SANITARYO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TAGAAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%HUKAY%'&#xd;&#xa;THEN&#x9;&#xd;&#xa;&#x9;&quot;SECTOR&quot; IN ('08_GARBAGE AND WASTE DISPOSAL')&#xd;&#xa;&#x9;&#xd;&#xa;WHEN&#x9;&quot;FACILITY_NAME&quot; LIKE '%AIRPORT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%JEEPNEY TERMINAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LAND TRANSPORT TERMINAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PANTALAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SEAPORT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TERMINAL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%WHARF%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TRANSPORT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LAND%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%TRAVEL%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PASSENGER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%VEHICLE%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%FERRY%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PIER%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PORT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%AIR%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SEA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PALIPARAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DAUNGAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%HIMPUILAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%SASAKYAN%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%PASAHERO%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%LUPA%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%DAGAT%' OR&#xd;&#xa;&#x9;&quot;FACILITY_NAME&quot; LIKE '%HIMPAPAWID%'&#xd;&#xa;THEN&#x9;&#xd;&#xa;&#x9;&quot;SECTOR&quot; IN ('09_TRANSPORT')&#xd;&#xa;&#x9;&#xd;&#xa;ELSE&#x9;&#xd;&#xa;&#x9;&#xd;&#xa;&#x9;SECTOR IN ('01_HEALTHCARE',&#xd;&#xa;'02_EDUCATION AND LITERACY',&#x9;&#xd;&#xa;'03_PUBLIC BUILDING AND OPEN SPACE',&#x9;&#xd;&#xa;'04_PUBLIC SAFETY',&#x9;&#xd;&#xa;'05_AGRICULTURE AND PUBLIC ENTERPRISE',&#x9;&#xd;&#xa;'06_UTILITY SERVICE',&#x9;&#xd;&#xa;'07_FINANCIAL AND CREDIT INSTITUTION',&#x9;&#xd;&#xa;'08_GARBAGE AND WASTE DISPOSAL',&#x9;&#xd;&#xa;'09_TRANSPORT')&#x9;&#xd;&#xa;END&#x9;&#xd;&#xa;END&#x9;"/>
+        <constraint field="SPECIFIC_TYPE" desc="" exp=""/>
+        <constraint field="OTHER_USAGE" desc="" exp=""/>
+        <constraint field="REMARKS" desc="" exp=""/>
+        <constraint field="OTHER_SPEC" desc="" exp=""/>
+      </constraintExpressions>
+      <expressionfields/>
+      <attributeactions>
+        <defaultAction value="{00000000-0000-0000-0000-000000000000}" key="Canvas"/>
+      </attributeactions>
+      <attributetableconfig sortOrder="0" sortExpression="" actionWidgetStyle="dropDown">
+        <columns>
+          <column hidden="0" name="fid" type="field" width="-1"/>
+          <column hidden="0" name="FSN" type="field" width="-1"/>
+          <column hidden="0" name="GEOTAGGING_STATUS" type="field" width="160"/>
+          <column hidden="0" name="BLDG_STATUS" type="field" width="216"/>
+          <column hidden="0" name="FACILITY_NAME" type="field" width="-1"/>
+          <column hidden="0" name="ADDRESS" type="field" width="153"/>
+          <column hidden="0" name="OPERATING_INSTITUTION" type="field" width="-1"/>
+          <column hidden="0" name="SECTOR" type="field" width="276"/>
+          <column hidden="0" name="SPECIFIC_TYPE" type="field" width="646"/>
+          <column hidden="0" name="OTHER_USAGE" type="field" width="-1"/>
+          <column hidden="0" name="REMARKS" type="field" width="-1"/>
+          <column hidden="0" name="OTHER_SPEC" type="field" width="-1"/>
+          <column hidden="1" type="actions" width="-1"/>
+        </columns>
+      </attributetableconfig>
+      <conditionalstyles>
+        <rowstyles/>
+        <fieldstyles/>
+      </conditionalstyles>
+      <storedexpressions/>
+      <editform tolerant="1"></editform>
+      <editforminit/>
+      <editforminitcodesource>0</editforminitcodesource>
+      <editforminitfilepath></editforminitfilepath>
+      <editforminitcode><![CDATA[# -*- coding: utf-8 -*-
+"""
+QGIS forms can have a Python function that is called when the form is
+opened.
+
+Use this function to add extra logic to your forms.
+
+Enter the name of the function in the "Python Init function"
+field.
+An example follows:
+"""
+from qgis.PyQt.QtWidgets import QWidget
+
+def my_form_open(dialog, layer, feature):
+    geom = feature.geometry()
+    control = dialog.findChild(QWidget, "MyLineEdit")
+]]></editforminitcode>
+      <featformsuppress>0</featformsuppress>
+      <editorlayout>tablayout</editorlayout>
+      <attributeEditorForm>
+        <labelStyle labelColor="0,0,0,255" overrideLabelColor="0" overrideLabelFont="0">
+          <labelFont description="MS Shell Dlg 2,8.25,-1,5,50,0,0,0,0,0" bold="0" italic="0" style="" underline="0" strikethrough="0"/>
+        </labelStyle>
+        <attributeEditorField showLabel="1" index="-1" name="FSN">
+          <labelStyle labelColor="0,0,0,255" overrideLabelColor="0" overrideLabelFont="0">
+            <labelFont description="MS Shell Dlg 2,7.8,-1,5,50,0,0,0,0,0" bold="0" italic="0" style="" underline="0" strikethrough="0"/>
+          </labelStyle>
+        </attributeEditorField>
+        <attributeEditorField showLabel="1" index="-1" name="GEOTAGGING_STATUS">
+          <labelStyle labelColor="0,0,0,255" overrideLabelColor="0" overrideLabelFont="0">
+            <labelFont description="MS Shell Dlg 2,7.8,-1,5,50,0,0,0,0,0" bold="0" italic="0" style="" underline="0" strikethrough="0"/>
+          </labelStyle>
+        </attributeEditorField>
+        <attributeEditorField showLabel="1" index="-1" name="BLDG_STATUS">
+          <labelStyle labelColor="0,0,0,255" overrideLabelColor="0" overrideLabelFont="0">
+            <labelFont description="MS Shell Dlg 2,7.8,-1,5,50,0,0,0,0,0" bold="0" italic="0" style="" underline="0" strikethrough="0"/>
+          </labelStyle>
+        </attributeEditorField>
+        <attributeEditorField showLabel="1" index="-1" name="FACILITY_NAME">
+          <labelStyle labelColor="0,0,0,255" overrideLabelColor="0" overrideLabelFont="0">
+            <labelFont description="MS Shell Dlg 2,7.8,-1,5,50,0,0,0,0,0" bold="0" italic="0" style="" underline="0" strikethrough="0"/>
+          </labelStyle>
+        </attributeEditorField>
+        <attributeEditorField showLabel="1" index="-1" name="ADDRESS">
+          <labelStyle labelColor="0,0,0,255" overrideLabelColor="0" overrideLabelFont="0">
+            <labelFont description="MS Shell Dlg 2,7.8,-1,5,50,0,0,0,0,0" bold="0" italic="0" style="" underline="0" strikethrough="0"/>
+          </labelStyle>
+        </attributeEditorField>
+        <attributeEditorField showLabel="1" index="-1" name="OPERATING_INSTITUTION">
+          <labelStyle labelColor="0,0,0,255" overrideLabelColor="0" overrideLabelFont="0">
+            <labelFont description="MS Shell Dlg 2,7.8,-1,5,50,0,0,0,0,0" bold="0" italic="0" style="" underline="0" strikethrough="0"/>
+          </labelStyle>
+        </attributeEditorField>
+        <attributeEditorField showLabel="1" index="-1" name="SECTOR">
+          <labelStyle labelColor="0,0,0,255" overrideLabelColor="0" overrideLabelFont="0">
+            <labelFont description="MS Shell Dlg 2,7.8,-1,5,50,0,0,0,0,0" bold="0" italic="0" style="" underline="0" strikethrough="0"/>
+          </labelStyle>
+        </attributeEditorField>
+        <attributeEditorField showLabel="1" index="-1" name="SPECIFIC_TYPE">
+          <labelStyle labelColor="0,0,0,255" overrideLabelColor="0" overrideLabelFont="0">
+            <labelFont description="MS Shell Dlg 2,7.8,-1,5,50,0,0,0,0,0" bold="0" italic="0" style="" underline="0" strikethrough="0"/>
+          </labelStyle>
+        </attributeEditorField>
+        <attributeEditorContainer groupBox="1" collapsedExpression="" visibilityExpression="regexp_substr(&quot;SPECIFIC_TYPE&quot;, '^[0-9]+') IN ('0199', '0299', '0399', '0499', '0599', '0699', '0799', '0899', '0999')&#xa;" showLabel="1" columnCount="1" collapsedExpressionEnabled="0" name="" collapsed="0" visibilityExpressionEnabled="1">
+          <labelStyle labelColor="0,0,0,255" overrideLabelColor="0" overrideLabelFont="0">
+            <labelFont description="MS Shell Dlg 2,7.8,-1,5,50,0,0,0,0,0" bold="0" italic="0" style="" underline="0" strikethrough="0"/>
+          </labelStyle>
+          <attributeEditorField showLabel="1" index="-1" name="OTHER_SPEC">
+            <labelStyle labelColor="0,0,0,255" overrideLabelColor="0" overrideLabelFont="0">
+              <labelFont description="MS Shell Dlg 2,7.8,-1,5,50,0,0,0,0,0" bold="0" italic="0" style="" underline="0" strikethrough="0"/>
+            </labelStyle>
+          </attributeEditorField>
+        </attributeEditorContainer>
+        <attributeEditorField showLabel="1" index="-1" name="OTHER_USAGE">
+          <labelStyle labelColor="0,0,0,255" overrideLabelColor="0" overrideLabelFont="0">
+            <labelFont description="MS Shell Dlg 2,7.8,-1,5,50,0,0,0,0,0" bold="0" italic="0" style="" underline="0" strikethrough="0"/>
+          </labelStyle>
+        </attributeEditorField>
+        <attributeEditorField showLabel="1" index="-1" name="REMARKS">
+          <labelStyle labelColor="0,0,0,255" overrideLabelColor="0" overrideLabelFont="0">
+            <labelFont description="MS Shell Dlg 2,7.8,-1,5,50,0,0,0,0,0" bold="0" italic="0" style="" underline="0" strikethrough="0"/>
+          </labelStyle>
+        </attributeEditorField>
+      </attributeEditorForm>
+      <editable>
+        <field name="ADDRESS" editable="1"/>
+        <field name="BLDG_STATUS" editable="1"/>
+        <field name="FACILITY_NAME" editable="1"/>
+        <field name="FSN" editable="1"/>
+        <field name="GEOTAGGING_STATUS" editable="1"/>
+        <field name="OPERATING_INSTITUTION" editable="1"/>
+        <field name="OTHER_SPEC" editable="1"/>
+        <field name="OTHER_USAGE" editable="1"/>
+        <field name="REMARKS" editable="1"/>
+        <field name="SECTOR" editable="1"/>
+        <field name="SPECIFIC_TYPE" editable="1"/>
+        <field name="fid" editable="1"/>
+      </editable>
+      <labelOnTop>
+        <field labelOnTop="0" name="ADDRESS"/>
+        <field labelOnTop="0" name="BLDG_STATUS"/>
+        <field labelOnTop="0" name="FACILITY_NAME"/>
+        <field labelOnTop="0" name="FSN"/>
+        <field labelOnTop="0" name="GEOTAGGING_STATUS"/>
+        <field labelOnTop="0" name="OPERATING_INSTITUTION"/>
+        <field labelOnTop="0" name="OTHER_SPEC"/>
+        <field labelOnTop="0" name="OTHER_USAGE"/>
+        <field labelOnTop="0" name="REMARKS"/>
+        <field labelOnTop="0" name="SECTOR"/>
+        <field labelOnTop="0" name="SPECIFIC_TYPE"/>
+        <field labelOnTop="0" name="fid"/>
+      </labelOnTop>
+      <reuseLastValue>
+        <field reuseLastValue="0" name="ADDRESS"/>
+        <field reuseLastValue="0" name="BLDG_STATUS"/>
+        <field reuseLastValue="0" name="FACILITY_NAME"/>
+        <field reuseLastValue="0" name="FSN"/>
+        <field reuseLastValue="0" name="GEOTAGGING_STATUS"/>
+        <field reuseLastValue="0" name="OPERATING_INSTITUTION"/>
+        <field reuseLastValue="0" name="OTHER_SPEC"/>
+        <field reuseLastValue="0" name="OTHER_USAGE"/>
+        <field reuseLastValue="0" name="REMARKS"/>
+        <field reuseLastValue="0" name="SECTOR"/>
+        <field reuseLastValue="0" name="SPECIFIC_TYPE"/>
+        <field reuseLastValue="0" name="fid"/>
+      </reuseLastValue>
+      <dataDefinedFieldProperties/>
+      <widgets/>
+      <previewExpression>COALESCE( "FACILITY_NAME", '&lt;NULL>' )</previewExpression>
+      <mapTip></mapTip>
+    </maplayer>
+  </maplayers>
+</qlr>
