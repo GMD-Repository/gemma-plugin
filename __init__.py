@@ -9,7 +9,7 @@ import sys
 
 # Add libqfieldsync wheel to sys.path before any imports that need it
 src_dir = pathlib.Path(__file__).parent.resolve()
-libqfieldsync_whl = src_dir / "references" / "libqfieldsync.whl"
+libqfieldsync_whl = src_dir / "references" / "package_qfield" / "libqfieldsync.whl"
 if libqfieldsync_whl.exists() and str(libqfieldsync_whl) not in sys.path:
     sys.path.append(str(libqfieldsync_whl))
 

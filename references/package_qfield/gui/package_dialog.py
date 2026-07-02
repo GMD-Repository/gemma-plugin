@@ -80,7 +80,7 @@ class MultiSelectDialog(QDialog):
     def __init__(self, title, label_text, items, parent=None):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setMinimumWidth(320)
+        self.setMinimumWidth(720)
         self.setMinimumHeight(240)
         
         layout = QVBoxLayout(self)
@@ -390,18 +390,28 @@ class PackageDialog(QDialog, DialogUi):
             return (0, detected) if detected else (1, lname)
         active_layers.sort(key=layer_sort_key)
         
+        # Collect layer items first — add tree items with blockSignals to avoid
+        # premature visibility updates, but do NOT set item widgets yet.
+        pending_combos = []
         self.layer_groups_tree.blockSignals(True)
         for layer_name in active_layers:
             layer_item = QTreeWidgetItem(group_item)
             layer_item.setText(0, layer_name)
             layer_item.setFlags(layer_item.flags() | Qt.ItemIsUserCheckable)
             layer_item.setCheckState(0, Qt.Unchecked)
-            self._create_qml_combo_for_layer(layer_item, layer_name)
+            pending_combos.append((layer_item, layer_name))
         self.layer_groups_tree.blockSignals(False)
 
         self.layer_groups_tree.expandItem(group_item)
         self.group_name_input.clear()
-        self._update_layer_visibility()
+
+        # Defer combo widget creation until the event loop has laid out the tree
+        # items — setItemWidget does not render reliably during batch insertion.
+        def _deferred_create_combos():
+            for layer_item, layer_name in pending_combos:
+                self._create_qml_combo_for_layer(layer_item, layer_name)
+            self._update_layer_visibility()
+        QTimer.singleShot(0, _deferred_create_combos)
 
     def _on_delete_layer_group(self):
         selected_items = self.layer_groups_tree.selectedItems()
@@ -436,9 +446,24 @@ class PackageDialog(QDialog, DialogUi):
         else:
             index = self.layer_groups_tree.indexOfTopLevelItem(item)
             if index > 0:
+                # Save all child combo selections before the move — take/insert
+                # destroys every item widget on the group's children.
+                child_qml = {}
+                for c in range(item.childCount()):
+                    child = item.child(c)
+                    combo = self.layer_groups_tree.itemWidget(child, 1)
+                    child_qml[child.text(0)] = combo.currentText() if combo else ""
                 self.layer_groups_tree.takeTopLevelItem(index)
                 self.layer_groups_tree.insertTopLevelItem(index - 1, item)
                 self.layer_groups_tree.setCurrentItem(item)
+                self.layer_groups_tree.expandItem(item)
+                # Restore combos for all children
+                def _restore(group=item, saved=child_qml):
+                    for c in range(group.childCount()):
+                        child = group.child(c)
+                        preset = saved.get(child.text(0), "")
+                        self._create_qml_combo_for_layer(child, child.text(0), preset_qml=preset)
+                QTimer.singleShot(0, _restore)
                 
     def _on_move_item_down(self):
         selected_items = self.layer_groups_tree.selectedItems()
@@ -460,9 +485,24 @@ class PackageDialog(QDialog, DialogUi):
         else:
             index = self.layer_groups_tree.indexOfTopLevelItem(item)
             if index < self.layer_groups_tree.topLevelItemCount() - 1:
+                # Save all child combo selections before the move — take/insert
+                # destroys every item widget on the group's children.
+                child_qml = {}
+                for c in range(item.childCount()):
+                    child = item.child(c)
+                    combo = self.layer_groups_tree.itemWidget(child, 1)
+                    child_qml[child.text(0)] = combo.currentText() if combo else ""
                 self.layer_groups_tree.takeTopLevelItem(index)
                 self.layer_groups_tree.insertTopLevelItem(index + 1, item)
                 self.layer_groups_tree.setCurrentItem(item)
+                self.layer_groups_tree.expandItem(item)
+                # Restore combos for all children
+                def _restore(group=item, saved=child_qml):
+                    for c in range(group.childCount()):
+                        child = group.child(c)
+                        preset = saved.get(child.text(0), "")
+                        self._create_qml_combo_for_layer(child, child.text(0), preset_qml=preset)
+                QTimer.singleShot(0, _restore)
 
     def _on_save_groups_preset(self):
         # Ask for a preset name
@@ -528,6 +568,7 @@ class PackageDialog(QDialog, DialogUi):
         self.layer_groups_tree.blockSignals(True)
         
         active_layers_set = set(self._get_active_project_layers())
+        pending_combos = []
         
         for group_name, data in preset_data.items():
             group_item = QTreeWidgetItem(self.layer_groups_tree)
@@ -556,7 +597,7 @@ class PackageDialog(QDialog, DialogUi):
                     return (0, detected) if detected else (1, lname)
                 all_layers_in_group.sort(key=layer_sort_key)
                 
-            # Create items in saved order
+            # Create items in saved order — do NOT set item widgets yet
             for layer_name in all_layers_in_group:
                 if layer_name not in active_layers_set:
                     continue
@@ -568,7 +609,7 @@ class PackageDialog(QDialog, DialogUi):
                 else:
                     layer_item.setCheckState(0, Qt.Unchecked)
                 preset_qml = saved_qml_styles.get(layer_name, "")
-                self._create_qml_combo_for_layer(layer_item, layer_name, preset_qml=preset_qml)
+                pending_combos.append((layer_item, layer_name, preset_qml))
                 
             # Append any newly added active layers that aren't in the preset group
             for layer_name in active_layers_set:
@@ -577,12 +618,19 @@ class PackageDialog(QDialog, DialogUi):
                     layer_item.setText(0, layer_name)
                     layer_item.setFlags(layer_item.flags() | Qt.ItemIsUserCheckable)
                     layer_item.setCheckState(0, Qt.Unchecked)
-                    self._create_qml_combo_for_layer(layer_item, layer_name)
+                    pending_combos.append((layer_item, layer_name, ""))
                     
             self.layer_groups_tree.expandItem(group_item)
             
         self.layer_groups_tree.blockSignals(False)
-        self._update_layer_visibility()
+
+        # Defer combo widget creation until the event loop has laid out the tree
+        # items — setItemWidget does not render reliably during batch insertion.
+        def _deferred_create_combos():
+            for layer_item, layer_name, preset_qml in pending_combos:
+                self._create_qml_combo_for_layer(layer_item, layer_name, preset_qml=preset_qml)
+            self._update_layer_visibility()
+        QTimer.singleShot(0, _deferred_create_combos)
 
     def _on_delete_groups_preset(self):
         settings = QSettings()
@@ -677,8 +725,8 @@ class PackageDialog(QDialog, DialogUi):
                     if layer_tree_layer:
                         # Clone the layer node
                         cloned_layer = layer_tree_layer.clone()
-                        # Add to the new group
-                        qgis_group.insertChildNode(0, cloned_layer)
+                        # Add to the new group (append to preserve order)
+                        qgis_group.addChildNode(cloned_layer)
                         # Remove original
                         layer_tree_layer.parent().removeChildNode(layer_tree_layer)
 
@@ -760,33 +808,31 @@ class PackageDialog(QDialog, DialogUi):
         self.tab_additional = QWidget()
         self.tab_additional_layout = QVBoxLayout(self.tab_additional)
         
+        # ── Step 1: Create Groups ──────────────────────────────────────
+        step1_label = QLabel(self.tr("Step 1: Create Groups"))
+        step1_label.setStyleSheet("font-weight: bold; font-size: 13px; margin-top: 4px;")
+        self.tab_additional_layout.addWidget(step1_label)
+
         group_controls_layout = QHBoxLayout()
         self.group_name_input = QLineEdit()
         self.group_name_input.setPlaceholderText(self.tr("Enter group name..."))
-        
+
         self.add_group_btn = QPushButton("+")
         self.add_group_btn.setFixedWidth(40)
         self.add_group_btn.setStyleSheet("color: green; font-weight: bold; font-size: 16px;")
-        
+
         self.delete_group_btn = QPushButton("-")
         self.delete_group_btn.setFixedWidth(40)
         self.delete_group_btn.setStyleSheet("color: red; font-weight: bold; font-size: 16px;")
-        
-        self.move_up_btn = QPushButton("↑")
-        self.move_up_btn.setFixedWidth(30)
-        self.move_up_btn.setStyleSheet("color: blue; font-weight: bold; font-size: 16px;")
-        
-        self.move_down_btn = QPushButton("↓")
-        self.move_down_btn.setFixedWidth(30)
-        self.move_down_btn.setStyleSheet("color: blue; font-weight: bold; font-size: 16px;")
-        
+
         group_controls_layout.addWidget(self.group_name_input)
         group_controls_layout.addWidget(self.add_group_btn)
         group_controls_layout.addWidget(self.delete_group_btn)
-        group_controls_layout.addWidget(self.move_up_btn)
-        group_controls_layout.addWidget(self.move_down_btn)
         self.tab_additional_layout.addLayout(group_controls_layout)
-        
+
+        # Tree widget + reorder arrows side-by-side
+        tree_row_layout = QHBoxLayout()
+
         self.layer_groups_tree = LayerGroupsTreeWidget(self)
         self.layer_groups_tree.setColumnCount(2)
         self.layer_groups_tree.setHeaderLabels([self.tr("Layer"), self.tr("QML Style")])
@@ -800,21 +846,73 @@ class PackageDialog(QDialog, DialogUi):
         header.setSectionResizeMode(0, QHeaderView.Stretch)
         header.setSectionResizeMode(1, QHeaderView.Fixed)
         header.resizeSection(1, 220)
-        self.tab_additional_layout.addWidget(self.layer_groups_tree)
-        preset_buttons_layout = QHBoxLayout()
-        self.save_preset_btn = QPushButton(self.tr("Save Preset"))
-        self.load_preset_btn = QPushButton(self.tr("Load Preset"))
-        self.delete_preset_btn = QPushButton(self.tr("Delete Preset"))
-        preset_buttons_layout.addWidget(self.save_preset_btn)
-        preset_buttons_layout.addWidget(self.load_preset_btn)
-        preset_buttons_layout.addWidget(self.delete_preset_btn)
-        self.tab_additional_layout.addLayout(preset_buttons_layout)
+        tree_row_layout.addWidget(self.layer_groups_tree)
 
-        self.apply_groups_btn = QPushButton(self.tr("Apply Groups to QGIS Layers Panel"))
-        self.tab_additional_layout.addWidget(self.apply_groups_btn)
+        # Vertical column for reorder arrows beside the tree
+        arrows_layout = QVBoxLayout()
+        arrows_layout.addStretch()
+        self.move_up_btn = QPushButton("↑")
+        self.move_up_btn.setFixedWidth(30)
+        self.move_up_btn.setStyleSheet("color: blue; font-weight: bold; font-size: 16px;")
+        self.move_down_btn = QPushButton("↓")
+        self.move_down_btn.setFixedWidth(30)
+        self.move_down_btn.setStyleSheet("color: blue; font-weight: bold; font-size: 16px;")
+        arrows_layout.addWidget(self.move_up_btn)
+        arrows_layout.addWidget(self.move_down_btn)
+        arrows_layout.addStretch()
+        tree_row_layout.addLayout(arrows_layout)
+
+        self.tab_additional_layout.addLayout(tree_row_layout)
+
+        # ── Step 2: Verify Styles ─────────────────────────────────
+        # step2_label = QLabel(self.tr("Step 2: Verify Styles"))
+        # step2_label.setStyleSheet("font-weight: bold; font-size: 13px; margin-top: 8px;")
+        # self.tab_additional_layout.addWidget(step2_label)
+
+        step2_note = QLabel(self.tr(
+            "QML styles are auto-detected for each layer. "
+            "Verify the selections above and adjust if needed."
+        ))
+        step2_note.setWordWrap(True)
+        step2_note.setStyleSheet("color: gray; font-size: 11px; margin-bottom: 2px;")
+        self.tab_additional_layout.addWidget(step2_note)
 
         self.import_qml_btn = QPushButton(self.tr("Import QML Style(s)..."))
+        self.import_qml_btn.setToolTip(self.tr(
+            "Import additional QML style files if the built-in styles are not sufficient."
+        ))
         self.tab_additional_layout.addWidget(self.import_qml_btn)
+
+        # ── 2: Apply ────────────────────────────────────────────
+        step3_label = QLabel(self.tr("Step 2: Apply"))
+        step3_label.setStyleSheet("font-weight: bold; font-size: 13px; margin-top: 8px;")
+        self.tab_additional_layout.addWidget(step3_label)
+
+        self.apply_groups_btn = QPushButton(self.tr("Apply Groups && Styles"))
+        self.apply_groups_btn.setStyleSheet(
+            "QPushButton { font-weight: bold; font-size: 13px; padding: 6px; }"
+        )
+        self.tab_additional_layout.addWidget(self.apply_groups_btn)
+
+        # ── Separator ────────────────────────────────────────────────
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        self.tab_additional_layout.addWidget(separator)
+
+        # ── Presets ──────────────────────────────────────────────────
+        presets_label = QLabel(self.tr("Presets"))
+        presets_label.setStyleSheet("font-weight: bold; font-size: 13px; margin-top: 4px;")
+        self.tab_additional_layout.addWidget(presets_label)
+
+        preset_buttons_layout = QHBoxLayout()
+        self.load_preset_btn = QPushButton(self.tr("Load Preset"))
+        self.save_preset_btn = QPushButton(self.tr("Save Preset"))
+        self.delete_preset_btn = QPushButton(self.tr("Delete Preset"))
+        preset_buttons_layout.addWidget(self.load_preset_btn)
+        preset_buttons_layout.addWidget(self.save_preset_btn)
+        preset_buttons_layout.addWidget(self.delete_preset_btn)
+        self.tab_additional_layout.addLayout(preset_buttons_layout)
         
         # Connect signals for groups
         self.add_group_btn.clicked.connect(self._on_add_layer_group)
@@ -1394,8 +1492,6 @@ class PackageDialog(QDialog, DialogUi):
                     QgsProject.instance().read(project_file)
             except Exception:
                 pass
-
-        self.accept()
 
     def reject(self):
         """Override reject to handle batch cancellation."""
@@ -2069,7 +2165,6 @@ class PackageDialog(QDialog, DialogUi):
             )
             self.iface.messageBar().pushWarning("Export Error", str(e))
             self.do_post_offline_convert_action(False)
-            raise
         finally:
             QApplication.restoreOverrideCursor()
             self._offline_convertor = None
@@ -6783,7 +6878,7 @@ class PackageDialog(QDialog, DialogUi):
         <li>{save_preset_img} <br><b>Save Preset:</b> Saves your current group structure and QML assignments so you can reuse them later.</li>
         <li>{load_preset_img} <br><b>Load Preset:</b> Loads a previously saved layer grouping preset.</li>
         <li>{delete_preset_img} <br><b>Delete Preset:</b> Deletes a saved layer grouping preset.</li>
-        <li>{apply_groups_img} <br><b>Apply Groups to QGIS Layers Panel:</b> Updates your actual QGIS project with the groups and layer structure defined in the table above.</li>
+        <li>{apply_groups_img} <br><b>Create Groups and Apply Style:</b> Updates your actual QGIS project with the groups and layer structure defined in the table above.</li>
         <li>{import_qml_img} <br><b>Import QML Style(s)...:</b> Opens a file browser to import custom QML styles which can be assigned to your layers in the table.</li>
         </ul>
 
