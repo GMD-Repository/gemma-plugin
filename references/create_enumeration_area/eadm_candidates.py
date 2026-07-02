@@ -524,7 +524,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
 
     def groupId(self) -> str:
         """Returns the unique ID of the group."""
-        return "1map"
+        return "eadelineation"
 
     def shortHelpString(self) -> str:
         """Returns a short description of the algorithm."""

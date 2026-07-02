@@ -20,10 +20,10 @@ from qgis.PyQt.QtWidgets import (
     QSizePolicy, QSpacerItem, QWidget, QSpinBox, QDoubleSpinBox, QCheckBox,
     QComboBox, QLineEdit, QFileDialog, QTabWidget, QTableWidget, QTableWidgetItem,
     QHeaderView, QProgressBar, QTextEdit, QScrollArea, QSplitter, QGridLayout,
-    QTextBrowser
+    QTextBrowser, QMessageBox
 )
 from qgis.PyQt.QtGui import QFont, QPixmap, QColor, QIcon, QTextCursor
-from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication, QThread, QObject, pyqtSignal
+from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication, QThread, QObject, pyqtSignal, QVariant
 
 # ── Theme Palettes (Defaulting to White/Light Theme) ──────────────────────
 THEME_PALETTES = {
@@ -268,6 +268,13 @@ class EALauncherDialog(QDialog):
         self.detect_btn.setToolTip("Scan current QGIS project layers and auto-select matching layers.")
         self.detect_btn.clicked.connect(self.auto_detect_layers)
         inputs_header_layout.addWidget(self.detect_btn)
+
+        # Fill missing hhcount from building points
+        self.fill_missing_btn = QPushButton("🧮 Fill missing hhcount")
+        self.fill_missing_btn.setObjectName("fillMissingBtn")
+        self.fill_missing_btn.setToolTip("Compute and populate missing EA hhcount values from building points within each EA polygon.")
+        self.fill_missing_btn.clicked.connect(self.fill_missing_hhcount)
+        inputs_header_layout.addWidget(self.fill_missing_btn)
         
         scroll_layout.addLayout(inputs_header_layout)
         
@@ -725,6 +732,123 @@ class EALauncherDialog(QDialog):
                 return f"EA {ean_str}"
         return "EA Unknown"
 
+    def fill_missing_hhcount(self):
+        """Populate null/empty hhcount values in the EA layer from building points inside each EA."""
+        prev_ea_layer = self.prev_ea_combo.currentLayer()
+        bldg_layer = self.bldg_combo.currentLayer()
+        if not prev_ea_layer or not bldg_layer:
+            QMessageBox.warning(
+                self,
+                "Missing Layers",
+                "Please select both Previous EA and Building Point layers before filling missing hhcount values."
+            )
+            return
+
+        # Resolve household field index in EA layer
+        prev_fields = prev_ea_layer.fields()
+        hh_field = None
+        for i in range(prev_fields.count()):
+            name_lower = prev_fields.at(i).name().lower()
+            if name_lower in ["hhcount", "hh_count", "household", "household_count"]:
+                hh_field = prev_fields.at(i).name()
+                break
+        if not hh_field:
+            QMessageBox.critical(
+                self,
+                "Field Not Found",
+                "Previous EA layer does not contain a household field (hhcount / hh_count / household / household_count)."
+            )
+            return
+
+        # Use spatial index on EA polygons
+        ea_index = QgsSpatialIndex(prev_ea_layer.getFeatures())
+        ea_by_id = {feat.id(): feat for feat in prev_ea_layer.getFeatures()}
+
+        # Map EA feature id -> total HHcount from buildings inside it
+        hh_updates = {}
+        building_fields = bldg_layer.fields()
+        bldg_hh_idx = -1
+        for i in range(building_fields.count()):
+            if building_fields.at(i).name().lower() in ["hhcount", "hh_count", "household", "household_count"]:
+                bldg_hh_idx = i
+                break
+        if bldg_hh_idx == -1:
+            QMessageBox.critical(
+                self,
+                "Field Not Found",
+                "Building point layer does not contain a household field (hhcount / hh_count / household / household_count)."
+            )
+            return
+
+        # Track EA features that currently have empty/null hhcount
+        missing_ea_ids = []
+        for feat in prev_ea_layer.getFeatures():
+            hh_val = feat.attribute(hh_field)
+            if hh_val is None or (isinstance(hh_val, QVariant) and hh_val.isNull()) or str(hh_val).strip() == "":
+                missing_ea_ids.append(feat.id())
+
+        if not missing_ea_ids:
+            QMessageBox.information(
+                self,
+                "No Missing hhcount",
+                "No missing or empty hhcount values were detected on the selected Previous EA layer."
+            )
+            return
+
+        # Build a spatial lookup for buildings
+        for bldg_feat in bldg_layer.getFeatures():
+            geom = bldg_feat.geometry()
+            if geom is None or geom.isEmpty():
+                continue
+            candidate_eas = ea_index.intersects(geom.boundingBox())
+            for ea_id in candidate_eas:
+                ea_feat = ea_by_id.get(ea_id)
+                if not ea_feat:
+                    continue
+                if not ea_feat.geometry().contains(geom):
+                    continue
+                if ea_id not in missing_ea_ids:
+                    continue
+
+                hh_val = bldg_feat.attribute(bldg_hh_idx)
+                try:
+                    hh_val_float = float(hh_val) if hh_val is not None else 0.0
+                except (TypeError, ValueError):
+                    hh_val_float = 0.0
+                hh_updates[ea_id] = hh_updates.get(ea_id, 0.0) + hh_val_float
+
+        if not hh_updates:
+            QMessageBox.warning(
+                self,
+                "No Building Matches",
+                "No building points were found inside EA polygons with missing hhcount values."
+            )
+            return
+
+        # Write values back to the EA layer
+        if not prev_ea_layer.isEditable():
+            prev_ea_layer.startEditing()
+        updated_count = 0
+        for ea_id, hh_total in hh_updates.items():
+            feat = prev_ea_layer.getFeature(ea_id)
+            if feat.isValid():
+                prev_ea_layer.changeAttributeValue(ea_id, prev_fields.indexOf(hh_field), hh_total)
+                updated_count += 1
+
+        if prev_ea_layer.commitChanges():
+            QMessageBox.information(
+                self,
+                "hhcount Updated",
+                f"Updated hhcount for {updated_count} EA(s) from building points."
+            )
+            self.generate_preview()
+        else:
+            QMessageBox.critical(
+                self,
+                "Update Failed",
+                "Failed to save hhcount updates to the EA layer. Check layer edit permissions."
+            )
+
     def auto_detect_layers(self):
         """Scan all loaded layers in QGIS project and automatically match inputs by name keywords."""
         layers = QgsProject.instance().mapLayers().values()
@@ -796,6 +920,8 @@ class EALauncherDialog(QDialog):
 
         # 3. Previous EA Layer
         prev_ea_layer = self.prev_ea_combo.currentLayer()
+        hh_found = False
+        ean_found = False
         if not prev_ea_layer:
             self.prev_ea_status_lbl.setText("🔴 Previous EA Layer is required.")
             self.prev_ea_status_lbl.setStyleSheet("color: #cf222e; font-style: italic;")
@@ -803,7 +929,7 @@ class EALauncherDialog(QDialog):
             fields = [f.name().lower() for f in prev_ea_layer.fields()]
             hh_found = any(f in fields for f in ["hhcount", "hh_count", "household", "household_count"])
             ean_found = any(f in fields for f in ["ean", "ea_number", "ea_code", "id", "geocode"])
-            
+
             if not hh_found:
                 self.prev_ea_status_lbl.setText("🔴 Error: Missing 'hhcount' or 'household' field.")
                 self.prev_ea_status_lbl.setStyleSheet("color: #cf222e; font-weight: bold;")
@@ -814,7 +940,8 @@ class EALauncherDialog(QDialog):
                 self.prev_ea_status_lbl.setText(f"🟢 Active: {prev_ea_layer.featureCount()} EAs loaded successfully.")
                 self.prev_ea_status_lbl.setStyleSheet("color: #1a7f37;")
 
-        # 4. Road Layer (Optional)
+        # Enable fill-missing button only when required layers are present
+        self.fill_missing_btn.setEnabled(bool(prev_ea_layer and bldg_layer and hh_found))
         road_layer = self.road_combo.currentLayer()
         if not road_layer:
             self.road_status_lbl.setText("🟡 Optional: Road boundary snapping will be skipped.")
