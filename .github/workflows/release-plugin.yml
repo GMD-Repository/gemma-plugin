@@ -1,0 +1,400 @@
+name: Release QGIS Plugin
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  models: read
+
+jobs:
+  release:
+    name: Build & Release Plugin
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full history for tag comparison
+
+      # ── 2. Extract version from metadata.txt ─────────────────────────
+      - name: Extract plugin version
+        id: get-version
+        run: |
+          VERSION=$(grep -Po '(?<=^version=)\S+' metadata.txt)
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not extract version from metadata.txt"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION"    >> "$GITHUB_OUTPUT"
+          echo "Plugin version: $VERSION"
+
+      # ── 3. Check if this version was already released ────────────────
+      - name: Check for existing tag
+        id: check-tag
+        run: |
+          TAG="${{ steps.get-version.outputs.tag }}"
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $TAG already exists — skipping release."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Tag $TAG does not exist — proceeding with release."
+          fi
+
+      # ── 4. Generate AI changelog & create release ────────────────────
+      - name: Generate changelog and create release
+        if: steps.check-tag.outputs.exists == 'false'
+        id: create-release
+        uses: actions/github-script@v7
+        env:
+          PLUGIN_VERSION: ${{ steps.get-version.outputs.version }}
+          PLUGIN_TAG:     ${{ steps.get-version.outputs.tag }}
+          AI_MODEL_TOKEN: ${{ secrets.AI_TOKEN }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const version = process.env.PLUGIN_VERSION;
+            const tag     = process.env.PLUGIN_TAG;
+
+            console.log(`Building release for GMD Pipeline v${version} (${tag})`);
+
+            // ── Helpers ─────────────────────────────────────────────────
+
+            function cleanLine(line) {
+              return line
+                .replace(/^\*\s+/, '')
+                .replace(/\s+by @[\w-]+ in https?:\/\/\S+/g, '')
+                .replace(/\s+in https?:\/\/\S+/g, '')
+                .replace(/…$/, '')
+                .replace(/^(feat|fix|refactor|perf|docs|style|test|chore|build)(\([^)]*\))?[!:]?\s*/i, '')
+                .trim();
+            }
+
+            function isNoise(line) {
+              if (!line || line.length < 5)                    return true;
+              if (/^Merge (branch|pull request)/i.test(line))  return true;
+              if (/^(Bugfix|Feature|Hotfix)\//i.test(line))    return true;
+              if (/^release v\d+/i.test(line))                 return true;
+              if (/^update changelog/i.test(line))             return true;
+              if (/^(chore|ci|bump|wip)\s*[:(]/i.test(line))   return true;
+              if (/^merge\s/i.test(line))                      return true;
+              return false;
+            }
+
+            const unique = (arr) =>
+              [...new Map(arr.map(x => [x.toLowerCase(), x])).values()];
+
+
+            // ── 1. Find previous release tag ────────────────────────────
+
+            const { data: tags } = await github.rest.repos.listTags({
+              owner:    context.repo.owner,
+              repo:     context.repo.repo,
+              per_page: 20,
+            });
+
+            const previousTag = tags
+              .map(t => t.name)
+              .filter(name => /^v\d+\.\d+\.\d+$/.test(name) && name !== tag)
+              .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))[0];
+
+            console.log(`Previous tag: ${previousTag ?? '(none — first release)'}`);
+
+
+            // ── 2. Collect raw change lines ─────────────────────────────
+
+            let prLines     = [];
+            let commitLines = [];
+
+            // Source A — PR titles via auto-generated release notes
+            try {
+              const { data: notes } = await github.rest.repos.generateReleaseNotes({
+                owner:    context.repo.owner,
+                repo:     context.repo.repo,
+                tag_name: tag,
+                ...(previousTag ? { previous_tag_name: previousTag } : {}),
+              });
+              prLines = notes.body
+                .split('\n')
+                .filter(l => l.startsWith('* '))
+                .map(cleanLine)
+                .filter(l => !isNoise(l));
+              console.log(`PR lines collected: ${prLines.length}`);
+            } catch (err) {
+              console.log(`⚠️  generateReleaseNotes failed: ${err.message}`);
+            }
+
+            // Source B — direct commits
+            if (previousTag) {
+              try {
+                const { data: compare } = await github.rest.repos.compareCommits({
+                  owner: context.repo.owner,
+                  repo:  context.repo.repo,
+                  base:  previousTag,
+                  head:  'HEAD',
+                });
+                commitLines = compare.commits
+                  .map(c => cleanLine(c.commit.message.split('\n')[0]))
+                  .filter(l => !isNoise(l));
+                console.log(`Commit lines collected: ${commitLines.length}`);
+              } catch (err) {
+                console.log(`⚠️  compareCommits failed: ${err.message}`);
+              }
+            }
+
+            const allRawLines = unique([...prLines, ...commitLines]).slice(0, 25);
+            console.log(`Total raw lines for AI: ${allRawLines.length}`);
+
+
+            // ── 3. AI-powered changelog ─────────────────────────────────
+
+            const AI_SYSTEM_PROMPT = `\
+            You are the release notes writer for GMD Pipeline, a QGIS processing plugin used by the Geospatial Management Division (GMD) of the Philippine Statistics Authority.
+
+            The plugin provides GIS processing tools: gap/overlap checking, geometry repair, LGU CRS correction, metadata updates, QField packaging, and more.
+
+            ## Output contract
+            - Respond with a **JSON array of strings only** — no markdown, no code fences, no preamble.
+            - Each string is one standalone highlight sentence (max 20 words).
+            - 5–10 items maximum; merge closely related changes into one item.
+            - Use past-tense action verbs: Added, Improved, Fixed, Updated, Removed.
+            - Write for GIS technicians — keep it clear but you may use GIS terms (layer, CRS, shapefile, QField).
+            - NEVER return an empty array. If changes seem internal, reframe them as user-facing improvements.
+            - Do NOT include emojis or version numbers.
+
+            ## Good examples
+            ["Added new Geometry Repair Toolkit for fixing invalid polygon geometries",
+             "Improved gap and overlap detection speed for large municipality datasets",
+             "Fixed CRS assignment issue when processing LGU boundary layers"]
+
+            ## Bad examples
+            ["Refactored pipeline","Bumped dependencies","chore: update CI"]`;
+
+            let highlights  = [];
+            let aiGenerated = false;
+
+            if (allRawLines.length > 0) {
+              try {
+                console.log('Calling GitHub Models API...');
+                const aiRes = await fetch(
+                  'https://models.github.ai/inference/chat/completions',
+                  {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type':  'application/json',
+                      'Authorization': `Bearer ${process.env.AI_MODEL_TOKEN}`,
+                    },
+                    body: JSON.stringify({
+                      model:       'openai/gpt-4o-mini',
+                      temperature: 0.2,
+                      max_tokens:  600,
+                      messages: [
+                        { role: 'system', content: AI_SYSTEM_PROMPT },
+                        {
+                          role: 'user',
+                          content: [
+                            `Summarize the following changes for GMD Pipeline v${version}:`,
+                            '',
+                            allRawLines.map(l => `- ${l}`).join('\n'),
+                          ].join('\n'),
+                        },
+                      ],
+                    }),
+                  }
+                );
+
+                console.log(`GitHub Models API: HTTP ${aiRes.status}`);
+
+                if (aiRes.ok) {
+                  const aiData  = await aiRes.json();
+                  const rawText = aiData.choices?.[0]?.message?.content?.trim() ?? '';
+                  console.log(`AI raw output: ${rawText.slice(0, 300)}`);
+
+                  const cleaned = rawText
+                    .replace(/^```(?:json)?\s*/i, '')
+                    .replace(/\s*```$/i, '')
+                    .trim();
+
+                  const parsed = JSON.parse(cleaned);
+                  if (Array.isArray(parsed) && parsed.length > 0) {
+                    highlights  = parsed;
+                    aiGenerated = true;
+                    console.log(`✅ AI changelog: ${highlights.length} items`);
+                  } else {
+                    throw new Error('AI returned empty array');
+                  }
+                } else {
+                  const errBody = await aiRes.text();
+                  throw new Error(`HTTP ${aiRes.status} — ${errBody.slice(0, 400)}`);
+                }
+              } catch (err) {
+                console.log(`⚠️  AI failed: ${err.message}`);
+                console.log('Falling back to raw commit lines.');
+                highlights = allRawLines.slice(0, 8);
+              }
+            }
+
+            if (highlights.length === 0) {
+              highlights = [
+                'Improved overall plugin stability and performance',
+                'Applied internal updates and maintenance fixes',
+              ];
+              console.log('⚠️  No changes found — using generic fallback');
+            }
+
+
+            // ── 4. Update metadata.txt changelog ────────────────────────
+
+            const metadataPath = 'metadata.txt';
+            let metadata = fs.readFileSync(metadataPath, 'utf8');
+
+            // Build new changelog entry
+            const newEntry = `${version}: ${highlights.join('; ')}`;
+
+            // Find the changelog= line and prepend the new version
+            const changelogRegex = /^(changelog=)(.*)$/m;
+            const match = metadata.match(changelogRegex);
+
+            if (match) {
+              const existingChangelog = match[2].trim();
+              const updatedChangelog  = `${newEntry}\n    ${existingChangelog}`;
+              metadata = metadata.replace(changelogRegex, `changelog=${updatedChangelog}`);
+            } else {
+              // No changelog field exists — add one after the about= block
+              metadata = metadata.replace(
+                /^(about=.*)$/m,
+                `$1\n\nchangelog=${newEntry}`
+              );
+            }
+
+            fs.writeFileSync(metadataPath, metadata);
+            console.log('✅ metadata.txt updated with new changelog entry');
+
+
+            // ── 5. Build QGIS plugin ZIP ────────────────────────────────
+
+            const { execSync } = require('child_process');
+
+            const zipName = `gmd_pipeline_v${version}.zip`;
+
+            // Create plugin ZIP with proper folder structure
+            // Exclude .git, .github, __pycache__, .pyc files, and the zip itself
+            execSync(
+              `zip -r "${zipName}" . ` +
+              `-x ".git/*" ".github/*" "__pycache__/*" "*.pyc" "${zipName}"`,
+              { stdio: 'inherit' }
+            );
+
+            // Re-package with root folder gmd_pipeline/ (QGIS convention)
+            const tmpDir = `_tmp_plugin_${Date.now()}`;
+            execSync(`mkdir -p ${tmpDir}/gmd_pipeline`);
+            execSync(
+              `unzip -o "${zipName}" -d ${tmpDir}/gmd_pipeline`,
+              { stdio: 'inherit' }
+            );
+            execSync(`rm "${zipName}"`);
+            execSync(
+              `cd ${tmpDir} && zip -r "../${zipName}" gmd_pipeline/`,
+              { stdio: 'inherit' }
+            );
+            execSync(`rm -rf ${tmpDir}`);
+
+            console.log(`✅ Plugin ZIP created: ${zipName}`);
+
+
+            // ── 6. Create GitHub Release ────────────────────────────────
+
+            const bulletList  = highlights.map(h => `- ${h}`).join('\n');
+            const releaseBody = [
+              `## What's New in v${version}`,
+              '',
+              bulletList,
+              '',
+              '---',
+              '**Installation:** Download the `.zip` file below and install in QGIS via *Plugins → Manage and Install Plugins → Install from ZIP*.',
+            ].join('\n');
+
+            const { data: release } = await github.rest.repos.createRelease({
+              owner:            context.repo.owner,
+              repo:             context.repo.repo,
+              tag_name:         tag,
+              target_commitish: 'main',
+              name:             `GMD Pipeline v${version}`,
+              body:             releaseBody,
+              draft:            false,
+              prerelease:       false,
+            });
+
+            console.log(`✅ Release created: ${release.html_url}`);
+
+            // Upload ZIP as release asset
+            const zipBuffer = fs.readFileSync(zipName);
+            await github.rest.repos.uploadReleaseAsset({
+              owner:      context.repo.owner,
+              repo:       context.repo.repo,
+              release_id: release.id,
+              name:       zipName,
+              data:       zipBuffer,
+            });
+
+            console.log(`✅ ZIP uploaded as release asset`);
+
+            // Export for later steps
+            core.setOutput('release_url', release.html_url);
+            core.setOutput('release_body', bulletList);
+            core.setOutput('zip_name', zipName);
+
+
+            // ── 7. Job summary ──────────────────────────────────────────
+
+            const dateStr = new Date().toLocaleDateString('en-US', {
+              month: 'long', day: 'numeric', year: 'numeric',
+            });
+
+            const summary = [
+              `# GMD Pipeline — Plugin Release`,
+              ``,
+              `> **Version:** \`v${version}\`  ·  **Date:** ${dateStr}  ·  **AI Generated:** ${aiGenerated ? '✅ Yes' : '⚠️ Fallback'}`,
+              ``,
+              `---`,
+              ``,
+              `## What's New`,
+              ``,
+              bulletList,
+              ``,
+              `---`,
+              ``,
+              `| Field | Value |`,
+              `|-------|-------|`,
+              `| Tag | \`${tag}\` |`,
+              `| Previous Tag | \`${previousTag ?? 'none (first release)'}\` |`,
+              `| PR Lines | ${prLines.length} |`,
+              `| Commit Lines | ${commitLines.length} |`,
+              `| ZIP File | \`${zipName}\` |`,
+              `| Release | [View on GitHub](${release.html_url}) |`,
+            ].join('\n');
+
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary + '\n');
+
+      # ── 5. Commit updated metadata.txt back to main ──────────────────
+      - name: Commit metadata changes
+        if: steps.check-tag.outputs.exists == 'false'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet metadata.txt; then
+            echo "No metadata changes to commit."
+          else
+            git add metadata.txt
+            git commit -m "chore: update changelog for v${{ steps.get-version.outputs.version }}"
+            git push
+            echo "✅ metadata.txt committed and pushed."
+          fi

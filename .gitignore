@@ -1,2 +1,8 @@
 __pycache__/
 *.pyc
+*.zip
+.vscode/
+.idea/
+*.egg-info/
+dist/
+build/
