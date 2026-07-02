@@ -32,6 +32,7 @@ class GMDPipeline(object):
         self.create_ea_action = None
         self.ea_dlg = None
         self.offline_editing = None
+        self.ea_provider = None
 
     def gema_add_submenu(self, submenu, icon):
         if self.gema_menu != None:
@@ -44,6 +45,10 @@ class GMDPipeline(object):
     def initProcessing(self):
         self.provider = GmdPipelineProvider()
         QgsApplication.processingRegistry().addProvider(self.provider)
+
+        from .references.create_enumeration_area.provider import EADelineationProvider
+        self.ea_provider = EADelineationProvider()
+        QgsApplication.processingRegistry().addProvider(self.ea_provider)
 
 
     def initGui(self):
@@ -82,7 +87,8 @@ class GMDPipeline(object):
         self.package_qfield_action.setShortcut("Ctrl+Alt+Q")
         self.qfield_menu.addAction(self.package_qfield_action)
 
-        self.create_ea_action = QAction(packager_icon, "Create Enumeration Areas", self.iface.mainWindow())
+        create_ea_icon = QIcon(os.path.dirname(__file__) + "/icons/create_ea.png")
+        self.create_ea_action = QAction(create_ea_icon, "Create Enumeration Areas", self.iface.mainWindow())
         self.create_ea_action.triggered.connect(self.show_create_ea_dialog)
         self.qfield_menu.addAction(self.create_ea_action)
 
@@ -94,6 +100,12 @@ class GMDPipeline(object):
         )
         self.package_qfield_toolbar_action.triggered.connect(self.show_package_dialog)
         self.toolbar.addAction(self.package_qfield_toolbar_action)
+
+        self.create_ea_toolbar_action = QAction(
+            create_ea_icon, "Create Enumeration Areas", self.iface.mainWindow()
+        )
+        self.create_ea_toolbar_action.triggered.connect(self.show_create_ea_dialog)
+        self.toolbar.addAction(self.create_ea_toolbar_action)
 
         # Initialize offline editing for QField packaging
         self.offline_editing = QgsOfflineEditing()
@@ -116,6 +128,17 @@ class GMDPipeline(object):
             finally:
                 del self.provider
                 self.provider = None
+
+        if self.ea_provider:
+            try:
+                QgsApplication.processingRegistry().removeProvider(self.ea_provider)
+            except Exception as e:
+                QgsApplication.instance().messageLog().logMessage(
+                    f"Error removing EA Delineation provider: {e}",
+                    'GMD')
+            finally:
+                del self.ea_provider
+                self.ea_provider = None
 
     def sync_report_act(self):
         from .gmd_scripts import gsheet
@@ -150,9 +173,6 @@ class GMDPipeline(object):
         from .gmd_scripts.create_enumeration_area import show_create_ea_dialog
 
         self.ea_dlg = show_create_ea_dialog(self.iface)
-        self.ea_dlg.show()
-        self.ea_dlg.raise_()
-        self.ea_dlg.activateWindow()
 
     def push_dialog_finished(self):
         """
