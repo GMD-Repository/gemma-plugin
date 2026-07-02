@@ -22,6 +22,7 @@ jobs:
   release:
     name: Build & Release Plugin
     runs-on: ubuntu-latest
+    environment: pipeline
 
     steps:
       # ── 1. Checkout ──────────────────────────────────────────────────
@@ -37,6 +38,7 @@ jobs:
         env:
           INPUT_RELEASE_TYPE: ${{ inputs.release_type }}
         with:
+          github-token: ${{ secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
 
@@ -129,7 +131,7 @@ jobs:
           IS_PRERELEASE:  ${{ steps.resolve-version.outputs.prerelease }}
           AI_MODEL_TOKEN: ${{ secrets.AI_TOKEN }}
         with:
-          github-token: ${{ secrets.AI_TOKEN }}
+          github-token: ${{ secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
             const path = require('path');

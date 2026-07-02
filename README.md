@@ -1,3 +1,5 @@
+[![Release QGIS Plugin](https://github.com/Geotags-GMD/gmd-pipeline/actions/workflows/release-plugin.yml/badge.svg?branch=main)](https://github.com/Geotags-GMD/gmd-pipeline/actions/workflows/release-plugin.yml)
+
 # Git Workflow Guide
 
 This step-by-step guide explains how to get the code, create your branch, update it, and submit your changes—all using the VS Code interface!
