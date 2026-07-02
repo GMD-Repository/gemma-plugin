@@ -56,6 +56,7 @@ jobs:
           PLUGIN_TAG:     ${{ steps.get-version.outputs.tag }}
           AI_MODEL_TOKEN: ${{ secrets.AI_TOKEN }}
         with:
+          github-token: ${{ secrets.AI_TOKEN }}
           script: |
             const fs = require('fs');
             const path = require('path');
@@ -390,11 +391,14 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          # Configure authentication with the AI_TOKEN to push to main
+          git remote set-url origin "https://x-access-token:${{ secrets.AI_TOKEN }}@github.com/${{ github.repository }}.git"
+
           if git diff --quiet metadata.txt; then
             echo "No metadata changes to commit."
           else
             git add metadata.txt
             git commit -m "chore: update changelog for v${{ steps.get-version.outputs.version }}"
-            git push
-            echo "✅ metadata.txt committed and pushed."
+            git push origin main
+            echo "✅ metadata.txt committed and pushed directly to main using AI_TOKEN."
           fi
