@@ -2938,78 +2938,57 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             _ea_ean = str(ea_item.get('original_code', '')).strip()
             return _ea_ean in merge_candidate_eans
 
-        # Helper function to run the iterative splitting loop on a single Barangay's EAs
+        # Helper function to run the splitting process on a single Barangay's EAs
         def process_barangay_split(bar_code, bar_eas, fback):
-            iteration = 0
-            max_iterations = 5
-            changed = True
+            if fback.isCanceled():
+                return bar_eas
             
-            while changed and iteration < max_iterations:
-                if fback.isCanceled():
-                    break
-                
-                # Check split threshold compliance (any over-threshold candidate that needs split?)
-                has_overs = False
-                for ea in bar_eas:
-                    if is_delineation_candidate(ea):
-                        has_overs = True
-                        break
-                        
-                if not has_overs:
-                    break
+            # Classify EAs (find overs)
+            overs = []
+            for idx, ea in enumerate(bar_eas):
+                if is_delineation_candidate(ea):
+                    overs.append(idx)
                     
-                # Classify EAs (find overs)
-                overs = []
-                for idx, ea in enumerate(bar_eas):
-                    if is_delineation_candidate(ea):
-                        overs.append(idx)
-                        
-                changed = False
-                
-                # Case A: Splitting
-                if overs:
-                    new_eas = []
-                    for idx in range(len(bar_eas)):
-                        if idx in overs:
-                            ea = bar_eas[idx]
-                            # Rule: EAs produced by a merge must never be delineated
-                            if ea.get('from_merge', False):
-                                new_eas.append(ea)
-                            else:
-                                split_parts = split_ea(ea, max_household, fback)
-                                if len(split_parts) > 1:
-                                    # ── bldgpoints_value validation ──────────────────────────────
-                                    # Sum of all parts' bldgpoints_value must be <= parent's hhdivthres
-                                    # (max_household / parent_hhcount from Delineation Candidate Index).
-                                    _ea_ean = str(ea.get('original_code', '')).strip()
-                                    if _ea_ean in delineation_candidate_hhdivthres:
-                                        _parent_hhdivthres = delineation_candidate_hhdivthres[_ea_ean]
-                                        _total_bldgpv = sum(
-                                            p['hh_count'] / p['bldg_count'] if p.get('bldg_count', 0) > 0 else 0.0
-                                            for p in split_parts
-                                        )
-                                        if _total_bldgpv > _parent_hhdivthres:
-                                            fback.pushWarning(
-                                                f"[Barangay {bar_code}] [EA {ea['original_code']}] "
-                                                f"bldgpoints_value validation: sum of parts ({_total_bldgpv:.4f}) "
-                                                f"> hhdivthres ({_parent_hhdivthres:.4f}). "
-                                                f"Enforcing {min_household + 1}–{max_household - 1} HH range on parts."
-                                            )
-                                            split_parts = enforce_min_household(split_parts, fback, ea_geom=ea['geom'])
-                                            # Strictly enforce bldgpoints_value <= hhdivthres by merging parts inside candidate boundaries
-                                            split_parts = enforce_bldgpv_threshold(split_parts, _parent_hhdivthres, fback, ea_geom=ea['geom'])
-                                    # ────────────────────────────────────────────────────────────
-                                    new_eas.extend(split_parts)
-                                    changed = True
-                                    fback.pushInfo(f"[Barangay {bar_code}] Split over-populated EA (code={ea['original_code']}, pop={ea['hh_count']}) into {len(split_parts)} sub-polygons.")
-                                else:
-                                    new_eas.append(ea)
+            # Case A: Splitting
+            if overs:
+                new_eas = []
+                for idx in range(len(bar_eas)):
+                    if idx in overs:
+                        ea = bar_eas[idx]
+                        # Rule: EAs produced by a merge must never be delineated
+                        if ea.get('from_merge', False):
+                            new_eas.append(ea)
                         else:
-                            new_eas.append(bar_eas[idx])
-                    bar_eas = new_eas
-                    if changed:
-                        iteration += 1
-                        continue
+                            split_parts = split_ea(ea, max_household, fback)
+                            if len(split_parts) > 1:
+                                # ── bldgpoints_value validation ──────────────────────────────
+                                # Sum of all parts' bldgpoints_value must be <= parent's hhdivthres
+                                # (max_household / parent_hhcount from Delineation Candidate Index).
+                                _ea_ean = str(ea.get('original_code', '')).strip()
+                                if _ea_ean in delineation_candidate_hhdivthres:
+                                    _parent_hhdivthres = delineation_candidate_hhdivthres[_ea_ean]
+                                    _total_bldgpv = sum(
+                                        p['hh_count'] / p['bldg_count'] if p.get('bldg_count', 0) > 0 else 0.0
+                                        for p in split_parts
+                                    )
+                                    if _total_bldgpv > _parent_hhdivthres:
+                                        fback.pushWarning(
+                                            f"[Barangay {bar_code}] [EA {ea['original_code']}] "
+                                            f"bldgpoints_value validation: sum of parts ({_total_bldgpv:.4f}) "
+                                            f"> hhdivthres ({_parent_hhdivthres:.4f}). "
+                                            f"Enforcing {min_household + 1}–{max_household - 1} HH range on parts."
+                                        )
+                                        split_parts = enforce_min_household(split_parts, fback, ea_geom=ea['geom'])
+                                        # Strictly enforce bldgpoints_value <= hhdivthres by merging parts inside candidate boundaries
+                                        split_parts = enforce_bldgpv_threshold(split_parts, _parent_hhdivthres, fback, ea_geom=ea['geom'])
+                                # ────────────────────────────────────────────────────────────
+                                new_eas.extend(split_parts)
+                                fback.pushInfo(f"[Barangay {bar_code}] Split over-populated EA (code={ea['original_code']}, pop={ea['hh_count']}) into {len(split_parts)} sub-polygons.")
+                            else:
+                                new_eas.append(ea)
+                    else:
+                        new_eas.append(bar_eas[idx])
+                bar_eas = new_eas
             
             # --- Diagnostic: report any over-threshold EAs that could not be resolved ---
             remaining_overs = [ea for ea in bar_eas if is_delineation_candidate(ea)]
@@ -3027,7 +3006,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 fback.pushWarning(
                     f"[Barangay {bar_code}] UNRESOLVED OVER-THRESHOLD: EA (code={ea['original_code']}, "
                     f"hh_count={ea['hh_count']}, bldg_count={ea.get('bldg_count',0)}, "
-                    f"unique_pts={unique_pt_count}) after {iteration} iteration(s). "
+                    f"unique_pts={unique_pt_count}). "
                     f"Reason: {'; '.join(reason)}."
                 )
                 
@@ -3292,8 +3271,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 
             return bar_eas
 
-        # --- Main Iterative Loop (Parallelized per Barangay) ---
-        feedback.pushInfo("Phase 6/9: Iterative per-barangay splitting loop [SPLIT-FIRST]...")
+        # --- Main Splitting Process (Parallelized per Barangay) ---
+        feedback.pushInfo("Phase 6/9: Per-barangay splitting process [SPLIT-FIRST]...")
         
         # Group starting EAs by parent barangay and sort by geocode for deterministic ordering
         barangay_groups = {}
@@ -3313,7 +3292,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             if any(is_delineation_candidate(ea) for ea in barangay_groups[bar_code])
         ]
             
-        # ── Phase 6: Iterative per-barangay splitting loop ─────────────────────────────────────
+        # ── Phase 6: Per-barangay splitting process ─────────────────────────────────────
         multi_feedback.setCurrentStep(5)
         multi_feedback.setProgressText(
             f"{_PHASE_LABELS[5]} [0/{len(split_bar_keys)} barangay(s)]..."
