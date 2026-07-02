@@ -1,8 +1,18 @@
 name: Release QGIS Plugin
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Release Type (stable = full release, major/minor/patch = pre-release)'
+        required: true
+        default: 'stable'
+        type: choice
+        options:
+          - stable
+          - major
+          - minor
+          - patch
 
 permissions:
   contents: write
@@ -20,24 +30,86 @@ jobs:
         with:
           fetch-depth: 0          # full history for tag comparison
 
-      # ── 2. Extract version from metadata.txt ─────────────────────────
-      - name: Extract plugin version
-        id: get-version
-        run: |
-          VERSION=$(grep -Po '(?<=^version=)\S+' metadata.txt)
-          if [ -z "$VERSION" ]; then
-            echo "::error::Could not extract version from metadata.txt"
-            exit 1
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VERSION"    >> "$GITHUB_OUTPUT"
-          echo "Plugin version: $VERSION"
+      # ── 2. Resolve version and release type ──────────────────────────
+      - name: Resolve version and release type
+        id: resolve-version
+        uses: actions/github-script@v7
+        env:
+          INPUT_RELEASE_TYPE: ${{ inputs.release_type }}
+        with:
+          script: |
+            const fs = require('fs');
+
+            // Read current version from metadata.txt
+            const metadataPath = 'metadata.txt';
+            const metadata = fs.readFileSync(metadataPath, 'utf8');
+            const versionMatch = metadata.match(/^version=(\S+)/m);
+            if (!versionMatch) {
+              core.setFailed('Could not find version in metadata.txt');
+              return;
+            }
+            let version = versionMatch[1];
+            console.log(`Current version in metadata.txt: ${version}`);
+
+            // Determine release type input (default to 'stable' on push to main)
+            const eventName = context.eventName;
+            const releaseTypeInput = eventName === 'workflow_dispatch' 
+              ? process.env.INPUT_RELEASE_TYPE 
+              : 'stable';
+
+            let isStable = true;
+            let finalVersion = version;
+
+            if (eventName === 'workflow_dispatch' && ['major', 'minor', 'patch'].includes(releaseTypeInput)) {
+              // Parse clean semver: X.Y.Z
+              const semverMatch = version.match(/^(\d+)\.(\d+)\.(\d+)/);
+              if (!semverMatch) {
+                core.setFailed(`Current version ${version} is not standard SemVer X.Y.Z for bumping`);
+                return;
+              }
+              let major = parseInt(semverMatch[1], 10);
+              let minor = parseInt(semverMatch[2], 10);
+              let patch = parseInt(semverMatch[3], 10);
+
+              if (releaseTypeInput === 'major') {
+                major += 1;
+                minor = 0;
+                patch = 0;
+              } else if (releaseTypeInput === 'minor') {
+                minor += 1;
+                patch = 0;
+              } else if (releaseTypeInput === 'patch') {
+                patch += 1;
+              }
+
+              finalVersion = `${major}.${minor}.${patch}`;
+              isStable = false; // major, minor, patch manual runs are pre-releases
+
+              console.log(`Bumping version (${releaseTypeInput}): ${version} -> ${finalVersion}`);
+
+              // Write back to metadata.txt
+              const updatedMetadata = metadata.replace(/^version=\S+/m, `version=${finalVersion}`);
+              fs.writeFileSync(metadataPath, updatedMetadata);
+              console.log('Updated metadata.txt with new version');
+            } else {
+              // Push trigger or stable release_type input
+              // If the version has a hyphen (e.g. 1.1.0-alpha), it is pre-release
+              isStable = !version.includes('-');
+              finalVersion = version;
+              console.log(`Using existing version: ${finalVersion} (Stable: ${isStable})`);
+            }
+
+            const tag = `v${finalVersion}`;
+            core.setOutput('version', finalVersion);
+            core.setOutput('tag', tag);
+            core.setOutput('prerelease', isStable ? 'false' : 'true');
+            core.setOutput('release_type', releaseTypeInput);
 
       # ── 3. Check if this version was already released ────────────────
       - name: Check for existing tag
         id: check-tag
         run: |
-          TAG="${{ steps.get-version.outputs.tag }}"
+          TAG="${{ steps.resolve-version.outputs.tag }}"
           if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Tag $TAG already exists — skipping release."
@@ -52,8 +124,9 @@ jobs:
         id: create-release
         uses: actions/github-script@v7
         env:
-          PLUGIN_VERSION: ${{ steps.get-version.outputs.version }}
-          PLUGIN_TAG:     ${{ steps.get-version.outputs.tag }}
+          PLUGIN_VERSION: ${{ steps.resolve-version.outputs.version }}
+          PLUGIN_TAG:     ${{ steps.resolve-version.outputs.tag }}
+          IS_PRERELEASE:  ${{ steps.resolve-version.outputs.prerelease }}
           AI_MODEL_TOKEN: ${{ secrets.AI_TOKEN }}
         with:
           github-token: ${{ secrets.AI_TOKEN }}
@@ -322,6 +395,7 @@ jobs:
               '**Installation:** Download the `.zip` file below and install in QGIS via *Plugins → Manage and Install Plugins → Install from ZIP*.',
             ].join('\n');
 
+            const isPrerelease = process.env.IS_PRERELEASE === 'true';
             const { data: release } = await github.rest.repos.createRelease({
               owner:            context.repo.owner,
               repo:             context.repo.repo,
@@ -330,7 +404,7 @@ jobs:
               name:             `GMD Pipeline v${version}`,
               body:             releaseBody,
               draft:            false,
-              prerelease:       true,
+              prerelease:       isPrerelease,
             });
 
             console.log(`✅ Release created: ${release.html_url}`);
@@ -398,7 +472,7 @@ jobs:
             echo "No metadata changes to commit."
           else
             git add metadata.txt
-            git commit -m "chore: update changelog for v${{ steps.get-version.outputs.version }}"
+            git commit -m "chore: update changelog for v${{ steps.resolve-version.outputs.version }}"
             git push origin main
             echo "✅ metadata.txt committed and pushed directly to main using AI_TOKEN."
           fi
@@ -415,7 +489,7 @@ jobs:
           password: ${{ secrets.MAIL_PASSWORD }}
           from: "GMD Pipeline CI <${{ secrets.MAIL_USERNAME }}>"
           to:   ${{ secrets.EMAIL_TO }}
-          subject: "[GMD Pipeline] v${{ steps.get-version.outputs.version }} — Pre-release Ready for Testing"
+          subject: "[GMD Pipeline] v${{ steps.resolve-version.outputs.version }} — ${{ steps.resolve-version.outputs.prerelease == 'true' && 'Pre-release' || 'Release' }} Ready"
           html_body: |
             <!DOCTYPE html>
             <html>
@@ -490,9 +564,9 @@ jobs:
             <body>
               <div class="email-container">
                 <div class="content">
-                  <div class="title">Pre-release Ready for Testing</div>
+                  <div class="title">${{ steps.resolve-version.outputs.prerelease == 'true' && 'Pre-release' || 'Stable Release' }} Ready</div>
                   <div class="text">
-                    Version <strong>v${{ steps.get-version.outputs.version }}</strong> of <strong>GMD Pipeline</strong> has been successfully built and is ready for testing.
+                    Version <strong>v${{ steps.resolve-version.outputs.version }}</strong> of <strong>GMD Pipeline</strong> has been successfully built and is ready.
                   </div>
 
                   <!-- What's New -->
@@ -504,10 +578,10 @@ jobs:
                   <!-- Release Details -->
                   <div class="box">
                     <div class="box-title">Release Details</div>
-                    <div class="text"><strong>Version:</strong> v${{ steps.get-version.outputs.version }}</div>
+                    <div class="text"><strong>Version:</strong> v${{ steps.resolve-version.outputs.version }}</div>
                     <div class="text"><strong>Platform:</strong> QGIS Plugin (.zip)</div>
                     <div class="text"><strong>Triggered by:</strong> ${{ github.actor }}</div>
-                    <div class="text"><strong>Status:</strong> Pre-release (Testing)</div>
+                    <div class="text"><strong>Status:</strong> ${{ steps.resolve-version.outputs.prerelease == 'true' && 'Pre-release (Testing)' || 'Stable Release' }}</div>
                   </div>
 
                   <!-- Download & Test -->
@@ -517,7 +591,7 @@ jobs:
                       Download the zip package and install it in QGIS via <em>Plugins → Manage and Install Plugins → Install from ZIP</em>.
                     </div>
 
-                    <a href="https://github.com/${{ github.repository }}/releases/download/v${{ steps.get-version.outputs.version }}/${{ steps.create-release.outputs.zip_name }}"
+                    <a href="https://github.com/${{ github.repository }}/releases/download/v${{ steps.resolve-version.outputs.version }}/${{ steps.create-release.outputs.zip_name }}"
                        class="button"
                        style="color: #ffffff !important; text-decoration: none;">
                       Download Plugin ZIP
