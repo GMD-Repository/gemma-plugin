@@ -3,7 +3,7 @@ from qgis.core import QgsProject
 from qgis.PyQt.QtCore import Qt
 
 def show_package_dialog(iface, offline_editing, on_finished_callback=None):
-    from ..references.gui.package_dialog import PackageDialog
+    from ..references.package_qfield.gui.package_dialog import PackageDialog
     push_dlg = PackageDialog(
         iface,
         QgsProject.instance(),
