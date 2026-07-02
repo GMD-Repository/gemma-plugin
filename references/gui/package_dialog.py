@@ -727,6 +727,13 @@ class PackageDialog(QDialog, DialogUi):
     def _on_tab_changed(self, index):
         self.update_button_box_visibility()
 
+    def _open_create_ea_dialog(self):
+        from gmd_scripts.create_enumeration_area import show_create_ea_dialog
+        self._ea_dialog = show_create_ea_dialog(self.iface)
+        self._ea_dialog.show()
+        self._ea_dialog.raise_()
+        self._ea_dialog.activateWindow()
+
     def __init__(self, iface, project, offline_editing, parent=None):
         """Constructor."""
         super(PackageDialog, self).__init__(parent=parent)
@@ -835,6 +842,21 @@ class PackageDialog(QDialog, DialogUi):
         self.tab_main_layout.setContentsMargins(0, 0, 0, 0)
         self.tab_main_layout.addWidget(_scroll)
         self.main_tab_widget.addTab(self.tab_main, self.tr("Export Options"))
+
+        self.tab_ea = QWidget()
+        self.tab_ea_layout = QVBoxLayout(self.tab_ea)
+        self.tab_ea_layout.setContentsMargins(15, 15, 15, 15)
+        self.tab_ea_layout.setSpacing(12)
+        self.tab_ea_label = QLabel(self.tr("Open the Create Enumeration Areas tool to delineate or merge EAs."))
+        self.tab_ea_label.setWordWrap(True)
+        self.open_ea_btn = QPushButton(self.tr("Open Create Enumeration Areas"))
+        self.open_ea_btn.setFixedHeight(40)
+        self.open_ea_btn.clicked.connect(self._open_create_ea_dialog)
+        self.tab_ea_layout.addWidget(self.tab_ea_label)
+        self.tab_ea_layout.addSpacing(10)
+        self.tab_ea_layout.addWidget(self.open_ea_btn)
+        self.tab_ea_layout.addStretch()
+        self.main_tab_widget.addTab(self.tab_ea, self.tr("Create Enumeration Area"))
         
         self.main_tab_widget.currentChanged.connect(self._on_tab_changed)
         
