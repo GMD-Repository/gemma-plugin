@@ -330,7 +330,7 @@ jobs:
               name:             `GMD Pipeline v${version}`,
               body:             releaseBody,
               draft:            false,
-              prerelease:       false,
+              prerelease:       true,
             });
 
             console.log(`✅ Release created: ${release.html_url}`);
@@ -402,3 +402,136 @@ jobs:
             git push origin main
             echo "✅ metadata.txt committed and pushed directly to main using AI_TOKEN."
           fi
+
+      # ── 6. Send email notification ───────────────────────────────────
+      - name: Notify team — ready to test
+        if: steps.check-tag.outputs.exists == 'false' && success()
+        uses: dawidd6/action-send-mail@v6
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: "GMD Pipeline CI <${{ secrets.MAIL_USERNAME }}>"
+          to:   ${{ secrets.EMAIL_TO }}
+          subject: "[GMD Pipeline] v${{ steps.get-version.outputs.version }} — Pre-release Ready for Testing"
+          html_body: |
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>GMD Pipeline Notification</title>
+              <style>
+                body { 
+                  font-family: Arial, sans-serif; 
+                  line-height: 1.5; 
+                  color: #333; 
+                  margin: 0; 
+                  padding: 0; 
+                  background-color: #f5f5f5;
+                }
+
+                .email-container { 
+                  max-width: 600px; 
+                  margin: 16px auto; 
+                  background-color: #ffffff; 
+                }
+
+                .content { 
+                  padding: 24px; 
+                }
+
+                .title {
+                  font-size: 20px;
+                  font-weight: bold;
+                  margin-bottom: 8px;
+                }
+
+                .text {
+                  font-size: 14px;
+                  color: #555;
+                  margin-bottom: 12px;
+                }
+
+                .box { 
+                  background-color: #f8fafc; 
+                  border: 1px solid #e2e8f0; 
+                  padding: 16px; 
+                  margin: 14px 0; 
+                }
+
+                .box-title { 
+                  font-size: 15px; 
+                  font-weight: bold; 
+                  margin-bottom: 6px; 
+                }
+
+                .list { 
+                  font-size: 14px;
+                  margin: 6px 0;
+                }
+
+                .button { 
+                  display: inline-block; 
+                  background-color: #2563a8; 
+                  color: #ffffff; 
+                  padding: 10px 18px; 
+                  text-decoration: none; 
+                  border-radius: 4px; 
+                  font-size: 13px;
+                  font-weight: bold;
+                  margin: 6px 0;
+                }
+              </style>
+            </head>
+
+            <body>
+              <div class="email-container">
+                <div class="content">
+                  <div class="title">Pre-release Ready for Testing</div>
+                  <div class="text">
+                    Version <strong>v${{ steps.get-version.outputs.version }}</strong> of <strong>GMD Pipeline</strong> has been successfully built and is ready for testing.
+                  </div>
+
+                  <!-- What's New -->
+                  <div class="box">
+                    <div class="box-title">What's New</div>
+                    <div style="white-space: pre-wrap; font-size: 14px; margin-top: 10px;">${{ steps.create-release.outputs.release_body }}</div>
+                  </div>
+
+                  <!-- Release Details -->
+                  <div class="box">
+                    <div class="box-title">Release Details</div>
+                    <div class="text"><strong>Version:</strong> v${{ steps.get-version.outputs.version }}</div>
+                    <div class="text"><strong>Platform:</strong> QGIS Plugin (.zip)</div>
+                    <div class="text"><strong>Triggered by:</strong> ${{ github.actor }}</div>
+                    <div class="text"><strong>Status:</strong> Pre-release (Testing)</div>
+                  </div>
+
+                  <!-- Download & Test -->
+                  <div class="box">
+                    <div class="box-title">Download &amp; Test</div>
+                    <div class="text">
+                      Download the zip package and install it in QGIS via <em>Plugins → Manage and Install Plugins → Install from ZIP</em>.
+                    </div>
+
+                    <a href="https://github.com/${{ github.repository }}/releases/download/v${{ steps.get-version.outputs.version }}/${{ steps.create-release.outputs.zip_name }}"
+                       class="button"
+                       style="color: #ffffff !important; text-decoration: none;">
+                      Download Plugin ZIP
+                    </a>
+
+                    <div style="margin-top:6px;font-size:12px;color:#777;line-height:1.4;">
+                      If the link returns a <strong>404</strong>, the assets may still be processing.
+                      You can manually download from the
+                      <a href="https://github.com/${{ github.repository }}/releases" style="color:#2563a8;text-decoration:none;">
+                        Releases page
+                      </a>.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </body>
+            </html>
