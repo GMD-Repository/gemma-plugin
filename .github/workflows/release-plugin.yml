@@ -37,7 +37,7 @@ jobs:
         env:
           INPUT_RELEASE_TYPE: ${{ inputs.release_type }}
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.AI_TOKEN }}
           script: |
             const fs = require('fs');
 
