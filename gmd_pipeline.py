@@ -29,6 +29,8 @@ class GMDPipeline(object):
         self.toolbar = None
         self.geometry_toolkit_dlg = None
         self.push_dlg = None
+        self.create_ea_action = None
+        self.ea_dlg = None
         self.offline_editing = None
 
     def gema_add_submenu(self, submenu, icon):
@@ -79,6 +81,10 @@ class GMDPipeline(object):
         self.package_qfield_action.triggered.connect(self.show_package_dialog)
         self.package_qfield_action.setShortcut("Ctrl+Alt+Q")
         self.qfield_menu.addAction(self.package_qfield_action)
+
+        self.create_ea_action = QAction(packager_icon, "Create Enumeration Areas", self.iface.mainWindow())
+        self.create_ea_action.triggered.connect(self.show_create_ea_dialog)
+        self.qfield_menu.addAction(self.create_ea_action)
 
         # QField toolbar icon
         self.toolbar = self.iface.addToolBar("GeMa Toolbar")
@@ -138,6 +144,15 @@ class GMDPipeline(object):
             self.offline_editing, 
             self.push_dialog_finished
         )
+
+    def show_create_ea_dialog(self):
+        """Open the Create Enumeration Areas dialog."""
+        from .gmd_scripts.create_enumeration_area import show_create_ea_dialog
+
+        self.ea_dlg = show_create_ea_dialog(self.iface)
+        self.ea_dlg.show()
+        self.ea_dlg.raise_()
+        self.ea_dlg.activateWindow()
 
     def push_dialog_finished(self):
         """
