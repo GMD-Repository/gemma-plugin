@@ -22,6 +22,7 @@ jobs:
   release:
     name: Build & Release Plugin
     runs-on: ubuntu-latest
+    environment: pipeline
 
     steps:
       # ── 1. Checkout ──────────────────────────────────────────────────
