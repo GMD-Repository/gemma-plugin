@@ -19,8 +19,8 @@ def get_qml_styles_dir():
 
     Does NOT create it — it is expected to ship with the plugin.
     """
-    # Navigate from references/utils/ up to the plugin root (gmd-pipeline-v2/)
-    plugin_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    # Navigate from references/package_qfield/utils/ up to the plugin root (gmd-pipeline-v2/)
+    plugin_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     return os.path.join(plugin_dir, "qml styles")
 
 
