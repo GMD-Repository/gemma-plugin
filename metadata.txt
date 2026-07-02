@@ -3,7 +3,7 @@
 # This file should be included when you package your plugin.# Mandatory items:
 
 [general]
-name=GMD Pipeline v2
+name=GMD Pipeline
 qgisMinimumVersion=3.0
 description=General Processing Pipelines for GMD Activities with QField Packaging
 version=1.1.0
