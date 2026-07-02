@@ -270,7 +270,7 @@ class EALauncherDialog(QDialog):
         inputs_header_layout.addWidget(self.detect_btn)
 
         # Fill missing hhcount from building points
-        self.fill_missing_btn = QPushButton("🧮 Fill missing hhcount")
+        self.fill_missing_btn = QPushButton("Fill missing hhcount")
         self.fill_missing_btn.setObjectName("fillMissingBtn")
         self.fill_missing_btn.setToolTip("Compute and populate missing EA hhcount values from building points within each EA polygon.")
         self.fill_missing_btn.clicked.connect(self.fill_missing_hhcount)
