@@ -536,23 +536,43 @@ class PackageDialog(QDialog, DialogUi):
             }
             
         settings = QSettings()
-        all_presets_json = settings.value("qfieldmod/layer_groups_presets_dict", "{}")
+        all_presets_json = settings.value("gmd_pipeline/layer_groups_presets_dict", "{}")
         try:
             all_presets = json.loads(all_presets_json)
         except Exception:
             all_presets = {}
             
         all_presets[preset_name] = preset_data
-        settings.setValue("qfieldmod/layer_groups_presets_dict", json.dumps(all_presets))
+        settings.setValue("gmd_pipeline/layer_groups_presets_dict", json.dumps(all_presets))
         QMessageBox.information(self, self.tr("Success"), self.tr(f"Preset '{preset_name}' saved successfully."))
 
     def _on_load_groups_preset(self):
         settings = QSettings()
-        all_presets_json = settings.value("qfieldmod/layer_groups_presets_dict", "{}")
+        
+        # MIGRATION LOGIC: Check old qfieldmod key
+        old_presets_json = settings.value("qfieldmod/layer_groups_presets_dict", None)
+        if old_presets_json:
+            settings.setValue("gmd_pipeline/layer_groups_presets_dict", old_presets_json)
+            settings.remove("qfieldmod/layer_groups_presets_dict")
+            
+        all_presets_json = settings.value("gmd_pipeline/layer_groups_presets_dict", "{}")
         try:
             all_presets = json.loads(all_presets_json)
         except Exception:
             all_presets = {}
+            
+        # DEFAULT PRESETS LOGIC
+        default_presets_dir = os.path.join(os.path.dirname(__file__), "..", "presets")
+        if os.path.exists(default_presets_dir):
+            for file_name in os.listdir(default_presets_dir):
+                if file_name.endswith(".json"):
+                    preset_name = file_name[:-5]
+                    if preset_name not in all_presets:
+                        try:
+                            with open(os.path.join(default_presets_dir, file_name), "r", encoding="utf-8") as f:
+                                all_presets[preset_name] = json.load(f)
+                        except Exception as e:
+                            QgsMessageLog.logMessage(f"Failed to load preset {file_name}: {e}", "GMD Pipeline")
             
         if not all_presets:
             QMessageBox.information(self, self.tr("Info"), self.tr("No presets found."))
@@ -634,14 +654,21 @@ class PackageDialog(QDialog, DialogUi):
 
     def _on_delete_groups_preset(self):
         settings = QSettings()
-        all_presets_json = settings.value("qfieldmod/layer_groups_presets_dict", "{}")
+        
+        # MIGRATION LOGIC: Check old qfieldmod key
+        old_presets_json = settings.value("qfieldmod/layer_groups_presets_dict", None)
+        if old_presets_json:
+            settings.setValue("gmd_pipeline/layer_groups_presets_dict", old_presets_json)
+            settings.remove("qfieldmod/layer_groups_presets_dict")
+            
+        all_presets_json = settings.value("gmd_pipeline/layer_groups_presets_dict", "{}")
         try:
             all_presets = json.loads(all_presets_json)
         except Exception:
             all_presets = {}
             
         if not all_presets:
-            QMessageBox.information(self, self.tr("Info"), self.tr("No presets found to delete."))
+            QMessageBox.information(self, self.tr("Info"), self.tr("No user presets found to delete. Built-in default presets cannot be deleted."))
             return
             
         dialog = MultiSelectDialog(
@@ -663,7 +690,7 @@ class PackageDialog(QDialog, DialogUi):
             if reply == QMessageBox.Yes:
                 for name in selected:
                     all_presets.pop(name, None)
-                settings.setValue("qfieldmod/layer_groups_presets_dict", json.dumps(all_presets))
+                settings.setValue("gmd_pipeline/layer_groups_presets_dict", json.dumps(all_presets))
                 QMessageBox.information(self, self.tr("Success"), self.tr("Selected preset(s) deleted successfully."))
 
     def _on_apply_layer_groups(self):
@@ -1595,7 +1622,8 @@ class PackageDialog(QDialog, DialogUi):
             self.feedbackTableWrapperLayout.addWidget(feedback_table)
             self.stackedWidget.setCurrentWidget(self.projectCompatibilityPage)
             self.nextButton.setVisible(True)
-            self.nextButton.setEnabled(not has_errors)
+            # Force enable the Next button so users can proceed even with warnings/errors
+            self.nextButton.setEnabled(True)
         else:
             self.show_package_page()
 
@@ -1699,13 +1727,13 @@ class PackageDialog(QDialog, DialogUi):
                         if not removed and item.exists():
                             QgsApplication.instance().messageLog().logMessage(
                                 f"Could not remove locked file before export: {item}",
-                                "qfieldmod",
+                                "GMD Pipeline",
                                 Qgis.Warning,
                             )
                 except Exception as e:
                     QgsApplication.instance().messageLog().logMessage(
                         f"Could not clear export item '{item}': {e}",
-                        "qfieldmod",
+                        "GMD Pipeline",
                         Qgis.Warning,
                     )
         subfolder_path.mkdir(parents=True, exist_ok=True)
@@ -1976,7 +2004,7 @@ class PackageDialog(QDialog, DialogUi):
             else:
                 QgsApplication.instance().messageLog().logMessage(
                     f"Packaged project validation passed: {project_path}",
-                    "qfieldmod",
+                    "GMD Pipeline",
                     Qgis.Info,
                 )
 
@@ -2003,7 +2031,7 @@ class PackageDialog(QDialog, DialogUi):
                 # Keep export silent and continue.
                 QgsApplication.instance().messageLog().logMessage(
                     f"Ignoring same-path copy during export: {e}",
-                    "qfieldmod",
+                    "GMD Pipeline",
                     Qgis.Info,
                 )
 
@@ -2026,7 +2054,7 @@ class PackageDialog(QDialog, DialogUi):
                 # can desync and trigger `offline_layer_names` index errors.
                 QgsApplication.instance().messageLog().logMessage(
                     f"Offline export retry (offline editing disabled) after IndexError: {e}",
-                    "qfieldmod",
+                    "GMD Pipeline",
                     Qgis.Warning,
                 )
                 self.iface.messageBar().pushWarning(
@@ -2070,7 +2098,7 @@ class PackageDialog(QDialog, DialogUi):
             except Exception as e:
                 QgsApplication.instance().messageLog().logMessage(
                     f"Could not rewrite packaged raster datasource: {e}",
-                    "qfieldmod",
+                    "GMD Pipeline",
                     Qgis.Warning,
                 )
 
@@ -2107,7 +2135,7 @@ class PackageDialog(QDialog, DialogUi):
                     except Exception as e:
                         QgsApplication.instance().messageLog().logMessage(
                             f"Could not rename ea_update file '{_ea_old_name}': {e}",
-                            "qfieldmod", Qgis.Warning)
+                            "GMD Pipeline", Qgis.Warning)
                         continue
                     if os.path.exists(_proj_path):
                         if _proj_path.lower().endswith('.qgz'):
@@ -2124,7 +2152,7 @@ class PackageDialog(QDialog, DialogUi):
                                 os.replace(_tmp, _proj_path)
                             except Exception as e:
                                 QgsApplication.instance().messageLog().logMessage(
-                                    f"Could not patch qgz for ea_update rename: {e}", "qfieldmod", Qgis.Warning)
+                                    f"Could not patch qgz for ea_update rename: {e}", "GMD Pipeline", Qgis.Warning)
                                 if os.path.exists(_tmp):
                                     os.remove(_tmp)
                         else:
@@ -2135,10 +2163,10 @@ class PackageDialog(QDialog, DialogUi):
                                     _f.write(_txt)
                             except Exception as e:
                                 QgsApplication.instance().messageLog().logMessage(
-                                    f"Could not patch qgs for ea_update rename: {e}", "qfieldmod", Qgis.Warning)
+                                    f"Could not patch qgs for ea_update rename: {e}", "GMD Pipeline", Qgis.Warning)
             except Exception as e:
                 QgsApplication.instance().messageLog().logMessage(
-                    f"ea_update rename block failed: {e}", "qfieldmod", Qgis.Warning)
+                    f"ea_update rename block failed: {e}", "GMD Pipeline", Qgis.Warning)
 
             # Final check before reporting success: warn immediately if the
             # packaged project still references missing local files.
@@ -2147,7 +2175,7 @@ class PackageDialog(QDialog, DialogUi):
             except Exception as e:
                 QgsApplication.instance().messageLog().logMessage(
                     f"Could not validate packaged project sources: {e}",
-                    "qfieldmod",
+                    "GMD Pipeline",
                     Qgis.Warning,
                 )
 
@@ -2160,7 +2188,7 @@ class PackageDialog(QDialog, DialogUi):
         except Exception as e:
             QgsApplication.instance().messageLog().logMessage(
                 "Packaging failed with exception:\n{}\n{}".format(e, traceback.format_exc()),
-                "qfieldmod",
+                "GMD Pipeline",
                 Qgis.Critical,
             )
             self.iface.messageBar().pushWarning("Export Error", str(e))
@@ -3312,7 +3340,7 @@ class PackageDialog(QDialog, DialogUi):
                         ext_str = "_img.gpkg" if format_idx == 0 else ("_img.mbtiles" if format_idx == 1 else "_img.gpkg or _img.mbtiles")
                         QgsApplication.instance().messageLog().logMessage(
                             f"No satellite image found for {ea_geocode}: {raster_file}",
-                            "qfieldmod", Qgis.Warning,
+                            "GMD Pipeline", Qgis.Warning,
                         )
                         errors.append(f"{ea_geocode}: Missing satellite image ({pppmm}{ext_str}) — skipped")
                         continue
@@ -3369,7 +3397,7 @@ class PackageDialog(QDialog, DialogUi):
                             else:
                                 QgsApplication.instance().messageLog().logMessage(
                                     f"Additional raster clip failed for {ea_geocode}: {add_clip_msg}",
-                                    "qfieldmod", Qgis.Warning,
+                                    "GMD Pipeline", Qgis.Warning,
                                 )
 
                     self.statusLabel.setText(
@@ -3545,7 +3573,7 @@ class PackageDialog(QDialog, DialogUi):
                     except Exception as e:
                         QgsApplication.instance().messageLog().logMessage(
                             f"Could not spatially filter {lyr.name()}: {e}",
-                            "qfieldmod", Qgis.Warning,
+                            "GMD Pipeline", Qgis.Warning,
                         )
             else:
                 # bgy features empty after filter — leave linear layers unfiltered
@@ -3574,7 +3602,7 @@ class PackageDialog(QDialog, DialogUi):
                     self.iface.mapCanvas().refresh()
         except Exception as _e:
             QgsApplication.instance().messageLog().logMessage(
-                f"Could not zoom canvas to EA extent: {_e}", "qfieldmod", Qgis.Warning,
+                f"Could not zoom canvas to EA extent: {_e}", "GMD Pipeline", Qgis.Warning,
             )
 
         # Apply snapping config so it is saved into the exported QGZ.
@@ -3582,7 +3610,7 @@ class PackageDialog(QDialog, DialogUi):
             self.auto_snap_layer()
         except Exception as _e:
             QgsApplication.instance().messageLog().logMessage(
-                f"Could not apply snapping for EA export: {_e}", "qfieldmod", Qgis.Warning,
+                f"Could not apply snapping for EA export: {_e}", "GMD Pipeline", Qgis.Warning,
             )
 
         QgsProject.instance().write()
@@ -4271,7 +4299,7 @@ class PackageDialog(QDialog, DialogUi):
         except Exception as _aoi_err:
             QgsApplication.instance().messageLog().logMessage(
                 f"Could not compute EA area_of_interest from layer: {_aoi_err}",
-                "qfieldmod", Qgis.Warning,
+                "GMD Pipeline", Qgis.Warning,
             )
         if not area_of_interest:
             # Fallback to canvas extent if geometry union failed.
@@ -4451,7 +4479,7 @@ class PackageDialog(QDialog, DialogUi):
                     return text
                 except Exception as e:
                     QgsApplication.instance().messageLog().logMessage(
-                        f"Layer rename patch error: {e}", "qfieldmod", Qgis.Warning,
+                        f"Layer rename patch error: {e}", "GMD Pipeline", Qgis.Warning,
                     )
                     return text
 
@@ -4496,7 +4524,7 @@ class PackageDialog(QDialog, DialogUi):
                         shutil.copy2(src, dst)
                         return
                 QgsApplication.instance().messageLog().logMessage(
-                    f"Ignoring same-path copy during EA export: {e}", "qfieldmod", Qgis.Info,
+                    f"Ignoring same-path copy during EA export: {e}", "GMD Pipeline", Qgis.Info,
                 )
 
         self._offline_convertor = _build_converter(self.offliner)
@@ -4536,7 +4564,7 @@ class PackageDialog(QDialog, DialogUi):
                 _convert()
             except IndexError as e:
                 QgsApplication.instance().messageLog().logMessage(
-                    f"EA export retry after IndexError: {e}", "qfieldmod", Qgis.Warning,
+                    f"EA export retry after IndexError: {e}", "GMD Pipeline", Qgis.Warning,
                 )
                 fallback_offliner = QgisCoreOffliner(offline_editing=False)
                 fallback_offliner.warning.connect(self.show_warning)
@@ -4564,7 +4592,7 @@ class PackageDialog(QDialog, DialogUi):
                     except Exception as e:
                         QgsApplication.instance().messageLog().logMessage(
                             f"Could not move raster for {code_digits}: {e}",
-                            "qfieldmod", Qgis.Warning,
+                            "GMD Pipeline", Qgis.Warning,
                         )
 
             # Move additional raster into the export subfolder
@@ -4588,7 +4616,7 @@ class PackageDialog(QDialog, DialogUi):
                 except Exception as e:
                     QgsApplication.instance().messageLog().logMessage(
                         f"Could not move additional raster for {code_digits}: {e}",
-                        "qfieldmod", Qgis.Warning,
+                        "GMD Pipeline", Qgis.Warning,
                     )
 
             try:
@@ -4596,7 +4624,7 @@ class PackageDialog(QDialog, DialogUi):
             except Exception as e:
                 QgsApplication.instance().messageLog().logMessage(
                     f"Could not rewrite raster source for {code_digits}: {e}",
-                    "qfieldmod", Qgis.Warning,
+                    "GMD Pipeline", Qgis.Warning,
                 )
 
             try:
@@ -4604,7 +4632,7 @@ class PackageDialog(QDialog, DialogUi):
             except Exception as e:
                 QgsApplication.instance().messageLog().logMessage(
                     f"Could not rename/regroup layers for {code_digits}: {e}",
-                    "qfieldmod", Qgis.Warning,
+                    "GMD Pipeline", Qgis.Warning,
                 )
 
             try:
@@ -4612,7 +4640,7 @@ class PackageDialog(QDialog, DialogUi):
             except Exception as e:
                 QgsApplication.instance().messageLog().logMessage(
                     f"Could not export individual layers for {code_digits}: {e}",
-                    "qfieldmod", Qgis.Warning,
+                    "GMD Pipeline", Qgis.Warning,
                 )
 
             # Copy additional raster (.mbtiles) and patch visibility for both rasters
@@ -4621,7 +4649,7 @@ class PackageDialog(QDialog, DialogUi):
             except Exception as e:
                 QgsApplication.instance().messageLog().logMessage(
                     f"Could not copy additional raster for {code_digits}: {e}",
-                    "qfieldmod", Qgis.Warning,
+                    "GMD Pipeline", Qgis.Warning,
                 )
 
 
@@ -4631,7 +4659,7 @@ class PackageDialog(QDialog, DialogUi):
         except Exception as e:
             QgsApplication.instance().messageLog().logMessage(
                 f"EA packaging failed for {code_digits}: {e}\n{traceback.format_exc()}",
-                "qfieldmod", Qgis.Critical,
+                "GMD Pipeline", Qgis.Critical,
             )
             raise
         finally:
@@ -4726,7 +4754,7 @@ class PackageDialog(QDialog, DialogUi):
     def show_warning(self, _, message):
         # Most messages from the offline editing plugin are not important enough to show in the message bar.
         # In case we find important ones in the future, we need to filter them.
-        QgsApplication.instance().messageLog().logMessage(message, "qfieldmod")
+        QgsApplication.instance().messageLog().logMessage(message, "GMD Pipeline")
 
 
 
@@ -5030,7 +5058,7 @@ class PackageDialog(QDialog, DialogUi):
                         ext_str = "_img.gpkg" if format_idx == 0 else ("_img.mbtiles" if format_idx == 1 else "_img.gpkg or _img.mbtiles")
                         QgsApplication.instance().messageLog().logMessage(
                             f"No satellite image found for {bgy_geocode}: {raster_file}",
-                            "qfieldmod", Qgis.Warning,
+                            "GMD Pipeline", Qgis.Warning,
                         )
                         errors.append(f"{bgy_geocode}: Missing satellite image ({pppmm}{ext_str}) — skipped")
                         continue
@@ -5085,7 +5113,7 @@ class PackageDialog(QDialog, DialogUi):
                             else:
                                 QgsApplication.instance().messageLog().logMessage(
                                     f"Additional raster clip failed for BGY {bgy_geocode}: {add_clip_msg}",
-                                    "qfieldmod", Qgis.Warning,
+                                    "GMD Pipeline", Qgis.Warning,
                                 )
 
                     self.statusLabel.setText(
@@ -5258,7 +5286,7 @@ class PackageDialog(QDialog, DialogUi):
                     except Exception as e:
                         QgsApplication.instance().messageLog().logMessage(
                             f"Could not spatially filter {lyr.name()}: {e}",
-                            "qfieldmod", Qgis.Warning,
+                            "GMD Pipeline", Qgis.Warning,
                         )
             else:
                 # bgy features empty after filter — leave linear layers unfiltered
@@ -5286,7 +5314,7 @@ class PackageDialog(QDialog, DialogUi):
                     self.iface.mapCanvas().refresh()
         except Exception as _e:
             QgsApplication.instance().messageLog().logMessage(
-                f"Could not zoom canvas to BGY extent: {_e}", "qfieldmod", Qgis.Warning,
+                f"Could not zoom canvas to BGY extent: {_e}", "GMD Pipeline", Qgis.Warning,
             )
 
         # Apply snapping config so it is saved into the exported QGZ.
@@ -5294,7 +5322,7 @@ class PackageDialog(QDialog, DialogUi):
             self.auto_snap_layer()
         except Exception as _e:
             QgsApplication.instance().messageLog().logMessage(
-                f"Could not apply snapping for BGY export: {_e}", "qfieldmod", Qgis.Warning,
+                f"Could not apply snapping for BGY export: {_e}", "GMD Pipeline", Qgis.Warning,
             )
 
         QgsProject.instance().write()
@@ -5419,7 +5447,7 @@ class PackageDialog(QDialog, DialogUi):
                         _root_tree.addChildNode(QgsLayerTreeLayer(rlayer))
         except Exception as e:
             QgsApplication.instance().messageLog().logMessage(
-                f"Could not register raster layer: {e}", "qfieldmod", Qgis.Warning,
+                f"Could not register raster layer: {e}", "GMD Pipeline", Qgis.Warning,
             )
 
         # --- Build OfflineConverter with full parameters (matching EA export) ---
@@ -5444,7 +5472,7 @@ class PackageDialog(QDialog, DialogUi):
         except Exception as _aoi_err:
             QgsApplication.instance().messageLog().logMessage(
                 f"Could not compute BGY area_of_interest from layer: {_aoi_err}",
-                "qfieldmod", Qgis.Warning,
+                "GMD Pipeline", Qgis.Warning,
             )
         if not area_of_interest:
             area_of_interest = self.iface.mapCanvas().extent().asWktPolygon()
@@ -5643,7 +5671,7 @@ class PackageDialog(QDialog, DialogUi):
                     return text
                 except Exception as e:
                     QgsApplication.instance().messageLog().logMessage(
-                        f"BGY layer rename patch error: {e}", "qfieldmod", Qgis.Warning,
+                        f"BGY layer rename patch error: {e}", "GMD Pipeline", Qgis.Warning,
                     )
                     return text
 
@@ -5688,7 +5716,7 @@ class PackageDialog(QDialog, DialogUi):
                         shutil.copy2(src, dst)
                         return
                 QgsApplication.instance().messageLog().logMessage(
-                    f"Ignoring same-path copy during BGY export: {e}", "qfieldmod", Qgis.Info,
+                    f"Ignoring same-path copy during BGY export: {e}", "GMD Pipeline", Qgis.Info,
                 )
 
         self._offline_convertor = _build_converter(self.offliner)
@@ -5722,7 +5750,7 @@ class PackageDialog(QDialog, DialogUi):
                 _convert()
             except IndexError as e:
                 QgsApplication.instance().messageLog().logMessage(
-                    f"BGY export retry after IndexError: {e}", "qfieldmod", Qgis.Warning,
+                    f"BGY export retry after IndexError: {e}", "GMD Pipeline", Qgis.Warning,
                 )
                 fallback_offliner = QgisCoreOffliner(offline_editing=False)
                 fallback_offliner.warning.connect(self.show_warning)
@@ -5751,7 +5779,7 @@ class PackageDialog(QDialog, DialogUi):
                     except Exception as e:
                         QgsApplication.instance().messageLog().logMessage(
                             f"Could not move raster for BGY {code_digits}: {e}",
-                            "qfieldmod", Qgis.Warning,
+                            "GMD Pipeline", Qgis.Warning,
                         )
 
             # Move additional raster into the export subfolder
@@ -5774,7 +5802,7 @@ class PackageDialog(QDialog, DialogUi):
                 except Exception as e:
                     QgsApplication.instance().messageLog().logMessage(
                         f"Could not move additional raster for BGY {code_digits}: {e}",
-                        "qfieldmod", Qgis.Warning,
+                        "GMD Pipeline", Qgis.Warning,
                     )
 
             try:
@@ -5782,21 +5810,21 @@ class PackageDialog(QDialog, DialogUi):
             except Exception as e:
                 QgsApplication.instance().messageLog().logMessage(
                     f"Could not rewrite raster source for BGY {code_digits}: {e}",
-                    "qfieldmod", Qgis.Warning,
+                    "GMD Pipeline", Qgis.Warning,
                 )
             try:
                 _rename_and_regroup_layers()
             except Exception as e:
                 QgsApplication.instance().messageLog().logMessage(
                     f"Could not rename/regroup layers for BGY {code_digits}: {e}",
-                    "qfieldmod", Qgis.Warning,
+                    "GMD Pipeline", Qgis.Warning,
                 )
             try:
                 self._export_individual_layers(code_digits, subfolder_path, packaged_project_file)
             except Exception as e:
                 QgsApplication.instance().messageLog().logMessage(
                     f"Could not export individual layers for BGY {code_digits}: {e}",
-                    "qfieldmod", Qgis.Warning,
+                    "GMD Pipeline", Qgis.Warning,
                 )
 
             # Copy additional raster (.mbtiles) and patch visibility for both rasters
@@ -5805,7 +5833,7 @@ class PackageDialog(QDialog, DialogUi):
             except Exception as e:
                 QgsApplication.instance().messageLog().logMessage(
                     f"Could not copy additional raster for BGY {code_digits}: {e}",
-                    "qfieldmod", Qgis.Warning,
+                    "GMD Pipeline", Qgis.Warning,
                 )
 
             self.do_post_offline_convert_action(True)
@@ -5814,7 +5842,7 @@ class PackageDialog(QDialog, DialogUi):
         except Exception as e:
             QgsApplication.instance().messageLog().logMessage(
                 f"BGY packaging failed for {code_digits}: {e}\n{traceback.format_exc()}",
-                "qfieldmod", Qgis.Critical,
+                "GMD Pipeline", Qgis.Critical,
             )
             raise
         finally:
