@@ -56,6 +56,7 @@ jobs:
           PLUGIN_TAG:     ${{ steps.get-version.outputs.tag }}
           AI_MODEL_TOKEN: ${{ secrets.AI_TOKEN }}
         with:
+          github-token: ${{ secrets.AI_TOKEN }}
           script: |
             const fs = require('fs');
             const path = require('path');
@@ -383,19 +384,21 @@ jobs:
 
             fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary + '\n');
 
-      # ── 5. Create PR for metadata.txt changes ────────────────────────
-      - name: Create PR for metadata changes
+      # ── 5. Commit updated metadata.txt back to main ──────────────────
+      - name: Commit metadata changes
         if: steps.check-tag.outputs.exists == 'false'
-        uses: peter-evans/create-pull-request@v6
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "chore: update changelog for v${{ steps.get-version.outputs.version }}"
-          committer: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
-          author: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
-          branch: "patch/metadata-v${{ steps.get-version.outputs.version }}"
-          title: "chore: update changelog for v${{ steps.get-version.outputs.version }}"
-          body: |
-            This is an automated pull request to update `metadata.txt` with the release notes for version ${{ steps.get-version.outputs.version }}.
-            
-            Please merge this PR to keep the branch history updated.
-          delete-branch: true
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Configure authentication with the AI_TOKEN to push to main
+          git remote set-url origin "https://x-access-token:${{ secrets.AI_TOKEN }}@github.com/${{ github.repository }}.git"
+
+          if git diff --quiet metadata.txt; then
+            echo "No metadata changes to commit."
+          else
+            git add metadata.txt
+            git commit -m "chore: update changelog for v${{ steps.get-version.outputs.version }}"
+            git push origin main
+            echo "✅ metadata.txt committed and pushed directly to main using AI_TOKEN."
+          fi
