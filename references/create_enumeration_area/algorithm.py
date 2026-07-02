@@ -1427,7 +1427,9 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 previous_ea_source.sourceCrs(), target_crs, context.transformContext()
             )
 
-        for _dc_feat in all_ea_features:
+        # Phase 2 scans ALL EAs in the source layer — identical to what the preview widget sees.
+        # Only the later processing phases (Phases 5-9) use the barangay-filtered all_ea_features.
+        for _dc_feat in previous_ea_source.getFeatures():
             if multi_feedback.isCanceled():
                 raise QgsProcessingException("Algorithm cancelled by user.")
             total_ea_processed += 1
@@ -1436,13 +1438,16 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             _dc_hh = 0.0
             _dc_val = _dc_feat.attribute(_dc_pop_idx)
             if _dc_val is None or (isinstance(_dc_val, QVariant) and _dc_val.isNull()):
-                feedback.pushWarning(f"Skipping EA record (Feature ID: {_dc_feat.id()}) with null hhcount.")
-                continue
-            try:
-                _dc_hh = float(_dc_val)
-            except (TypeError, ValueError):
-                feedback.pushWarning(f"Skipping EA record (Feature ID: {_dc_feat.id()}) with non-numeric hhcount '{_dc_val}'.")
-                continue
+                feedback.pushWarning(
+                    f"EA record (Feature ID: {_dc_feat.id()}) has null hhcount; treating as 0 for merge candidate classification."
+                )
+            else:
+                try:
+                    _dc_hh = float(_dc_val)
+                except (TypeError, ValueError):
+                    feedback.pushWarning(
+                        f"EA record (Feature ID: {_dc_feat.id()}) has non-numeric hhcount '{_dc_val}'; treating as 0 for merge candidate classification."
+                    )
 
             _dc_ean = _dc_feat.attribute(ea_id_field)
             _dc_ean_str = str(_dc_ean).strip() if _dc_ean is not None else ""
@@ -1499,12 +1504,6 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             f"Delineation Candidate Index: {len(delineation_candidate_eans)} EA(s) flagged "
             f"for delineation across {len(delineation_candidates_by_geocode)} barangay(s)."
         )
-        # feedback.pushInfo(f"  {'EAN':<20} {'hhdivthres':>12}")
-        # feedback.pushInfo(f"  {'-'*20} {'-'*12}")
-        # for _dc_geo, _dc_entries in sorted(delineation_candidates_by_geocode.items()):
-        #     feedback.pushInfo(f"  Geocode {_dc_geo}:")
-        #     for _dc_ean_str, _dc_ratio in sorted(_dc_entries, key=lambda x: x[0]):
-        #         feedback.pushInfo(f"    {_dc_ean_str:<20} {_dc_ratio:>12.4f}")
 
         self.total_ea_processed = total_ea_processed
         self.total_delin_candidates = total_delin_candidates
@@ -1512,21 +1511,20 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         # Barangay index and helpers are already created during Phase 1
         pass
 
-        # Build Temporal Spatial Index of only candidate EAs
-        feedback.pushInfo("Building temporal previous EA index (candidates only)...")
-        temp_ea_index = QgsSpatialIndex()
-        temp_ea_by_id = {}
-        for feat in all_ea_features:
-            _ean = feat.attribute(ea_id_field)
-            _ean_str = str(_ean).strip() if _ean is not None else ""
-            if _ean_str in delineation_candidate_eans or _ean_str in merge_candidate_eans:
-                temp_ea_index.insertFeature(feat)
-                temp_ea_by_id[feat.id()] = feat
+        # Build a FULL spatial index of all EAs (not just candidates) so merge partners
+        # can be any touching EA in the same barangay — matching the preview widget logic.
+        feedback.pushInfo("Building full previous EA spatial index for merge partner lookup...")
+        full_ea_index = QgsSpatialIndex()
+        full_ea_by_id = {}
+        for feat in previous_ea_source.getFeatures():
+            full_ea_index.insertFeature(feat)
+            full_ea_by_id[feat.id()] = feat
 
-        # Find contiguous neighbors for merge candidates and write to merge candidate sink
+        # Find contiguous neighbors for merge candidates and write to merge candidate sink.
+        # Iterate ALL EAs in the source — same scope as the preview widget.
         feedback.pushInfo("Identifying contiguous partners for Merge Candidates...")
         merge_candidates_by_geocode = {}
-        for feat in temp_ea_by_id.values():
+        for feat in previous_ea_source.getFeatures():
             if multi_feedback.isCanceled():
                 raise QgsProcessingException("Algorithm cancelled by user.")
             geom = feat.geometry()
@@ -1539,28 +1537,28 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             except (TypeError, ValueError):
                 continue
 
-            if _dc_hh <= 100:
+            if _dc_hh <= min_household:
                 partners = []
-                candidates = temp_ea_index.intersects(geom.boundingBox())
+                candidates = full_ea_index.intersects(geom.boundingBox())
                 parent_bar_geo = resolve_ea_parent_barangay(feat)
                 
                 for cid in candidates:
                      if cid == feat.id():
-                         continue
-                     nb_feat = temp_ea_by_id[cid]
+                          continue
+                     nb_feat = full_ea_by_id[cid]
                      if geom.touches(nb_feat.geometry()) or geom.intersects(nb_feat.geometry()):
-                         nb_parent_bar_geo = resolve_ea_parent_barangay(nb_feat)
-                         if parent_bar_geo and nb_parent_bar_geo and parent_bar_geo == nb_parent_bar_geo:
-                            nb_hh_val = nb_feat.attribute(_dc_pop_idx)
-                            try:
-                                nb_hh = float(nb_hh_val) if nb_hh_val is not None else 0.0
-                            except (TypeError, ValueError):
-                                nb_hh = 0.0
-                            if nb_hh < 300:
-                                nb_ean = nb_feat.attribute(ea_id_field)
-                                nb_ean_str = str(nb_ean).strip() if nb_ean is not None else ""
-                                if nb_ean_str:
-                                    partners.append(nb_ean_str)
+                          nb_parent_bar_geo = resolve_ea_parent_barangay(nb_feat)
+                          if parent_bar_geo and nb_parent_bar_geo and parent_bar_geo == nb_parent_bar_geo:
+                             nb_hh_val = nb_feat.attribute(_dc_pop_idx)
+                             try:
+                                 nb_hh = float(nb_hh_val) if nb_hh_val is not None else 0.0
+                             except (TypeError, ValueError):
+                                 nb_hh = 0.0
+                             if nb_hh < max_household:
+                                 nb_ean = nb_feat.attribute(ea_id_field)
+                                 nb_ean_str = str(nb_ean).strip() if nb_ean is not None else ""
+                                 if nb_ean_str:
+                                     partners.append(nb_ean_str)
                 
                 _mc_ean = feat.attribute(ea_id_field)
                 _mc_ean_str = str(_mc_ean).strip() if _mc_ean is not None else ""
@@ -1615,6 +1613,17 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         #     for _mc_ean_str, _mc_hh, _mc_partners in sorted(_mc_entries, key=lambda x: x[0]):
         #         partners_str = ", ".join(sorted(_mc_partners)) if _mc_partners else "None"
         #         feedback.pushInfo(f"    {_mc_ean_str:<20} {_mc_hh:>10.1f}   {partners_str}")
+
+        # Build temporal previous EA index (candidates only) of the active Barangays for subsequent phases
+        feedback.pushInfo("Building temporal previous EA index (candidates only)...")
+        temp_ea_index = QgsSpatialIndex()
+        temp_ea_by_id = {}
+        for feat in all_ea_features:
+            _ean = feat.attribute(ea_id_field)
+            _ean_str = str(_ean).strip() if _ean is not None else ""
+            if _ean_str in delineation_candidate_eans or _ean_str in merge_candidate_eans:
+                temp_ea_index.insertFeature(feat)
+                temp_ea_by_id[feat.id()] = feat
 
         multi_feedback.setProgress(100)  # Phase 2 complete
 
@@ -3126,7 +3135,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         best_neighbor_idx = -1
                         best_neighbor_score = float('inf')
                         
-                        # Pass 0: Prioritize merging contiguous merge candidates (<= 100 HH)
+                        # Pass 0: Prioritize merging contiguous merge candidates by threshold
                         for j in range(len(bar_eas)):
                             if idx == j or j in merged_indices:
                                 continue
