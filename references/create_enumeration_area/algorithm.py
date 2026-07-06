@@ -3864,6 +3864,24 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 previous_ea_source.sourceCrs(), target_crs, context.transformContext()
             )
 
+        bldg_out_fields = QgsFields()
+        if extracted_buildings_sink is not None:
+            bldg_out_fields = QgsFields(building_source.fields())
+            if bldg_out_fields.indexOf("parent_ean") == -1:
+                bldg_out_fields.append(QgsField("parent_ean", QVariant.String))
+                
+            bldgpts_idx = bldg_out_fields.indexOf("bldgpoints_value")
+            if bldgpts_idx == -1:
+                bldgpts_idx = bldg_out_fields.indexOf("bldgpts_val")
+            if bldgpts_idx == -1:
+                bldg_out_fields.append(QgsField("bldgpoints_value", QVariant.Double))
+                
+            pop_out_idx = bldg_out_fields.indexOf("pop")
+            if pop_out_idx == -1:
+                pop_out_idx = bldg_out_fields.indexOf(bldg_hh_field)
+            if pop_out_idx == -1:
+                bldg_out_fields.append(QgsField("pop", QVariant.Double))
+
         for i, ea in enumerate(eas):
             if multi_feedback.isCanceled():
                 raise QgsProcessingException("Algorithm cancelled by user.")
@@ -3985,33 +4003,16 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
 
             # Add matched buildings to extracted buildings sink
             if extracted_buildings_sink is not None:
-                bldg_out_fields = QgsFields(building_source.fields())
-                if bldg_out_fields.indexOf("parent_ean") == -1:
-                    bldg_out_fields.append(QgsField("parent_ean", QVariant.String))
-                    
-                bldgpts_idx = bldg_out_fields.indexOf("bldgpoints_value")
-                if bldgpts_idx == -1:
-                    bldgpts_idx = bldg_out_fields.indexOf("bldgpts_val")
-                if bldgpts_idx == -1:
-                    bldg_out_fields.append(QgsField("bldgpoints_value", QVariant.Double))
-                    bldgpts_idx = bldg_out_fields.count() - 1
-                    
-                pop_out_idx = bldg_out_fields.indexOf("pop")
-                if pop_out_idx == -1:
-                    pop_out_idx = bldg_out_fields.indexOf(bldg_hh_field)
-                if pop_out_idx == -1:
-                    bldg_out_fields.append(QgsField("pop", QVariant.Double))
-                    pop_out_idx = bldg_out_fields.count() - 1
-                    
-                parent_ean_idx = bldg_out_fields.indexOf("parent_ean")
-                
                 parent_ean_val = ea.get('new_ea_code', ea.get('original_code', ''))
                 _ea_orig_code = str(ea.get('original_code', '')).strip()
-                _is_delineation_result = (
+                _is_target_ea = (
                     ea.get('from_split', False)
+                    or ea.get('from_merge', False)
                     or _ea_orig_code in delineation_candidate_eans
+                    or _ea_orig_code in merge_candidate_eans
+                    or _ea_orig_code in adjacent_ea_eans
                 )
-                if _is_delineation_result:
+                if _is_target_ea:
                     for b in ea.get('buildings', []):
                         b_feat = QgsFeature(bldg_out_fields)
                         b_geom = QgsGeometry.fromPointXY(b['point'])
@@ -4019,21 +4020,27 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                             b_geom.transform(barangay_to_target)
                         b_feat.setGeometry(b_geom)
                         
-                        b_attrs = list(b['attributes']) if 'attributes' in b else []
-                        needed = bldg_out_fields.count() - len(b_attrs)
+                        b_feat.setAttributes(b['attributes'])
+                        attrs = b_feat.attributes()
+                        needed = bldg_out_fields.count() - len(attrs)
                         if needed > 0:
-                            b_attrs.extend([None] * needed)
-                        elif len(b_attrs) > bldg_out_fields.count():
-                            b_attrs = b_attrs[:bldg_out_fields.count()]
+                            attrs.extend([None] * needed)
+                            b_feat.setAttributes(attrs)
+                            
+                        b_feat["parent_ean"] = str(parent_ean_val)
                         
-                        if bldgpts_idx != -1:
-                            b_attrs[bldgpts_idx] = b['bldgpoints_value']
-                        if pop_out_idx != -1:
-                            b_attrs[pop_out_idx] = b['pop']
-                        if parent_ean_idx != -1:
-                            b_attrs[parent_ean_idx] = str(parent_ean_val)
-                        
-                        b_feat.setAttributes(b_attrs)
+                        # Set pop value
+                        if "pop" in [f.name() for f in bldg_out_fields]:
+                            b_feat["pop"] = b['pop']
+                        elif bldg_hh_field in [f.name() for f in bldg_out_fields]:
+                            b_feat[bldg_hh_field] = b['pop']
+                            
+                        # Set bldgpoints_value
+                        if "bldgpoints_value" in [f.name() for f in bldg_out_fields]:
+                            b_feat["bldgpoints_value"] = b['bldgpoints_value']
+                        elif "bldgpts_val" in [f.name() for f in bldg_out_fields]:
+                            b_feat["bldgpts_val"] = b['bldgpoints_value']
+                            
                         if not extracted_buildings_sink.addFeature(b_feat, QgsFeatureSink.Flag.FastInsert):
                             feedback.reportWarning("Failed to add building point to extracted buildings sink.")
                 

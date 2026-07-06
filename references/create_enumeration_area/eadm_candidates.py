@@ -4104,7 +4104,14 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 parent_ean_idx = bldg_out_fields.indexOf("parent_ean")
                 
                 parent_ean_val = ea.get('new_ea_code', ea.get('original_code', ''))
-                if _is_delineation_result:
+                _is_target_ea = (
+                    ea.get('from_split', False)
+                    or ea.get('from_merge', False)
+                    or _ea_orig_code in delineation_candidate_eans
+                    or _ea_orig_code in merge_candidate_eans
+                    or _ea_orig_code in adjacent_ea_eans
+                )
+                if _is_target_ea:
                     for b in ea.get('buildings', []):
                         b_feat = QgsFeature(bldg_out_fields)
                         b_geom = QgsGeometry.fromPointXY(b['point'])
