@@ -501,6 +501,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
     MERGED_OUTPUT = "MERGED_OUTPUT"
     DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
     MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
+    EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
     SLIVER_THRESHOLD = "SLIVER_THRESHOLD"
     PREVIEW_ONLY = "PREVIEW_ONLY"
     PREVIEW = "PREVIEW"
@@ -825,6 +826,16 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
+        # Extracted building points output layer
+        self.addParameter(
+            QgsProcessingParameterFeatureSink(
+                self.EXTRACTED_BUILDINGS_OUTPUT,
+                "Extracted Building Points Layer",
+                type=QgsProcessing.SourceType.TypeVectorPoint,
+                optional=True,
+            )
+        )
+
     def processAlgorithm(
         self,
         parameters: dict[str, Any],
@@ -924,6 +935,14 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 household_field = ea_fields.at(i).name()
                 break
 
+        # Resolve household field in Building Point Layer (strictly "hhcount")
+        bldg_fields = building_source.fields()
+        bldg_hh_field = "hhcount"
+        for i in range(bldg_fields.count()):
+            if bldg_fields.at(i).name().lower() == "hhcount":
+                bldg_hh_field = bldg_fields.at(i).name()
+                break
+
         # 3. Barangay geocode field in EA layer
         barangay_id_field = "geocode"  # Default fallback
         for i in range(ea_fields.count()):
@@ -1003,15 +1022,20 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                     if val_str.endswith(".0"):
                         val_str = val_str[:-2]
                     if val_str:
+                        # Extract 9-digit barangay code if it's a 12-digit EA geocode
+                        if len(val_str) > 9:
+                            return val_str[:9]
                         return val_str
             # Fallback to spatial overlay
             parent_feat = get_parent_barangay(ea_feat.geometry())
             if parent_feat:
-                val = parent_feat.attribute(barangay_id_field)
+                val = parent_feat.attribute(bar_geocode_field)
                 if val is not None:
                     val_str = str(val).strip()
                     if val_str.endswith(".0"):
                         val_str = val_str[:-2]
+                    if len(val_str) > 9:
+                        return val_str[:9]
                     return val_str
             return "Unknown"
 
@@ -1087,9 +1111,11 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         source_crs = previous_ea_source.sourceCrs()
         building_crs = building_source.sourceCrs()
         transform = None
+        bbox_transform = None
         if source_crs != building_crs:
             feedback.pushInfo(f"Transforming buildings from {building_crs.authid()} to {source_crs.authid()}...")
             transform = QgsCoordinateTransform(building_crs, source_crs, context.transformContext())
+            bbox_transform = QgsCoordinateTransform(source_crs, building_crs, context.transformContext())
 
         # Retrieve sliver threshold option and dynamically determine area_threshold
         sliver_threshold_idx = self.parameterAsInt(
@@ -1282,6 +1308,34 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 target_crs,
             )
 
+        extracted_buildings_sink = None
+        extracted_buildings_dest_id = None
+        if self.EXTRACTED_BUILDINGS_OUTPUT in parameters and parameters[self.EXTRACTED_BUILDINGS_OUTPUT] is not None:
+            bldg_out_fields = QgsFields(building_source.fields())
+            if bldg_out_fields.indexOf("parent_ean") == -1:
+                bldg_out_fields.append(QgsField("parent_ean", QVariant.String))
+                
+            bldgpts_idx = bldg_out_fields.indexOf("bldgpoints_value")
+            if bldgpts_idx == -1:
+                bldgpts_idx = bldg_out_fields.indexOf("bldgpts_val")
+            if bldgpts_idx == -1:
+                bldg_out_fields.append(QgsField("bldgpoints_value", QVariant.Double))
+                
+            pop_out_idx = bldg_out_fields.indexOf("pop")
+            if pop_out_idx == -1:
+                pop_out_idx = bldg_out_fields.indexOf(bldg_hh_field)
+            if pop_out_idx == -1:
+                bldg_out_fields.append(QgsField("pop", QVariant.Double))
+
+            (extracted_buildings_sink, extracted_buildings_dest_id) = self.parameterAsSink(
+                parameters,
+                self.EXTRACTED_BUILDINGS_OUTPUT,
+                context,
+                bldg_out_fields,
+                building_source.wkbType(),
+                target_crs,
+            )
+
         delin_candidate_sink = None
         delin_candidate_dest_id = None
         if self.DELINEATION_CANDIDATE_OUTPUT in parameters and parameters[self.DELINEATION_CANDIDATE_OUTPUT] is not None:
@@ -1334,6 +1388,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             outputs[self.DELINEATION_CANDIDATE_OUTPUT] = delin_candidate_dest_id
         if merge_candidate_dest_id is not None:
             outputs[self.MERGE_CANDIDATE_OUTPUT] = merge_candidate_dest_id
+        if extracted_buildings_dest_id is not None:
+            outputs[self.EXTRACTED_BUILDINGS_OUTPUT] = extracted_buildings_dest_id
 
 #        try:
 #            if context.willLoadLayerOnCompletion(dest_id):
@@ -1374,6 +1430,14 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 feedback.pushInfo(f"Set completion layer name to: {geocode_prefix}_merge_candidates_ea2026")
         except Exception as e:
             feedback.pushInfo(f"Could not set merge candidate layer completion name: {str(e)}")
+
+        try:
+            if extracted_buildings_dest_id and context.willLoadLayerOnCompletion(extracted_buildings_dest_id):
+                details = context.layerToLoadOnCompletionDetails(extracted_buildings_dest_id)
+                details.name = f"{geocode_prefix}_extracted_buildings_ea2026"
+                feedback.pushInfo(f"Set completion layer name to: {geocode_prefix}_extracted_buildings_ea2026")
+        except Exception as e:
+            feedback.pushInfo(f"Could not set extracted buildings layer completion name: {str(e)}")
 
         # Transform target for output/candidates
         barangay_to_target = None
@@ -1451,6 +1515,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
 
             _dc_ean = _dc_feat.attribute(ea_id_field)
             _dc_ean_str = str(_dc_ean).strip() if _dc_ean is not None else ""
+            if _dc_ean_str.endswith(".0"):
+                _dc_ean_str = _dc_ean_str[:-2]
 
             if _dc_hh >= max_household:
                 total_delin_candidates += 1
@@ -1524,6 +1590,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         # Iterate ALL EAs in the source — same scope as the preview widget.
         feedback.pushInfo("Identifying contiguous partners for Merge Candidates...")
         merge_candidates_by_geocode = {}
+        adjacent_ea_eans = set()
         for feat in previous_ea_source.getFeatures():
             if multi_feedback.isCanceled():
                 raise QgsProcessingException("Algorithm cancelled by user.")
@@ -1549,16 +1616,21 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                      if geom.touches(nb_feat.geometry()) or geom.intersects(nb_feat.geometry()):
                           nb_parent_bar_geo = resolve_ea_parent_barangay(nb_feat)
                           if parent_bar_geo and nb_parent_bar_geo and parent_bar_geo == nb_parent_bar_geo:
-                             nb_hh_val = nb_feat.attribute(_dc_pop_idx)
-                             try:
-                                 nb_hh = float(nb_hh_val) if nb_hh_val is not None else 0.0
-                             except (TypeError, ValueError):
-                                 nb_hh = 0.0
-                             if nb_hh < max_household:
-                                 nb_ean = nb_feat.attribute(ea_id_field)
-                                 nb_ean_str = str(nb_ean).strip() if nb_ean is not None else ""
-                                 if nb_ean_str:
-                                     partners.append(nb_ean_str)
+                               nb_ean = nb_feat.attribute(ea_id_field)
+                               nb_ean_str = str(nb_ean).strip() if nb_ean is not None else ""
+                               if nb_ean_str.endswith(".0"):
+                                   nb_ean_str = nb_ean_str[:-2]
+                               if nb_ean_str:
+                                   adjacent_ea_eans.add(nb_ean_str)
+                               
+                               nb_hh_val = nb_feat.attribute(_dc_pop_idx)
+                               try:
+                                   nb_hh = float(nb_hh_val) if nb_hh_val is not None else 0.0
+                               except (TypeError, ValueError):
+                                   nb_hh = 0.0
+                               if nb_hh < max_household:
+                                   if nb_ean_str:
+                                       partners.append(nb_ean_str)
                 
                 _mc_ean = feat.attribute(ea_id_field)
                 _mc_ean_str = str(_mc_ean).strip() if _mc_ean is not None else ""
@@ -1566,7 +1638,25 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                     (_mc_ean_str, _dc_hh, partners)
                 )
 
-                if merge_candidate_sink is not None:
+        # Write to merge_candidate_sink (both initiators and contiguous neighbor/partner EAs)
+        if merge_candidate_sink is not None:
+            merge_related_eans = merge_candidate_eans | adjacent_ea_eans
+            for feat in previous_ea_source.getFeatures():
+                if multi_feedback.isCanceled():
+                    raise QgsProcessingException("Algorithm cancelled by user.")
+                _ean = feat.attribute(ea_id_field)
+                _ean_str = str(_ean).strip() if _ean is not None else ""
+                if _ean_str.endswith(".0"):
+                    _ean_str = _ean_str[:-2]
+                if _ean_str in merge_related_eans:
+                    # Resolve partners list if this is a merge initiator, otherwise empty list
+                    partners = []
+                    for _mc_entries in merge_candidates_by_geocode.values():
+                        for _mc_ean_str, _mc_hh, _mc_partners in _mc_entries:
+                            if _mc_ean_str == _ean_str:
+                                partners = _mc_partners
+                                break
+                    
                     out_feat = QgsFeature(merge_cand_fields_filtered)
                     _dc_geom = feat.geometry()
                     if ea_to_target:
@@ -1614,14 +1704,16 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         #         partners_str = ", ".join(sorted(_mc_partners)) if _mc_partners else "None"
         #         feedback.pushInfo(f"    {_mc_ean_str:<20} {_mc_hh:>10.1f}   {partners_str}")
 
-        # Build temporal previous EA index (candidates only) of the active Barangays for subsequent phases
-        feedback.pushInfo("Building temporal previous EA index (candidates only)...")
+        # Build temporal previous EA index (candidates and adjacent EAs only) of the active Barangays for subsequent phases
+        feedback.pushInfo("Building temporal previous EA index (candidates and adjacent EAs only)...")
         temp_ea_index = QgsSpatialIndex()
         temp_ea_by_id = {}
         for feat in all_ea_features:
             _ean = feat.attribute(ea_id_field)
             _ean_str = str(_ean).strip() if _ean is not None else ""
-            if _ean_str in delineation_candidate_eans or _ean_str in merge_candidate_eans:
+            if _ean_str.endswith(".0"):
+                _ean_str = _ean_str[:-2]
+            if _ean_str in delineation_candidate_eans or _ean_str in merge_candidate_eans or _ean_str in adjacent_ea_eans:
                 temp_ea_index.insertFeature(feat)
                 temp_ea_by_id[feat.id()] = feat
 
@@ -1700,9 +1792,13 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             if not parent_geom or parent_geom.isEmpty():
                 continue
                 
+            bbox = parent_geom.boundingBox()
+            if bbox_transform:
+                bbox = bbox_transform.transformBoundingBox(bbox)
+                
             # Perform a spatial query restricted to the bounding box of this candidate EA
             from qgis.core import QgsFeatureRequest
-            request = QgsFeatureRequest().setFilterRect(parent_geom.boundingBox())
+            request = QgsFeatureRequest().setFilterRect(bbox)
             
             for feat in building_source.getFeatures(request):
                 bldg_processed_count += 1
@@ -1721,11 +1817,16 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                     pt_geom = QgsGeometry.fromPointXY(p)
                     # Check exact spatial containment
                     if parent_geom.contains(pt_geom) or parent_geom.intersects(pt_geom):
-                        pop_val = feat.attribute(household_field)
-                        try:
-                            pop_val = float(pop_val) if pop_val is not None else 1.0
-                        except (TypeError, ValueError):
+                        pop_val = feat.attribute(bldg_hh_field)
+                        if pop_val is None or (isinstance(pop_val, QVariant) and pop_val.isNull()) or str(pop_val).strip() == "":
                             pop_val = 1.0
+                        else:
+                            try:
+                                pop_val = float(pop_val)
+                                if pop_val <= 0.0:
+                                    pop_val = 1.0
+                            except (TypeError, ValueError):
+                                pop_val = 1.0
                             
                         bldg_val = None
                         bldg_val_idx = feat.fields().indexOf("bldgpoints_value")
@@ -1743,7 +1844,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         ea_id_to_buildings.setdefault(parent_ea_id, []).append({
                             'point': p,
                             'pop': pop_val,
-                            'bldgpoints_value': bldg_val
+                            'bldgpoints_value': bldg_val,
+                            'attributes': feat.attributes()
                         })
         
         feedback.pushInfo(f"Matched {bldg_matched_count} of {bldg_processed_count} building points.")
@@ -1983,25 +2085,22 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 parts.pop(up_idx)
             return parts
 
-        # Enforce sum(p['hh_count'] / p['bldg_count']) <= hhdivthres strictly within parent EA candidate boundaries
+        # Enforce sum(b['bldgpoints_value']) < hhdivthres for each individual part strictly within parent EA candidate boundaries
         def enforce_bldgpv_threshold(parts, hhdivthres, fback, ea_geom=None):
             while len(parts) > 1:
-                # Calculate current sum of bldgpoints_value
-                _total_bldgpv = sum(
-                    p['hh_count'] / p['bldg_count'] if p.get('bldg_count', 0) > 0 else 0.0
-                    for p in parts
-                )
-                if _total_bldgpv <= hhdivthres:
-                    break
-                    
-                # We need to merge a part to reduce the sum.
-                # Find the part that has the highest bldgpoints_value (highest density) to merge.
+                # Find the part that has the highest sum of building bldgpoints_value
                 parts_with_pv = []
                 for idx, p in enumerate(parts):
-                    pv = p['hh_count'] / p['bldg_count'] if p.get('bldg_count', 0) > 0 else 0.0
+                    pv = sum(b.get('bldgpoints_value', 0.0) for b in p['buildings'])
                     parts_with_pv.append((idx, pv))
-                    
+                
                 parts_with_pv.sort(key=lambda x: x[1], reverse=True)
+                _max_bldgpv = parts_with_pv[0][1]
+                
+                # If even the maximum part is strictly less than hhdivthres, all parts comply.
+                if _max_bldgpv < hhdivthres:
+                    break
+                    
                 up_idx = parts_with_pv[0][0]
                 up = parts[up_idx]
                 
@@ -2414,8 +2513,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         
                     # Rule 3: Household Threshold Rule
                     next_val = best_bldg.get('bldgpoints_value', 0.0)
-                    if running_total + next_val > hhdivthres:
-                        break # Exceeds threshold, finalize group
+                    if running_total + next_val >= hhdivthres:
+                        break # Exceeds or meets threshold, finalize group
                         
                     # Add to group
                     current_group.append(best_bldg)
@@ -2512,6 +2611,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                                 combined_geom = combined_geom.combine(cell)
                                 
                             combined_geom = combined_geom.buffer(0.0, 3)
+                            intersected = ea_item['geom'].intersection(combined_geom)
                             if not intersected.isEmpty():
                                 polys = get_polygons_from_geom(intersected)
                                 for poly in polys:
@@ -2792,6 +2892,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         for feat in all_ea_features:
             _ean = feat.attribute(ea_id_field)
             _ean_str = str(_ean).strip() if _ean is not None else ""
+            if _ean_str.endswith(".0"):
+                _ean_str = _ean_str[:-2]
             
             _orig_hhcount = 0.0
             if prev_ea_pop_idx != -1:
@@ -2828,6 +2930,11 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                                 
         feedback.pushInfo(f"Found {len(active_barangays)} active barangay(s) containing candidates.")
         feedback.pushInfo(f"Bypassing non-candidate/non-partner EAs. Loading only {len(needed_ea_ids)} EA(s) for processing.")
+        
+        feedback.pushInfo(f"[DIAGNOSTIC] Total EAs in active barangays (all_ea_features): {len(all_ea_features)}")
+        feedback.pushInfo(f"[DIAGNOSTIC] Total delineation candidates identified in Phase 2: {len(delineation_candidate_eans)}")
+        feedback.pushInfo(f"[DIAGNOSTIC] Total merge candidates identified in Phase 2: {len(merge_candidate_eans)}")
+        feedback.pushInfo(f"[DIAGNOSTIC] Total EAs matching needed criteria: {len(needed_ea_ids)}")
 
         eas = []
         _ea_load_count = 0
@@ -2864,6 +2971,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             # Bypassing building matches for non-candidates EAs
             _ean = feat.attribute(ea_id_field)
             _ean_str = str(_ean).strip() if _ean is not None else ""
+            if _ean_str.endswith(".0"):
+                _ean_str = _ean_str[:-2]
             is_candidate = (_ean_str in delineation_candidate_eans or _ean_str in merge_candidate_eans)
 
             if not is_candidate:
@@ -2873,9 +2982,12 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
 
             _bldg_pt_count = len(assigned_bldgs)
             _bldgpoints_value = _ea_hh_count / _bldg_pt_count if _bldg_pt_count > 0 else 0.0
+            _total_bldg_val = sum(b.get('bldgpoints_value') if b.get('bldgpoints_value') is not None else b['pop'] for b in assigned_bldgs)
             for b in assigned_bldgs:
-                if b.get('bldgpoints_value') is None:
-                    b['bldgpoints_value'] = b['pop'] / _ea_hh_count if _ea_hh_count > 0.0 else 0.0
+                val = b.get('bldgpoints_value')
+                if val is None:
+                    val = b['pop']
+                b['bldgpoints_value'] = val / _total_bldg_val if _total_bldg_val > 0.0 else 0.0
 
             eas.append({
                 'geom': clean_geom,
@@ -2886,7 +2998,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 'bldgpoints_value': _bldgpoints_value,
                 'attributes': feat.attributes(),
                 'original_id': feat.id(),
-                'original_code': feat.attribute(ea_id_field),
+                'original_code': _ean_str,
                 'is_new': False,
                 'split_by': 'none',
                 'parent_barangay': bar_geo
@@ -2959,27 +3071,29 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         if ea.get('from_merge', False):
                             new_eas.append(ea)
                         else:
+                            fback.pushInfo(f"[Barangay {bar_code}] EA {ea['original_code']} (pop={ea['hh_count']}, buildings={ea.get('bldg_count', 0)}) is a delineation candidate. Calling split_ea...")
                             split_parts = split_ea(ea, max_household, fback)
+                            fback.pushInfo(f"[Barangay {bar_code}] EA {ea['original_code']} split_ea returned {len(split_parts)} part(s).")
                             if len(split_parts) > 1:
                                 # ── bldgpoints_value validation ──────────────────────────────
-                                # Sum of all parts' bldgpoints_value must be <= parent's hhdivthres
+                                # Each part's bldgpoints_value must be < parent's hhdivthres
                                 # (max_household / parent_hhcount from Delineation Candidate Index).
                                 _ea_ean = str(ea.get('original_code', '')).strip()
                                 if _ea_ean in delineation_candidate_hhdivthres:
                                     _parent_hhdivthres = delineation_candidate_hhdivthres[_ea_ean]
-                                    _total_bldgpv = sum(
-                                        p['hh_count'] / p['bldg_count'] if p.get('bldg_count', 0) > 0 else 0.0
+                                    _max_bldgpv = max(
+                                        sum(b.get('bldgpoints_value', 0.0) for b in p['buildings'])
                                         for p in split_parts
                                     )
-                                    if _total_bldgpv > _parent_hhdivthres:
+                                    if _max_bldgpv >= _parent_hhdivthres:
                                         fback.pushWarning(
                                             f"[Barangay {bar_code}] [EA {ea['original_code']}] "
-                                            f"bldgpoints_value validation: sum of parts ({_total_bldgpv:.4f}) "
-                                            f"> hhdivthres ({_parent_hhdivthres:.4f}). "
+                                            f"bldgpoints_value validation: max part's bldgpoints_value ({_max_bldgpv:.4f}) "
+                                            f">= hhdivthres ({_parent_hhdivthres:.4f}). "
                                             f"Enforcing {min_household + 1}–{max_household - 1} HH range on parts."
                                         )
                                         split_parts = enforce_min_household(split_parts, fback, ea_geom=ea['geom'])
-                                        # Strictly enforce bldgpoints_value <= hhdivthres by merging parts inside candidate boundaries
+                                        # Strictly enforce bldgpoints_value < hhdivthres by merging parts inside candidate boundaries
                                         split_parts = enforce_bldgpv_threshold(split_parts, _parent_hhdivthres, fback, ea_geom=ea['geom'])
                                 # ────────────────────────────────────────────────────────────
                                 new_eas.extend(split_parts)
@@ -3861,6 +3975,54 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 if merged_sink is not None:
                     if not merged_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
                         feedback.reportError(f"Failed to add EA {i} to merged sink.")
+
+            # Add matched buildings to extracted buildings sink
+            if extracted_buildings_sink is not None:
+                bldg_out_fields = QgsFields(building_source.fields())
+                if bldg_out_fields.indexOf("parent_ean") == -1:
+                    bldg_out_fields.append(QgsField("parent_ean", QVariant.String))
+                    
+                bldgpts_idx = bldg_out_fields.indexOf("bldgpoints_value")
+                if bldgpts_idx == -1:
+                    bldgpts_idx = bldg_out_fields.indexOf("bldgpts_val")
+                if bldgpts_idx == -1:
+                    bldg_out_fields.append(QgsField("bldgpoints_value", QVariant.Double))
+                    bldgpts_idx = bldg_out_fields.count() - 1
+                    
+                pop_out_idx = bldg_out_fields.indexOf("pop")
+                if pop_out_idx == -1:
+                    pop_out_idx = bldg_out_fields.indexOf(bldg_hh_field)
+                if pop_out_idx == -1:
+                    bldg_out_fields.append(QgsField("pop", QVariant.Double))
+                    pop_out_idx = bldg_out_fields.count() - 1
+                    
+                parent_ean_idx = bldg_out_fields.indexOf("parent_ean")
+                
+                parent_ean_val = ea.get('new_ea_code', ea.get('original_code', ''))
+                for b in ea.get('buildings', []):
+                    b_feat = QgsFeature(bldg_out_fields)
+                    b_geom = QgsGeometry.fromPointXY(b['point'])
+                    if barangay_to_target:
+                        b_geom.transform(barangay_to_target)
+                    b_feat.setGeometry(b_geom)
+                    
+                    b_attrs = list(b['attributes']) if 'attributes' in b else []
+                    needed = bldg_out_fields.count() - len(b_attrs)
+                    if needed > 0:
+                        b_attrs.extend([None] * needed)
+                    elif len(b_attrs) > bldg_out_fields.count():
+                        b_attrs = b_attrs[:bldg_out_fields.count()]
+                    
+                    if bldgpts_idx != -1:
+                        b_attrs[bldgpts_idx] = b['bldgpoints_value']
+                    if pop_out_idx != -1:
+                        b_attrs[pop_out_idx] = b['pop']
+                    if parent_ean_idx != -1:
+                        b_attrs[parent_ean_idx] = str(parent_ean_val)
+                    
+                    b_feat.setAttributes(b_attrs)
+                    if not extracted_buildings_sink.addFeature(b_feat, QgsFeatureSink.Flag.FastInsert):
+                        feedback.reportWarning("Failed to add building point to extracted buildings sink.")
                 
             _out_pct = int((i + 1) / max(len(eas), 1) * 100)
             multi_feedback.setProgress(_out_pct)

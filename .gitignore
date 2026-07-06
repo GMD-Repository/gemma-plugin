@@ -9,3 +9,6 @@ build/
 *.db
 *.db-shm
 *.db-wal
+
+# context-mem
+.context-mem/
