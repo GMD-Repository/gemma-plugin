@@ -1673,6 +1673,11 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                     if eadel_indi_idx != -1:
                         indi_val = "for delineation" if feat.id() in delineation_candidate_ids else "ea_reference"
                         out_feat.setAttribute(eadel_indi_idx, indi_val)
+                    
+                    # Clear fid attribute to let OGR generate sequential IDs
+                    fid_idx = delin_cand_fields.indexOf("fid")
+                    if fid_idx != -1:
+                        out_feat.setAttribute(fid_idx, None)
                         
                     delin_candidate_sink.addFeature(out_feat)
 
@@ -1814,6 +1819,11 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                     if merge_indi_idx != -1:
                         indi_val = "for merging" if feat.id() in merge_candidate_ids else "merge_partner"
                         out_feat.setAttribute(merge_indi_idx, indi_val)
+                    
+                    # Clear fid attribute to let OGR generate sequential IDs
+                    fid_idx = merge_cand_fields_filtered.indexOf("fid")
+                    if fid_idx != -1:
+                        out_feat.setAttribute(fid_idx, None)
                         
                     merge_candidate_sink.addFeature(out_feat)
 
@@ -4053,7 +4063,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                     seq_num = max_ea_number.get(bar, 0) + 1 + new_ea_counter
                     seq_str = f"{seq_num:03d}"
                     new_ea_counter += 1
-                    ea['new_ea_code'] = seq_str + orig_last3
+                    ea['new_ea_code'] = orig_last3 + seq_str
                 else:
                     # If it is unchanged, retain the original EA code
                     orig_code_str = str(ea['original_code']).strip() if ea['original_code'] is not None else ""
@@ -4129,6 +4139,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             is_unchanged_retain = False
             if not ea.get('from_split', False) and not ea.get('from_merge', False):
                 _ea_ean_str = str(ea.get('original_code', '')).strip()
+                _ea_id = ea.get('original_id')
                 if _ea_id not in delineation_candidate_ids and _ea_id not in merge_candidate_ids:
                     is_unchanged_retain = True
             
@@ -4137,6 +4148,10 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             pop_idx = out_fields.indexOf(output_hh_field)
             if pop_idx != -1:
                 out_feat.setAttribute(pop_idx, final_pop)
+                
+            fid_idx = out_fields.indexOf("fid")
+            if fid_idx != -1:
+                out_feat.setAttribute(fid_idx, None)
                 
             new_ea_idx = out_fields.indexOf("new_ea")
             if new_ea_idx != -1:
