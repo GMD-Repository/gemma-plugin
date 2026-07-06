@@ -1350,6 +1350,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 idx = delin_cand_fields.indexOf(fname)
                 if idx != -1:
                     delin_cand_fields.remove(idx)
+            if delin_cand_fields.indexOf("eadel_indi") == -1:
+                delin_cand_fields.append(QgsField("eadel_indi", QVariant.String))
             (delin_candidate_sink, delin_candidate_dest_id) = self.parameterAsSink(
                 parameters,
                 self.DELINEATION_CANDIDATE_OUTPUT,
@@ -1480,6 +1482,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         merge_candidate_ids = set()
         delineation_candidate_hhdivthres = {}   # EAN -> hhdivthres (hhcount / max_household)
         delineation_candidates_by_geocode = {}  # geocode -> list of (EAN, hhdivthres) tuples
+        delineation_candidate_bar_geocodes = set()
 
         _dc_pop_idx = previous_ea_source.fields().indexOf(household_field)
         if _dc_pop_idx == -1:
@@ -1538,19 +1541,30 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                     (_dc_ean_str, _dc_hhdivthres)
                 )
                 
-                # Write immediately to delineation candidate sink
-                if delin_candidate_sink is not None:
+                parent_bar = resolve_ea_parent_barangay(_dc_feat)
+                if parent_bar and parent_bar != "Unknown":
+                    delineation_candidate_bar_geocodes.add(parent_bar)
+            elif _dc_hh <= min_household:
+                merge_candidate_ids.add(_dc_feat.id())
+
+        # Write to delineation candidate sink (both initiators and other EAs within their barangays)
+        if delin_candidate_sink is not None:
+            for feat in previous_ea_source.getFeatures():
+                if multi_feedback.isCanceled():
+                    raise QgsProcessingException("Algorithm cancelled by user.")
+                parent_bar = resolve_ea_parent_barangay(feat)
+                if parent_bar and parent_bar in delineation_candidate_bar_geocodes:
                     out_feat = QgsFeature(delin_cand_fields)
-                    _dc_geom = _dc_feat.geometry()
+                    _dc_geom = feat.geometry()
                     if ea_to_target:
                         _dc_geom = QgsGeometry(_dc_geom)
                         _dc_geom.transform(ea_to_target)
                     out_feat.setGeometry(_dc_geom)
                     attrs = []
                     for f in delin_cand_fields:
-                        orig_idx = _dc_feat.fields().indexOf(f.name())
+                        orig_idx = feat.fields().indexOf(f.name())
                         if orig_idx != -1:
-                            attrs.append(_dc_feat.attribute(orig_idx))
+                            attrs.append(feat.attribute(orig_idx))
                         else:
                             attrs.append(None)
                     out_feat.setAttributes(attrs)
@@ -1569,9 +1583,13 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         if geocode_str.endswith(".0"): geocode_str = geocode_str[:-2]
                         if sy_str.endswith(".0"): sy_str = sy_str[:-2]
                         out_feat.setAttribute(corr_ea_geo_idx, f"{map_uuid_str}:{geocode_str}:{sy_str}")
+                    
+                    eadel_indi_idx = delin_cand_fields.indexOf("eadel_indi")
+                    if eadel_indi_idx != -1:
+                        indi_val = "for delineation" if feat.id() in delineation_candidate_ids else "ea_reference"
+                        out_feat.setAttribute(eadel_indi_idx, indi_val)
+                        
                     delin_candidate_sink.addFeature(out_feat)
-            elif _dc_hh <= min_household:
-                merge_candidate_ids.add(_dc_feat.id())
 
         feedback.pushInfo(
             f"Delineation Candidate Index: {len(delineation_candidate_ids)} EA(s) flagged "
