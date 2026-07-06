@@ -1348,9 +1348,6 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
 
         merge_partner_idx = -1
         merge_cand_fields = QgsFields(out_fields)
-        if "merge_partner" not in [f.name() for f in merge_cand_fields]:
-            merge_cand_fields.append(QgsField("merge_partner", QVariant.String))
-        merge_partner_idx = merge_cand_fields.indexOf("merge_partner")
 
         merge_candidate_sink = None
         merge_candidate_dest_id = None
@@ -1361,6 +1358,12 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                     idx = merge_cand_fields_filtered.indexOf(fname)
                     if idx != -1:
                         merge_cand_fields_filtered.remove(idx)
+            for fname in ["merge_partner", "split_by", "new_ea", "bldg_count", "bldgpoints_value", "bldgpts_val", "bldgpoint_value"]:
+                idx = merge_cand_fields_filtered.indexOf(fname)
+                if idx != -1:
+                    merge_cand_fields_filtered.remove(idx)
+            if merge_cand_fields_filtered.indexOf("merge_indi") == -1:
+                merge_cand_fields_filtered.append(QgsField("merge_indi", QVariant.String))
             (merge_candidate_sink, merge_candidate_dest_id) = self.parameterAsSink(
                 parameters,
                 self.MERGE_CANDIDATE_OUTPUT,
@@ -1787,6 +1790,12 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                     filtered_partner_idx = merge_cand_fields_filtered.indexOf("merge_partner")
                     if filtered_partner_idx != -1:
                         out_feat.setAttribute(filtered_partner_idx, ",".join(sorted(partners)))
+                    
+                    merge_indi_idx = merge_cand_fields_filtered.indexOf("merge_indi")
+                    if merge_indi_idx != -1:
+                        indi_val = "for merging" if _ean_str in merge_candidate_eans else "merge_partner"
+                        out_feat.setAttribute(merge_indi_idx, indi_val)
+                        
                     merge_candidate_sink.addFeature(out_feat)
 
         # Build temporal previous EA index (candidates and adjacent EAs only) of the active Barangays for subsequent phases
@@ -1849,54 +1858,53 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
         multi_feedback.setCurrentStep(3)
         multi_feedback.setProgressText(f"{_PHASE_LABELS[3]} [0/{building_count:,}]...")
 
-        # Stream buildings on-the-fly and match to starting EAs using spatial queries
+        # Stream buildings on-the-fly and match to starting EAs using candidate spatial index memory
         feedback.pushInfo("Phase 4/9: Streaming and matching building points to EAs...")
         # Pre-cache EA geometries to enable internal GEOS prepared geometry acceleration
         ea_geometries = {fid: feat.geometry() for fid, feat in ea_by_id.items()}
         ea_id_to_buildings = {}
+        
+        # Combine bounding boxes of all candidate and adjacent EAs to perform a single query
+        from qgis.core import QgsRectangle, QgsFeatureRequest
+        combined_bbox = QgsRectangle()
+        for parent_feat in ea_by_id.values():
+            if parent_feat.geometry() and not parent_feat.geometry().isEmpty():
+                combined_bbox.combineExtentWith(parent_feat.geometry().boundingBox())
+                
+        if bbox_transform and not combined_bbox.isEmpty():
+            combined_bbox = bbox_transform.transformBoundingBox(combined_bbox)
+            
+        request = QgsFeatureRequest()
+        if not combined_bbox.isEmpty():
+            request.setFilterRect(combined_bbox)
+            
         bldg_processed_count = 0
         bldg_matched_count = 0
         
-        # Keep track of matched building IDs to prevent duplicate matching
-        matched_bldg_ids = set()
-        
-        total_candidates = len(ea_by_id)
-        for cand_idx, (parent_ea_id, parent_feat) in enumerate(ea_by_id.items()):
+        for idx, feat in enumerate(building_source.getFeatures(request)):
             if multi_feedback.isCanceled():
                 raise QgsProcessingException("Algorithm cancelled by user.")
                 
-            yield_to_ui(cand_idx, 10)
-            
-            _pct = int(cand_idx / total_candidates * 100) if total_candidates > 0 else 0
-            multi_feedback.setProgress(_pct)
-            multi_feedback.setProgressText(
-                f"{_PHASE_LABELS[3]} [EA {cand_idx + 1}/{total_candidates} done]..."
-            )
-            
-            parent_geom = ea_geometries[parent_ea_id]
-            if not parent_geom or parent_geom.isEmpty():
-                continue
+            if idx % 2000 == 0:
+                yield_to_ui(idx, 100)
+                multi_feedback.setProgressText(f"{_PHASE_LABELS[3]} [Processed {idx:,} building points]...")
                 
-            # Perform a spatial query restricted to the bounding box of this candidate EA
-            from qgis.core import QgsFeatureRequest
-            request = QgsFeatureRequest().setFilterRect(parent_geom.boundingBox())
-            
-            for feat in building_source.getFeatures(request):
-                bldg_processed_count += 1
-                if feat.id() in matched_bldg_ids:
-                    continue
+            bldg_processed_count += 1
+            geom = feat.geometry()
+            if geom and not geom.isEmpty():
+                if transform:
+                    geom_clone = QgsGeometry(geom)
+                    geom_clone.transform(transform)
+                    p = geom_clone.asPoint()
+                else:
+                    p = geom.asPoint()
                     
-                geom = feat.geometry()
-                if geom and not geom.isEmpty():
-                    if transform:
-                        geom_clone = QgsGeometry(geom)
-                        geom_clone.transform(transform)
-                        p = geom_clone.asPoint()
-                    else:
-                        p = geom.asPoint()
-                        
-                    pt_geom = QgsGeometry.fromPointXY(p)
-                    # Check exact spatial containment
+                pt_geom = QgsGeometry.fromPointXY(p)
+                
+                # Check spatial index intersection
+                candidate_ids = ea_index.intersects(pt_geom.boundingBox())
+                for parent_ea_id in candidate_ids:
+                    parent_geom = ea_geometries[parent_ea_id]
                     if parent_geom.contains(pt_geom) or parent_geom.intersects(pt_geom):
                         pop_val = feat.attribute(bldg_hh_field)
                         if pop_val is None or (isinstance(pop_val, QVariant) and pop_val.isNull()) or str(pop_val).strip() == "":
@@ -1908,7 +1916,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                                     pop_val = 1.0
                             except (TypeError, ValueError):
                                 pop_val = 1.0
-                            
+                                
                         bldg_val = None
                         bldg_val_idx = feat.fields().indexOf("bldgpoints_value")
                         if bldg_val_idx == -1:
@@ -1920,14 +1928,14 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                             except (TypeError, ValueError):
                                 bldg_val = None
                                 
-                        bldg_matched_count += 1
-                        matched_bldg_ids.add(feat.id())
                         ea_id_to_buildings.setdefault(parent_ea_id, []).append({
                             'point': p,
                             'pop': pop_val,
                             'bldgpoints_value': bldg_val,
                             'attributes': feat.attributes()
                         })
+                        bldg_matched_count += 1
+                        break
         
         feedback.pushInfo(f"Matched {bldg_matched_count} of {bldg_processed_count} building points.")
         multi_feedback.setProgress(100)  # Phase 4 complete
@@ -4096,30 +4104,31 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 parent_ean_idx = bldg_out_fields.indexOf("parent_ean")
                 
                 parent_ean_val = ea.get('new_ea_code', ea.get('original_code', ''))
-                for b in ea.get('buildings', []):
-                    b_feat = QgsFeature(bldg_out_fields)
-                    b_geom = QgsGeometry.fromPointXY(b['point'])
-                    if barangay_to_target:
-                        b_geom.transform(barangay_to_target)
-                    b_feat.setGeometry(b_geom)
-                    
-                    b_attrs = list(b['attributes']) if 'attributes' in b else []
-                    needed = bldg_out_fields.count() - len(b_attrs)
-                    if needed > 0:
-                        b_attrs.extend([None] * needed)
-                    elif len(b_attrs) > bldg_out_fields.count():
-                        b_attrs = b_attrs[:bldg_out_fields.count()]
-                    
-                    if bldgpts_idx != -1:
-                        b_attrs[bldgpts_idx] = b['bldgpoints_value']
-                    if pop_out_idx != -1:
-                        b_attrs[pop_out_idx] = b['pop']
-                    if parent_ean_idx != -1:
-                        b_attrs[parent_ean_idx] = str(parent_ean_val)
-                    
-                    b_feat.setAttributes(b_attrs)
-                    if not extracted_buildings_sink.addFeature(b_feat, QgsFeatureSink.Flag.FastInsert):
-                        feedback.reportWarning("Failed to add building point to extracted buildings sink.")
+                if _is_delineation_result:
+                    for b in ea.get('buildings', []):
+                        b_feat = QgsFeature(bldg_out_fields)
+                        b_geom = QgsGeometry.fromPointXY(b['point'])
+                        if barangay_to_target:
+                            b_geom.transform(barangay_to_target)
+                        b_feat.setGeometry(b_geom)
+                        
+                        b_attrs = list(b['attributes']) if 'attributes' in b else []
+                        needed = bldg_out_fields.count() - len(b_attrs)
+                        if needed > 0:
+                            b_attrs.extend([None] * needed)
+                        elif len(b_attrs) > bldg_out_fields.count():
+                            b_attrs = b_attrs[:bldg_out_fields.count()]
+                        
+                        if bldgpts_idx != -1:
+                            b_attrs[bldgpts_idx] = b['bldgpoints_value']
+                        if pop_out_idx != -1:
+                            b_attrs[pop_out_idx] = b['pop']
+                        if parent_ean_idx != -1:
+                            b_attrs[parent_ean_idx] = str(parent_ean_val)
+                        
+                        b_feat.setAttributes(b_attrs)
+                        if not extracted_buildings_sink.addFeature(b_feat, QgsFeatureSink.Flag.FastInsert):
+                            feedback.reportWarning("Failed to add building point to extracted buildings sink.")
 
             _out_pct = int((i + 1) / max(len(eas), 1) * 100)
             multi_feedback.setProgress(_out_pct)

@@ -413,6 +413,11 @@ class EALauncherDialog(QDialog):
         self.merge_cand_path, self.merge_cand_edit = self._file_picker_row()
         outputs_layout.addLayout(self.merge_cand_path)
 
+        # Extracted Building Points Layer
+        outputs_layout.addWidget(QLabel("Extracted Building Points Layer"))
+        self.extracted_bldg_path, self.extracted_bldg_edit = self._file_picker_row()
+        outputs_layout.addLayout(self.extracted_bldg_path)
+
         scroll_layout.addWidget(self._create_collapsible_section("Output Layers", outputs_card))
         scroll.setWidget(scroll_content)
         left_layout.addWidget(scroll)
@@ -1492,7 +1497,7 @@ class EALauncherDialog(QDialog):
             'MERGED_OUTPUT': self.merged_edit.text() or 'TEMPORARY_OUTPUT',
             'DELINEATION_CANDIDATE_OUTPUT': self.delin_cand_edit.text() or 'TEMPORARY_OUTPUT',
             'MERGE_CANDIDATE_OUTPUT': self.merge_cand_edit.text() or 'TEMPORARY_OUTPUT',
-            'EXTRACTED_BUILDINGS_OUTPUT': 'TEMPORARY_OUTPUT',
+            'EXTRACTED_BUILDINGS_OUTPUT': self.extracted_bldg_edit.text() or 'TEMPORARY_OUTPUT',
         }
 
         # Clear UI state
