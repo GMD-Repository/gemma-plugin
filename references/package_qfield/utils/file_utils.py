@@ -2,7 +2,7 @@
 
 """
 /***************************************************************************
- qfieldmod
+ gmd_pipeline
                               -------------------
         begin                : 2016
         copyright            : (C) 2016 by OPENGIS.ch
@@ -51,7 +51,7 @@ def path_to_dict(path: PathLike, dirs_only: bool = False) -> DirectoryTreeDict:
             if dirs_only and not subpath.is_dir():
                 continue
 
-            if ".qfieldmod" in str(subpath):
+            if ".gmd_pipeline" in str(subpath):
                 continue
 
             node["content"].append(path_to_dict(subpath, dirs_only=dirs_only))

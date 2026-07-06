@@ -1,0 +1,17 @@
+libqfieldsync/__init__.py,sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU,0
+libqfieldsync/layer.py,sha256=YFeKJIG4RIpRGrePSXLZZjGlbWolizl-UnRLWAA-rZg,56516
+libqfieldsync/offline_converter.py,sha256=RK65E8dHszWXnEiUn98B5BjO9XKzF2Z2w-e3sE7Do-Y,33215
+libqfieldsync/offliners.py,sha256=hVn8-ErAGShbe3ASQJF2DSns9mT2bKDN11zWbcjXZfc,19421
+libqfieldsync/project.py,sha256=zMxeYiqShZGvfmcz2NF6u1gaLV5IuQSdU7A-_I4w76E,15507
+libqfieldsync/project_checker.py,sha256=zzdWe2IJicvDMmonF2QiVq6kJFett8Gf4SJFmtstSKU,20802
+libqfieldsync/utils/__init__.py,sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU,0
+libqfieldsync/utils/bad_layer_handler.py,sha256=34iLvsA0O6KUsOAnqeGonC7lF9iuGJruRTSQ0rkOGbc,3251
+libqfieldsync/utils/exceptions.py,sha256=2_NM2C7q669PiI82Dn3qxoMi3WhfBeTCUubMqTFG6Sg,2202
+libqfieldsync/utils/file_utils.py,sha256=umsdQTWQ3O2ulUJ-3E32HvkEuSg5APBWj2vxWk3IZq4,11030
+libqfieldsync/utils/logger.py,sha256=JcWg5rw2R8uFUzdh_JTBMDNFc29D3dl-YC7wFDzfcvI,3702
+libqfieldsync/utils/qgis.py,sha256=OKpD8ckALzAitna9y_rvObx84-CC9cjIVC-nfUQB_dM,2397
+libqfieldsync/utils/xml.py,sha256=ukApbN_bqTXVffuOfzXbQkHF-ZAGBXU52zWRlZCPvjk,1701
+libqfieldsync-1.0.dist-info/METADATA,sha256=yetcB2Z3l9QFrLvtldk3rr4giWE-TiCDg7ExzcyArhk,488
+libqfieldsync-1.0.dist-info/WHEEL,sha256=_zCd3N1l69ArxyTb8rzEoP9TpbYXkqRFSNOD5OuxnTs,91
+libqfieldsync-1.0.dist-info/top_level.txt,sha256=b6eRWy4jaCILbx9_LXlISXmQ6jPiBmt9turD64ZPDDM,14
+libqfieldsync-1.0.dist-info/RECORD,,

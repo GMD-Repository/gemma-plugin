@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: libqfieldsync
+Version: 1.0
+Summary: the qfieldsync library
+Author-email: "OPENGIS.ch" <info@opengis.ch>
+Project-URL: homepage, https://github.com/opengisch/libqfieldsync
+Project-URL: documentation, https://docs.qfield.org/get-started/
+Project-URL: repository, https://github.com/opengisch/libqfieldsync
+Project-URL: tracker, https://github.com/opengisch/libqfieldsync/issues
+Requires-Python: >=3.7
+Provides-Extra: dev
+Requires-Dist: pre-commit; extra == "dev"
