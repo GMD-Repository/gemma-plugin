@@ -866,23 +866,22 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
         # ── Multi-step progress feedback ───────────────────────────────────────────────────────
         # Divides the overall QGIS progress bar into 9 labelled phases.
         # Each phase maps its own 0–100 % to a proportional slice of the total bar.
-        _TOTAL_PHASES = 9
+        _TOTAL_PHASES = 8
         _PHASE_LABELS = [
-            "Phase 1/9: Initializing",
-            "Phase 2/9: Scanning Candidates",
-            "Phase 3/9: Indexing",
-            "Phase 4/9: Matching Buildings",
-            "Phase 5/9: Loading EAs",
-            "Phase 6/9: Splitting EAs",
-            "Phase 7/9: Merging EAs",
-            "Phase 8/9: Compliance Sweep",
-            "Phase 9/9: Writing Output",
+            "Phase 1/8: Initializing",
+            "Phase 2/8: Scanning Candidates & Matching Buildings",
+            "Phase 3/8: Indexing Roads & Rivers",
+            "Phase 4/8: Loading EAs",
+            "Phase 5/8: Splitting EAs",
+            "Phase 6/8: Merging EAs",
+            "Phase 7/8: Compliance Sweep",
+            "Phase 8/8: Writing Output",
         ]
         from qgis.core import QgsProcessingMultiStepFeedback
         multi_feedback = QgsProcessingMultiStepFeedback(_TOTAL_PHASES, feedback)
         multi_feedback.setCurrentStep(0)
         multi_feedback.setProgressText(f"{_PHASE_LABELS[0]}...")
-        feedback.pushInfo("Phase 1/9: Initializing — reading parameters...")
+        feedback.pushInfo("Phase 1/8: Initializing — reading parameters...")
         # ──────────────────────────────────────────────────────────────────────────────────────
 
         # Retrieve input parameters
@@ -992,6 +991,8 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                     if val_str.endswith(".0"):
                         val_str = val_str[:-2]
                     if val_str:
+                        if len(val_str) > 9:
+                            val_str = val_str[:9]
                         active_barangay_geocodes.add(val_str)
 
         # Helpers for parent barangay lookup
@@ -1561,9 +1562,9 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
         multi_feedback.setCurrentStep(1)
         multi_feedback.setProgressText(f"{_PHASE_LABELS[1]}...")
 
-        feedback.pushInfo("Phase 2/9: Identifying and saving delineation and merge candidates...")
-        delineation_candidate_eans = set()
-        merge_candidate_eans = set()
+        feedback.pushInfo("Phase 2/8: Identifying and saving delineation and merge candidates...")
+        delineation_candidate_ids = set()
+        merge_candidate_ids = set()
         delineation_candidate_hhdivthres = {}   # EAN -> hhdivthres (hhcount / max_household)
         delineation_candidates_by_geocode = {}  # geocode -> list of (EAN, hhdivthres) tuples
 
@@ -1612,8 +1613,8 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             if _dc_hh >= max_household:
                 total_delin_candidates += 1
                 _dc_hhdivthres = max_household / _dc_hh
-                delineation_candidate_eans.add(_dc_ean_str)
-                delineation_candidate_hhdivthres[_dc_ean_str] = _dc_hhdivthres
+                delineation_candidate_ids.add(_dc_feat.id())
+                delineation_candidate_hhdivthres[_dc_feat.id()] = _dc_hhdivthres
                 _dc_geo = ""
                 if _dc_geo_idx != -1:
                     _dc_geo_val = _dc_feat.attribute(_dc_geo_idx)
@@ -1655,10 +1656,10 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                         out_feat.setAttribute(corr_ea_geo_idx, f"{map_uuid_str}:{geocode_str}:{sy_str}")
                     delin_candidate_sink.addFeature(out_feat)
             elif _dc_hh <= min_household:
-                merge_candidate_eans.add(_dc_ean_str)
+                merge_candidate_ids.add(_dc_feat.id())
 
         feedback.pushInfo(
-            f"Delineation Candidate Index: {len(delineation_candidate_eans)} EA(s) flagged "
+            f"Delineation Candidate Index: {len(delineation_candidate_ids)} EA(s) flagged "
             f"for delineation across {len(delineation_candidates_by_geocode)} barangay(s)."
         )
         # feedback.pushInfo(f"  {'EAN':<20} {'hhdivthres':>12}")
@@ -1687,7 +1688,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
         # Iterate ALL EAs in the source — same scope as the preview widget.
         feedback.pushInfo("Identifying contiguous partners for Merge Candidates...")
         merge_candidates_by_geocode = {}
-        adjacent_ea_eans = set()
+        adjacent_ea_ids = set()
         for feat in previous_ea_source.getFeatures():
             if multi_feedback.isCanceled():
                 raise QgsProcessingException("Algorithm cancelled by user.")
@@ -1722,7 +1723,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                             if nb_ean_str.endswith(".0"):
                                 nb_ean_str = nb_ean_str[:-2]
                             if nb_ean_str:
-                                adjacent_ea_eans.add(nb_ean_str)
+                                adjacent_ea_ids.add(nb_feat.id())
                             
                             nb_hh_val = nb_feat.attribute(_dc_pop_idx)
                             try:
@@ -1741,7 +1742,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
 
         # Write to merge_candidate_sink (both initiators and contiguous neighbor/partner EAs)
         if merge_candidate_sink is not None:
-            merge_related_eans = merge_candidate_eans | adjacent_ea_eans
+            merge_related_ids = merge_candidate_ids | adjacent_ea_ids
             for feat in previous_ea_source.getFeatures():
                 if multi_feedback.isCanceled():
                     raise QgsProcessingException("Algorithm cancelled by user.")
@@ -1749,7 +1750,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 _ean_str = str(_ean).strip() if _ean is not None else ""
                 if _ean_str.endswith(".0"):
                     _ean_str = _ean_str[:-2]
-                if _ean_str in merge_related_eans:
+                if feat.id() in merge_related_ids:
                     # Resolve partners list if this is a merge initiator, otherwise empty list
                     partners = []
                     for _mc_entries in merge_candidates_by_geocode.values():
@@ -1793,7 +1794,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                     
                     merge_indi_idx = merge_cand_fields_filtered.indexOf("merge_indi")
                     if merge_indi_idx != -1:
-                        indi_val = "for merging" if _ean_str in merge_candidate_eans else "merge_partner"
+                        indi_val = "for merging" if feat.id() in merge_candidate_ids else "merge_partner"
                         out_feat.setAttribute(merge_indi_idx, indi_val)
                         
                     merge_candidate_sink.addFeature(out_feat)
@@ -1807,59 +1808,15 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             _ean_str = str(_ean).strip() if _ean is not None else ""
             if _ean_str.endswith(".0"):
                 _ean_str = _ean_str[:-2]
-            if _ean_str in delineation_candidate_eans or _ean_str in merge_candidate_eans or _ean_str in adjacent_ea_eans:
+            if feat.id() in delineation_candidate_ids or feat.id() in merge_candidate_ids or feat.id() in adjacent_ea_ids:
                 temp_ea_index.insertFeature(feat)
                 temp_ea_by_id[feat.id()] = feat
 
-        multi_feedback.setProgress(100)  # Phase 2 complete
-
-        if preview_only:
-            feedback.pushInfo("PREVIEW ONLY check is active — exiting early after creating candidate layers.")
-            return outputs
-
-        # ── Phase 3: Building spatial indexes (barangay, road, river, candidate EAs only) ──────────
-        multi_feedback.setCurrentStep(2)
-        multi_feedback.setProgressText(f"{_PHASE_LABELS[2]}...")
-        feedback.pushInfo("Phase 3/9: Building spatial indexes (barangay, road, river, candidate EAs only)...")
-
-        # Re-use candidate-only spatial index of starting EAs built in Phase 2
-        feedback.pushInfo("Re-using candidate-only spatial index of starting EAs built in Phase 2...")
         ea_index = temp_ea_index
         ea_by_id = temp_ea_by_id
 
-        # Build spatial indexes for optional road and river layers
-        road_index = None
-        road_geoms = {}
-        if road_source is not None:
-            feedback.pushInfo("Building spatial index of Road Layer...")
-            road_index = QgsSpatialIndex()
-            for idx, feat in enumerate(road_source.getFeatures()):
-                if multi_feedback.isCanceled():
-                    raise QgsProcessingException("Algorithm cancelled by user.")
-                yield_to_ui(idx)
-                road_index.insertFeature(feat)
-                road_geoms[feat.id()] = feat.geometry()
-
-        river_index = None
-        river_geoms = {}
-        if river_source is not None:
-            feedback.pushInfo("Building spatial index of River Layer...")
-            river_index = QgsSpatialIndex()
-            for idx, feat in enumerate(river_source.getFeatures()):
-                if multi_feedback.isCanceled():
-                    raise QgsProcessingException("Algorithm cancelled by user.")
-                yield_to_ui(idx)
-                river_index.insertFeature(feat)
-                river_geoms[feat.id()] = feat.geometry()
-
-        multi_feedback.setProgress(100)  # Phase 3 complete
-
-        # ── Phase 4: Stream and match building points to EAs ─────────────────────────────────────
-        multi_feedback.setCurrentStep(3)
-        multi_feedback.setProgressText(f"{_PHASE_LABELS[3]} [0/{building_count:,}]...")
-
-        # Stream buildings on-the-fly and match to starting EAs using candidate spatial index memory
-        feedback.pushInfo("Phase 4/9: Streaming and matching building points to EAs...")
+# Stream buildings on-the-fly and match to starting EAs using candidate spatial index memory
+        feedback.pushInfo("Phase 2/8: Extracting candidate building points building points to EAs...")
         # Pre-cache EA geometries to enable internal GEOS prepared geometry acceleration
         ea_geometries = {fid: feat.geometry() for fid, feat in ea_by_id.items()}
         ea_id_to_buildings = {}
@@ -1887,7 +1844,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 
             if idx % 2000 == 0:
                 yield_to_ui(idx, 100)
-                multi_feedback.setProgressText(f"{_PHASE_LABELS[3]} [Processed {idx:,} building points]...")
+                multi_feedback.setProgressText(f"{_PHASE_LABELS[1]} [Processed {idx:,} building points]...")
                 
             bldg_processed_count += 1
             geom = feat.geometry()
@@ -1943,6 +1900,110 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
         if multi_feedback.isCanceled():
             raise QgsProcessingException("Algorithm cancelled by user.")
 
+        
+
+        multi_feedback.setProgress(100)  # Phase 2 complete
+
+        if preview_only:
+            if extracted_buildings_sink is not None:
+                feedback.pushInfo("Writing matched building points to extracted buildings output layer...")
+                bldg_out_fields = QgsFields(building_source.fields())
+                if bldg_out_fields.indexOf("parent_ean") == -1:
+                    bldg_out_fields.append(QgsField("parent_ean", QVariant.String))
+                    
+                bldgpts_idx = bldg_out_fields.indexOf("bldgpoints_value")
+                if bldgpts_idx == -1:
+                    bldgpts_idx = bldg_out_fields.indexOf("bldgpts_val")
+                if bldgpts_idx == -1:
+                    bldg_out_fields.append(QgsField("bldgpoints_value", QVariant.Double))
+                    
+                pop_out_idx = bldg_out_fields.indexOf("pop")
+                if pop_out_idx == -1:
+                    pop_out_idx = bldg_out_fields.indexOf(bldg_hh_field)
+                if pop_out_idx == -1:
+                    bldg_out_fields.append(QgsField("pop", QVariant.Double))
+                    
+                barangay_to_target = None
+                if previous_ea_source.sourceCrs() != target_crs:
+                    barangay_to_target = QgsCoordinateTransform(
+                        previous_ea_source.sourceCrs(), target_crs, context.transformContext()
+                    )
+                    
+                bldg_written_preview = 0
+                for parent_ea_id, buildings in ea_id_to_buildings.items():
+                    parent_feat = ea_by_id[parent_ea_id]
+                    parent_ean_val = parent_feat.attribute(ea_id_field)
+                    
+                    for b in buildings:
+                        b_feat = QgsFeature(bldg_out_fields)
+                        b_geom = QgsGeometry.fromPointXY(b['point'])
+                        if barangay_to_target:
+                            b_geom.transform(barangay_to_target)
+                        b_feat.setGeometry(b_geom)
+                        
+                        b_feat.setAttributes(b['attributes'])
+                        attrs = b_feat.attributes()
+                        needed = bldg_out_fields.count() - len(attrs)
+                        if needed > 0:
+                            attrs.extend([None] * needed)
+                            b_feat.setAttributes(attrs)
+                            
+                        b_feat["parent_ean"] = str(parent_ean_val)
+                        
+                        if "pop" in [f.name() for f in bldg_out_fields]:
+                            b_feat["pop"] = b['pop']
+                        elif bldg_hh_field in [f.name() for f in bldg_out_fields]:
+                            b_feat[bldg_hh_field] = b['pop']
+                            
+                        if "bldgpoints_value" in [f.name() for f in bldg_out_fields]:
+                            b_feat["bldgpoints_value"] = b['bldgpoints_value']
+                        elif "bldgpts_val" in [f.name() for f in bldg_out_fields]:
+                            b_feat["bldgpts_val"] = b['bldgpoints_value']
+                            
+                        if extracted_buildings_sink.addFeature(b_feat, QgsFeatureSink.Flag.FastInsert):
+                            bldg_written_preview += 1
+                feedback.pushInfo(f"Successfully wrote {bldg_written_preview} building features to output in preview mode.")
+
+            feedback.pushInfo("PREVIEW ONLY check is active — exiting early after creating candidate layers.")
+            return outputs
+
+        # ── Phase 3: Indexing Roads & Rivers ──────────────────────────────────────────────────────
+        multi_feedback.setCurrentStep(2)
+        multi_feedback.setProgressText(f"{_PHASE_LABELS[2]}...")
+        feedback.pushInfo("Phase 3/8: Building spatial indexes (barangay, road, river, candidate EAs only)...")
+
+        # Re-use candidate-only spatial index of starting EAs built in Phase 2
+        feedback.pushInfo("Re-using candidate-only spatial index of starting EAs built in Phase 2...")
+        ea_index = temp_ea_index
+        ea_by_id = temp_ea_by_id
+
+        # Build spatial indexes for optional road and river layers
+        road_index = None
+        road_geoms = {}
+        if road_source is not None:
+            feedback.pushInfo("Building spatial index of Road Layer...")
+            road_index = QgsSpatialIndex()
+            for idx, feat in enumerate(road_source.getFeatures()):
+                if multi_feedback.isCanceled():
+                    raise QgsProcessingException("Algorithm cancelled by user.")
+                yield_to_ui(idx)
+                road_index.insertFeature(feat)
+                road_geoms[feat.id()] = feat.geometry()
+
+        river_index = None
+        river_geoms = {}
+        if river_source is not None:
+            feedback.pushInfo("Building spatial index of River Layer...")
+            river_index = QgsSpatialIndex()
+            for idx, feat in enumerate(river_source.getFeatures()):
+                if multi_feedback.isCanceled():
+                    raise QgsProcessingException("Algorithm cancelled by user.")
+                yield_to_ui(idx)
+                river_index.insertFeature(feat)
+                river_geoms[feat.id()] = feat.geometry()
+
+        multi_feedback.setProgress(100)  # Phase 3 complete
+
         # Helper to extract individual contiguous polygon parts from a QgsGeometry
         def get_polygons_from_geom(geom):
             polys = []
@@ -1982,6 +2043,47 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 else:
                     cleaned_polys.append(p)
             return cleaned_polys
+
+        # Helper to allocate gaps/holes in the union of parts to their nearest parent part
+        def allocate_gaps_to_parts(parts, parent_geom):
+            if not parts:
+                return parts
+            
+            # Compute union of parts
+            parts_union = parts[0]['geom']
+            for p in parts[1:]:
+                parts_union = parts_union.combine(p['geom'])
+                
+            # Get gaps
+            gaps = parent_geom.difference(parts_union).buffer(0.0, 3)
+            if gaps.isEmpty():
+                return parts
+                
+            # Extract individual polygons from gaps
+            gap_polys = get_polygons_from_geom(gaps)
+            for gap_poly in gap_polys:
+                if gap_poly.isEmpty():
+                    continue
+                # Find the part that shares the longest boundary with this gap polygon
+                best_part = None
+                max_boundary_len = -1.0
+                for p in parts:
+                    shared = gap_poly.intersection(p['geom'])
+                    if not shared.isEmpty():
+                        boundary_len = shared.length()
+                        if boundary_len > max_boundary_len:
+                            max_boundary_len = boundary_len
+                            best_part = p
+                            
+                # Fallback: assign to the nearest part by centroid distance
+                if best_part is None:
+                    gap_centroid = gap_poly.centroid().asPoint()
+                    best_part = min(parts, key=lambda p: gap_centroid.distance(p['geom'].centroid().asPoint()))
+                    
+                # Combine gap polygon with the selected part
+                combined = best_part['geom'].combine(gap_poly).buffer(0.0, 3)
+                best_part['geom'] = combined
+            return parts
 
         def collect_linear_features(ea_geom, index, geoms_dict):
             """Return road/river line geometries clipped strictly to the EA polygon boundary.
@@ -2516,7 +2618,8 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 clipped = p['geom'].intersection(parent_geom).buffer(0.0, 3)
                 if not clipped.isEmpty():
                     p['geom'] = clipped
-                
+            # Allocate gaps/holes to ensure strict partition with no holes/gaps
+            split_parts = allocate_gaps_to_parts(split_parts, parent_geom)
             return split_parts
 
         # Spatial splitting of over-populated EAs using Building Point-Based Delineation (First Preference)
@@ -2534,7 +2637,8 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             
             # Retrieve or compute hhdivthres for this EA
             _ea_ean = str(ea_item.get('original_code', '')).strip()
-            hhdivthres = delineation_candidate_hhdivthres.get(_ea_ean)
+            _ea_id = ea_item.get('original_id')
+            hhdivthres = delineation_candidate_hhdivthres.get(_ea_id)
             if hhdivthres is None:
                 hhdivthres = max_household / ea_item['hh_count'] if ea_item['hh_count'] > 0.0 else 1.0
                 
@@ -2754,6 +2858,8 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                     clipped = p['geom'].intersection(parent_geom).buffer(0.0, 3)
                     if not clipped.isEmpty():
                         p['geom'] = clipped
+                # Allocate gaps/holes to ensure strict partition with no holes/gaps
+                point_based_parts = allocate_gaps_to_parts(point_based_parts, parent_geom)
                 return point_based_parts
                 
             # ── 2. Fallbacks ──────────────────────────────────────────────────────────
@@ -2942,6 +3048,9 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             if orig_first3 != "000" and len(final_parts) > 0:
                 final_parts.sort(key=lambda x: x['hh_count'], reverse=True)
                 final_parts[0]['is_new'] = False
+                
+            # Allocate gaps/holes to ensure strict partition with no holes/gaps
+            final_parts = allocate_gaps_to_parts(final_parts, ea_item['geom'])
 
             # Final guaranteed clip: ensure every geometric strip part strictly follows
             # the shape of the parent EA polygon before returning.
@@ -2958,11 +3067,11 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             )
             return final_parts
 
-        # ── Phase 5: Load previous EAs into memory ──────────────────────────────────────────────────
-        multi_feedback.setCurrentStep(4)
-        multi_feedback.setProgressText(f"{_PHASE_LABELS[4]} [0/{previous_ea_count:,}]...")
+        # ── Phase 4: Load previous EAs into memory ──────────────────────────────────────────────────
+        multi_feedback.setCurrentStep(3)
+        multi_feedback.setProgressText(f"{_PHASE_LABELS[3]} [0/{previous_ea_count:,}]...")
         # Load starting EAs directly from Previous EA layer
-        feedback.pushInfo("Phase 5/9: Loading previous EAs into memory (caching only, no sink writing)...")
+        feedback.pushInfo("Phase 4/8: Loading previous EAs into memory (caching only, no sink writing)...")
         
         # Find index of hhcount/household field in Previous EA Layer
         prev_ea_pop_idx = previous_ea_source.fields().indexOf(household_field)
@@ -2990,8 +3099,8 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 except (TypeError, ValueError):
                     _orig_hhcount = 0.0
                     
-            is_delineation = _ean_str in delineation_candidate_eans
-            is_merge = _ean_str in merge_candidate_eans or _orig_hhcount == 0.0
+            is_delineation = feat.id() in delineation_candidate_ids
+            is_merge = feat.id() in merge_candidate_ids or _orig_hhcount == 0.0
             
             if is_delineation:
                 needed_ea_ids.add(feat.id())
@@ -3031,7 +3140,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 if _ea_pct != _ea_load_last_pct:
                     multi_feedback.setProgress(_ea_pct)
                     multi_feedback.setProgressText(
-                        f"{_PHASE_LABELS[4]} [{_ea_load_count:,}/{previous_ea_count:,}]..."
+                        f"{_PHASE_LABELS[3]} [{_ea_load_count:,}/{previous_ea_count:,}]..."
                     )
                     _ea_load_last_pct = _ea_pct
             
@@ -3053,7 +3162,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             # Bypassing building matches for non-candidates EAs
             _ean = feat.attribute(ea_id_field)
             _ean_str = str(_ean).strip() if _ean is not None else ""
-            is_candidate = (_ean_str in delineation_candidate_eans or _ean_str in merge_candidate_eans)
+            is_candidate = (feat.id() in delineation_candidate_ids or feat.id() in merge_candidate_ids)
 
             if not is_candidate:
                 _ea_hh_count = _orig_hhcount
@@ -3119,16 +3228,16 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             return ea_item['hh_count']
 
         def is_delineation_candidate(ea_item):
-            _ea_ean = str(ea_item.get('original_code', '')).strip()
-            return _ea_ean in delineation_candidate_eans and not ea_item.get('from_split', False) and not ea_item.get('from_merge', False)
+            if ea_item.get('from_split', False) or ea_item.get('from_merge', False):
+                return False
+            return ea_item.get('original_id') in delineation_candidate_ids and ea_item['hh_count'] >= max_household
 
         def is_merge_candidate(ea_item):
             if ea_item.get('from_split', False):
                 return ea_item['hh_count'] <= min_household
             if ea_item.get('from_merge', False):
                 return False
-            _ea_ean = str(ea_item.get('original_code', '')).strip()
-            return _ea_ean in merge_candidate_eans
+            return (ea_item.get('original_id') in merge_candidate_ids) or (ea_item.get('original_id') in delineation_candidate_ids and ea_item['hh_count'] <= min_household)
 
         # Helper function to run the iterative splitting loop on a single Barangay's EAs
         def process_barangay_split(bar_code, bar_eas, fback):
@@ -3270,7 +3379,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                             if is_delineation_candidate(neighbor):
                                 continue
                             # Skip neighbours whose original EAN was a delineation candidate
-                            if str(neighbor.get('original_code', '')).strip() in delineation_candidate_eans:
+                            if neighbor.get('original_id') in delineation_candidate_ids:
                                 continue
                             if ea['geom'].touches(neighbor['geom']) or ea['geom'].intersects(neighbor['geom']):
                                 combined_hh = ea['hh_count'] + neighbor['hh_count']
@@ -3355,7 +3464,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                                 if is_delineation_candidate(neighbor):
                                     continue
                                 # Skip neighbours whose original EAN was a delineation candidate
-                                if str(neighbor.get('original_code', '')).strip() in delineation_candidate_eans:
+                                if neighbor.get('original_id') in delineation_candidate_ids:
                                     continue
                                     
                                 # Check contiguity
@@ -3376,7 +3485,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                                 if is_delineation_candidate(neighbor):
                                     continue
                                 # Skip neighbours whose original EAN was a delineation candidate
-                                if str(neighbor.get('original_code', '')).strip() in delineation_candidate_eans:
+                                if neighbor.get('original_id') in delineation_candidate_ids:
                                     continue
                                 if ea['geom'].touches(neighbor['geom']) or ea['geom'].intersects(neighbor['geom']):
                                     combined_hh = ea['hh_count'] + neighbor['hh_count']
@@ -3396,7 +3505,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                                 if is_delineation_candidate(neighbor):
                                     continue
                                 # Skip neighbours whose original EAN was a delineation candidate
-                                if str(neighbor.get('original_code', '')).strip() in delineation_candidate_eans:
+                                if neighbor.get('original_id') in delineation_candidate_ids:
                                     continue
                                 if ea['geom'].touches(neighbor['geom']) or ea['geom'].intersects(neighbor['geom']):
                                     combined_hh = ea['hh_count'] + neighbor['hh_count']
@@ -3417,7 +3526,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                                 if is_delineation_candidate(bar_eas[j]):
                                     continue
                                 # Skip neighbours whose original EAN was a delineation candidate
-                                if str(bar_eas[j].get('original_code', '')).strip() in delineation_candidate_eans:
+                                if bar_eas[j].get('original_id') in delineation_candidate_ids:
                                     continue
                                 dist = up_centroid.distance(bar_eas[j]['geom'].centroid().asPoint())
                                 combined = ea['hh_count'] + bar_eas[j]['hh_count']
@@ -3485,7 +3594,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             return bar_eas
 
         # --- Main Iterative Loop (Parallelized per Barangay) ---
-        feedback.pushInfo("Phase 6/9: Iterative per-barangay splitting loop [SPLIT-FIRST]...")
+        feedback.pushInfo("Phase 5/8: Iterative per-barangay splitting loop [SPLIT-FIRST]...")
         
         # Group starting EAs by parent barangay and sort by geocode for deterministic ordering
         barangay_groups = {}
@@ -3506,9 +3615,9 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
         ]
             
         # ── Phase 6: Iterative per-barangay splitting loop ─────────────────────────────────────
-        multi_feedback.setCurrentStep(5)
+        multi_feedback.setCurrentStep(4)
         multi_feedback.setProgressText(
-            f"{_PHASE_LABELS[5]} [0/{len(split_bar_keys)} barangay(s)]..."
+            f"{_PHASE_LABELS[4]} [0/{len(split_bar_keys)} barangay(s)]..."
         )
 
         class ThreadFeedback:
@@ -3555,7 +3664,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                         _pct = int(_n_done / len(futures) * 100) if futures else 0
                         multi_feedback.setProgress(_pct)
                         multi_feedback.setProgressText(
-                            f"{_PHASE_LABELS[5]} [{_n_done}/{len(futures)} barangay(s) done]..."
+                            f"{_PHASE_LABELS[4]} [{_n_done}/{len(futures)} barangay(s) done]..."
                         )
                         _last_n_done = _n_done
 
@@ -3590,7 +3699,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             raise QgsProcessingException("Algorithm cancelled by user.")
 
         # ── Phase 7: Iterative per-barangay merging loop ─────────────────────────────────────
-        feedback.pushInfo("Phase 7/9: Iterative per-barangay merging loop [PRIORITIZE CONTIGUOUS MERGES TO 299 HH]...")
+        feedback.pushInfo("Phase 6/8: Iterative per-barangay merging loop [PRIORITIZE CONTIGUOUS MERGES TO 299 HH]...")
         
         # Group split EAs by parent barangay
         barangay_split_groups = {}
@@ -3609,9 +3718,9 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             if any(is_merge_candidate(ea) or ea['hh_count'] == 0 for ea in barangay_split_groups[bar_code])
         ]
         
-        multi_feedback.setCurrentStep(6)
+        multi_feedback.setCurrentStep(5)
         multi_feedback.setProgressText(
-            f"{_PHASE_LABELS[6]} [0/{len(merge_bar_keys)} barangay(s)]..."
+            f"{_PHASE_LABELS[5]} [0/{len(merge_bar_keys)} barangay(s)]..."
         )
         
         def process_barangay_merge_wrapper(bar_code, bar_eas, parent_feedback):
@@ -3641,7 +3750,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                         _pct = int(_n_done / len(futures) * 100) if futures else 0
                         multi_feedback.setProgress(_pct)
                         multi_feedback.setProgressText(
-                            f"{_PHASE_LABELS[6]} [{_n_done}/{len(futures)} barangay(s) done]..."
+                            f"{_PHASE_LABELS[5]} [{_n_done}/{len(futures)} barangay(s) done]..."
                         )
                         _last_n_done = _n_done
 
@@ -3674,14 +3783,14 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
         if multi_feedback.isCanceled():
             raise QgsProcessingException("Algorithm cancelled by user.")
 
-        # ── Phase 8: Final Compliance Sweep ──────────────────────────────────────────────────
-        multi_feedback.setCurrentStep(7)
-        multi_feedback.setProgressText(f"{_PHASE_LABELS[7]}...")
+        # ── Phase 7: Final Compliance Sweep ──────────────────────────────────────────────────
+        multi_feedback.setCurrentStep(6)
+        multi_feedback.setProgressText(f"{_PHASE_LABELS[6]}...")
         # --- Final Compliance Sweep ---
         # A global last-resort pass that enforces [min_household, max_household] on every EA
         # in the output list. Runs after per-barangay processing; handles any remaining
         # violations that the iterative loop could not resolve within its 25-iteration budget.
-        feedback.pushInfo("Phase 8/9: Final compliance sweep...")
+        feedback.pushInfo("Phase 7/8: Final compliance sweep...")
         # Temporary bypass to disable Phase 8
         compliance_changed = False
         compliance_pass = 0
@@ -3697,7 +3806,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             _pct = int(compliance_pass / max_compliance_passes * 100)
             multi_feedback.setProgress(_pct)
             multi_feedback.setProgressText(
-                f"{_PHASE_LABELS[7]} [pass {compliance_pass}/{max_compliance_passes}]..."
+                f"{_PHASE_LABELS[6]} [pass {compliance_pass}/{max_compliance_passes}]..."
             )
 
             over_idx  = [i for i, ea in enumerate(eas) if is_delineation_candidate(ea)]
@@ -3877,7 +3986,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             bar_eas = barangay_to_final_eas[bar]
             
             # Centroid-based geographic ordering shall only be performed for barangays that contain identified Candidates for Delineation.
-            has_delin = any(str(ea.get('original_code', '')).strip() in delineation_candidate_eans for ea in barangay_groups.get(bar, []))
+            has_delin = any(ea.get('original_id') in delineation_candidate_ids for ea in barangay_groups.get(bar, []))
             if has_delin:
                 bar_eas.sort(key=get_sort_key)
             else:
@@ -3937,11 +4046,11 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 # Cache sort index to preserve the conditional sorting sequence in output generation
                 ea['sort_index'] = i
 
-        # ── Phase 9: Output Generation ───────────────────────────────────────────────────────────
-        multi_feedback.setCurrentStep(8)
-        multi_feedback.setProgressText(f"{_PHASE_LABELS[8]} [0/{len(eas):,}]...")
+        # ── Phase 8: Output Generation ───────────────────────────────────────────────────────────
+        multi_feedback.setCurrentStep(7)
+        multi_feedback.setProgressText(f"{_PHASE_LABELS[7]} [0/{len(eas):,}]...")
         # --- Output Generation ---
-        feedback.pushInfo("Phase 9/9: Writing output features...")
+        feedback.pushInfo("Phase 8/8: Writing output features...")
         
         # Sort output EAs by geocode (parent_barangay) then by sort_index to preserve the
         # conditional sorting sequence from code assignment.
@@ -4002,7 +4111,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             is_unchanged_retain = False
             if not ea.get('from_split', False) and not ea.get('from_merge', False):
                 _ea_ean_str = str(ea.get('original_code', '')).strip()
-                if _ea_ean_str not in delineation_candidate_eans and _ea_ean_str not in merge_candidate_eans:
+                if _ea_id not in delineation_candidate_ids and _ea_id not in merge_candidate_ids:
                     is_unchanged_retain = True
             
             final_pop = ea['original_hhcount'] if is_unchanged_retain else ea['hh_count']
@@ -4065,10 +4174,10 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
 
             # Add to delineated sink if it originated from a delineation candidate
             # (Use EAN lookup instead of from_split flag, which can be overwritten by Phase 8 merges)
-            _ea_orig_code = str(ea.get('original_code', '')).strip()
+            _ea_id = ea.get('original_id')
             _is_delineation_result = (
                 ea.get('from_split', False)
-                or _ea_orig_code in delineation_candidate_eans
+                or _ea_id in delineation_candidate_ids
             )
             if _is_delineation_result:
                 if delineated_sink is not None:
@@ -4141,10 +4250,10 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             multi_feedback.setProgress(_out_pct)
             if i % 100 == 0 or _out_pct == 100:
                 multi_feedback.setProgressText(
-                    f"{_PHASE_LABELS[8]} [{i + 1:,}/{len(eas):,}]..."
+                    f"{_PHASE_LABELS[7]} [{i + 1:,}/{len(eas):,}]..."
                 )
 
-        multi_feedback.setProgress(100)  # Phase 9 complete
+        multi_feedback.setProgress(100)  # Phase 8 complete
         feedback.pushInfo("Successfully created and structured Enumeration Areas.")
 
         # Log total EAs processed and total delineation candidates identified at the end
