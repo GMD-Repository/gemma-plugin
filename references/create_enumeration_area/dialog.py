@@ -1492,6 +1492,7 @@ class EALauncherDialog(QDialog):
             'MERGED_OUTPUT': self.merged_edit.text() or 'TEMPORARY_OUTPUT',
             'DELINEATION_CANDIDATE_OUTPUT': self.delin_cand_edit.text() or 'TEMPORARY_OUTPUT',
             'MERGE_CANDIDATE_OUTPUT': self.merge_cand_edit.text() or 'TEMPORARY_OUTPUT',
+            'EXTRACTED_BUILDINGS_OUTPUT': 'TEMPORARY_OUTPUT',
         }
 
         # Clear UI state
