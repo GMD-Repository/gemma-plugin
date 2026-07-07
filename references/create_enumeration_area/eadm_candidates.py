@@ -1626,7 +1626,9 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             if eadel_indi_col_idx != -1:
                 val = _dc_feat.attribute(eadel_indi_col_idx)
                 is_delin = (val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"))
-            else:
+            
+            # Fallback: if not explicitly flagged, still split if it exceeds max_household
+            if not is_delin:
                 is_delin = (_dc_hh >= max_household)
 
             # 2. Determine if it is a merge candidate
@@ -3309,10 +3311,11 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             if ea_item.get('from_split', False) or ea_item.get('from_merge', False):
                 return False
             orig_id = ea_item.get('original_id')
+            is_explicit = False
             if eadel_indi_col_idx != -1 and orig_id in full_ea_by_id:
                 val = full_ea_by_id[orig_id].attribute(eadel_indi_col_idx)
-                return val is not None and str(val).strip().lower() in ("for delineation", "for_delineation")
-            return orig_id in delineation_candidate_ids and ea_item['hh_count'] >= max_household
+                is_explicit = (val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"))
+            return is_explicit or (orig_id in delineation_candidate_ids) or (ea_item['hh_count'] >= max_household)
 
         def is_merge_candidate(ea_item):
             if ea_item.get('from_split', False):
