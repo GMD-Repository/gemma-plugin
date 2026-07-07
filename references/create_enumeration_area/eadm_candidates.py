@@ -916,6 +916,14 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
 
         # Resolve dynamic field names from Previous EA Layer case-insensitively
         ea_fields = previous_ea_source.fields()
+        eadel_indi_col_idx = -1
+        merge_indi_col_idx = -1
+        for i in range(ea_fields.count()):
+            name_lower = ea_fields.at(i).name().lower()
+            if name_lower == "eadel_indi":
+                eadel_indi_col_idx = i
+            elif name_lower == "merge_indi":
+                merge_indi_col_idx = i
         
         # 1. EA ID field
         ea_id_field = "ean"  # Default fallback
@@ -1613,9 +1621,25 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             _dc_ean = _dc_feat.attribute(ea_id_field)
             _dc_ean_str = str(_dc_ean).strip() if _dc_ean is not None else ""
 
-            if _dc_hh >= max_household:
+            # 1. Determine if it is a delineation candidate
+            is_delin = False
+            if eadel_indi_col_idx != -1:
+                val = _dc_feat.attribute(eadel_indi_col_idx)
+                is_delin = (val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"))
+            else:
+                is_delin = (_dc_hh >= max_household)
+
+            # 2. Determine if it is a merge candidate
+            is_merge = False
+            if merge_indi_col_idx != -1:
+                val = _dc_feat.attribute(merge_indi_col_idx)
+                is_merge = (val is not None and str(val).strip().lower() in ("for merging", "for_merging"))
+            else:
+                is_merge = (_dc_hh <= min_household)
+
+            if is_delin:
                 total_delin_candidates += 1
-                _dc_hhdivthres = max_household / _dc_hh
+                _dc_hhdivthres = max_household / _dc_hh if _dc_hh > 0 else 1.0
                 delineation_candidate_ids.add(_dc_feat.id())
                 delineation_candidate_hhdivthres[_dc_feat.id()] = _dc_hhdivthres
                 _dc_geo = ""
@@ -1629,7 +1653,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 parent_bar = resolve_ea_parent_barangay(_dc_feat)
                 if parent_bar and parent_bar != "Unknown":
                     delineation_candidate_bar_geocodes.add(parent_bar)
-            elif _dc_hh <= min_household:
+            elif is_merge:
                 merge_candidate_ids.add(_dc_feat.id())
 
         # Write to delineation candidate sink (both initiators and other EAs within their barangays)
@@ -1671,7 +1695,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                     
                     eadel_indi_idx = delin_cand_fields.indexOf("eadel_indi")
                     if eadel_indi_idx != -1:
-                        indi_val = "for delineation" if feat.id() in delineation_candidate_ids else "ea_reference"
+                        indi_val = "for_delineation" if feat.id() in delineation_candidate_ids else "ea_reference"
                         out_feat.setAttribute(eadel_indi_idx, indi_val)
                     
                     # Clear fid attribute to let OGR generate sequential IDs
@@ -1817,7 +1841,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                     
                     merge_indi_idx = merge_cand_fields_filtered.indexOf("merge_indi")
                     if merge_indi_idx != -1:
-                        indi_val = "for merging" if feat.id() in merge_candidate_ids else "merge_partner"
+                        indi_val = "for_merging" if feat.id() in merge_candidate_ids else "merge_partner"
                         out_feat.setAttribute(merge_indi_idx, indi_val)
                     
                     # Clear fid attribute to let OGR generate sequential IDs
@@ -2226,12 +2250,24 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                         
             return labels, centroids
 
+        def is_parent_delineation_candidate(ea_item):
+            orig_id = ea_item.get('original_id')
+            if orig_id is not None and eadel_indi_col_idx != -1 and orig_id in full_ea_by_id:
+                val = full_ea_by_id[orig_id].attribute(eadel_indi_col_idx)
+                return val is not None and str(val).strip().lower() in ("for delineation", "for_delineation")
+            return False
+
         # Pure K-Means + Voronoi split logic (extracted as helper)
         # Shared helper: merges any part below min_household into its best sibling until
         # all parts satisfy the minimum or only one remains (signalling a failed split).
         # Returns the cleaned list; callers must check len() >= 2 before accepting the split.
         def enforce_min_household(parts, fback, ea_geom=None):
+            is_parent_delin = False
+            if parts:
+                is_parent_delin = is_parent_delineation_candidate(parts[0])
             while len(parts) > 1:
+                if is_parent_delin and len(parts) == 2:
+                    break
                 under = [i for i, p in enumerate(parts) if p['hh_count'] <= min_household]  # strictly above min_household required
                 if not under:
                     break
@@ -2657,6 +2693,9 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 return [ea_item]
             bldgs = ea_item.get('buildings', [])
             if not bldgs:
+                if is_delineation_candidate(ea_item):
+                    fback.pushInfo(f"[EA {ea_item['original_code']}] Delineation candidate has no building points. Forcing geometric split...")
+                    return force_geometric_split(ea_item, target_pop, fback)
                 return [ea_item]
             road_lines = collect_linear_features(ea_item['geom'], road_index, road_geoms)
             river_lines = collect_linear_features(ea_item['geom'], river_index, river_geoms)
@@ -3006,8 +3045,13 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                     })
                 
                 # Merge zero-household strips into their nearest populated neighbour
-                zero_parts    = [p for p in parts if p['hh_count'] == 0]
-                nonzero_parts = [p for p in parts if p['hh_count'] > 0]
+                is_parent_delin = is_parent_delineation_candidate(ea_item)
+                if is_parent_delin:
+                    nonzero_parts = list(parts)
+                    zero_parts = []
+                else:
+                    zero_parts    = [p for p in parts if p['hh_count'] == 0]
+                    nonzero_parts = [p for p in parts if p['hh_count'] > 0]
                 
                 if not nonzero_parts:
                     continue  # All strips empty — try next k
@@ -3221,12 +3265,18 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 'parent_barangay': bar_geo
             })
 
-        # Calculate max original EA sequence number per parent barangay
+        # Calculate max original EA sequence number per parent barangay from all EAs in the active barangays
         max_ea_number = {}
-        for ea in eas:
-            bar_geo = ea['parent_barangay']
-            
-            orig_code_str = str(ea['original_code']).strip() if ea['original_code'] is not None else "000"
+        for feat in all_ea_features:
+            bar_geo = resolve_ea_parent_barangay(feat)
+            if not bar_geo or bar_geo == "Unknown":
+                continue
+                
+            orig_code = feat.attribute(ea_id_field)
+            orig_code_str = str(orig_code).strip() if orig_code is not None else "000"
+            if orig_code_str.endswith(".0"):
+                orig_code_str = orig_code_str[:-2]
+                
             digits = "".join([c for c in orig_code_str if c.isdigit()])
             orig_first3 = digits[:3] if len(digits) >= 3 else digits.zfill(3)
             
@@ -3258,14 +3308,22 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
         def is_delineation_candidate(ea_item):
             if ea_item.get('from_split', False) or ea_item.get('from_merge', False):
                 return False
-            return ea_item.get('original_id') in delineation_candidate_ids and ea_item['hh_count'] >= max_household
+            orig_id = ea_item.get('original_id')
+            if eadel_indi_col_idx != -1 and orig_id in full_ea_by_id:
+                val = full_ea_by_id[orig_id].attribute(eadel_indi_col_idx)
+                return val is not None and str(val).strip().lower() in ("for delineation", "for_delineation")
+            return orig_id in delineation_candidate_ids and ea_item['hh_count'] >= max_household
 
         def is_merge_candidate(ea_item):
             if ea_item.get('from_split', False):
                 return ea_item['hh_count'] <= min_household
             if ea_item.get('from_merge', False):
                 return False
-            return (ea_item.get('original_id') in merge_candidate_ids) or (ea_item.get('original_id') in delineation_candidate_ids and ea_item['hh_count'] <= min_household)
+            orig_id = ea_item.get('original_id')
+            if merge_indi_col_idx != -1 and orig_id in full_ea_by_id:
+                val = full_ea_by_id[orig_id].attribute(merge_indi_col_idx)
+                return val is not None and str(val).strip().lower() in ("for merging", "for_merging")
+            return (orig_id in merge_candidate_ids) or (orig_id in delineation_candidate_ids and ea_item['hh_count'] <= min_household)
 
         # Helper function to run the iterative splitting loop on a single Barangay's EAs
         def process_barangay_split(bar_code, bar_eas, fback):
@@ -3464,108 +3522,56 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                         best_neighbor_idx = -1
                         best_neighbor_score = float('inf')
                         
-                        # Pass 0: Prioritize merging contiguous merge candidates (<= 100 HH)
+                        # Pass 1: Find adjacent non-split neighbor that is NOT a merge candidate
                         for j in range(len(bar_eas)):
                             if idx == j or j in merged_indices:
                                 continue
+                                
                             neighbor = bar_eas[j]
+                            if neighbor.get('from_split', False):
+                                continue
+                            if is_delineation_candidate(neighbor):
+                                continue
+                            if neighbor.get('original_id') in delineation_candidate_ids:
+                                continue
                             if is_merge_candidate(neighbor):
-                                # Check contiguity
+                                continue
+                                
+                            # Check contiguity
+                            if ea['geom'].touches(neighbor['geom']) or ea['geom'].intersects(neighbor['geom']):
+                                combined_hh = ea['hh_count'] + neighbor['hh_count']
+                                if combined_hh <= max_household:
+                                    score = abs(combined_hh - (max_household - 1))
+                                    if score < best_neighbor_score:
+                                        best_neighbor_score = score
+                                        best_neighbor_idx = j
+                        
+                        # Pass 2: Fallback to adjacent from_split neighbor that is NOT a merge candidate
+                        if best_neighbor_idx == -1:
+                            for j in range(len(bar_eas)):
+                                if idx == j or j in merged_indices:
+                                    continue
+                                neighbor = bar_eas[j]
+                                if is_delineation_candidate(neighbor):
+                                    continue
+                                if neighbor.get('original_id') in delineation_candidate_ids:
+                                    continue
+                                if is_merge_candidate(neighbor):
+                                    continue
+                                    
                                 if ea['geom'].touches(neighbor['geom']) or ea['geom'].intersects(neighbor['geom']):
                                     combined_hh = ea['hh_count'] + neighbor['hh_count']
-                                    if combined_hh < max_household:
+                                    if combined_hh <= max_household:
                                         score = abs(combined_hh - (max_household - 1))
                                         if score < best_neighbor_score:
                                             best_neighbor_score = score
                                             best_neighbor_idx = j
                                             
-                        # Pass 1: find the best adjacent non-split neighbor whose combined count is within threshold
                         if best_neighbor_idx == -1:
-                            for j in range(len(bar_eas)):
-                                if idx == j or j in merged_indices:
-                                    continue
-                                    
-                                neighbor = bar_eas[j]
-                                # Prefer non-split neighbours to avoid undoing valid splits
-                                if neighbor.get('from_split', False):
-                                    continue
-                                if is_delineation_candidate(neighbor):
-                                    continue
-                                # Skip neighbours whose original EAN was a delineation candidate
-                                if neighbor.get('original_id') in delineation_candidate_ids:
-                                    continue
-                                    
-                                # Check contiguity
-                                if ea['geom'].touches(neighbor['geom']) or ea['geom'].intersects(neighbor['geom']):
-                                    combined_hh = ea['hh_count'] + neighbor['hh_count']
-                                    if min_household <= combined_hh < max_household:
-                                        score = abs(combined_hh - (max_household - 1))
-                                        if score < best_neighbor_score:
-                                            best_neighbor_score = score
-                                            best_neighbor_idx = j
-                        
-                        # Pass 2: if no non-split neighbour found, allow from_split neighbours as fallback
-                        if best_neighbor_idx == -1:
-                            for j in range(len(bar_eas)):
-                                if idx == j or j in merged_indices:
-                                    continue
-                                neighbor = bar_eas[j]
-                                if is_delineation_candidate(neighbor):
-                                    continue
-                                # Skip neighbours whose original EAN was a delineation candidate
-                                if neighbor.get('original_id') in delineation_candidate_ids:
-                                    continue
-                                if ea['geom'].touches(neighbor['geom']) or ea['geom'].intersects(neighbor['geom']):
-                                    combined_hh = ea['hh_count'] + neighbor['hh_count']
-                                    if min_household <= combined_hh < max_household:
-                                        score = abs(combined_hh - (max_household - 1))
-                                        if score < best_neighbor_score:
-                                            best_neighbor_score = score
-                                            best_neighbor_idx = j
-                        
-                        # Pass 3: if still no neighbour within strict threshold, allow any touching neighbour
-                        # (combined must strictly be under max_household to prevent subsequent split)
-                        if best_neighbor_idx == -1:
-                            for j in range(len(bar_eas)):
-                                if idx == j or j in merged_indices:
-                                    continue
-                                neighbor = bar_eas[j]
-                                if is_delineation_candidate(neighbor):
-                                    continue
-                                # Skip neighbours whose original EAN was a delineation candidate
-                                if neighbor.get('original_id') in delineation_candidate_ids:
-                                    continue
-                                if ea['geom'].touches(neighbor['geom']) or ea['geom'].intersects(neighbor['geom']):
-                                    combined_hh = ea['hh_count'] + neighbor['hh_count']
-                                    if combined_hh < max_household:
-                                        score = abs(combined_hh - (max_household - 1))
-                                        if score < best_neighbor_score:
-                                            best_neighbor_score = score
-                                            best_neighbor_idx = j
-                        
-                        # Pass 4: absolute fallback — nearest by centroid distance if nothing touches.
-                        # Neighbors must keep the combined count strictly below max_household.
-                        if best_neighbor_idx == -1:
-                            up_centroid = ea['geom'].centroid().asPoint()
-                            best_dist = float('inf')
-                            for j in range(len(bar_eas)):
-                                if idx == j or j in merged_indices:
-                                    continue
-                                if is_delineation_candidate(bar_eas[j]):
-                                    continue
-                                # Skip neighbours whose original EAN was a delineation candidate
-                                if bar_eas[j].get('original_id') in delineation_candidate_ids:
-                                    continue
-                                dist = up_centroid.distance(bar_eas[j]['geom'].centroid().asPoint())
-                                combined = ea['hh_count'] + bar_eas[j]['hh_count']
-                                if combined < max_household:
-                                    if dist < best_dist:
-                                        best_dist = dist
-                                        best_neighbor_idx = j
-                            if best_neighbor_idx == -1:
-                                # Truly no candidate — leave as-is
-                                new_eas.append(ea)
-                                continue
+                            # If no adjacent neighbor is eligible (must be adjacent, non-merge, <= max_household),
+                            # leave it as-is (do not merge to non-adjacent / invalid neighbors)
+                            new_eas.append(ea)
+                            continue
 
                         # --- Shared merge block (used by whichever Pass found the best neighbour) ---
                         if best_neighbor_idx != -1:
