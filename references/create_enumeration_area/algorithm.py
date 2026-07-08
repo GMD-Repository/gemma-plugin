@@ -3255,6 +3255,71 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 return val is not None and str(val).strip().lower() in ("for merging", "for_merging")
             return (orig_id in merge_candidate_ids) or (orig_id in delineation_candidate_ids and ea_item['hh_count'] <= min_household)
 
+        # Resolve field indices for the output line layer case-insensitively
+        ea_fields = previous_ea_source.fields()
+        geocode_idx = -1
+        ean_idx = -1
+        region_idx = -1
+        province_idx = -1
+        city_mun_idx = -1
+        barangay_idx_col = -1
+        eadel_indi_idx = -1
+        remarks_idx = -1
+        
+        for i in range(ea_fields.count()):
+            name_lower = ea_fields.at(i).name().lower()
+            if name_lower == "geocode":
+                geocode_idx = i
+            elif name_lower == ea_id_field.lower():
+                ean_idx = i
+            elif name_lower == "region":
+                region_idx = i
+            elif name_lower == "province":
+                province_idx = i
+            elif name_lower in ["city_mun", "citymun"]:
+                city_mun_idx = i
+            elif name_lower == "barangay":
+                barangay_idx_col = i
+            elif name_lower == "eadel_indi":
+                eadel_indi_idx = i
+            elif name_lower == "remarks":
+                remarks_idx = i
+
+        def get_attr_val(ea_item, idx):
+            if idx != -1 and idx < len(ea_item['attributes']):
+                val = ea_item['attributes'][idx]
+                if val is not None and not (isinstance(val, QVariant) and val.isNull()):
+                    return str(val)
+            return ""
+
+        def get_lines_from_geom(geom):
+            lines = []
+            if geom.isEmpty():
+                return lines
+            
+            flat_type = QgsWkbTypes.flatType(geom.wkbType())
+            
+            if flat_type == QgsWkbTypes.LineString:
+                lines.append(geom)
+            elif flat_type == QgsWkbTypes.MultiLineString:
+                for part in geom.constParts():
+                    lines.append(QgsGeometry(part.clone()))
+            elif flat_type == QgsWkbTypes.GeometryCollection or geom.isMultipart():
+                try:
+                    for part in geom.constParts():
+                        part_geom = QgsGeometry(part.clone())
+                        part_flat = QgsWkbTypes.flatType(part_geom.wkbType())
+                        if part_flat == QgsWkbTypes.LineString:
+                            lines.append(part_geom)
+                        elif part_flat == QgsWkbTypes.MultiLineString:
+                            for sub_part in part_geom.constParts():
+                                lines.append(QgsGeometry(sub_part.clone()))
+                        elif part_flat == QgsWkbTypes.GeometryCollection:
+                            lines.extend(get_lines_from_geom(part_geom))
+                except Exception:
+                    pass
+            return lines
+
         # Helper function to run the splitting process on a single Barangay's EAs
         def process_barangay_split(bar_code, bar_eas, fback):
             if fback.isCanceled():
@@ -4010,6 +4075,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 previous_ea_source.sourceCrs(), target_crs, context.transformContext()
             )
 
+        final_geom_by_candidate = {}
+
         bldg_out_fields = QgsFields()
         if extracted_buildings_sink is not None:
             bldg_out_fields = QgsFields(building_source.fields())
@@ -4059,6 +4126,10 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                     continue
                 geom = QgsGeometry.collectGeometry(poly_parts).buffer(0.0, 3)
                 geom.convertToMultiType()
+            
+            _ea_id = ea.get('original_id')
+            if _ea_id in delineation_candidate_ids:
+                final_geom_by_candidate.setdefault(_ea_id, []).append((QgsGeometry(geom), ea))
             
             out_feat = QgsFeature(out_fields)
             out_feat.setGeometry(geom)
@@ -4203,6 +4274,89 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 )
 
         multi_feedback.setProgress(100)  # Phase 8 complete
+
+        # ── Output Splitting Lines Layer Per Barangay ───────────────────────
+        from qgis.core import QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry
+        
+        # Group generated line features by barangay
+        lines_by_barangay = {}
+        
+        for candidate_id, part_tuples in final_geom_by_candidate.items():
+            if len(part_tuples) >= 2:
+                # Retrieve parent candidate feature
+                if candidate_id not in full_ea_by_id:
+                    continue
+                parent_feat = full_ea_by_id[candidate_id]
+                
+                # Get parent barangay code from the first part
+                bar_code = part_tuples[0][1].get('parent_barangay')
+                if not bar_code:
+                    continue
+                
+                # Generate line boundaries between adjacent final parts
+                for i in range(len(part_tuples)):
+                    for j in range(i + 1, len(part_tuples)):
+                        part_i_geom = part_tuples[i][0]
+                        part_j_geom = part_tuples[j][0]
+                        shared_boundary = part_i_geom.intersection(part_j_geom)
+                        if shared_boundary and not shared_boundary.isEmpty():
+                            # Merge touching segments to make lines contiguous
+                            merged_boundary = shared_boundary.mergeLines()
+                            if merged_boundary.isEmpty():
+                                merged_boundary = shared_boundary
+                            
+                            lines = get_lines_from_geom(merged_boundary)
+                            for line_geom in lines:
+                                if not line_geom.isEmpty():
+                                    attrs = {
+                                        'geocode': str(parent_feat.attribute(geocode_idx)) if geocode_idx != -1 and parent_feat.attribute(geocode_idx) is not None else "",
+                                        'ean': str(parent_feat.attribute(ean_idx)) if ean_idx != -1 and parent_feat.attribute(ean_idx) is not None else "",
+                                        'region': str(parent_feat.attribute(region_idx)) if region_idx != -1 and parent_feat.attribute(region_idx) is not None else "",
+                                        'province': str(parent_feat.attribute(province_idx)) if province_idx != -1 and parent_feat.attribute(province_idx) is not None else "",
+                                        'city_mun': str(parent_feat.attribute(city_mun_idx)) if city_mun_idx != -1 and parent_feat.attribute(city_mun_idx) is not None else "",
+                                        'barangay': str(parent_feat.attribute(barangay_idx_col)) if barangay_idx_col != -1 and parent_feat.attribute(barangay_idx_col) is not None else "",
+                                        'indicator': str(parent_feat.attribute(eadel_indi_idx)) if eadel_indi_idx != -1 and parent_feat.attribute(eadel_indi_idx) is not None else "",
+                                        'remarks': str(parent_feat.attribute(remarks_idx)) if remarks_idx != -1 and parent_feat.attribute(remarks_idx) is not None else "",
+                                    }
+                                    lines_by_barangay.setdefault(bar_code, []).append((line_geom, attrs))
+                                        
+        for bar_code, bar_line_features in lines_by_barangay.items():
+            if bar_line_features:
+                cleaned_digits = "".join([c for c in str(bar_code) if c.isdigit()])
+                if len(cleaned_digits) > 9:
+                    cleaned_digits = cleaned_digits[:9]
+                ppmmbbb = cleaned_digits.zfill(9)
+                layer_name = f"{ppmmbbb}_eadel_update"
+                
+                crs_auth_id = target_crs.authid()
+                uri = f"LineString?crs={crs_auth_id}&field=geocode:string&field=ean:string&field=region:string&field=province:string&field=city_mun:string&field=barangay:string&field=indicator:string&field=remarks:string"
+                line_layer = QgsVectorLayer(uri, layer_name, "memory")
+                
+                if line_layer.isValid():
+                    pr = line_layer.dataProvider()
+                    features_to_add = []
+                    for line_geom, attrs in bar_line_features:
+                        f = QgsFeature(line_layer.fields())
+                        f.setGeometry(line_geom)
+                        f.setAttribute("geocode", attrs.get('geocode', ''))
+                        f.setAttribute("ean", attrs.get('ean', ''))
+                        f.setAttribute("region", attrs.get('region', ''))
+                        f.setAttribute("province", attrs.get('province', ''))
+                        f.setAttribute("city_mun", attrs.get('city_mun', ''))
+                        f.setAttribute("barangay", attrs.get('barangay', ''))
+                        f.setAttribute("indicator", attrs.get('indicator', ''))
+                        f.setAttribute("remarks", attrs.get('remarks', ''))
+                        features_to_add.append(f)
+                    
+                    pr.addFeatures(features_to_add)
+                    line_layer.updateExtents()
+                    
+                    project = QgsProject.instance()
+                    if project:
+                        project.addMapLayer(line_layer)
+                    feedback.pushInfo(f"Created line layer {layer_name} with {len(features_to_add)} feature(s).")
+                else:
+                    feedback.reportError(f"Failed to create memory layer for {layer_name}")
         feedback.pushInfo("Successfully created and structured Enumeration Areas.")
 
         # Log total EAs processed and total delineation candidates identified at the end
