@@ -108,53 +108,96 @@ class LayerGroupsTreeWidget(QTreeWidget):
         if not selected_items:
             event.ignore()
             return
-            
-        old_parent = selected_items[0].parent()
-        if old_parent is None:
-            event.ignore()
-            return
-            
-        drop_target = self.itemAt(event.pos())
-        if not drop_target:
-            event.ignore()
-            return
-            
-        target_parent = drop_target if drop_target.parent() is None else drop_target.parent()
-        if target_parent != old_parent:
-            event.ignore()
-            return
-            
+
+        dragged = selected_items[0]
+        is_top_level = dragged.parent() is None
+
+        # Let Qt compute the drop indicator first
         super().dragMoveEvent(event)
+
+        drop_target = self.itemAt(event.pos())
+        indicator = self.dropIndicatorPosition()
+
+        if is_top_level:
+            # --- Dragging a GROUP ---
+            # "OnItem" would nest the group under another item → block it
+            if indicator == QTreeWidget.OnItem:
+                event.ignore()
+                return
+            # If the indicator is above/below a *child* item, the group
+            # would land inside that child's parent group → block it
+            if drop_target and drop_target.parent() is not None:
+                event.ignore()
+                return
+        else:
+            # --- Dragging a LAYER (child item) ---
+            old_parent = dragged.parent()
+            if not drop_target:
+                event.ignore()
+                return
+            # "OnItem" on another layer would nest it → block
+            if indicator == QTreeWidget.OnItem and drop_target.parent() is not None:
+                event.ignore()
+                return
+            # Ensure the layer stays within its own group
+            target_parent = drop_target if drop_target.parent() is None else drop_target.parent()
+            if target_parent != old_parent:
+                event.ignore()
+                return
 
     def dropEvent(self, event):
         selected_items = self.selectedItems()
         if not selected_items:
             event.ignore()
             return
-            
-        old_parent = selected_items[0].parent()
-        if old_parent is None:
-            event.ignore()
-            return
-            
+
+        dragged = selected_items[0]
+        is_top_level = dragged.parent() is None
+
         drop_target = self.itemAt(event.pos())
-        if not drop_target:
-            event.ignore()
-            return
-            
-        target_parent = drop_target if drop_target.parent() is None else drop_target.parent()
-        if target_parent != old_parent:
-            event.ignore()
-            return
-            
-        self._dragged_combos = {}
-        for item in selected_items:
-            combo = self.itemWidget(item, 1)
-            self._dragged_combos[item.text(0)] = combo.currentText() if combo else ""
-            
-        super().dropEvent(event)
-        QTimer.singleShot(0, self._restore_missing_combos)
-        
+        indicator = self.dropIndicatorPosition()
+
+        if is_top_level:
+            # --- Dropping a GROUP ---
+            if indicator == QTreeWidget.OnItem:
+                event.ignore()
+                return
+            if drop_target and drop_target.parent() is not None:
+                event.ignore()
+                return
+
+            # Save combo widgets for every child in every dragged group
+            self._dragged_combos = {}
+            for item in selected_items:
+                for ci in range(item.childCount()):
+                    child = item.child(ci)
+                    combo = self.itemWidget(child, 1)
+                    self._dragged_combos[child.text(0)] = combo.currentText() if combo else ""
+
+            super().dropEvent(event)
+            QTimer.singleShot(0, self._restore_missing_combos)
+        else:
+            # --- Dropping a LAYER ---
+            old_parent = dragged.parent()
+            if not drop_target:
+                event.ignore()
+                return
+            if indicator == QTreeWidget.OnItem and drop_target.parent() is not None:
+                event.ignore()
+                return
+            target_parent = drop_target if drop_target.parent() is None else drop_target.parent()
+            if target_parent != old_parent:
+                event.ignore()
+                return
+
+            self._dragged_combos = {}
+            for item in selected_items:
+                combo = self.itemWidget(item, 1)
+                self._dragged_combos[item.text(0)] = combo.currentText() if combo else ""
+
+            super().dropEvent(event)
+            QTimer.singleShot(0, self._restore_missing_combos)
+
     def _restore_missing_combos(self):
         for i in range(self.topLevelItemCount()):
             group_item = self.topLevelItem(i)
@@ -253,6 +296,16 @@ class PackageDialog(QDialog, DialogUi):
         """Return a list of layer names currently in the QGIS project."""
         project = QgsProject.instance()
         return [layer.name() for layer in project.mapLayers().values()]
+
+    def _layer_type_key(self, layer_name):
+        """Extract the layer type suffix after the first '_'.
+
+        E.g. '813_railroad' → 'railroad', '456_bldg_point' → 'bldg_point'.
+        If there is no underscore the full name is returned so exact matching
+        still works as a fallback.
+        """
+        idx = layer_name.find('_')
+        return layer_name[idx + 1:] if idx >= 0 else layer_name
 
     def _get_already_grouped_layers(self):
         """Return a set of layer names that are checked in any group."""
@@ -587,8 +640,17 @@ class PackageDialog(QDialog, DialogUi):
         self.layer_groups_tree.clear()
         self.layer_groups_tree.blockSignals(True)
         
-        active_layers_set = set(self._get_active_project_layers())
+        active_layers = self._get_active_project_layers()
+        active_layers_set = set(active_layers)
         pending_combos = []
+
+        # Build key → active layer name lookup for suffix-based matching.
+        # Key = everything after the first '_' (the layer type identifier).
+        key_to_active = {}
+        for aname in active_layers:
+            key = self._layer_type_key(aname)
+            if key not in key_to_active:
+                key_to_active[key] = aname
         
         for group_name, data in preset_data.items():
             group_item = QTreeWidgetItem(self.layer_groups_tree)
@@ -607,6 +669,12 @@ class PackageDialog(QDialog, DialogUi):
                 all_layers_in_group = []
                 
             group_item.setCheckState(0, Qt.Checked if group_checked else Qt.Unchecked)
+
+            # Build key-based lookups for checked layers and QML styles
+            checked_keys = set(self._layer_type_key(cl) for cl in checked_layers)
+            qml_by_key = {}
+            for pname, qml in saved_qml_styles.items():
+                qml_by_key[self._layer_type_key(pname)] = qml
             
             # If all_layers is missing (e.g. older preset fallback), sort active_layers_set based on QML matching
             if not all_layers_in_group:
@@ -617,28 +685,51 @@ class PackageDialog(QDialog, DialogUi):
                     return (0, detected) if detected else (1, lname)
                 all_layers_in_group.sort(key=layer_sort_key)
                 
-            # Create items in saved order — do NOT set item widgets yet
-            for layer_name in all_layers_in_group:
-                if layer_name not in active_layers_set:
+            # Create items in saved order — do NOT set item widgets yet.
+            # Use suffix-based matching when exact name is not found.
+            matched_active = set()
+            for preset_layer_name in all_layers_in_group:
+                # Resolve to an active project layer: exact match first, then key
+                if preset_layer_name in active_layers_set:
+                    active_name = preset_layer_name
+                else:
+                    pkey = self._layer_type_key(preset_layer_name)
+                    active_name = key_to_active.get(pkey)
+
+                if not active_name or active_name in matched_active:
                     continue
+                matched_active.add(active_name)
+
                 layer_item = QTreeWidgetItem(group_item)
-                layer_item.setText(0, layer_name)
+                layer_item.setText(0, active_name)
                 layer_item.setFlags(layer_item.flags() | Qt.ItemIsUserCheckable)
-                if layer_name in checked_layers:
+
+                # Determine checked state (exact or key match)
+                active_key = self._layer_type_key(active_name)
+                if preset_layer_name in checked_layers or active_key in checked_keys:
                     layer_item.setCheckState(0, Qt.Checked)
                 else:
                     layer_item.setCheckState(0, Qt.Unchecked)
-                preset_qml = saved_qml_styles.get(layer_name, "")
-                pending_combos.append((layer_item, layer_name, preset_qml))
+
+                # Determine QML style (exact first, then key match)
+                preset_qml = (saved_qml_styles.get(preset_layer_name, "")
+                              or saved_qml_styles.get(active_name, "")
+                              or qml_by_key.get(active_key, ""))
+                pending_combos.append((layer_item, active_name, preset_qml))
                 
-            # Append any newly added active layers that aren't in the preset group
-            for layer_name in active_layers_set:
-                if layer_name not in all_layers_in_group:
-                    layer_item = QTreeWidgetItem(group_item)
-                    layer_item.setText(0, layer_name)
-                    layer_item.setFlags(layer_item.flags() | Qt.ItemIsUserCheckable)
-                    layer_item.setCheckState(0, Qt.Unchecked)
-                    pending_combos.append((layer_item, layer_name, ""))
+            # Append any active layers not matched to any preset layer
+            for layer_name in active_layers:
+                if layer_name in matched_active:
+                    continue
+                # Also skip if its type key was already matched
+                if self._layer_type_key(layer_name) in {self._layer_type_key(m) for m in matched_active}:
+                    continue
+                matched_active.add(layer_name)
+                layer_item = QTreeWidgetItem(group_item)
+                layer_item.setText(0, layer_name)
+                layer_item.setFlags(layer_item.flags() | Qt.ItemIsUserCheckable)
+                layer_item.setCheckState(0, Qt.Unchecked)
+                pending_combos.append((layer_item, layer_name, ""))
                     
             self.layer_groups_tree.expandItem(group_item)
             
