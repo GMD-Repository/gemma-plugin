@@ -694,7 +694,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 self.SNAP_TOLERANCE,
                 "Snapping Tolerance (meters) for road/river alignment",
                 type=QgsProcessingParameterNumber.Double,
-                defaultValue=20.0,
+                defaultValue=15.0,
                 minValue=0.0,
             )
         )
@@ -4277,49 +4277,201 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
 
         # ── Output Splitting Lines Layer Per Barangay ───────────────────────
         from qgis.core import QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry
-        
-        # Group generated line features by barangay
+        import math
+
+        # ── Helper: refine the merged split-line geometry ─────────────────────
+        # Fixes two visual artefacts that appear after mergeLines():
+        #   1. Gaps — dangling endpoint pairs that are spatially close but not
+        #      touching are bridged with a straight connecting segment.
+        #   2. Short dangling branches — tiny isolated arms whose endpoint does
+        #      not connect to anything else and whose length is below a minimum
+        #      threshold are removed as processing artefacts.
+        def refine_split_line(geom, gap_tolerance, min_branch_len):
+            """Return a refined QgsGeometry with gaps bridged and tiny branches pruned."""
+            if geom is None or geom.isEmpty():
+                return geom
+
+            # Decompose into individual LineString parts
+            parts = []
+            flat = QgsWkbTypes.flatType(geom.wkbType())
+            if flat == QgsWkbTypes.LineString:
+                parts = [geom]
+            elif flat == QgsWkbTypes.MultiLineString:
+                parts = geom.asGeometryCollection()
+            else:
+                return geom  # cannot process other types
+
+            if len(parts) <= 1:
+                return geom  # nothing to refine
+
+            # Extract endpoints: each part contributes [start, end]
+            def endpoints(line_geom):
+                pts = line_geom.asPolyline()
+                if not pts or len(pts) < 2:
+                    return None, None
+                return pts[0], pts[-1]
+
+            def pt_dist(a, b):
+                return math.sqrt((a.x() - b.x()) ** 2 + (a.y() - b.y()) ** 2)
+
+            # Collect all endpoint coordinates indexed by part index and end (0=start,1=end)
+            ep_map = {}  # (part_idx, end_idx) -> QgsPointXY
+            for idx, part in enumerate(parts):
+                s, e = endpoints(part)
+                if s:
+                    ep_map[(idx, 0)] = s
+                if e:
+                    ep_map[(idx, 1)] = e
+
+            # Determine which endpoints connect to another endpoint exactly
+            # (i.e., are interior nodes of the network)
+            keys = list(ep_map.keys())
+            connected = set()  # keys that share coordinates with another endpoint
+            for a in range(len(keys)):
+                for b in range(a + 1, len(keys)):
+                    ka, kb = keys[a], keys[b]
+                    if ka[0] == kb[0]:
+                        continue  # same part, skip
+                    if pt_dist(ep_map[ka], ep_map[kb]) < 1e-8:  # exact coincidence
+                        connected.add(ka)
+                        connected.add(kb)
+
+            # Dangling endpoints = not connected to any other endpoint exactly
+            dangling = [k for k in keys if k not in connected]
+
+            bridge_segments = []
+            bridged = set()
+
+            # Pass 1: bridge gap pairs among dangling endpoints within gap_tolerance
+            for a in range(len(dangling)):
+                for b in range(a + 1, len(dangling)):
+                    ka, kb = dangling[a], dangling[b]
+                    if ka[0] == kb[0]:
+                        continue  # same part
+                    if ka in bridged or kb in bridged:
+                        continue
+                    dist = pt_dist(ep_map[ka], ep_map[kb])
+                    if dist <= gap_tolerance:
+                        # Insert a straight bridge segment between the two dangling ends
+                        pa, pb = ep_map[ka], ep_map[kb]
+                        bridge = QgsGeometry.fromPolylineXY([pa, pb])
+                        if not bridge.isEmpty():
+                            bridge_segments.append(bridge)
+                        bridged.add(ka)
+                        bridged.add(kb)
+
+            # Pass 2: identify short dangling branches to prune
+            # A branch is prunable when BOTH its endpoints are dangling (i.e. it
+            # connects to nothing) and its length is below min_branch_len.
+            pruned_indices = set()
+            for idx, part in enumerate(parts):
+                k_start = (idx, 0)
+                k_end   = (idx, 1)
+                both_dangling = (k_start in dangling or k_start not in ep_map) and \
+                                (k_end   in dangling or k_end   not in ep_map)
+                if both_dangling and part.length() < min_branch_len:
+                    pruned_indices.add(idx)
+
+            # Rebuild: keep non-pruned parts + bridge segments
+            kept = [p for idx, p in enumerate(parts) if idx not in pruned_indices]
+            all_geoms = kept + bridge_segments
+            if not all_geoms:
+                return geom  # nothing survived — return original
+
+            refined = QgsGeometry.unaryUnion(all_geoms)
+            if refined is None or refined.isEmpty():
+                return geom
+            result = refined.mergeLines()
+            return result if result and not result.isEmpty() else refined
+
+        # Build exactly one line feature per EA delineation candidate.
+        # Strategy: pairwise intersection of split parts collects only the shared
+        # boundary edges (no outer perimeter, no holes) → unaryUnion merges duplicates
+        # → mergeLines() stitches into fewest connected strings → refine_split_line()
+        # closes small gaps and prunes dangling branch artefacts → one feature per EA.
         lines_by_barangay = {}
-        
+
         for candidate_id, part_tuples in final_geom_by_candidate.items():
-            if len(part_tuples) >= 2:
-                # Retrieve parent candidate feature
-                if candidate_id not in full_ea_by_id:
-                    continue
-                parent_feat = full_ea_by_id[candidate_id]
-                
-                # Get parent barangay code from the first part
-                bar_code = part_tuples[0][1].get('parent_barangay')
-                if not bar_code:
-                    continue
-                
-                # Generate line boundaries between adjacent final parts
-                for i in range(len(part_tuples)):
-                    for j in range(i + 1, len(part_tuples)):
-                        part_i_geom = part_tuples[i][0]
-                        part_j_geom = part_tuples[j][0]
-                        shared_boundary = part_i_geom.intersection(part_j_geom)
-                        if shared_boundary and not shared_boundary.isEmpty():
-                            # Merge touching segments to make lines contiguous
-                            merged_boundary = shared_boundary.mergeLines()
-                            if merged_boundary.isEmpty():
-                                merged_boundary = shared_boundary
-                            
-                            lines = get_lines_from_geom(merged_boundary)
-                            for line_geom in lines:
-                                if not line_geom.isEmpty():
-                                    attrs = {
-                                        'geocode': str(parent_feat.attribute(geocode_idx)) if geocode_idx != -1 and parent_feat.attribute(geocode_idx) is not None else "",
-                                        'ean': str(parent_feat.attribute(ean_idx)) if ean_idx != -1 and parent_feat.attribute(ean_idx) is not None else "",
-                                        'region': str(parent_feat.attribute(region_idx)) if region_idx != -1 and parent_feat.attribute(region_idx) is not None else "",
-                                        'province': str(parent_feat.attribute(province_idx)) if province_idx != -1 and parent_feat.attribute(province_idx) is not None else "",
-                                        'city_mun': str(parent_feat.attribute(city_mun_idx)) if city_mun_idx != -1 and parent_feat.attribute(city_mun_idx) is not None else "",
-                                        'barangay': str(parent_feat.attribute(barangay_idx_col)) if barangay_idx_col != -1 and parent_feat.attribute(barangay_idx_col) is not None else "",
-                                        'indicator': str(parent_feat.attribute(eadel_indi_idx)) if eadel_indi_idx != -1 and parent_feat.attribute(eadel_indi_idx) is not None else "",
-                                        'remarks': str(parent_feat.attribute(remarks_idx)) if remarks_idx != -1 and parent_feat.attribute(remarks_idx) is not None else "",
-                                    }
-                                    lines_by_barangay.setdefault(bar_code, []).append((line_geom, attrs))
-                                        
+            if len(part_tuples) < 2:
+                continue
+
+            # Retrieve parent candidate feature for attribute lookup
+            if candidate_id not in full_ea_by_id:
+                continue
+            parent_feat = full_ea_by_id[candidate_id]
+
+            # Get parent barangay code from the first part
+            bar_code = part_tuples[0][1].get('parent_barangay')
+            if not bar_code:
+                continue
+
+            # ── Step 1: Pairwise intersection → collect all shared edges ─────────────
+            # intersection() of two adjacent polygons returns only their shared boundary
+            # edge — never the outer perimeter, never interior holes — so no difference()
+            # subtraction is needed and floating-point residuals cannot form artefacts.
+            shared_edges = []
+            for i in range(len(part_tuples)):
+                for j in range(i + 1, len(part_tuples)):
+                    geom_i = part_tuples[i][0]
+                    geom_j = part_tuples[j][0]
+                    if geom_i.isEmpty() or geom_j.isEmpty():
+                        continue
+                    shared = geom_i.intersection(geom_j)
+                    if shared is None or shared.isEmpty():
+                        continue
+                    # Keep only line-type geometry; discard point touches and polygonal
+                    # slivers that may result from imprecise intersection.
+                    flat = QgsWkbTypes.flatType(shared.wkbType())
+                    if flat in (QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString):
+                        shared_edges.append(shared)
+                    elif flat == QgsWkbTypes.GeometryCollection or shared.isMultipart():
+                        # Mixed result — extract only the line sub-geometries
+                        for part in shared.asGeometryCollection():
+                            ptype = QgsWkbTypes.flatType(part.wkbType())
+                            if ptype in (QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString):
+                                shared_edges.append(part)
+
+            if not shared_edges:
+                continue
+
+            # ── Step 2: Union all pairwise shared edges into one geometry ────────────
+            # unaryUnion dissolves any overlapping/duplicate edges that arise when
+            # three or more parts meet at the same internal boundary segment.
+            all_shared = QgsGeometry.unaryUnion(shared_edges)
+            if all_shared is None or all_shared.isEmpty():
+                feedback.pushWarning(
+                    f"[eadel_update] unaryUnion of shared edges produced empty geometry "
+                    f"for candidate {candidate_id}; skipping."
+                )
+                continue
+
+            # ── Step 3: mergeLines() + refine ────────────────────────────────────────
+            merged = all_shared.mergeLines()
+            if merged is None or merged.isEmpty():
+                merged = all_shared
+
+            # Refine: bridge small gaps between dangling endpoints and prune short
+            # dangling branch artefacts.  Thresholds are proportional to snap_tolerance
+            # so they scale correctly with the input data resolution.
+            _gap_tol      = snap_tolerance * 4   # bridge endpoints within 4× snap dist
+            _min_branch   = snap_tolerance * 2   # prune branches shorter than 2× snap dist
+            merged = refine_split_line(merged, _gap_tol, _min_branch)
+
+            # ── Step 4: Build attribute dict once per candidate EA ───────────────────
+            attrs = {
+                'geocode':   str(parent_feat.attribute(geocode_idx))      if geocode_idx      != -1 and parent_feat.attribute(geocode_idx)      is not None else "",
+                'ean':       str(parent_feat.attribute(ean_idx))          if ean_idx          != -1 and parent_feat.attribute(ean_idx)          is not None else "",
+                'region':    str(parent_feat.attribute(region_idx))       if region_idx       != -1 and parent_feat.attribute(region_idx)       is not None else "",
+                'province':  str(parent_feat.attribute(province_idx))     if province_idx     != -1 and parent_feat.attribute(province_idx)     is not None else "",
+                'city_mun':  str(parent_feat.attribute(city_mun_idx))     if city_mun_idx     != -1 and parent_feat.attribute(city_mun_idx)     is not None else "",
+                'barangay':  str(parent_feat.attribute(barangay_idx_col)) if barangay_idx_col != -1 and parent_feat.attribute(barangay_idx_col) is not None else "",
+                'indicator': str(parent_feat.attribute(eadel_indi_idx))   if eadel_indi_idx   != -1 and parent_feat.attribute(eadel_indi_idx)   is not None else "",
+                'remarks':   str(parent_feat.attribute(remarks_idx))      if remarks_idx      != -1 and parent_feat.attribute(remarks_idx)      is not None else "",
+            }
+
+            # ── Step 5: ONE append per candidate EA (1-line-per-EA contract) ─────────
+            lines_by_barangay.setdefault(bar_code, []).append((merged, attrs))
+
         for bar_code, bar_line_features in lines_by_barangay.items():
             if bar_line_features:
                 cleaned_digits = "".join([c for c in str(bar_code) if c.isdigit()])
@@ -4327,34 +4479,44 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                     cleaned_digits = cleaned_digits[:9]
                 ppmmbbb = cleaned_digits.zfill(9)
                 layer_name = f"{ppmmbbb}_eadel_update"
-                
+
                 crs_auth_id = target_crs.authid()
-                uri = f"LineString?crs={crs_auth_id}&field=geocode:string&field=ean:string&field=region:string&field=province:string&field=city_mun:string&field=barangay:string&field=indicator:string&field=remarks:string"
+                # Use MultiLineString so both simple and multi-part boundaries are
+                # accepted without geometry-type mismatch errors.
+                uri = f"MultiLineString?crs={crs_auth_id}&field=geocode:string&field=ean:string&field=region:string&field=province:string&field=city_mun:string&field=barangay:string&field=indicator:string&field=remarks:string"
                 line_layer = QgsVectorLayer(uri, layer_name, "memory")
-                
+
                 if line_layer.isValid():
                     pr = line_layer.dataProvider()
                     features_to_add = []
                     for line_geom, attrs in bar_line_features:
+                        # Normalise to MultiLineString so the layer type is always
+                        # consistent regardless of whether mergeLines returned a
+                        # single LineString or a MultiLineString.
+                        if not line_geom.isMultipart():
+                            line_geom.convertToMultiType()
                         f = QgsFeature(line_layer.fields())
                         f.setGeometry(line_geom)
-                        f.setAttribute("geocode", attrs.get('geocode', ''))
-                        f.setAttribute("ean", attrs.get('ean', ''))
-                        f.setAttribute("region", attrs.get('region', ''))
-                        f.setAttribute("province", attrs.get('province', ''))
-                        f.setAttribute("city_mun", attrs.get('city_mun', ''))
-                        f.setAttribute("barangay", attrs.get('barangay', ''))
+                        f.setAttribute("geocode",   attrs.get('geocode',   ''))
+                        f.setAttribute("ean",       attrs.get('ean',       ''))
+                        f.setAttribute("region",    attrs.get('region',    ''))
+                        f.setAttribute("province",  attrs.get('province',  ''))
+                        f.setAttribute("city_mun",  attrs.get('city_mun',  ''))
+                        f.setAttribute("barangay",  attrs.get('barangay',  ''))
                         f.setAttribute("indicator", attrs.get('indicator', ''))
-                        f.setAttribute("remarks", attrs.get('remarks', ''))
+                        f.setAttribute("remarks",   attrs.get('remarks',   ''))
                         features_to_add.append(f)
-                    
+
                     pr.addFeatures(features_to_add)
                     line_layer.updateExtents()
-                    
+
                     project = QgsProject.instance()
                     if project:
                         project.addMapLayer(line_layer)
-                    feedback.pushInfo(f"Created line layer {layer_name} with {len(features_to_add)} feature(s).")
+                    feedback.pushInfo(
+                        f"Created line layer '{layer_name}' with {len(features_to_add)} "
+                        f"feature(s) ({len(final_geom_by_candidate)} candidate(s) processed)."
+                    )
                 else:
                     feedback.reportError(f"Failed to create memory layer for {layer_name}")
         feedback.pushInfo("Successfully created and structured Enumeration Areas.")

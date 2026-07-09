@@ -356,7 +356,7 @@ class EALauncherDialog(QDialog):
         params_layout.addWidget(QLabel("Snapping Tolerance (meters) for road/river alignment"))
         self.tolerance_spin = QDoubleSpinBox()
         self.tolerance_spin.setRange(0.0, 999.0)
-        self.tolerance_spin.setValue(20.0)
+        self.tolerance_spin.setValue(15.0)
         params_layout.addWidget(self.tolerance_spin)
 
         # Compactness optimization
