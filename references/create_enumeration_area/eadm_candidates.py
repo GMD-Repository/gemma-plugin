@@ -2084,19 +2084,32 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                         elif part_flat == QgsWkbTypes.GeometryCollection:
                             polys.extend(get_polygons_from_geom(part_geom))
                 except Exception:
-                    polys.append(geom)
+                    if flat_type in (QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon):
+                        polys.append(geom)
             else:
-                polys.append(geom)
+                if flat_type in (QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon):
+                    polys.append(geom)
                 
             # Clean each polygon individually to prevent dissolving shared boundaries
             cleaned_polys = []
             for p in polys:
                 cp = p.buffer(0.0, 3)
                 if cp and not cp.isEmpty():
-                    cleaned_polys.append(cp)
+                    cp_flat = QgsWkbTypes.flatType(cp.wkbType())
+                    if cp_flat in (QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon):
+                        cleaned_polys.append(cp)
+                    elif cp_flat == QgsWkbTypes.GeometryCollection or cp.isMultipart():
+                        for part in cp.constParts():
+                            part_geom = QgsGeometry(part.clone())
+                            part_flat = QgsWkbTypes.flatType(part_geom.wkbType())
+                            if part_flat in (QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon):
+                                cleaned_polys.append(part_geom)
                 else:
-                    cleaned_polys.append(p)
+                    p_flat = QgsWkbTypes.flatType(p.wkbType())
+                    if p_flat in (QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon):
+                        cleaned_polys.append(p)
             return cleaned_polys
+
 
         # Helper to allocate gaps/holes in the union of parts to their nearest parent part
         def allocate_gaps_to_parts(parts, parent_geom):
@@ -4088,7 +4101,263 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
         multi_feedback.setProgressText(f"{_PHASE_LABELS[7]} [0/{len(eas):,}]...")
         # --- Output Generation ---
         feedback.pushInfo("Phase 8/8: Writing output features...")
+
+        def clean_and_remove_holes(geometry, remove_holes=True):
+            if geometry.isEmpty():
+                return geometry
+            
+            flat_type = QgsWkbTypes.flatType(geometry.wkbType())
+            sliver_limit = 1e-9 if target_crs.isGeographic() else 1.0
+            
+            if flat_type == QgsWkbTypes.Polygon:
+                poly_pts = geometry.asPolygon()
+                if poly_pts:
+                    ext_poly = QgsGeometry.fromPolygonXY([poly_pts[0]])
+                    if ext_poly.area() >= sliver_limit:
+                        if remove_holes:
+                            return ext_poly
+                        else:
+                            return geometry
+                return QgsGeometry()
+            elif flat_type == QgsWkbTypes.MultiPolygon:
+                multipoly_pts = geometry.asMultiPolygon()
+                new_multipoly = []
+                for poly in multipoly_pts:
+                    if poly:
+                        ext_poly = QgsGeometry.fromPolygonXY([poly[0]])
+                        if ext_poly.area() >= sliver_limit:
+                            if remove_holes:
+                                new_multipoly.append([poly[0]])
+                            else:
+                                new_multipoly.append(poly)
+                if new_multipoly:
+                    return QgsGeometry.fromMultiPolygonXY(new_multipoly)
+                return QgsGeometry()
+            elif flat_type == QgsWkbTypes.GeometryCollection or geometry.isMultipart():
+                parts = []
+                for part in geometry.constParts():
+                    part_geom = QgsGeometry(part.clone())
+                    clean_part = clean_and_remove_holes(part_geom, remove_holes)
+                    if not clean_part.isEmpty():
+                        parts.append(clean_part)
+                if parts:
+                    collected = QgsGeometry.collectGeometry(parts)
+                    return collected
+                return QgsGeometry()
+            return geometry
         
+        def clean_unsnapped_vertices(eas_list, snap_tolerance):
+            # Build spatial index of EA geometries
+            idx_spatial = QgsSpatialIndex()
+            ea_map = {}
+            for idx_ea, ea_item in enumerate(eas_list):
+                f_ea = QgsFeature(idx_ea)
+                f_ea.setGeometry(ea_item['geom'])
+                idx_spatial.insertFeature(f_ea)
+                ea_map[idx_ea] = ea_item
+
+            # Collect roads, rivers, and barangay geometries for boundary constraints
+            constraint_geoms = []
+            for r in road_geoms.values():
+                constraint_geoms.append(r)
+            for r in river_geoms.values():
+                constraint_geoms.append(r)
+            for r in barangay_by_id.values():
+                g_bar = r.geometry()
+                if g_bar.isEmpty():
+                    continue
+                flat_type_bar = QgsWkbTypes.flatType(g_bar.wkbType())
+                if flat_type_bar == QgsWkbTypes.Polygon:
+                    for ring in g_bar.asPolygon():
+                        constraint_geoms.append(QgsGeometry.fromPolylineXY(ring))
+                elif flat_type_bar == QgsWkbTypes.MultiPolygon:
+                    for part in g_bar.asMultiPolygon():
+                        for ring in part:
+                            constraint_geoms.append(QgsGeometry.fromPolylineXY(ring))
+
+            def lies_on_constraint(pt):
+                pt_geom = QgsGeometry.fromPointXY(pt)
+                for cg in constraint_geoms:
+                    if cg.distance(pt_geom) < 1e-7:
+                        return True
+                return False
+
+            modified = True
+            iteration = 0
+            max_iterations = 3
+
+            while modified and iteration < max_iterations:
+                modified = False
+                iteration += 1
+
+                for idx_ea, ea_item in ea_map.items():
+                    geom = ea_item['geom']
+                    if geom.isEmpty():
+                        continue
+
+                    flat_type = QgsWkbTypes.flatType(geom.wkbType())
+                    if flat_type not in (QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon):
+                        continue
+
+                    # Retrieve spatial neighbors
+                    neighbor_ids = idx_spatial.intersects(geom.boundingBox())
+                    neighbors = [ea_map[nid]['geom'] for nid in neighbor_ids if nid != idx_ea and not ea_map[nid]['geom'].isEmpty()]
+                    if not neighbors:
+                        continue
+
+                    # Collect neighbor vertices to check for topological snapping
+                    neighbor_vertices = set()
+                    for n_geom in neighbors:
+                        n_type = QgsWkbTypes.flatType(n_geom.wkbType())
+                        if n_type == QgsWkbTypes.Polygon:
+                            p_list = [n_geom.asPolygon()]
+                        elif n_type == QgsWkbTypes.MultiPolygon:
+                            p_list = n_geom.asMultiPolygon()
+                        else:
+                            continue
+
+                        for part_pts in p_list:
+                            for ring_pts in part_pts:
+                                for pt_val in ring_pts:
+                                    neighbor_vertices.add((round(pt_val.x(), 8), round(pt_val.y(), 8)))
+
+                    # Extract polygon vertices as lists
+                    if flat_type == QgsWkbTypes.Polygon:
+                        parts_list = [geom.asPolygon()]
+                    else:
+                        parts_list = geom.asMultiPolygon()
+
+                    polygon_changed = False
+                    new_parts = []
+
+                    for part_idx, part_pts in enumerate(parts_list):
+                        new_rings = []
+                        for ring_idx, ring_pts in enumerate(part_pts):
+                            pts = list(ring_pts)
+                            if len(pts) <= 4:
+                                new_rings.append(pts)
+                                continue
+
+                            n_pts = len(pts) - 1
+                            pt_idx = 0
+
+                            while pt_idx < n_pts:
+                                if len(pts) <= 4:
+                                    break
+
+                                pt_val = pts[pt_idx]
+                                pt_rounded = (round(pt_val.x(), 8), round(pt_val.y(), 8))
+
+                                # 1. Keep shared vertices
+                                if pt_rounded in neighbor_vertices:
+                                    pt_idx += 1
+                                    continue
+
+                                # 2. Keep vertices snapped to roads/rivers/barangay lines
+                                if lies_on_constraint(pt_val):
+                                    pt_idx += 1
+                                    continue
+
+                                # 3. Keep vertices not within snapping tolerance of any neighbor
+                                pt_geom = QgsGeometry.fromPointXY(pt_val)
+                                min_dist = float('inf')
+                                for n_geom in neighbors:
+                                    dist_val = n_geom.distance(pt_geom)
+                                    if dist_val < min_dist:
+                                        min_dist = dist_val
+
+                                if not (0.0 < min_dist <= snap_tolerance):
+                                    pt_idx += 1
+                                    continue
+
+                                # 4. Test vertex deletion
+                                candidate_pts = [p for idx_p, p in enumerate(pts) if idx_p != pt_idx]
+                                if pt_idx == 0:
+                                    candidate_pts[-1] = candidate_pts[0]
+                                elif pt_idx == n_pts - 1:
+                                    candidate_pts[0] = candidate_pts[-1]
+
+                                # Rebuild polygon for validation
+                                test_parts = []
+                                for p_p in new_parts:
+                                    test_parts.append(p_p)
+
+                                current_test_rings = []
+                                for r in new_rings:
+                                    current_test_rings.append(r)
+                                current_test_rings.append(candidate_pts)
+                                for r in part_pts[len(new_rings) + 1:]:
+                                    current_test_rings.append(r)
+                                test_parts.append(current_test_rings)
+
+                                for p_p in parts_list[len(new_parts) + 1:]:
+                                    test_parts.append(p_p)
+
+                                if flat_type == QgsWkbTypes.Polygon:
+                                    temp_geom = QgsGeometry.fromPolygonXY(test_parts[0])
+                                if else_val := (flat_type != QgsWkbTypes.Polygon):
+                                    temp_geom = QgsGeometry.fromMultiPolygonXY(test_parts)
+
+                                if not temp_geom.isValid() or temp_geom.isEmpty():
+                                    pt_idx += 1
+                                    continue
+
+                                # Verify building counts remain unaffected
+                                buildings_lost = False
+                                for b in ea_item.get('buildings', []):
+                                    b_geom = QgsGeometry.fromPointXY(b['point'])
+                                    if not (temp_geom.contains(b_geom) or temp_geom.intersects(b_geom)):
+                                        buildings_lost = True
+                                        break
+                                if buildings_lost:
+                                    pt_idx += 1
+                                    continue
+
+                                # Verify no new overlaps are introduced
+                                overlap_ok = True
+                                for n_geom in neighbors:
+                                    old_overlap = geom.intersection(n_geom).area()
+                                    new_overlap = temp_geom.intersection(n_geom).area()
+                                    if new_overlap - old_overlap > 1e-9:
+                                        overlap_ok = False
+                                        break
+                                if not overlap_ok:
+                                    pt_idx += 1
+                                    continue
+
+                                # Safe to remove!
+                                pts = candidate_pts
+                                n_pts = len(pts) - 1
+                                polygon_changed = True
+                                modified = True
+
+                            new_rings.append(pts)
+                        new_parts.append(new_rings)
+
+                    if polygon_changed:
+                        if flat_type == QgsWkbTypes.Polygon:
+                            ea_item['geom'] = QgsGeometry.fromPolygonXY(new_parts[0])
+                        else:
+                            ea_item['geom'] = QgsGeometry.fromMultiPolygonXY(new_parts)
+
+                        # Update spatial index
+                        idx_spatial.deleteFeature(idx_ea)
+                        f_ea = QgsFeature(idx_ea)
+                        f_ea.setGeometry(ea_item['geom'])
+                        idx_spatial.insertFeature(f_ea)
+
+        # Determine snap tolerance based on CRS and sliver area threshold
+        source_crs = previous_ea_source.sourceCrs()
+        import math
+        v_tolerance = math.sqrt(area_threshold) * 0.1
+        if source_crs.isGeographic():
+            v_tolerance = max(1e-7, min(v_tolerance, 1e-5))
+        else:
+            v_tolerance = max(0.01, min(v_tolerance, 0.5))
+
+        feedback.pushInfo("Cleaning up unsnapped vertices along shared boundaries...")
+        clean_unsnapped_vertices(eas, v_tolerance)
+
         # Sort output EAs by geocode (parent_barangay) then by sort_index to preserve the
         # conditional sorting sequence from code assignment.
         eas.sort(key=lambda ea: (
@@ -4111,28 +4380,43 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             if barangay_to_target:
                 geom.transform(barangay_to_target)
 
-            # Resolve any GeometryCollection produced by intersection() into a clean MultiPolygon.
-            # buffer(0.0, 3) forces GEOS to re-classify mixed geometry as polygon-only.
+            # Ensure the geometry is valid to resolve self-intersections and spikes
+            geom = geom.makeValid()
+
+            # Resolve any GeometryCollection or mixed geometry components into a clean MultiPolygon.
+            # Extract only valid Polygon parts using get_polygons_from_geom to filter out any
+            # dangling/excess lines or points.
+            poly_parts = get_polygons_from_geom(geom)
+            if not poly_parts:
+                feedback.pushWarning(
+                    f"[Output] EA (code={ea.get('original_code', '?')}, "
+                    f"pop={ea.get('hh_count', '?')}) has no polygon geometry after "
+                    f"filtering — skipping feature."
+                )
+                continue
+            
+            # Reassemble the polygon parts
+            geom = poly_parts[0]
+            for p in poly_parts[1:]:
+                geom = geom.combine(p)
             geom = geom.buffer(0.0, 3)
             geom.convertToMultiType()
-
-            # If the geometry is still not a polygon type (e.g. still a GeometryCollection),
-            # extract only the polygon parts and reassemble as MultiPolygon.
-            if geom.wkbType() not in (
-                QgsWkbTypes.MultiPolygon, QgsWkbTypes.Polygon,
-                QgsWkbTypes.MultiPolygon25D, QgsWkbTypes.Polygon25D
-            ):
-                poly_parts = [g for g in geom.asGeometryCollection()
-                              if g.type() == QgsWkbTypes.PolygonGeometry and not g.isEmpty()]
-                if not poly_parts:
-                    feedback.pushWarning(
-                        f"[Output] EA (code={ea.get('original_code', '?')}, "
-                        f"pop={ea.get('hh_count', '?')}) has no polygon geometry after "
-                        f"type resolution — skipping feature."
-                    )
-                    continue
-                geom = QgsGeometry.collectGeometry(poly_parts).buffer(0.0, 3)
-                geom.convertToMultiType()
+            
+            # Unchanged Retain EAs shall retain their original household counts
+            is_unchanged_retain = False
+            if not ea.get('from_split', False) and not ea.get('from_merge', False):
+                _ea_ean_str = str(ea.get('original_code', '')).strip()
+                _ea_id = ea.get('original_id')
+                if _ea_id not in delineation_candidate_ids and _ea_id not in merge_candidate_ids:
+                    is_unchanged_retain = True
+            
+            # Clean slivers from all EAs, and remove holes from newly created EAs
+            geom = clean_and_remove_holes(geom, remove_holes=(not is_unchanged_retain))
+            
+            # Simplify geometry with a tiny tolerance to remove redundant/collinear vertices
+            simp_tolerance = 1e-7 if target_crs.isGeographic() else 0.01
+            geom = geom.simplify(simp_tolerance)
+            geom = geom.makeValid()
             
             out_feat = QgsFeature(out_fields)
             out_feat.setGeometry(geom)
@@ -4143,14 +4427,6 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             if needed > 0:
                 attrs.extend([None] * needed)
             out_feat.setAttributes(attrs)
-            
-            # Unchanged Retain EAs shall retain their original household counts
-            is_unchanged_retain = False
-            if not ea.get('from_split', False) and not ea.get('from_merge', False):
-                _ea_ean_str = str(ea.get('original_code', '')).strip()
-                _ea_id = ea.get('original_id')
-                if _ea_id not in delineation_candidate_ids and _ea_id not in merge_candidate_ids:
-                    is_unchanged_retain = True
             
             final_pop = ea['original_hhcount'] if is_unchanged_retain else ea['hh_count']
 
