@@ -693,7 +693,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 self.SNAP_TOLERANCE,
                 "Snapping Tolerance (meters) for road/river alignment",
                 type=QgsProcessingParameterNumber.Double,
-                defaultValue=20.0,
+                defaultValue=15.0,
                 minValue=0.0,
             )
         )
