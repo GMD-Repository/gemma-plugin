@@ -3,14 +3,14 @@
 # This file should be included when you package your plugin.# Mandatory items:
 
 [general]
-name=GMD Pipeline
+name=GEMMA
 qgisMinimumVersion=3.0
-description=General Processing Pipelines for GMD Activities with QField Packaging
+description=GIS Extension for Map Management and Analysis
 version=1.2.0
 author=Geospatial Management Division
 email=gmd.support@psa.gov.ph
 
-about=The GMD Plugin provides processing pipelines and QField packaging tools for GMD activities.
+about=This plugin is developed by the Geospatial Management Division to provide a comprehenive set of tools that could be used for map management and analyses for different sorts of activities.
 
 changelog=
     1.2.0: 
@@ -22,7 +22,7 @@ changelog=
     1.0.0: Initial release with Gaps and Overlaps Checker.
 
 #tracker=
-repository=https://github.com/Geotags-GMD/gmd-pipeline.git
+repository=https://github.com/Geotags-GMD/gemma-plugin.git
 hasProcessingProvider=yes
 tags=GMD,1Map,overlap,gap,QField,packaging
 category=Processing Provider
