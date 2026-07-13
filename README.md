@@ -1,4 +1,4 @@
-[![Release QGIS Plugin](https://github.com/Geotags-GMD/gmd-pipeline/actions/workflows/release-plugin.yml/badge.svg?branch=main)](https://github.com/Geotags-GMD/gmd-pipeline/actions/workflows/release-plugin.yml)
+[![Release QGIS Plugin](https://github.com/Geotags-GMD/gemma-plugin/actions/workflows/release-plugin.yml/badge.svg?branch=main)](https://github.com/Geotags-GMD/gemma-plugin/actions/workflows/release-plugin.yml)
 
 # Git Workflow Guide
 
@@ -16,12 +16,12 @@ If you do not have the project on your computer yet:
 1. Open VS Code.
 2. Press `Ctrl + Shift + P` to open the Command Palette.
 3. Type **Git: Clone** and hit Enter.
-4. Paste the repository URL: `https://github.com/Geotags-GMD/gmd-pipeline.git`
+4. Paste the repository URL: `https://github.com/Geotags-GMD/gemma-plugin.git`
 5. When prompted to select a folder, navigate to your QGIS plugins directory:
    `C:\Users\Admin\AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins\`
    and click **Select Repository Location**.
 6. Once it finishes downloading, click **Open** when prompted.
-*(Note: VS Code will name the folder `gmd-pipeline` by default. If QGIS needs it to be named `gmd_pipeline`, you can rename the folder in your File Explorer later).*
+*(Note: VS Code will name the folder `gemma-plugin` by default. If QGIS needs it to be named `gemma_plugin`, you can rename the folder in your File Explorer later).*
 7. **Create your branch:** Click on `main` in the bottom-left corner of the VS Code window. Select **+ Create new branch...** and type your name (e.g., `john-doe`).
 
 ### Option B: Existing Users (Update your code & Switch Branch)
