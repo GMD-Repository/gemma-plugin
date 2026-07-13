@@ -45,9 +45,9 @@ from libqfieldsync.project import ProjectConfiguration
 from libqfieldsync.project_checker import ProjectChecker
 from libqfieldsync.utils.file_utils import fileparts
 from libqfieldsync.utils.qgis import get_project_title
-from qgis.core import Qgis, QgsApplication, QgsProject, QgsLayerTreeGroup, QgsLayerTreeLayer, QgsVectorLayer, QgsRasterLayer, QgsVectorFileWriter, QgsTask, QgsTaskManager, QgsSnappingConfig, QgsTolerance, QgsGeometry, QgsFeatureRequest, QgsCoordinateTransform
+from qgis.core import Qgis, QgsApplication, QgsProject, QgsLayerTreeGroup, QgsLayerTreeLayer, QgsVectorLayer, QgsRasterLayer, QgsVectorFileWriter, QgsTask, QgsTaskManager, QgsSnappingConfig, QgsTolerance, QgsGeometry, QgsFeatureRequest, QgsCoordinateTransform, QgsMapLayer
 from qgis.PyQt.QtCore import QDir, Qt, QUrl, QTimer, QEvent
-from qgis.PyQt.QtGui import QIcon
+from qgis.PyQt.QtGui import QIcon, QBrush
 from qgis.PyQt.QtWidgets import QApplication, QDialog, QDialogButtonBox, QMessageBox, QLabel, QListWidget, QListWidgetItem, QWidget, QHBoxLayout, QPushButton, QComboBox, QGridLayout, QGroupBox, QSizePolicy, QScrollArea, QFrame, QVBoxLayout, QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView, QTreeWidget, QTreeWidgetItem, QTabWidget, QLineEdit, QInputDialog, QFileDialog
 from qgis.PyQt.uic import loadUiType
 from .checker_feedback_table import CheckerFeedbackTable
@@ -144,6 +144,8 @@ class LayerGroupsTreeWidget(QTreeWidget):
             if target_parent != old_parent:
                 event.ignore()
                 return
+                
+            event.accept()
 
     def dropEvent(self, event):
         selected_items = self.selectedItems()
@@ -167,12 +169,19 @@ class LayerGroupsTreeWidget(QTreeWidget):
                 return
 
             # Save combo widgets for every child in every dragged group
-            self._dragged_combos = {}
+            self._dragged_qml = {}
+            self._dragged_assigned = {}
             for item in selected_items:
                 for ci in range(item.childCount()):
                     child = item.child(ci)
-                    combo = self.itemWidget(child, 1)
-                    self._dragged_combos[child.text(0)] = combo.currentText() if combo else ""
+                    child_name = child.text(0) or child.text(1)
+                    
+                    qml_combo = self.itemWidget(child, 2)
+                    self._dragged_qml[child_name] = qml_combo.currentText() if qml_combo else ""
+                    
+                    assigned_combo = self.itemWidget(child, 1)
+                    if assigned_combo:
+                        self._dragged_assigned[child_name] = assigned_combo.currentData()
 
             super().dropEvent(event)
             QTimer.singleShot(0, self._restore_missing_combos)
@@ -185,15 +194,23 @@ class LayerGroupsTreeWidget(QTreeWidget):
             if indicator == QTreeWidget.OnItem and drop_target.parent() is not None:
                 event.ignore()
                 return
+                
             target_parent = drop_target if drop_target.parent() is None else drop_target.parent()
             if target_parent != old_parent:
                 event.ignore()
                 return
 
-            self._dragged_combos = {}
+            self._dragged_qml = {}
+            self._dragged_assigned = {}
             for item in selected_items:
-                combo = self.itemWidget(item, 1)
-                self._dragged_combos[item.text(0)] = combo.currentText() if combo else ""
+                child_name = item.text(0) or item.text(1)
+                
+                qml_combo = self.itemWidget(item, 2)
+                self._dragged_qml[child_name] = qml_combo.currentText() if qml_combo else ""
+                
+                assigned_combo = self.itemWidget(item, 1)
+                if assigned_combo:
+                    self._dragged_assigned[child_name] = assigned_combo.currentData()
 
             super().dropEvent(event)
             QTimer.singleShot(0, self._restore_missing_combos)
@@ -203,14 +220,27 @@ class LayerGroupsTreeWidget(QTreeWidget):
             group_item = self.topLevelItem(i)
             for j in range(group_item.childCount()):
                 layer_item = group_item.child(j)
-                if self.itemWidget(layer_item, 1) is None:
-                    preset = getattr(self, '_dragged_combos', {}).get(layer_item.text(0), "")
-                    # PackageDialog is the parent widget or accessible via tree parent
+                child_name = layer_item.text(0) or layer_item.text(1)
+                
+                # Check if QML combo is missing
+                if self.itemWidget(layer_item, 2) is None:
+                    preset_qml = getattr(self, '_dragged_qml', {}).get(child_name, "")
                     dlg = self.parent()
                     while dlg and not hasattr(dlg, '_create_qml_combo_for_layer'):
                         dlg = dlg.parent()
                     if dlg:
-                        dlg._create_qml_combo_for_layer(layer_item, layer_item.text(0), preset_qml=preset)
+                        dlg._create_qml_combo_for_layer(layer_item, child_name, preset_qml=preset_qml)
+                
+                # Check if Assigned Layer combo is missing
+                # If there's data for it in _dragged_assigned, restore it!
+                if self.itemWidget(layer_item, 1) is None:
+                    if hasattr(self, '_dragged_assigned') and child_name in self._dragged_assigned:
+                        preset_id = self._dragged_assigned[child_name]
+                        dlg = self.parent()
+                        while dlg and not hasattr(dlg, '_create_assigned_layer_combo_for_layer'):
+                            dlg = dlg.parent()
+                        if dlg:
+                            dlg._create_assigned_layer_combo_for_layer(layer_item, child_name, preset_id=preset_id)
 
 
 class PackageDialog(QDialog, DialogUi):
@@ -301,9 +331,13 @@ class PackageDialog(QDialog, DialogUi):
         """Extract the layer type suffix after the first '_'.
 
         E.g. '813_railroad' → 'railroad', '456_bldg_point' → 'bldg_point'.
-        If there is no underscore the full name is returned so exact matching
-        still works as a fallback.
+        If it's a description like 'Building points (*_bldg_point)', extract 'bldg_point'.
         """
+        import re
+        match = re.search(r'\(\*_(.*?)\)', layer_name)
+        if match:
+            return match.group(1)
+            
         idx = layer_name.find('_')
         return layer_name[idx + 1:] if idx >= 0 else layer_name
 
@@ -329,8 +363,10 @@ class PackageDialog(QDialog, DialogUi):
                 
             for j in range(group_item.childCount()):
                 layer_item = group_item.child(j)
-                if layer_item.checkState(0) == Qt.Checked:
-                    layer_name = layer_item.text(0)
+                combo = self.layer_groups_tree.itemWidget(layer_item, 1)
+                layer_name = combo.currentText() if (combo and combo.currentData() is not None) else (layer_item.text(0) or layer_item.text(1))
+                
+                if layer_item.checkState(0) == Qt.Checked and layer_name:
                     if layer_name not in checked_layers:
                         checked_layers[layer_name] = group_item
 
@@ -340,9 +376,11 @@ class PackageDialog(QDialog, DialogUi):
             group_item = self.layer_groups_tree.topLevelItem(i)
             for j in range(group_item.childCount()):
                 layer_item = group_item.child(j)
-                layer_name = layer_item.text(0)
+                combo = self.layer_groups_tree.itemWidget(layer_item, 1)
+                layer_name = combo.currentText() if (combo and combo.currentData() is not None) else (layer_item.text(0) or layer_item.text(1))
+                
                 # If layer is checked somewhere else in an active (checked) group, hide it here
-                if layer_name in checked_layers and checked_layers[layer_name] != group_item:
+                if layer_name and layer_name in checked_layers and checked_layers[layer_name] != group_item:
                     layer_item.setHidden(True)
                     if layer_item.checkState(0) == Qt.Checked:
                         layer_item.setCheckState(0, Qt.Unchecked)
@@ -352,6 +390,22 @@ class PackageDialog(QDialog, DialogUi):
 
     def _on_tree_item_changed(self, item, column):
         self._update_layer_visibility()
+
+    def _get_existing_qml_style_for_layer(self, active_layer_name, ignore_item=None):
+        """Finds if a given active layer name already has a QML style set in any other tree item."""
+        if not active_layer_name:
+            return None
+        for i in range(self.layer_groups_tree.topLevelItemCount()):
+            group_item = self.layer_groups_tree.topLevelItem(i)
+            for j in range(group_item.childCount()):
+                layer_item = group_item.child(j)
+                if layer_item == ignore_item:
+                    continue
+                if self._get_active_layer_name(layer_item) == active_layer_name:
+                    combo = self.layer_groups_tree.itemWidget(layer_item, 2)
+                    if combo and combo.currentText() != self.tr("(None)"):
+                        return combo.currentText()
+        return None
 
     def _create_qml_combo_for_layer(self, layer_item, layer_name, preset_qml=""):
         """Create a QComboBox for QML style selection and set it on column 1.
@@ -369,28 +423,116 @@ class PackageDialog(QDialog, DialogUi):
             preset_qml = saved_role
 
         # Determine which value to select
+        active_layer_name = self._get_active_layer_name(layer_item)
+        existing_global_qml = self._get_existing_qml_style_for_layer(active_layer_name, ignore_item=layer_item)
+        
         if preset_qml and preset_qml in available:
             combo.setCurrentText(preset_qml)
+        elif existing_global_qml and existing_global_qml in available:
+            combo.setCurrentText(existing_global_qml)
         else:
             detected = auto_detect_qml_for_layer(layer_name, available)
             if detected:
                 combo.setCurrentText(detected)
+        layer_item.setData(2, Qt.UserRole, combo.currentText())
+        combo.currentTextChanged.connect(lambda text, item=layer_item: self._on_qml_combo_changed(item, text))
 
-        layer_item.setData(1, Qt.UserRole, combo.currentText())
-        combo.currentTextChanged.connect(lambda text, lname=layer_name: self._on_qml_combo_changed(lname, text))
+        self.layer_groups_tree.setItemWidget(layer_item, 2, combo)
+        return combo
+        
+    def _get_role_attr_by_label(self, label):
+        is_ea = self.output_dropdown.currentText() == self.tr("EA Level")
+        roles = getattr(self, '_ea_layer_roles', []) if is_ea else getattr(self, '_bgy_layer_roles', [])
+        for attr, l, _ in roles:
+            if l == label:
+                return attr
+        return None
 
+    def _create_assigned_layer_combo_for_layer(self, layer_item, label, preset_id=None):
+        import re
+        alias_map = {
+            "_bldg_point": ("_bldg_point", "_bldgpts", "_bldg_points")
+        }
+        m = re.search(r'\(\*(.*?)\)', label)
+        base_suffix = m.group(1).lower() if m else None
+        valid_suffixes = alias_map.get(base_suffix, (base_suffix,)) if base_suffix else None
+        
+        all_vector_layers = sorted([
+            lyr for lyr in QgsProject.instance().mapLayers().values()
+            if isinstance(lyr, QgsVectorLayer) and lyr.isValid()
+        ], key=lambda l: l.name())
+        
+        combo = QComboBox()
+        combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        combo.addItem(self.tr("— None —"), None)
+        for lyr in all_vector_layers:
+            if valid_suffixes:
+                lname = lyr.name().lower()
+                if any(lname.endswith(s) for s in valid_suffixes):
+                    combo.addItem(lyr.name(), lyr.id())
+            else:
+                combo.addItem(lyr.name(), lyr.id())
+                
+        if preset_id is not None:
+            idx = combo.findData(preset_id)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+                
+        combo.currentIndexChanged.connect(lambda idx, item=layer_item: self._on_assigned_layer_changed(item))
         self.layer_groups_tree.setItemWidget(layer_item, 1, combo)
+        
+        attr = self._get_role_attr_by_label(label)
+        if attr:
+            setattr(self, attr, combo)
         return combo
 
-    def _on_qml_combo_changed(self, layer_name, new_text):
-        """Sync QML style combo box for a specific layer across all groups."""
+    def _get_active_layer_name(self, layer_item):
+        """Helper to get the true active layer name assigned to a tree item."""
+        assigned_combo = self.layer_groups_tree.itemWidget(layer_item, 1)
+        if assigned_combo:
+            if assigned_combo.currentData() is not None:
+                return assigned_combo.currentText()
+            return None
+        return layer_item.text(1)
+
+    def _on_assigned_layer_changed(self, layer_item):
+        """Handle layer assignment changes, updating visibility and syncing QML styles."""
+        self._update_layer_visibility()
+        
+        target_layer_name = self._get_active_layer_name(layer_item)
+        if not target_layer_name:
+            return
+            
+        # Find if this layer has a QML style set in another group
+        existing_qml = self._get_existing_qml_style_for_layer(target_layer_name, ignore_item=layer_item)
+                
+        if existing_qml:
+            qml_combo = self.layer_groups_tree.itemWidget(layer_item, 2)
+            if qml_combo and qml_combo.currentText() != existing_qml:
+                qml_combo.blockSignals(True)
+                qml_combo.setCurrentText(existing_qml)
+                qml_combo.blockSignals(False)
+
+    def _on_qml_combo_changed(self, source_layer_item, new_text):
+        """Sync QML style combo box for a specific active layer across all groups."""
+        target_layer_name = self._get_active_layer_name(source_layer_item)
+        
+        # Always save the selection for the source item itself
+        source_layer_item.setData(2, Qt.UserRole, new_text)
+        
+        if not target_layer_name:
+            return
+
         for i in range(self.layer_groups_tree.topLevelItemCount()):
             group_item = self.layer_groups_tree.topLevelItem(i)
             for j in range(group_item.childCount()):
                 layer_item = group_item.child(j)
-                if layer_item.text(0) == layer_name:
-                    layer_item.setData(1, Qt.UserRole, new_text)
-                    combo = self.layer_groups_tree.itemWidget(layer_item, 1)
+                
+                # Check if this item points to the SAME active layer
+                current_active_name = self._get_active_layer_name(layer_item)
+                if current_active_name == target_layer_name:
+                    layer_item.setData(2, Qt.UserRole, new_text)
+                    combo = self.layer_groups_tree.itemWidget(layer_item, 2)
                     if combo and combo.currentText() != new_text:
                         combo.blockSignals(True)
                         combo.setCurrentText(new_text)
@@ -403,7 +545,7 @@ class PackageDialog(QDialog, DialogUi):
             group_item = self.layer_groups_tree.topLevelItem(i)
             for j in range(group_item.childCount()):
                 layer_item = group_item.child(j)
-                combo = self.layer_groups_tree.itemWidget(layer_item, 1)
+                combo = self.layer_groups_tree.itemWidget(layer_item, 2)
                 if combo:
                     old_value = combo.currentText()
                     combo.blockSignals(True)
@@ -449,7 +591,8 @@ class PackageDialog(QDialog, DialogUi):
         self.layer_groups_tree.blockSignals(True)
         for layer_name in active_layers:
             layer_item = QTreeWidgetItem(group_item)
-            layer_item.setText(0, layer_name)
+            layer_item.setText(0, "")
+            layer_item.setText(1, layer_name)
             layer_item.setFlags(layer_item.flags() | Qt.ItemIsUserCheckable)
             layer_item.setCheckState(0, Qt.Unchecked)
             pending_combos.append((layer_item, layer_name))
@@ -478,6 +621,67 @@ class PackageDialog(QDialog, DialogUi):
                 
         self._update_layer_visibility()
 
+    def _update_layer_assignment_ui(self):
+        """Rebuilds the Base Layers group in the tree widget with role assignment combo boxes."""
+        if not hasattr(self, 'layer_groups_tree'):
+            return
+
+        group_name = "Base Layers"
+        group_item = None
+        for i in range(self.layer_groups_tree.topLevelItemCount()):
+            if self.layer_groups_tree.topLevelItem(i).text(0) == group_name:
+                group_item = self.layer_groups_tree.topLevelItem(i)
+                break
+        
+        if not group_item:
+            group_item = QTreeWidgetItem(self.layer_groups_tree)
+            group_item.setText(0, group_name)
+            group_item.setFlags(group_item.flags() | Qt.ItemIsUserCheckable)
+            group_item.setCheckState(0, Qt.Checked)
+            
+        # Ensure it is at the top
+        index = self.layer_groups_tree.indexOfTopLevelItem(group_item)
+        if index > 0:
+            self.layer_groups_tree.takeTopLevelItem(index)
+            self.layer_groups_tree.insertTopLevelItem(0, group_item)
+            
+        self.layer_groups_tree.expandItem(group_item)
+        
+        # Remove old children
+        for i in range(group_item.childCount() - 1, -1, -1):
+            group_item.removeChild(group_item.child(i))
+            
+        is_ea = self.output_dropdown.currentText() == self.tr("EA Level")
+        roles = getattr(self, '_ea_layer_roles', []) if is_ea else getattr(self, '_bgy_layer_roles', [])
+        
+        all_vector_layers = sorted([
+            lyr for lyr in QgsProject.instance().mapLayers().values()
+            if isinstance(lyr, QgsVectorLayer) and lyr.isValid()
+        ], key=lambda l: l.name())
+        
+        available_qml = get_available_qml_display_names()
+        
+        import re
+        alias_map = {
+            "_bldg_point": ("_bldg_point", "_bldgpts", "_bldg_points")
+        }
+        
+        for attr, label, required in roles:
+            layer_item = QTreeWidgetItem(group_item)
+            layer_item.setText(0, label)
+            layer_item.setFlags(layer_item.flags() | Qt.ItemIsUserCheckable)
+            layer_item.setCheckState(0, Qt.Checked)
+            if not required:
+                layer_item.setForeground(0, QBrush(Qt.gray))
+            
+            # 1. Layer Selection Combo
+            self._create_assigned_layer_combo_for_layer(layer_item, label)
+            
+            # 2. QML Style Combo
+            self._create_qml_combo_for_layer(layer_item, label)
+            
+        self._update_layer_visibility()
+
 
     def _on_move_item_up(self):
         selected_items = self.layer_groups_tree.selectedItems()
@@ -485,37 +689,58 @@ class PackageDialog(QDialog, DialogUi):
             return
         item = selected_items[0]
         parent = item.parent()
-        
         if parent:
             index = parent.indexOfChild(item)
+            
+            # Save only the moved item's widgets
+            combo = self.layer_groups_tree.itemWidget(item, 2)
+            selected_text = combo.currentText() if combo else None
+            
+            assigned_combo = self.layer_groups_tree.itemWidget(item, 1)
+            assigned_id = assigned_combo.currentData() if assigned_combo else None
+            has_assigned = assigned_combo is not None
+            
             if index > 0:
-                combo = self.layer_groups_tree.itemWidget(item, 1)
-                selected_text = combo.currentText() if combo else None
                 parent.takeChild(index)
                 parent.insertChild(index - 1, item)
-                if selected_text:
-                    self._create_qml_combo_for_layer(item, item.text(0), preset_qml=selected_text)
-                self.layer_groups_tree.setCurrentItem(item)
+            
+            self.layer_groups_tree.setCurrentItem(item)
+            
+            child_name = item.text(0) or item.text(1)
+            if selected_text:
+                self._create_qml_combo_for_layer(item, child_name, preset_qml=selected_text)
+            if has_assigned:
+                self._create_assigned_layer_combo_for_layer(item, child_name, preset_id=assigned_id)
         else:
             index = self.layer_groups_tree.indexOfTopLevelItem(item)
             if index > 0:
                 # Save all child combo selections before the move — take/insert
                 # destroys every item widget on the group's children.
                 child_qml = {}
+                child_assigned = {}
                 for c in range(item.childCount()):
                     child = item.child(c)
-                    combo = self.layer_groups_tree.itemWidget(child, 1)
-                    child_qml[child.text(0)] = combo.currentText() if combo else ""
+                    combo = self.layer_groups_tree.itemWidget(child, 2)
+                    child_name = child.text(0) or child.text(1)
+                    child_qml[child_name] = combo.currentText() if combo else ""
+                    
+                    assigned_combo = self.layer_groups_tree.itemWidget(child, 1)
+                    if assigned_combo:
+                        child_assigned[child_name] = assigned_combo.currentData()
+                        
                 self.layer_groups_tree.takeTopLevelItem(index)
                 self.layer_groups_tree.insertTopLevelItem(index - 1, item)
                 self.layer_groups_tree.setCurrentItem(item)
                 self.layer_groups_tree.expandItem(item)
                 # Restore combos for all children
-                def _restore(group=item, saved=child_qml):
+                def _restore(group=item, saved_qml=child_qml, saved_assigned=child_assigned):
                     for c in range(group.childCount()):
                         child = group.child(c)
-                        preset = saved.get(child.text(0), "")
-                        self._create_qml_combo_for_layer(child, child.text(0), preset_qml=preset)
+                        child_name = child.text(0) or child.text(1)
+                        preset = saved_qml.get(child_name, "")
+                        self._create_qml_combo_for_layer(child, child_name, preset_qml=preset)
+                        if child_name in saved_assigned:
+                            self._create_assigned_layer_combo_for_layer(child, child_name, preset_id=saved_assigned[child_name])
                 QTimer.singleShot(0, _restore)
                 
     def _on_move_item_down(self):
@@ -524,37 +749,58 @@ class PackageDialog(QDialog, DialogUi):
             return
         item = selected_items[0]
         parent = item.parent()
-        
         if parent:
             index = parent.indexOfChild(item)
+            
+            # Save only the moved item's widgets
+            combo = self.layer_groups_tree.itemWidget(item, 2)
+            selected_text = combo.currentText() if combo else None
+            
+            assigned_combo = self.layer_groups_tree.itemWidget(item, 1)
+            assigned_id = assigned_combo.currentData() if assigned_combo else None
+            has_assigned = assigned_combo is not None
+            
             if index < parent.childCount() - 1:
-                combo = self.layer_groups_tree.itemWidget(item, 1)
-                selected_text = combo.currentText() if combo else None
                 parent.takeChild(index)
                 parent.insertChild(index + 1, item)
-                if selected_text:
-                    self._create_qml_combo_for_layer(item, item.text(0), preset_qml=selected_text)
-                self.layer_groups_tree.setCurrentItem(item)
+            
+            self.layer_groups_tree.setCurrentItem(item)
+            
+            child_name = item.text(0) or item.text(1)
+            if selected_text:
+                self._create_qml_combo_for_layer(item, child_name, preset_qml=selected_text)
+            if has_assigned:
+                self._create_assigned_layer_combo_for_layer(item, child_name, preset_id=assigned_id)
         else:
             index = self.layer_groups_tree.indexOfTopLevelItem(item)
             if index < self.layer_groups_tree.topLevelItemCount() - 1:
                 # Save all child combo selections before the move — take/insert
                 # destroys every item widget on the group's children.
                 child_qml = {}
+                child_assigned = {}
                 for c in range(item.childCount()):
                     child = item.child(c)
-                    combo = self.layer_groups_tree.itemWidget(child, 1)
-                    child_qml[child.text(0)] = combo.currentText() if combo else ""
+                    combo = self.layer_groups_tree.itemWidget(child, 2)
+                    child_name = child.text(0) or child.text(1)
+                    child_qml[child_name] = combo.currentText() if combo else ""
+                    
+                    assigned_combo = self.layer_groups_tree.itemWidget(child, 1)
+                    if assigned_combo:
+                        child_assigned[child_name] = assigned_combo.currentData()
+                        
                 self.layer_groups_tree.takeTopLevelItem(index)
                 self.layer_groups_tree.insertTopLevelItem(index + 1, item)
                 self.layer_groups_tree.setCurrentItem(item)
                 self.layer_groups_tree.expandItem(item)
                 # Restore combos for all children
-                def _restore(group=item, saved=child_qml):
+                def _restore(group=item, saved_qml=child_qml, saved_assigned=child_assigned):
                     for c in range(group.childCount()):
                         child = group.child(c)
-                        preset = saved.get(child.text(0), "")
-                        self._create_qml_combo_for_layer(child, child.text(0), preset_qml=preset)
+                        child_name = child.text(0) or child.text(1)
+                        preset = saved_qml.get(child_name, "")
+                        self._create_qml_combo_for_layer(child, child_name, preset_qml=preset)
+                        if child_name in saved_assigned:
+                            self._create_assigned_layer_combo_for_layer(child, child_name, preset_id=saved_assigned[child_name])
                 QTimer.singleShot(0, _restore)
 
     def _on_save_groups_preset(self):
@@ -573,12 +819,12 @@ class PackageDialog(QDialog, DialogUi):
             qml_styles = {}
             for j in range(group_item.childCount()):
                 layer_item = group_item.child(j)
-                layer_name = layer_item.text(0)
+                layer_name = layer_item.text(0) or layer_item.text(1)
                 all_layers_in_group.append(layer_name)
                 if layer_item.checkState(0) == Qt.Checked:
                     checked_layers.append(layer_name)
                 # Save QML assignment for every layer (checked or not)
-                combo = self.layer_groups_tree.itemWidget(layer_item, 1)
+                combo = self.layer_groups_tree.itemWidget(layer_item, 2)
                 if combo and combo.currentText() != self.tr("(None)"):
                     qml_styles[layer_name] = combo.currentText()
             preset_data[group_name] = {
@@ -809,17 +1055,21 @@ class PackageDialog(QDialog, DialogUi):
             # Apply styles to ALL layers in the tree, even if unchecked or in unchecked group
             for j in range(group_item.childCount()):
                 layer_item = group_item.child(j)
-                layer_name = layer_item.text(0)
-                if layer_name not in styled_layers:
-                    combo = self.layer_groups_tree.itemWidget(layer_item, 1)
-                    if combo:
-                        qml_name = combo.currentText()
+                
+                active_name = self._get_active_layer_name(layer_item)
+                if not active_name or active_name == self.tr("— None —"):
+                    continue
+                    
+                if active_name not in styled_layers:
+                    qml_combo = self.layer_groups_tree.itemWidget(layer_item, 2)
+                    if qml_combo:
+                        qml_name = qml_combo.currentText()
                         if qml_name and qml_name != self.tr("(None)"):
-                            qgis_layer = project.mapLayersByName(layer_name)
+                            qgis_layer = project.mapLayersByName(active_name)
                             if qgis_layer:
                                 if apply_qml_to_layer(qgis_layer[0], qml_name):
                                     styled_count += 1
-                                    styled_layers.add(layer_name)
+                                    styled_layers.add(active_name)
             
             # If the group name is unchecked, skip applying grouping to QGIS
             if group_item.checkState(0) == Qt.Unchecked:
@@ -836,9 +1086,12 @@ class PackageDialog(QDialog, DialogUi):
             for j in range(group_item.childCount()):
                 layer_item = group_item.child(j)
                 if layer_item.checkState(0) == Qt.Checked:
-                    layer_name = layer_item.text(0)
+                    active_name = self._get_active_layer_name(layer_item)
+                    if not active_name or active_name == self.tr("— None —"):
+                        continue
+                        
                     # Find layer in root
-                    layer_tree_layer = root.findLayer(project.mapLayersByName(layer_name)[0].id()) if project.mapLayersByName(layer_name) else None
+                    layer_tree_layer = root.findLayer(project.mapLayersByName(active_name)[0].id()) if project.mapLayersByName(active_name) else None
                     
                     if layer_tree_layer:
                         # Clone the layer node
@@ -878,30 +1131,55 @@ class PackageDialog(QDialog, DialogUi):
             )
     def update_button_box_visibility(self):
         """Update visibility of the button box based on current tab and page."""
-        if hasattr(self, 'main_tab_widget') and hasattr(self, 'button_box'):
-            if self.main_tab_widget.currentIndex() == 0:
-                self.button_box.setVisible(False)
-            else:
-                if hasattr(self, 'stackedWidget') and hasattr(self, 'packagePage'):
-                    if self.stackedWidget.currentWidget() == self.packagePage:
-                        self.button_box.setVisible(True)
-                    else:
-                        self.button_box.setVisible(False)
-                else:
+        if hasattr(self, 'button_box'):
+            if hasattr(self, 'stackedWidget') and hasattr(self, 'packagePage'):
+                if self.stackedWidget.currentWidget() == self.packagePage:
                     self.button_box.setVisible(True)
-
-    def _on_tab_changed(self, index):
-        self.update_button_box_visibility()
+                else:
+                    self.button_box.setVisible(False)
+            else:
+                self.button_box.setVisible(True)
 
     def __init__(self, iface, project, offline_editing, parent=None):
         """Constructor."""
         super(PackageDialog, self).__init__(parent=parent)
         self.setupUi(self)
+        
+        # Define layer roles
+        self._ea_layer_roles = [
+            ("_ea_combo_bldg",       self.tr("Building points (*_bldg_point)"),  True),
+            ("_ea_combo_landmark",   self.tr("Landmark layer (*_landmark)"),     True),
+            ("_ea_combo_block",      self.tr("Block layer (*_block)"),           False),
+            ("_ea_combo_ea",         self.tr("EA layer (*_ea)"),                 True),
+            ("_ea_combo_bgy",        self.tr("Barangay layer (*_bgy)"),         True),
+            ("_ea_combo_railroad",   self.tr("Railroad layer (*_railroad)"),     False),
+            ("_ea_combo_bridge",     self.tr("Bridge layer (*_bridge)"),         False),
+            ("_ea_combo_road",       self.tr("Road layer (*_road)"),             False),
+            ("_ea_combo_river",      self.tr("River layer (*_river)"),           False),
+        ]
+        
+        self._bgy_layer_roles = [
+            ("_bgy_combo_bldg",      self.tr("Building points (*_bldg_point)"),  True),
+            ("_bgy_combo_landmark",  self.tr("Landmark layer (*_landmark)"),     True),
+            ("_bgy_combo_block",     self.tr("Block layer (*_block)"),           False),
+            ("_bgy_combo_ea",        self.tr("EA layer (*_ea)"),                 True),
+            ("_bgy_combo_bgy",       self.tr("Barangay layer (*_bgy)"),          True),
+            ("_bgy_combo_railroad",  self.tr("Railroad layer (*_railroad)"),     False),
+            ("_bgy_combo_bridge",    self.tr("Bridge layer (*_bridge)"),         False),
+            ("_bgy_combo_road",      self.tr("Road layer (*_road)"),             False),
+            ("_bgy_combo_river",     self.tr("River layer (*_river)"),           False),
+        ]
 
-        # Add Help button to upper right
+        # Add Help and Properties buttons to upper right
         self.help_button = QPushButton(self.tr("Help"))
         self.help_button.clicked.connect(self.show_help)
+        
+        self.properties_button = QPushButton(self.tr("Properties..."))
+        self.properties_button.setIcon(QIcon(QgsApplication.iconPath("mActionOptions.svg")))
+        self.properties_button.clicked.connect(self.show_data_sources_dialog)
+
         _help_layout = QHBoxLayout()
+        _help_layout.addWidget(self.properties_button)
         _help_layout.addStretch()
         _help_layout.addWidget(self.help_button)
         self.verticalLayout_3.insertLayout(0, _help_layout)
@@ -917,19 +1195,55 @@ class PackageDialog(QDialog, DialogUi):
             if _item and _item.widget() is self.stackedWidget:
                 self.verticalLayout_3.takeAt(_i)
                 break
-        _scroll.setWidget(self.stackedWidget)
+        # Create a wrapper widget with a VBoxLayout to place panels above Process
+        self._scroll_content = QWidget()
+        self._scroll_layout = QVBoxLayout(self._scroll_content)
+        self._scroll_layout.setContentsMargins(0, 0, 0, 0)
+        self._scroll_layout.setSpacing(0)
         
-        # Create a QTabWidget to hold the existing UI and the new tab
-        self.main_tab_widget = QTabWidget()
+        # Container for Layer Assignment and Raster Configuration above Process
+        self._top_panels_widget = QWidget()
+        self._top_panels_layout = QVBoxLayout(self._top_panels_widget)
+        self._top_panels_layout.setContentsMargins(9, 6, 9, 0)
+        self._top_panels_layout.setSpacing(4)
         
-        # First tab for additional features (Prepare Project Layers)
-        self.tab_additional = QWidget()
-        self.tab_additional_layout = QVBoxLayout(self.tab_additional)
+        self._scroll_layout.addWidget(self._top_panels_widget)
+        self._scroll_layout.addWidget(self.stackedWidget)
         
-        # ── Step 1: Create Groups ──────────────────────────────────────
+        _scroll.setWidget(self._scroll_content)
+        
+        # Initially hide the top panels until packagePage is shown
+        self._top_panels_widget.setVisible(False)
+        
+        
+        # ── Data Sources Dialog ───────────────────────────────────────────────
+        self.data_sources_dialog = QDialog(self)
+        self.data_sources_dialog.setWindowTitle(self.tr("Data Sources"))
+        self.data_sources_dialog.resize(600, 400)
+        ds_layout = QVBoxLayout(self.data_sources_dialog)
+        
+        self.data_sources_table = QTableWidget()
+        self.data_sources_table.setColumnCount(5)
+        self.data_sources_table.setHorizontalHeaderLabels([
+            self.tr("Layer"), self.tr("Identifiable"), self.tr("Read-only"), self.tr("Searchable"), self.tr("Visible")
+        ])
+        self.data_sources_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.data_sources_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.data_sources_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.data_sources_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.data_sources_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.data_sources_table.verticalHeader().setVisible(False)
+        ds_layout.addWidget(self.data_sources_table)
+        
+        self.data_sources_table.itemChanged.connect(self._on_data_source_changed)
+
+        # ── Layer Groups & Styles Panel ─────────────────────────────────────────
+        self._groups_styles_panel = QGroupBox(self.tr("Layer Groups & Styles"))
+        groups_layout = QVBoxLayout(self._groups_styles_panel)
+
         step1_label = QLabel(self.tr("Step 1: Create Groups"))
         step1_label.setStyleSheet("font-weight: bold; font-size: 13px; margin-top: 4px;")
-        self.tab_additional_layout.addWidget(step1_label)
+        groups_layout.addWidget(step1_label)
 
         group_controls_layout = QHBoxLayout()
         self.group_name_input = QLineEdit()
@@ -946,24 +1260,33 @@ class PackageDialog(QDialog, DialogUi):
         group_controls_layout.addWidget(self.group_name_input)
         group_controls_layout.addWidget(self.add_group_btn)
         group_controls_layout.addWidget(self.delete_group_btn)
-        self.tab_additional_layout.addLayout(group_controls_layout)
+        groups_layout.addLayout(group_controls_layout)
 
         # Tree widget + reorder arrows side-by-side
         tree_row_layout = QHBoxLayout()
 
         self.layer_groups_tree = LayerGroupsTreeWidget(self)
-        self.layer_groups_tree.setColumnCount(2)
-        self.layer_groups_tree.setHeaderLabels([self.tr("Layer"), self.tr("QML Style")])
+        self.layer_groups_tree.setMinimumHeight(400)
+        self.layer_groups_tree.setColumnCount(3)
+        self.layer_groups_tree.setHeaderLabels([self.tr("Description"), self.tr("Assigned Layer"), self.tr("QML Style")])
         self.layer_groups_tree.setSelectionMode(QTreeWidget.ExtendedSelection)
         self.layer_groups_tree.setDragEnabled(True)
         self.layer_groups_tree.setAcceptDrops(True)
         self.layer_groups_tree.setDragDropMode(QTreeWidget.InternalMove)
-        # Set column sizing: column 0 stretches, column 1 fixed width
+        # Center align the header text
+        self.layer_groups_tree.headerItem().setTextAlignment(0, Qt.AlignCenter)
+        self.layer_groups_tree.headerItem().setTextAlignment(1, Qt.AlignCenter)
+        self.layer_groups_tree.headerItem().setTextAlignment(2, Qt.AlignCenter)
+        
+        # Set column sizing to interactive so the user can adjust widths manually
         header = self.layer_groups_tree.header()
-        header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, QHeaderView.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.Fixed)
-        header.resizeSection(1, 220)
+        header.setStretchLastSection(True)
+        header.setSectionResizeMode(0, QHeaderView.Interactive)
+        header.setSectionResizeMode(1, QHeaderView.Interactive)
+        header.setSectionResizeMode(2, QHeaderView.Interactive)
+        self.layer_groups_tree.setColumnWidth(0, 250)
+        self.layer_groups_tree.setColumnWidth(1, 200)
+        self.layer_groups_tree.setColumnWidth(2, 220)
         tree_row_layout.addWidget(self.layer_groups_tree)
 
         # Vertical column for reorder arrows beside the tree
@@ -980,7 +1303,7 @@ class PackageDialog(QDialog, DialogUi):
         arrows_layout.addStretch()
         tree_row_layout.addLayout(arrows_layout)
 
-        self.tab_additional_layout.addLayout(tree_row_layout)
+        groups_layout.addLayout(tree_row_layout)
 
         # ── Step 2: Verify Styles ─────────────────────────────────
         # step2_label = QLabel(self.tr("Step 2: Verify Styles"))
@@ -993,35 +1316,35 @@ class PackageDialog(QDialog, DialogUi):
         ))
         step2_note.setWordWrap(True)
         step2_note.setStyleSheet("color: gray; font-size: 11px; margin-bottom: 2px;")
-        self.tab_additional_layout.addWidget(step2_note)
+        groups_layout.addWidget(step2_note)
 
         self.import_qml_btn = QPushButton(self.tr("Import QML Style(s)..."))
         self.import_qml_btn.setToolTip(self.tr(
             "Import additional QML style files if the built-in styles are not sufficient."
         ))
-        self.tab_additional_layout.addWidget(self.import_qml_btn)
+        groups_layout.addWidget(self.import_qml_btn)
 
         # ── 2: Apply ────────────────────────────────────────────
         step3_label = QLabel(self.tr("Step 2: Apply"))
         step3_label.setStyleSheet("font-weight: bold; font-size: 13px; margin-top: 8px;")
-        self.tab_additional_layout.addWidget(step3_label)
+        groups_layout.addWidget(step3_label)
 
         self.apply_groups_btn = QPushButton(self.tr("Apply Groups && Styles"))
         self.apply_groups_btn.setStyleSheet(
             "QPushButton { font-weight: bold; font-size: 13px; padding: 6px; }"
         )
-        self.tab_additional_layout.addWidget(self.apply_groups_btn)
+        groups_layout.addWidget(self.apply_groups_btn)
 
         # ── Separator ────────────────────────────────────────────────
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
         separator.setFrameShadow(QFrame.Sunken)
-        self.tab_additional_layout.addWidget(separator)
+        groups_layout.addWidget(separator)
 
         # ── Presets ──────────────────────────────────────────────────
         presets_label = QLabel(self.tr("Presets"))
         presets_label.setStyleSheet("font-weight: bold; font-size: 13px; margin-top: 4px;")
-        self.tab_additional_layout.addWidget(presets_label)
+        groups_layout.addWidget(presets_label)
 
         preset_buttons_layout = QHBoxLayout()
         self.load_preset_btn = QPushButton(self.tr("Load Preset"))
@@ -1030,7 +1353,11 @@ class PackageDialog(QDialog, DialogUi):
         preset_buttons_layout.addWidget(self.load_preset_btn)
         preset_buttons_layout.addWidget(self.save_preset_btn)
         preset_buttons_layout.addWidget(self.delete_preset_btn)
-        self.tab_additional_layout.addLayout(preset_buttons_layout)
+        preset_buttons_layout.addWidget(self.delete_preset_btn)
+        groups_layout.addLayout(preset_buttons_layout)
+        
+        # Add the completed groups panel to the top panels layout
+        self._top_panels_layout.addWidget(self._groups_styles_panel)
         
         # Connect signals for groups
         self.add_group_btn.clicked.connect(self._on_add_layer_group)
@@ -1043,18 +1370,8 @@ class PackageDialog(QDialog, DialogUi):
         self.delete_preset_btn.clicked.connect(self._on_delete_groups_preset)
         self.import_qml_btn.clicked.connect(self._on_import_qml_styles)
         self.layer_groups_tree.itemChanged.connect(self._on_tree_item_changed)
-        self.main_tab_widget.addTab(self.tab_additional, self.tr("Prepare Project Layers"))
-
-        # Second tab for the existing UI
-        self.tab_main = QWidget()
-        self.tab_main_layout = QVBoxLayout(self.tab_main)
-        self.tab_main_layout.setContentsMargins(0, 0, 0, 0)
-        self.tab_main_layout.addWidget(_scroll)
-        self.main_tab_widget.addTab(self.tab_main, self.tr("Export Options"))
         
-        self.main_tab_widget.currentChanged.connect(self._on_tab_changed)
-        
-        self.verticalLayout_3.insertWidget(_i, self.main_tab_widget)
+        self.verticalLayout_3.insertWidget(_i, _scroll)
         self.setMinimumHeight(500)
         self.resize(500, 720)
         self.setSizeGripEnabled(True)
@@ -1136,11 +1453,7 @@ class PackageDialog(QDialog, DialogUi):
         self._ea_list_widget.setVisible(False)
         self._ea_btn_container.setVisible(False)
         self.layer_dropdown.currentIndexChanged.connect(self._populate_ea_list)
-
-        # EA Layer Assignment panel (visible only in EA Level)
-        self._ea_layer_panel = self._build_ea_layer_panel()
-        self.gridLayout.addWidget(self._ea_layer_panel, 37, 0, 1, 2)
-        self._ea_layer_panel.setVisible(False)
+        
         self.layer_dropdown.currentIndexChanged.connect(self._auto_detect_ea_layers)
 
         # Combined City/Municipality and Barangay Tree Filter
@@ -1204,15 +1517,11 @@ class PackageDialog(QDialog, DialogUi):
         # Connect BGY list item model to update Export button when selections change
         self._bgy_list_widget.itemChanged.connect(self._on_bgy_item_changed)
 
-        # BGY Layer Assignment panel (visible only in Barangay Level)
-        self._bgy_layer_panel = self._build_bgy_layer_panel()
-        self.gridLayout.addWidget(self._bgy_layer_panel, 41, 0, 1, 2)
-        self._bgy_layer_panel.setVisible(False)
         self.layer_dropdown.currentIndexChanged.connect(self._auto_detect_bgy_layers)
 
         # Raster Configuration panel (replaces old Raster Process group box)
         self._raster_config_panel = self._build_raster_config_panel()
-        self.gridLayout.addWidget(self._raster_config_panel, 42, 0, 1, 2)
+        self._top_panels_layout.addWidget(self._raster_config_panel)
         self._raster_config_panel.setVisible(False)
 
         # Hide the old Raster Process group box and Clip button from the .ui file
@@ -1248,6 +1557,9 @@ class PackageDialog(QDialog, DialogUi):
         self.load_layer_groups()
         # Apply initial UI state based on the default output level.
         self._update_ui_for_output_level()
+        
+        # Populate data sources table
+        self._populate_data_sources()
 
         # Flag to control batch mode
         self.is_batch_mode = False
@@ -1297,6 +1609,148 @@ class PackageDialog(QDialog, DialogUi):
             except Exception:
                 continue
         self._batch_prev_enabled_states = {}
+
+    def show_data_sources_dialog(self):
+        self._populate_data_sources()
+        self.data_sources_dialog.exec_()
+
+    def _populate_data_sources(self):
+        self.data_sources_table.blockSignals(True)
+        self.data_sources_table.setRowCount(0)
+        
+        project = QgsProject.instance()
+        root = project.layerTreeRoot()
+        
+        # Get all assigned and checked layers from the layer groups tree
+        assigned_layer_ids = set()
+        for i in range(self.layer_groups_tree.topLevelItemCount()):
+            group_item = self.layer_groups_tree.topLevelItem(i)
+            if group_item.checkState(0) != Qt.Checked:
+                continue
+                
+            for j in range(group_item.childCount()):
+                layer_item = group_item.child(j)
+                if layer_item.checkState(0) != Qt.Checked:
+                    continue
+                    
+                active_name = self._get_active_layer_name(layer_item)
+                if not active_name or active_name == self.tr("— None —"):
+                    continue
+                    
+                combo = self.layer_groups_tree.itemWidget(layer_item, 1)
+                if combo and combo.currentData() is not None:
+                    assigned_layer_ids.add(combo.currentData())
+                else:
+                    layers_by_name = project.mapLayersByName(active_name)
+                    if layers_by_name:
+                        assigned_layer_ids.add(layers_by_name[0].id())
+                        
+        all_layers = project.mapLayers()
+        layers = [all_layers[lid] for lid in assigned_layer_ids if lid in all_layers]
+        layers.sort(key=lambda l: l.name())
+        
+        self.data_sources_table.setRowCount(len(layers))
+        for row, layer in enumerate(layers):
+            # Layer Name
+            name_item = QTableWidgetItem(layer.name())
+            name_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            name_item.setData(Qt.UserRole, layer.id())
+            self.data_sources_table.setItem(row, 0, name_item)
+            
+            # Identifiable
+            ident_checked = True
+            try:
+                if hasattr(Qgis, "MapLayerFlag"):
+                    ident_checked = bool(layer.flags() & Qgis.MapLayerFlag.Identifiable)
+                else:
+                    ident_checked = bool(layer.flags() & QgsMapLayer.Identifiable)
+            except Exception:
+                pass
+            ident_item = QTableWidgetItem()
+            ident_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable)
+            ident_item.setCheckState(Qt.Checked if ident_checked else Qt.Unchecked)
+            self.data_sources_table.setItem(row, 1, ident_item)
+            
+            # Read-only
+            ro_checked = False
+            if isinstance(layer, QgsVectorLayer):
+                ro_checked = layer.readOnly()
+            ro_item = QTableWidgetItem()
+            ro_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable)
+            ro_item.setCheckState(Qt.Checked if ro_checked else Qt.Unchecked)
+            self.data_sources_table.setItem(row, 2, ro_item)
+            
+            # Searchable
+            search_checked = True
+            try:
+                if hasattr(Qgis, "MapLayerFlag"):
+                    search_checked = bool(layer.flags() & Qgis.MapLayerFlag.Searchable)
+                else:
+                    search_checked = bool(layer.flags() & QgsMapLayer.Searchable)
+            except Exception:
+                pass
+            search_item = QTableWidgetItem()
+            search_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable)
+            search_item.setCheckState(Qt.Checked if search_checked else Qt.Unchecked)
+            self.data_sources_table.setItem(row, 3, search_item)
+            
+            # Visible
+            vis_checked = True
+            tree_layer = root.findLayer(layer.id())
+            if tree_layer:
+                vis_checked = tree_layer.isVisible()
+            vis_item = QTableWidgetItem()
+            vis_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable)
+            vis_item.setCheckState(Qt.Checked if vis_checked else Qt.Unchecked)
+            self.data_sources_table.setItem(row, 4, vis_item)
+            
+        self.data_sources_table.blockSignals(False)
+
+    def _on_data_source_changed(self, item):
+        row = item.row()
+        col = item.column()
+        if col == 0:
+            return
+            
+        layer_id = self.data_sources_table.item(row, 0).data(Qt.UserRole)
+        project = QgsProject.instance()
+        layer = project.mapLayer(layer_id)
+        if not layer:
+            return
+            
+        is_checked = item.checkState() == Qt.Checked
+        
+        if col == 1: # Identifiable
+            try:
+                flags = layer.flags()
+                flag_enum = Qgis.MapLayerFlag.Identifiable if hasattr(Qgis, "MapLayerFlag") else QgsMapLayer.Identifiable
+                if is_checked:
+                    layer.setFlags(flags | flag_enum)
+                else:
+                    layer.setFlags(flags & ~flag_enum)
+            except Exception as e:
+                print(f"Error setting Identifiable flag: {e}")
+                
+        elif col == 2: # Read-only
+            if isinstance(layer, QgsVectorLayer):
+                layer.setReadOnly(is_checked)
+                project.writeEntry("ReadOnlyLayers", layer.id(), "True" if is_checked else "False")
+                
+        elif col == 3: # Searchable
+            try:
+                flags = layer.flags()
+                flag_enum = Qgis.MapLayerFlag.Searchable if hasattr(Qgis, "MapLayerFlag") else QgsMapLayer.Searchable
+                if is_checked:
+                    layer.setFlags(flags | flag_enum)
+                else:
+                    layer.setFlags(flags & ~flag_enum)
+            except Exception as e:
+                print(f"Error setting Searchable flag: {e}")
+                
+        elif col == 4: # Visible
+            tree_layer = project.layerTreeRoot().findLayer(layer.id())
+            if tree_layer:
+                tree_layer.setItemVisibilityChecked(is_checked)
 
     def _update_lists_from_filter_tree(self):
         if self.output_dropdown.currentText() == self.tr("EA Level"):
@@ -1435,12 +1889,9 @@ class PackageDialog(QDialog, DialogUi):
             self._ea_list_widget.setVisible(is_ea)
             self._ea_btn_container.setVisible(is_ea)
 
-        # EA Layer Assignment panel
-        if hasattr(self, '_ea_layer_panel'):
-            self._ea_layer_panel.setVisible(is_ea)
-            if is_ea:
-                self._auto_detect_ea_layers()
-                
+        if is_ea:
+            self._auto_detect_ea_layers()
+
         # Tree filter widget
         if hasattr(self, '_filter_tree_label'):
             self._filter_tree_label.setVisible(is_bgy or is_ea)
@@ -1455,8 +1906,9 @@ class PackageDialog(QDialog, DialogUi):
             self._bgy_btn_container.setVisible(is_bgy)
 
         # BGY Layer Assignment panel
-        if hasattr(self, '_bgy_layer_panel'):
-            self._bgy_layer_panel.setVisible(is_bgy)
+        # Update Layer Groups & Styles Tree Widget with Base Layers
+        if hasattr(self, '_update_layer_assignment_ui'):
+            self._update_layer_assignment_ui()
             if is_bgy:
                 self._auto_detect_bgy_layers()
 
@@ -1718,6 +2170,79 @@ class PackageDialog(QDialog, DialogUi):
         else:
             self.show_package_page()
 
+    def _disable_unused_qfield_actions(self):
+        """Temporarily sets QFieldSync/action to 'no_action' for unselected layers.
+        Returns a dict of original actions so they can be restored.
+        """
+        project = QgsProject.instance()
+        assigned_layer_ids = set()
+        
+        # 1. Group Panel (LayerGroupsTreeWidget)
+        if hasattr(self, 'layer_groups_tree'):
+            for i in range(self.layer_groups_tree.topLevelItemCount()):
+                group_item = self.layer_groups_tree.topLevelItem(i)
+                if group_item.checkState(0) != Qt.Checked:
+                    continue
+                for j in range(group_item.childCount()):
+                    layer_item = group_item.child(j)
+                    if layer_item.checkState(0) == Qt.Checked:
+                        active_name = self._get_active_layer_name(layer_item)
+                        if not active_name or active_name == self.tr("— None —"):
+                            continue
+                        combo = self.layer_groups_tree.itemWidget(layer_item, 1)
+                        if combo and combo.currentData() is not None:
+                            assigned_layer_ids.add(combo.currentData())
+                        else:
+                            layers_by_name = project.mapLayersByName(active_name)
+                            if layers_by_name:
+                                assigned_layer_ids.add(layers_by_name[0].id())
+                                
+        # 2. Individual Export Layers
+        if hasattr(self, '_export_table'):
+            for row in range(self._export_table.rowCount()):
+                chk_item = self._export_table.item(row, 0)
+                if chk_item and chk_item.checkState() == Qt.Checked:
+                    layer_id = chk_item.data(Qt.UserRole)
+                    if layer_id:
+                        assigned_layer_ids.add(layer_id)
+                        
+        # 3. Raster Configuration
+        if hasattr(self, 'raster_table'):
+            for row in range(self.raster_table.rowCount()):
+                chk_item = self.raster_table.item(row, 0)
+                if chk_item and chk_item.checkState() == Qt.Checked:
+                    layer_id = chk_item.data(Qt.UserRole)
+                    if layer_id:
+                        assigned_layer_ids.add(layer_id)
+                        
+        original_actions = {}
+        for layer in project.mapLayers().values():
+            val = layer.customProperty("QFieldSync/action")
+            original_actions[layer.id()] = val if val is not None else ""
+            
+            is_generated_img = False
+            lyr_name = layer.name().lower()
+            if "_img" in lyr_name or lyr_name.endswith("_img.tif"):
+                is_generated_img = True
+            elif layer.source() and "_img.tif" in layer.source().lower():
+                is_generated_img = True
+                
+            if layer.id() not in assigned_layer_ids and not is_generated_img:
+                layer.setCustomProperty("QFieldSync/action", "no_action")
+                
+        return original_actions
+
+    def _restore_qfield_actions(self, original_actions):
+        """Restores QFieldSync/action to its pre-export state."""
+        project = QgsProject.instance()
+        for layer_id, action in original_actions.items():
+            layer = project.mapLayer(layer_id)
+            if layer:
+                if action == "":
+                    layer.removeCustomProperty("QFieldSync/action")
+                else:
+                    layer.setCustomProperty("QFieldSync/action", action)
+
     def get_export_folder_from_dialog(self):
         """Get the export folder according to the inputs in the selected"""
         # manual
@@ -1726,6 +2251,9 @@ class PackageDialog(QDialog, DialogUi):
     def show_package_page(self):
         self.nextButton.setVisible(False)
         self.stackedWidget.setCurrentWidget(self.packagePage)
+        # Show the top panels (Layer Assignment, Raster Configuration)
+        if hasattr(self, '_top_panels_widget'):
+            self._top_panels_widget.setVisible(True)
         self.update_button_box_visibility()
 
 
@@ -2100,6 +2628,7 @@ class PackageDialog(QDialog, DialogUi):
                 )
 
         def _convert_with_same_file_guard():
+            orig_actions = self._disable_unused_qfield_actions()
             try:
                 self._offline_convertor.convert()
             except shutil.SameFileError as e:
@@ -2125,6 +2654,8 @@ class PackageDialog(QDialog, DialogUi):
                     "GMD Pipeline",
                     Qgis.Info,
                 )
+            finally:
+                self._restore_qfield_actions(orig_actions)
 
         self._offline_convertor = _build_converter(self.offliner)
 
@@ -2430,102 +2961,6 @@ class PackageDialog(QDialog, DialogUi):
             return False, str(e)
 
     # ------------------------------------------------------------------
-    # EA Layer assignment panel helpers
-    # ------------------------------------------------------------------
-
-    def _build_ea_layer_panel(self):
-        """Create the layer assignment group box with dropdowns for each layer role."""
-        panel = QGroupBox(self.tr("Layer Assignment"))
-        grid = QGridLayout(panel)
-        grid.setContentsMargins(6, 6, 6, 6)
-        grid.setVerticalSpacing(4)
-
-        # Column header for Visible
-        vis_header = QLabel(self.tr("Visible"))
-        vis_header.setToolTip(self.tr("Whether this layer is visible in the packaged project"))
-        vis_header.setStyleSheet("font-weight: bold; font-size: 11px;")
-        vis_header.setAlignment(Qt.AlignCenter)
-        grid.addWidget(vis_header, 0, 2)
-
-        # (attribute_name, label, required)
-        self._ea_layer_roles = [
-            ("_ea_combo_bgy",        self.tr("Barangay layer (*_bgy)"),         True),
-            ("_ea_combo_bldg",       self.tr("Building points (*_bldg_point)"),  True),
-            ("_ea_combo_landmark",   self.tr("Landmark layer (*_landmark)"),     True),
-            ("_ea_combo_block",      self.tr("Block layer (*_block)"),           False),
-            ("_ea_combo_road",       self.tr("Road layer (*_road)"),             False),
-            ("_ea_combo_river",      self.tr("River layer (*_river)"),           False),
-            ("_ea_combo_bridge",     self.tr("Bridge layer (*_bridge)"),         False),
-            ("_ea_combo_railroad",   self.tr("Railroad layer (*_railroad)"),     False),
-        ]
-
-        for row, (attr, label, required) in enumerate(self._ea_layer_roles):
-            grid_row = row + 1  # offset by 1 for the header row
-            lbl = QLabel(label)
-            if not required:
-                lbl.setStyleSheet("color: gray;")
-            combo = QComboBox()
-            combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            setattr(self, attr, combo)
-            grid.addWidget(lbl, grid_row, 0)
-            grid.addWidget(combo, grid_row, 1)
-
-            # Visible checkbox
-            vis_chk = QCheckBox()
-            vis_chk.setChecked(True)
-            vis_chk.setToolTip(self.tr("Show/hide this layer in the packaged project"))
-            vis_chk.setStyleSheet("margin-left: 12px;")
-            setattr(self, attr + "_visible", vis_chk)
-            grid.addWidget(vis_chk, grid_row, 2, Qt.AlignCenter)
-
-        return panel
-
-    def _build_bgy_layer_panel(self):
-        """Create the BGY layer assignment group box with dropdowns for each layer role."""
-        panel = QGroupBox(self.tr("Layer Assignment"))
-        grid = QGridLayout(panel)
-        grid.setContentsMargins(6, 6, 6, 6)
-        grid.setVerticalSpacing(4)
-
-        # Column header for Visible
-        vis_header = QLabel(self.tr("Visible"))
-        vis_header.setToolTip(self.tr("Whether this layer is visible in the packaged project"))
-        vis_header.setStyleSheet("font-weight: bold; font-size: 11px;")
-        vis_header.setAlignment(Qt.AlignCenter)
-        grid.addWidget(vis_header, 0, 2)
-
-        # (attribute_name, label, required)
-        self._bgy_layer_roles = [
-            ("_bgy_combo_ea",        self.tr("EA layer (*_ea)"),                 True),
-            ("_bgy_combo_bldg",      self.tr("Building points (*_bldg_point)"),  True),
-            ("_bgy_combo_landmark",  self.tr("Landmark layer (*_landmark)"),     True),
-            ("_bgy_combo_block",     self.tr("Block layer (*_block)"),           False),
-            ("_bgy_combo_road",      self.tr("Road layer (*_road)"),             False),
-            ("_bgy_combo_river",     self.tr("River layer (*_river)"),           False),
-            ("_bgy_combo_bridge",    self.tr("Bridge layer (*_bridge)"),         False),
-            ("_bgy_combo_railroad",  self.tr("Railroad layer (*_railroad)"),     False),
-        ]
-
-        for row, (attr, label, required) in enumerate(self._bgy_layer_roles):
-            grid_row = row + 1  # offset by 1 for the header row
-            lbl = QLabel(label)
-            if not required:
-                lbl.setStyleSheet("color: gray;")
-            combo = QComboBox()
-            combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            setattr(self, attr, combo)
-            grid.addWidget(lbl, grid_row, 0)
-            grid.addWidget(combo, grid_row, 1)
-
-            # Visible checkbox
-            vis_chk = QCheckBox()
-            vis_chk.setChecked(True)
-            vis_chk.setToolTip(self.tr("Show/hide this layer in the packaged project"))
-            vis_chk.setStyleSheet("margin-left: 12px;")
-            setattr(self, attr + "_visible", vis_chk)
-            grid.addWidget(vis_chk, grid_row, 2, Qt.AlignCenter)
-
-        return panel
 
     def _build_raster_config_panel(self):
         """Create the raster configuration panel with satellite image and additional mbtiles selectors."""
@@ -2534,12 +2969,7 @@ class PackageDialog(QDialog, DialogUi):
         grid.setContentsMargins(6, 6, 6, 6)
         grid.setVerticalSpacing(4)
 
-        # Column header for Visible
-        vis_header = QLabel(self.tr("Visible"))
-        vis_header.setToolTip(self.tr("Whether this raster layer is visible in the packaged project"))
-        vis_header.setStyleSheet("font-weight: bold; font-size: 11px;")
-        vis_header.setAlignment(Qt.AlignCenter)
-        grid.addWidget(vis_header, 0, 2)
+
 
         # --- Row 1: Satellite Image Format dropdown ---
         format_label = QLabel(self.tr("Satellite Image Format"))
@@ -2573,11 +3003,7 @@ class PackageDialog(QDialog, DialogUi):
         )
         grid.addWidget(self._raster_satellite_dir, 2, 1)
 
-        self._raster_satellite_visible = QCheckBox()
-        self._raster_satellite_visible.setChecked(True)
-        self._raster_satellite_visible.setToolTip(self.tr("Show/hide the satellite raster in the packaged project"))
-        self._raster_satellite_visible.setStyleSheet("margin-left: 12px;")
-        grid.addWidget(self._raster_satellite_visible, 2, 2, Qt.AlignCenter)
+
 
         # --- Row 3: Convert to MBTiles checkbox ---
         self._raster_convert_mbtiles = QCheckBox(self.tr("Convert satellite to MBTiles"))
@@ -2609,11 +3035,7 @@ class PackageDialog(QDialog, DialogUi):
         )
         grid.addWidget(self._raster_additional_dir, 4, 1)
 
-        self._raster_additional_visible = QCheckBox()
-        self._raster_additional_visible.setChecked(True)
-        self._raster_additional_visible.setToolTip(self.tr("Show/hide the additional raster in the packaged project"))
-        self._raster_additional_visible.setStyleSheet("margin-left: 12px;")
-        grid.addWidget(self._raster_additional_visible, 4, 2, Qt.AlignCenter)
+
 
         # Connect format dropdown index change to handle dynamic showing/hiding
         self._raster_type_combo.currentIndexChanged.connect(self._on_satellite_format_changed)
@@ -2628,16 +3050,15 @@ class PackageDialog(QDialog, DialogUi):
     def _on_satellite_format_changed(self, index):
         """Show/hide options based on the chosen format selection."""
         # Check if elements are fully initialized before trying to modify visibility
-        has_sat = hasattr(self, '_raster_satellite_dir') and hasattr(self, '_raster_satellite_dir_label') and hasattr(self, '_raster_satellite_visible')
+        has_sat = hasattr(self, '_raster_satellite_dir') and hasattr(self, '_raster_satellite_dir_label')
         has_convert = hasattr(self, '_raster_convert_mbtiles')
-        has_add = hasattr(self, '_raster_additional_dir') and hasattr(self, '_raster_additional_dir_label') and hasattr(self, '_raster_additional_visible')
+        has_add = hasattr(self, '_raster_additional_dir') and hasattr(self, '_raster_additional_dir_label')
 
         if index == 0:  # GeoPackage
             # Show Satellite Image Directory
             if has_sat:
                 self._raster_satellite_dir_label.setVisible(True)
                 self._raster_satellite_dir.setVisible(True)
-                self._raster_satellite_visible.setVisible(True)
             # Show and enable Convert to MBTiles option
             if has_convert:
                 self._raster_convert_mbtiles.setVisible(True)
@@ -2651,14 +3072,12 @@ class PackageDialog(QDialog, DialogUi):
             if has_add:
                 self._raster_additional_dir_label.setVisible(False)
                 self._raster_additional_dir.setVisible(False)
-                self._raster_additional_visible.setVisible(False)
 
         elif index == 1:  # MBTiles
             # Show Satellite Image Directory
             if has_sat:
                 self._raster_satellite_dir_label.setVisible(True)
                 self._raster_satellite_dir.setVisible(True)
-                self._raster_satellite_visible.setVisible(True)
             # Hide Convert to MBTiles option (output is automatically MBTiles)
             if has_convert:
                 self._raster_convert_mbtiles.setChecked(True)
@@ -2667,14 +3086,12 @@ class PackageDialog(QDialog, DialogUi):
             if has_add:
                 self._raster_additional_dir_label.setVisible(False)
                 self._raster_additional_dir.setVisible(False)
-                self._raster_additional_visible.setVisible(False)
 
         elif index == 2:  # Both GPKG and MBTiles
             # Show Satellite Image Directory
             if has_sat:
                 self._raster_satellite_dir_label.setVisible(True)
                 self._raster_satellite_dir.setVisible(True)
-                self._raster_satellite_visible.setVisible(True)
             # Show and enable Convert to MBTiles option
             if has_convert:
                 self._raster_convert_mbtiles.setVisible(True)
@@ -2688,7 +3105,6 @@ class PackageDialog(QDialog, DialogUi):
             if has_add:
                 self._raster_additional_dir_label.setVisible(True)
                 self._raster_additional_dir.setVisible(True)
-                self._raster_additional_visible.setVisible(True)
 
     def _auto_detect_ea_layers(self):
         """Populate each layer assignment combo with auto-detected best match."""
@@ -2698,6 +3114,7 @@ class PackageDialog(QDialog, DialogUi):
             return
 
         suffix_map = {
+            "_ea_combo_ea":       ("_ea",),
             "_ea_combo_bgy":      ("_bgy",),
             "_ea_combo_bldg":     ("_bldg_point", "_bldgpts", "_bldg_points"),
             "_ea_combo_landmark": ("_landmark",),
@@ -2724,9 +3141,10 @@ class PackageDialog(QDialog, DialogUi):
             matched_id = None
             for lyr in all_vector_layers:
                 lname = self._normalized_layer_name(lyr.name()).lower()
-                combo.addItem(lyr.name(), lyr.id())
-                if matched_id is None and any(lname.endswith(s) for s in suffixes):
-                    matched_id = lyr.id()
+                if any(lname.endswith(s) for s in suffixes):
+                    combo.addItem(lyr.name(), lyr.id())
+                    if matched_id is None:
+                        matched_id = lyr.id()
 
             if matched_id:
                 idx = combo.findData(matched_id)
@@ -2752,6 +3170,7 @@ class PackageDialog(QDialog, DialogUi):
             return
 
         suffix_map = {
+            "_bgy_combo_bgy":     ("_bgy",),
             "_bgy_combo_ea":      ("_ea",),
             "_bgy_combo_bldg":    ("_bldg_point", "_bldgpts", "_bldg_points"),
             "_bgy_combo_landmark": ("_landmark",),
@@ -2778,9 +3197,10 @@ class PackageDialog(QDialog, DialogUi):
             matched_id = None
             for lyr in all_vector_layers:
                 lname = self._normalized_layer_name(lyr.name()).lower()
-                combo.addItem(lyr.name(), lyr.id())
-                if matched_id is None and any(lname.endswith(s) for s in suffixes):
-                    matched_id = lyr.id()
+                if any(lname.endswith(s) for s in suffixes):
+                    combo.addItem(lyr.name(), lyr.id())
+                    if matched_id is None:
+                        matched_id = lyr.id()
 
             if matched_id:
                 idx = combo.findData(matched_id)
@@ -3750,19 +4170,7 @@ class PackageDialog(QDialog, DialogUi):
         # Each role combo has a companion _visible checkbox (e.g. _ea_combo_bgy_visible).
         # Maps layer_id -> bool (True = visible, False = hidden)
         visibility_map = {}
-        is_ea = self.output_dropdown.currentText() == self.tr("EA Level")
-        layer_roles = getattr(self, '_ea_layer_roles', []) if is_ea else getattr(self, '_bgy_layer_roles', [])
-        for attr, _label, _req in layer_roles:
-            combo = getattr(self, attr, None)
-            vis_chk = getattr(self, attr + "_visible", None)
-            if combo and vis_chk:
-                layer_id = combo.currentData()
-                if layer_id:
-                    visibility_map[layer_id] = vis_chk.isChecked()
-
-        has_visibility_changes = any(not v for v in visibility_map.values())
-
-        if not export_configs and not has_visibility_changes:
+        if not export_configs:
             return
 
         qgs_text_cached = None
@@ -4072,22 +4480,7 @@ class PackageDialog(QDialog, DialogUi):
                     processed_ml_ids.add(xml_id)
                 matched_config["_applied"] = True
 
-        # Patch layer visibility in the layer-tree XML based on user selection
-        for ltl in root_xml.findall(".//layer-tree-layer"):
-            ltl_id = ltl.get("id", "")
-            matched_key = None
-            if ltl_id in visibility_map:
-                matched_key = ltl_id
-            else:
-                for k in visibility_map:
-                    if k in ltl_id:
-                        matched_key = k
-                        break
-            if matched_key is not None:
-                new_checked = "Qt::Checked" if visibility_map[matched_key] else "Qt::Unchecked"
-                if ltl.get("checked", "") != new_checked:
-                    ltl.set("checked", new_checked)
-                    changed_xml = True
+
 
         if changed_xml:
             patched_text = ET.tostring(root_xml, encoding="unicode")
@@ -4171,81 +4564,7 @@ class PackageDialog(QDialog, DialogUi):
         This method only patches the checked/unchecked state in the QGZ for
         both the satellite raster and the additional raster.
         """
-        project_path = str(packaged_project_file)
-        if not os.path.exists(project_path):
-            return
-
-        sat_visible = self._raster_satellite_visible.isChecked() if hasattr(self, '_raster_satellite_visible') else True
-        add_visible = self._raster_additional_visible.isChecked() if hasattr(self, '_raster_additional_visible') else True
-
-        # Read the project XML
-        qgs_text = None
-        qgs_name_in_zip = None
-        if project_path.lower().endswith(".qgz"):
-            try:
-                with zipfile.ZipFile(project_path, "r") as zin:
-                    all_names = zin.namelist()
-                    qgs_name_in_zip = next((n for n in all_names if n.lower().endswith(".qgs")), None)
-                    if not qgs_name_in_zip:
-                        return
-                    qgs_text = zin.read(qgs_name_in_zip).decode("utf-8", errors="ignore")
-            except Exception:
-                return
-        else:
-            try:
-                with open(project_path, "r", encoding="utf-8", errors="ignore") as f:
-                    qgs_text = f.read()
-            except Exception:
-                return
-
-        try:
-            root_xml = ET.fromstring(qgs_text)
-        except Exception:
-            return
-
-        changed_xml = False
-
-        for ltl in root_xml.findall(".//layer-tree-layer"):
-            ltl_name = ltl.get("name", "").lower()
-            if ltl_name.endswith("_img_new"):
-                # Additional raster
-                new_checked = "Qt::Checked" if add_visible else "Qt::Unchecked"
-                if ltl.get("checked", "") != new_checked:
-                    ltl.set("checked", new_checked)
-                    changed_xml = True
-            elif ltl_name.endswith("_img"):
-                # Satellite raster
-                new_checked = "Qt::Checked" if sat_visible else "Qt::Unchecked"
-                if ltl.get("checked", "") != new_checked:
-                    ltl.set("checked", new_checked)
-                    changed_xml = True
-
-        # --- Write back if changed ---
-        if changed_xml:
-            patched_text = ET.tostring(root_xml, encoding="unicode")
-            if project_path.lower().endswith(".qgz"):
-                tmp_path = project_path + ".rastertmp"
-                try:
-                    with zipfile.ZipFile(project_path, "r") as zin:
-                        with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as zout:
-                            for name in zin.namelist():
-                                zout.writestr(
-                                    name,
-                                    patched_text.encode("utf-8") if name == qgs_name_in_zip else zin.read(name),
-                                )
-                    os.replace(tmp_path, project_path)
-                except Exception:
-                    if os.path.exists(tmp_path):
-                        try:
-                            os.remove(tmp_path)
-                        except Exception:
-                            pass
-            else:
-                try:
-                    with open(project_path, "w", encoding="utf-8") as f:
-                        f.write(patched_text)
-                except Exception:
-                    pass
+        pass
 
 
     def _package_ea_single(self, ea_geocode, export_folder):
@@ -4600,6 +4919,7 @@ class PackageDialog(QDialog, DialogUi):
 
 
         def _convert():
+            orig_actions = self._disable_unused_qfield_actions()
             try:
                 self._offline_convertor.convert()
             except shutil.SameFileError as e:
@@ -4617,6 +4937,8 @@ class PackageDialog(QDialog, DialogUi):
                 QgsApplication.instance().messageLog().logMessage(
                     f"Ignoring same-path copy during EA export: {e}", "GMD Pipeline", Qgis.Info,
                 )
+            finally:
+                self._restore_qfield_actions(orig_actions)
 
         self._offline_convertor = _build_converter(self.offliner)
         try:
@@ -5792,6 +6114,7 @@ class PackageDialog(QDialog, DialogUi):
 
 
         def _convert():
+            orig_actions = self._disable_unused_qfield_actions()
             try:
                 self._offline_convertor.convert()
             except shutil.SameFileError as e:
@@ -5809,6 +6132,8 @@ class PackageDialog(QDialog, DialogUi):
                 QgsApplication.instance().messageLog().logMessage(
                     f"Ignoring same-path copy during BGY export: {e}", "GMD Pipeline", Qgis.Info,
                 )
+            finally:
+                self._restore_qfield_actions(orig_actions)
 
         self._offline_convertor = _build_converter(self.offliner)
         try:
