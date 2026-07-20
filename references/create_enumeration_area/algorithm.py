@@ -1021,7 +1021,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         ea_id_field = "ean"  # Default fallback
         for i in range(ea_fields.count()):
             name_lower = ea_fields.at(i).name().lower()
-            if name_lower in ["ean", "ea_number", "ea_code", "id", "geocode"]:
+            if name_lower in ["ean", "ea_number", "ea_code", "id"]:
                 ea_id_field = ea_fields.at(i).name()
                 break
                 
@@ -3626,26 +3626,15 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         
             eas.append(ea_dict)
 
-        # Calculate max original EA sequence number per parent barangay from all EAs in the active barangays
+        # Count the total number of EAs per parent barangay across all active barangay EAs.
+        # This total count is used as the YYY base: new EAs are numbered count+1, count+2, …
+        # ensuring the sequence stays within the barangay's own running count.
         max_ea_number = {}
         for feat in all_ea_features:
             bar_geo = resolve_ea_parent_barangay(feat)
             if not bar_geo or bar_geo == "Unknown":
                 continue
-                
-            orig_code = feat.attribute(ea_id_field)
-            orig_code_str = str(orig_code).strip() if orig_code is not None else "000"
-            if orig_code_str.endswith(".0"):
-                orig_code_str = orig_code_str[:-2]
-                
-            digits = "".join([c for c in orig_code_str if c.isdigit()])
-            orig_first3 = digits[:3] if len(digits) >= 3 else digits.zfill(3)
-            
-            if orig_first3.isdigit() and orig_first3 != "000":
-                val = int(orig_first3)
-                max_ea_number[bar_geo] = max(max_ea_number.get(bar_geo, 0), val)
-            else:
-                max_ea_number.setdefault(bar_geo, 0)
+            max_ea_number[bar_geo] = max_ea_number.get(bar_geo, 0) + 1
 
         # Update initial in-memory attributes for the Previous EA Layer to match building points
         for pop_fname in [household_field, "hhcount", "population", "household"]:
@@ -4481,7 +4470,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                     # Clean suffix and pad with zeros from the left to ensure exactly 3 digits
                     orig_last3 = suffix.zfill(3)
                     if len(orig_last3) > 3:
-                        orig_last3 = orig_last3[-3:]
+                        orig_last3 = orig_last3[:3] # FIX: take first 3 digits of mother EA suffix
                         
                 # Determine sequence number suffix YYY
                 # If it is a newly generated/modified EA, number starting from max_ea_number + 1
@@ -4489,15 +4478,12 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                     seq_num = max_ea_number.get(bar, 0) + 1 + new_ea_counter
                     seq_str = f"{seq_num:03d}"
                     new_ea_counter += 1
-                    if ea.get('is_special_ea', False):
-                        orig_code_str = str(ea['original_code']).strip() if ea['original_code'] is not None else ""
-                        if orig_code_str.endswith(".0"):
-                            orig_code_str = orig_code_str[:-2]
-                        if len(orig_code_str) > 9:
-                            ea['new_ea_code'] = orig_code_str[:9] + seq_str
-                        else:
-                            ea['new_ea_code'] = seq_str
+                    
+                    if orig_last3 == "000":
+                        # If mother EA is 000000, then delineated EAs should be 001000, 002000, etc.
+                        ea['new_ea_code'] = seq_str + "000"
                     else:
+                        # XXXYYY mother-child concept (first 3 digits of mother EA + last 3 digits next sequence suffix)
                         ea['new_ea_code'] = orig_last3 + seq_str
                 else:
                     # If it is unchanged, retain the original EA code
@@ -4505,6 +4491,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                     if orig_code_str.endswith(".0"):
                         orig_code_str = orig_code_str[:-2]
                     ea['new_ea_code'] = orig_code_str
+                    
+                ea['new_ea_tracker'] = ea['new_ea_code']
                 
                 # Cache sort index to preserve the conditional sorting sequence in output generation
                 ea['sort_index'] = i
@@ -4884,7 +4872,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 
             new_ea_idx = out_fields.indexOf("new_ea")
             if new_ea_idx != -1:
-                out_feat.setAttribute(new_ea_idx, ea['new_ea_code'])
+                out_feat.setAttribute(new_ea_idx, ea.get('new_ea_tracker'))
                 
             bldg_count_idx = out_fields.indexOf("bldg_count")
             if bldg_count_idx != -1:
@@ -4906,9 +4894,9 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             if split_by_idx != -1:
                 out_feat.setAttribute(split_by_idx, ea.get('split_by', 'none'))
 
-            # Also update the original ean field if it exists
+            # Also update the original ean field if it exists, but never overwrite the geocode field
             ean_field_idx = out_fields.indexOf(ea_id_field)
-            if ean_field_idx != -1:
+            if ean_field_idx != -1 and ea_id_field.lower() != "geocode":
                 out_feat.setAttribute(ean_field_idx, ea['new_ea_code'])
 
             ea_type_idx = out_fields.indexOf("ea_type")
