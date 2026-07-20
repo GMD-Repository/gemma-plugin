@@ -385,47 +385,18 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
         # Build candidate lookup
         delineation_candidates = []
         merge_candidates = []
-        
-        # Build gap and overlap spatial indexes if layers are selected
-        gap_layer = self._get_selected_layer(self.gap_input_wrapper)
-        gap_index = None
-        gap_features = []
-        gap_to_ea_transform = None
-        if gap_layer and prev_ea_layer:
-            gap_index = QgsSpatialIndex()
-            for g_feat in gap_layer.getFeatures():
-                if g_feat.geometry() and not g_feat.geometry().isEmpty():
-                    gap_index.insertFeature(g_feat)
-                    gap_features.append(g_feat)
-            if gap_layer.crs() != prev_ea_layer.crs():
-                from qgis.core import QgsCoordinateTransform, QgsProject
-                gap_to_ea_transform = QgsCoordinateTransform(gap_layer.crs(), prev_ea_layer.crs(), QgsProject.instance())
 
-        overlap_layer = self._get_selected_layer(self.overlap_input_wrapper)
-        overlap_index = None
-        overlap_features = []
-        overlap_to_ea_transform = None
-        if overlap_layer and prev_ea_layer:
-            overlap_index = QgsSpatialIndex()
-            for o_feat in overlap_layer.getFeatures():
-                if o_feat.geometry() and not o_feat.geometry().isEmpty():
-                    overlap_index.insertFeature(o_feat)
-                    overlap_features.append(o_feat)
-            if overlap_layer.crs() != prev_ea_layer.crs():
-                from qgis.core import QgsCoordinateTransform, QgsProject
-                overlap_to_ea_transform = QgsCoordinateTransform(overlap_layer.crs(), prev_ea_layer.crs(), QgsProject.instance())
-        
         temp_ea_index = QgsSpatialIndex()
         temp_ea_by_id = {}
-        
+
         for feat in prev_ea_layer.getFeatures():
             ean_val = feat.attribute(ean_idx)
             ean_str = str(ean_val).strip() if ean_val is not None else ""
             if ean_str.endswith(".0"):
                 ean_str = ean_str[:-2]
-                
+
             ea_name_str = self._get_ea_name(feat, ean_str, fields)
-                
+
             bgy_name_val = feat.attribute(bgy_name_idx) if bgy_name_idx != -1 else ""
             if bgy_name_val is None or (isinstance(bgy_name_val, QVariant) and bgy_name_val.isNull()):
                 bgy_name_str = "Unknown"
@@ -433,50 +404,19 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
                 bgy_name_str = str(bgy_name_val).strip()
                 if bgy_name_str.endswith(".0"):
                     bgy_name_str = bgy_name_str[:-2]
-                    
+
             hh_val = feat.attribute(hh_idx)
             try:
                 hh = float(hh_val) if hh_val is not None else 0.0
             except Exception:
                 hh = 0.0
-                
-            # Check gap and overlap intersections
-            intersects_gap_or_overlap = False
-            if feat.geometry() and not feat.geometry().isEmpty():
-                if gap_index:
-                    candidates = gap_index.intersects(feat.geometry().boundingBox())
-                    for go_fid in candidates:
-                        go_feat = next((f for f in gap_features if f.id() == go_fid), None)
-                        if go_feat:
-                            go_geom = go_feat.geometry()
-                            if gap_to_ea_transform:
-                                go_geom = QgsGeometry(go_geom)
-                                go_geom.transform(gap_to_ea_transform)
-                            if feat.geometry().intersects(go_geom):
-                                intersects_gap_or_overlap = True
-                                break
-                if not intersects_gap_or_overlap and overlap_index:
-                    candidates = overlap_index.intersects(feat.geometry().boundingBox())
-                    for go_fid in candidates:
-                        go_feat = next((f for f in overlap_features if f.id() == go_fid), None)
-                        if go_feat:
-                            go_geom = go_feat.geometry()
-                            if overlap_to_ea_transform:
-                                go_geom = QgsGeometry(go_geom)
-                                go_geom.transform(overlap_to_ea_transform)
-                            if feat.geometry().intersects(go_geom):
-                                intersects_gap_or_overlap = True
-                                break
-                            
-            if intersects_gap_or_overlap:
+
+            # Classify purely by hhcount thresholds
+            if hh > max_hh:
                 delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, feat))
                 temp_ea_index.insertFeature(feat)
                 temp_ea_by_id[feat.id()] = (ean_str, ea_name_str, bgy_name_str, hh, feat)
-            elif hh >= max_hh:
-                delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, feat))
-                temp_ea_index.insertFeature(feat)
-                temp_ea_by_id[feat.id()] = (ean_str, ea_name_str, bgy_name_str, hh, feat)
-            elif hh <= min_hh:
+            elif hh < min_hh:
                 merge_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, feat))
                 temp_ea_index.insertFeature(feat)
                 temp_ea_by_id[feat.id()] = (ean_str, ea_name_str, bgy_name_str, hh, feat)
@@ -2062,54 +2002,56 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             for special_fid in special_ea_info.keys():
                 merge_candidate_ids.add(special_fid)
 
-        # Write to delineation candidate sink (both initiators and other EAs within their barangays)
+        # Write to delineation candidate sink — only strict for_delineation candidates
+        # (EAs flagged by household threshold). Excludes context/reference EAs and
+        # Gap/Overlap Special EAs which are separately output to delineated_ea2026.
         if delin_candidate_sink is not None:
             for feat in previous_ea_source.getFeatures():
                 if multi_feedback.isCanceled():
                     raise QgsProcessingException("Algorithm cancelled by user.")
-                parent_bar = resolve_ea_parent_barangay(feat)
-                if parent_bar and parent_bar in delineation_candidate_bar_geocodes:
-                    out_feat = QgsFeature(delin_cand_fields)
-                    _dc_geom = feat.geometry()
-                    if ea_to_target:
-                        _dc_geom = QgsGeometry(_dc_geom)
-                        _dc_geom.transform(ea_to_target)
-                    out_feat.setGeometry(_dc_geom)
-                    attrs = []
-                    for f in delin_cand_fields:
-                        orig_idx = feat.fields().indexOf(f.name())
-                        if orig_idx != -1:
-                            attrs.append(feat.attribute(orig_idx))
-                        else:
-                            attrs.append(None)
-                    out_feat.setAttributes(attrs)
-                    corr_ea_geo_idx = delin_cand_fields.indexOf("correspondence_ea_geocode")
-                    if corr_ea_geo_idx != -1:
-                        map_uuid_idx = delin_cand_fields.indexOf("map_uuid")
-                        geocode_idx = delin_cand_fields.indexOf("geocode")
-                        sy_idx = delin_cand_fields.indexOf("sy")
-                        map_uuid_val = out_feat.attribute(map_uuid_idx) if map_uuid_idx != -1 else ""
-                        geocode_val = out_feat.attribute(geocode_idx) if geocode_idx != -1 else ""
-                        sy_val = out_feat.attribute(sy_idx) if sy_idx != -1 else ""
-                        map_uuid_str = str(map_uuid_val) if map_uuid_val is not None else ""
-                        geocode_str = str(geocode_val) if geocode_val is not None else ""
-                        sy_str = str(sy_val) if sy_val is not None else ""
-                        if map_uuid_str.endswith(".0"): map_uuid_str = map_uuid_str[:-2]
-                        if geocode_str.endswith(".0"): geocode_str = geocode_str[:-2]
-                        if sy_str.endswith(".0"): sy_str = sy_str[:-2]
-                        out_feat.setAttribute(corr_ea_geo_idx, f"{map_uuid_str}:{geocode_str}:{sy_str}")
+                # Only include this EA if it is a confirmed delineation candidate
+                if feat.id() not in delineation_candidate_ids:
+                    continue
+                out_feat = QgsFeature(delin_cand_fields)
+                _dc_geom = feat.geometry()
+                if ea_to_target:
+                    _dc_geom = QgsGeometry(_dc_geom)
+                    _dc_geom.transform(ea_to_target)
+                out_feat.setGeometry(_dc_geom)
+                attrs = []
+                for f in delin_cand_fields:
+                    orig_idx = feat.fields().indexOf(f.name())
+                    if orig_idx != -1:
+                        attrs.append(feat.attribute(orig_idx))
+                    else:
+                        attrs.append(None)
+                out_feat.setAttributes(attrs)
+                corr_ea_geo_idx = delin_cand_fields.indexOf("correspondence_ea_geocode")
+                if corr_ea_geo_idx != -1:
+                    map_uuid_idx = delin_cand_fields.indexOf("map_uuid")
+                    geocode_idx = delin_cand_fields.indexOf("geocode")
+                    sy_idx = delin_cand_fields.indexOf("sy")
+                    map_uuid_val = out_feat.attribute(map_uuid_idx) if map_uuid_idx != -1 else ""
+                    geocode_val = out_feat.attribute(geocode_idx) if geocode_idx != -1 else ""
+                    sy_val = out_feat.attribute(sy_idx) if sy_idx != -1 else ""
+                    map_uuid_str = str(map_uuid_val) if map_uuid_val is not None else ""
+                    geocode_str = str(geocode_val) if geocode_val is not None else ""
+                    sy_str = str(sy_val) if sy_val is not None else ""
+                    if map_uuid_str.endswith(".0"): map_uuid_str = map_uuid_str[:-2]
+                    if geocode_str.endswith(".0"): geocode_str = geocode_str[:-2]
+                    if sy_str.endswith(".0"): sy_str = sy_str[:-2]
+                    out_feat.setAttribute(corr_ea_geo_idx, f"{map_uuid_str}:{geocode_str}:{sy_str}")
+                
+                eadel_indi_idx = delin_cand_fields.indexOf("eadel_indi")
+                if eadel_indi_idx != -1:
+                    out_feat.setAttribute(eadel_indi_idx, "for_delineation")
+                
+                # Clear fid attribute to let OGR generate sequential IDs
+                fid_idx = delin_cand_fields.indexOf("fid")
+                if fid_idx != -1:
+                    out_feat.setAttribute(fid_idx, None)
                     
-                    eadel_indi_idx = delin_cand_fields.indexOf("eadel_indi")
-                    if eadel_indi_idx != -1:
-                        indi_val = "for_delineation" if feat.id() in delineation_candidate_ids else "ea_reference"
-                        out_feat.setAttribute(eadel_indi_idx, indi_val)
-                    
-                    # Clear fid attribute to let OGR generate sequential IDs
-                    fid_idx = delin_cand_fields.indexOf("fid")
-                    if fid_idx != -1:
-                        out_feat.setAttribute(fid_idx, None)
-                        
-                    delin_candidate_sink.addFeature(out_feat)
+                delin_candidate_sink.addFeature(out_feat)
 
         feedback.pushInfo(
             f"Delineation Candidate Index: {len(delineation_candidate_ids)} EA(s) flagged "
