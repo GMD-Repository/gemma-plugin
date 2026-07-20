@@ -63,6 +63,8 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
         self.household_field_wrapper = None
         self.min_household_wrapper = None
         self.max_household_wrapper = None
+        self.gap_input_wrapper = None
+        self.overlap_input_wrapper = None
         super().__init__(*args, **kwargs)
 
     def createWidget(self):
@@ -235,10 +237,14 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
                 self.min_household_wrapper = w
             elif name == "MAX_HOUSEHOLD":
                 self.max_household_wrapper = w
+            elif name == "GAP_INPUT":
+                self.gap_input_wrapper = w
+            elif name == "OVERLAP_INPUT":
+                self.overlap_input_wrapper = w
 
         for w in [self.prev_ea_input_wrapper, self.ea_id_field_wrapper,
                   self.household_field_wrapper, self.min_household_wrapper,
-                  self.max_household_wrapper]:
+                  self.max_household_wrapper, self.gap_input_wrapper, self.overlap_input_wrapper]:
             if w:
                 try:
                     w.widgetValueHasChanged.connect(self.trigger_auto_refresh)
@@ -380,6 +386,35 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
         delineation_candidates = []
         merge_candidates = []
         
+        # Build gap and overlap spatial indexes if layers are selected
+        gap_layer = self._get_selected_layer(self.gap_input_wrapper)
+        gap_index = None
+        gap_features = []
+        gap_to_ea_transform = None
+        if gap_layer and prev_ea_layer:
+            gap_index = QgsSpatialIndex()
+            for g_feat in gap_layer.getFeatures():
+                if g_feat.geometry() and not g_feat.geometry().isEmpty():
+                    gap_index.insertFeature(g_feat)
+                    gap_features.append(g_feat)
+            if gap_layer.crs() != prev_ea_layer.crs():
+                from qgis.core import QgsCoordinateTransform, QgsProject
+                gap_to_ea_transform = QgsCoordinateTransform(gap_layer.crs(), prev_ea_layer.crs(), QgsProject.instance())
+
+        overlap_layer = self._get_selected_layer(self.overlap_input_wrapper)
+        overlap_index = None
+        overlap_features = []
+        overlap_to_ea_transform = None
+        if overlap_layer and prev_ea_layer:
+            overlap_index = QgsSpatialIndex()
+            for o_feat in overlap_layer.getFeatures():
+                if o_feat.geometry() and not o_feat.geometry().isEmpty():
+                    overlap_index.insertFeature(o_feat)
+                    overlap_features.append(o_feat)
+            if overlap_layer.crs() != prev_ea_layer.crs():
+                from qgis.core import QgsCoordinateTransform, QgsProject
+                overlap_to_ea_transform = QgsCoordinateTransform(overlap_layer.crs(), prev_ea_layer.crs(), QgsProject.instance())
+        
         temp_ea_index = QgsSpatialIndex()
         temp_ea_by_id = {}
         
@@ -405,7 +440,39 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
             except Exception:
                 hh = 0.0
                 
-            if hh >= max_hh:
+            # Check gap and overlap intersections
+            intersects_gap_or_overlap = False
+            if feat.geometry() and not feat.geometry().isEmpty():
+                if gap_index:
+                    candidates = gap_index.intersects(feat.geometry().boundingBox())
+                    for go_fid in candidates:
+                        go_feat = next((f for f in gap_features if f.id() == go_fid), None)
+                        if go_feat:
+                            go_geom = go_feat.geometry()
+                            if gap_to_ea_transform:
+                                go_geom = QgsGeometry(go_geom)
+                                go_geom.transform(gap_to_ea_transform)
+                            if feat.geometry().intersects(go_geom):
+                                intersects_gap_or_overlap = True
+                                break
+                if not intersects_gap_or_overlap and overlap_index:
+                    candidates = overlap_index.intersects(feat.geometry().boundingBox())
+                    for go_fid in candidates:
+                        go_feat = next((f for f in overlap_features if f.id() == go_fid), None)
+                        if go_feat:
+                            go_geom = go_feat.geometry()
+                            if overlap_to_ea_transform:
+                                go_geom = QgsGeometry(go_geom)
+                                go_geom.transform(overlap_to_ea_transform)
+                            if feat.geometry().intersects(go_geom):
+                                intersects_gap_or_overlap = True
+                                break
+                            
+            if intersects_gap_or_overlap:
+                delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, feat))
+                temp_ea_index.insertFeature(feat)
+                temp_ea_by_id[feat.id()] = (ean_str, ea_name_str, bgy_name_str, hh, feat)
+            elif hh >= max_hh:
                 delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, feat))
                 temp_ea_index.insertFeature(feat)
                 temp_ea_by_id[feat.id()] = (ean_str, ea_name_str, bgy_name_str, hh, feat)
@@ -508,6 +575,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
     # New optional linear layer parameters
     ROAD_INPUT = "ROAD_INPUT"
     RIVER_INPUT = "RIVER_INPUT"
+    GAP_INPUT = "GAP_INPUT"
+    OVERLAP_INPUT = "OVERLAP_INPUT"
     SNAP_TOLERANCE = "SNAP_TOLERANCE"
     # Buffer tolerance (meters) for snapping splits to linear features
     LINE_BUFFER_TOLERANCE = 0.5
@@ -684,6 +753,26 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 "River Layer (optional)",
                 [QgsProcessing.SourceType.TypeVectorLine],
                 defaultValue=default_river,
+                optional=True,
+            )
+        )
+        # Optional Gap layer
+        self.addParameter(
+            QgsProcessingParameterFeatureSource(
+                self.GAP_INPUT,
+                "Gap Layer (optional)",
+                [QgsProcessing.SourceType.TypeVectorPolygon],
+                defaultValue=None,
+                optional=True,
+            )
+        )
+        # Optional Overlap layer
+        self.addParameter(
+            QgsProcessingParameterFeatureSource(
+                self.OVERLAP_INPUT,
+                "Overlap Layer (optional)",
+                [QgsProcessing.SourceType.TypeVectorPolygon],
+                defaultValue=None,
                 optional=True,
             )
         )
@@ -912,6 +1001,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         # Retrieve optional linear layers
         road_source = self.parameterAsSource(parameters, self.ROAD_INPUT, context)
         river_source = self.parameterAsSource(parameters, self.RIVER_INPUT, context)
+        gap_source = self.parameterAsSource(parameters, self.GAP_INPUT, context)
+        overlap_source = self.parameterAsSource(parameters, self.OVERLAP_INPUT, context)
         snap_tolerance_m = self.parameterAsDouble(parameters, self.SNAP_TOLERANCE, context)
         preview_only = self.parameterAsBoolean(parameters, self.PREVIEW_ONLY, context)
 
@@ -1063,6 +1154,246 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                     all_ea_features.append(feat)
             _ea_load_cnt += 1
             yield_to_ui(_ea_load_cnt, 1000)
+
+        # --- Gap and Overlap workflow ---
+        special_ea_info = {}  # special_fid -> {special_type, source_id, remarks, original_code}
+        special_ea_ids = set()
+        
+        if gap_source is not None or overlap_source is not None:
+            gaps_count = 0
+            overlaps_count = 0
+            special_ea_counter = 0
+            
+            # Find the max ID of features in all_ea_features to generate new IDs
+            max_fid = max([feat.id() for feat in all_ea_features]) if all_ea_features else 0
+            special_ea_features = []
+            
+            # Process Gap layer features
+            if gap_source is not None:
+                feedback.pushInfo("Gap layer detected.")
+                feedback.pushInfo("Scanning affected EAs...")
+                
+                gap_to_ea_transform = None
+                if gap_source.sourceCrs() != previous_ea_source.sourceCrs():
+                    gap_to_ea_transform = QgsCoordinateTransform(gap_source.sourceCrs(), previous_ea_source.sourceCrs(), context.transformContext())
+                
+                for go_feat in gap_source.getFeatures():
+                    if feedback.isCanceled():
+                        raise QgsProcessingException("Algorithm cancelled by user.")
+                        
+                    go_geom = go_feat.geometry()
+                    if not go_geom or go_geom.isEmpty():
+                        continue
+                        
+                    go_geom = QgsGeometry(go_geom)
+                    if gap_to_ea_transform:
+                        go_geom.transform(gap_to_ea_transform)
+                    go_geom = go_geom.makeValid()
+                    
+                    # Clip the Gap geometry to the barangay boundary
+                    candidates = barangay_index.intersects(go_geom.boundingBox())
+                    best_bar_feat = None
+                    max_bar_overlap = -1
+                    for cid in candidates:
+                        bar_feat = barangay_by_id[cid]
+                        bar_geom = bar_feat.geometry()
+                        if bar_geom.intersects(go_geom):
+                            overlap_area = bar_geom.intersection(go_geom).area()
+                            if overlap_area > max_bar_overlap:
+                                max_bar_overlap = overlap_area
+                                best_bar_feat = bar_feat
+                                
+                    if best_bar_feat is None:
+                        continue
+                        
+                    go_geom = go_geom.intersection(best_bar_feat.geometry()).makeValid()
+                    if go_geom.isEmpty():
+                        continue
+                        
+                    parent_bar_geo = str(best_bar_feat.attribute(bar_geocode_field)).strip()
+                    if parent_bar_geo.endswith(".0"):
+                        parent_bar_geo = parent_bar_geo[:-2]
+                        
+                    special_type = "GAP"
+                    gaps_count += 1
+                    
+                    # Find intersecting EAs and subtract Gap geometry
+                    intersecting_eas = []
+                    max_ea_overlap = -1
+                    primary_ea_feat = None
+                    
+                    for ea_feat in all_ea_features:
+                        if ea_feat.geometry().intersects(go_geom):
+                            overlap_area = ea_feat.geometry().intersection(go_geom).area()
+                            if overlap_area > 1e-9:
+                                intersecting_eas.append((ea_feat, overlap_area))
+                                if overlap_area > max_ea_overlap:
+                                    max_ea_overlap = overlap_area
+                                    primary_ea_feat = ea_feat
+                                    
+                    # Subtract geometry in-place from all intersecting EAs
+                    for ea_feat, _ in intersecting_eas:
+                        new_geom = ea_feat.geometry().difference(go_geom).makeValid()
+                        ea_feat.setGeometry(new_geom)
+                        
+                    # Create Special EA feature
+                    special_ea_feat = QgsFeature(previous_ea_source.fields())
+                    special_ea_feat.setGeometry(go_geom)
+                    
+                    # Copy standard attributes from primary or fallback EA
+                    special_ea_attrs = None
+                    if primary_ea_feat:
+                        special_ea_attrs = list(primary_ea_feat.attributes())
+                    else:
+                        fallback_ea_feat = None
+                        for ea_feat in all_ea_features:
+                            if resolve_ea_parent_barangay(ea_feat) == parent_bar_geo:
+                                fallback_ea_feat = ea_feat
+                                break
+                        if fallback_ea_feat:
+                            special_ea_attrs = list(fallback_ea_feat.attributes())
+                        else:
+                            special_ea_attrs = [None] * previous_ea_source.fields().count()
+                            
+                    # Update geocode attribute
+                    geocode_field_idx = previous_ea_source.fields().indexOf(barangay_id_field)
+                    if geocode_field_idx != -1 and geocode_field_idx < len(special_ea_attrs):
+                        special_ea_attrs[geocode_field_idx] = parent_bar_geo
+                        
+                    special_ea_feat.setAttributes(special_ea_attrs)
+                    
+                    special_ea_counter += 1
+                    new_fid = max_fid + special_ea_counter
+                    special_ea_feat.setId(new_fid)
+                    
+                    # Save Special EA in memory
+                    go_source_id = str(go_feat.attribute("id")) if go_feat.fields().indexOf("id") != -1 and go_feat.attribute("id") is not None else str(go_feat.id())
+                    special_ea_info[new_fid] = {
+                        'special_type': special_type,
+                        'source_id': go_source_id,
+                        'remarks': 'Generated from Gap layer',
+                        'original_code': str(primary_ea_feat.attribute(ea_id_field)) if primary_ea_feat else (str(fallback_ea_feat.attribute(ea_id_field)) if fallback_ea_feat else "000")
+                    }
+                    special_ea_ids.add(new_fid)
+                    special_ea_features.append(special_ea_feat)
+
+            # Process Overlap layer features
+            if overlap_source is not None:
+                feedback.pushInfo("Overlap layer detected.")
+                feedback.pushInfo("Scanning affected EAs...")
+                
+                overlap_to_ea_transform = None
+                if overlap_source.sourceCrs() != previous_ea_source.sourceCrs():
+                    overlap_to_ea_transform = QgsCoordinateTransform(overlap_source.sourceCrs(), previous_ea_source.sourceCrs(), context.transformContext())
+                
+                for go_feat in overlap_source.getFeatures():
+                    if feedback.isCanceled():
+                        raise QgsProcessingException("Algorithm cancelled by user.")
+                        
+                    go_geom = go_feat.geometry()
+                    if not go_geom or go_geom.isEmpty():
+                        continue
+                        
+                    go_geom = QgsGeometry(go_geom)
+                    if overlap_to_ea_transform:
+                        go_geom.transform(overlap_to_ea_transform)
+                    go_geom = go_geom.makeValid()
+                    
+                    # Clip the Overlap geometry to the barangay boundary
+                    candidates = barangay_index.intersects(go_geom.boundingBox())
+                    best_bar_feat = None
+                    max_bar_overlap = -1
+                    for cid in candidates:
+                        bar_feat = barangay_by_id[cid]
+                        bar_geom = bar_feat.geometry()
+                        if bar_geom.intersects(go_geom):
+                            overlap_area = bar_geom.intersection(go_geom).area()
+                            if overlap_area > max_bar_overlap:
+                                max_bar_overlap = overlap_area
+                                best_bar_feat = bar_feat
+                                
+                    if best_bar_feat is None:
+                        continue
+                        
+                    go_geom = go_geom.intersection(best_bar_feat.geometry()).makeValid()
+                    if go_geom.isEmpty():
+                        continue
+                        
+                    parent_bar_geo = str(best_bar_feat.attribute(bar_geocode_field)).strip()
+                    if parent_bar_geo.endswith(".0"):
+                        parent_bar_geo = parent_bar_geo[:-2]
+                        
+                    special_type = "OVERLAP"
+                    overlaps_count += 1
+                    
+                    # Find intersecting EAs and subtract Overlap geometry
+                    intersecting_eas = []
+                    max_ea_overlap = -1
+                    primary_ea_feat = None
+                    
+                    for ea_feat in all_ea_features:
+                        if ea_feat.geometry().intersects(go_geom):
+                            overlap_area = ea_feat.geometry().intersection(go_geom).area()
+                            if overlap_area > 1e-9:
+                                intersecting_eas.append((ea_feat, overlap_area))
+                                if overlap_area > max_ea_overlap:
+                                    max_ea_overlap = overlap_area
+                                    primary_ea_feat = ea_feat
+                                    
+                    # Subtract geometry in-place from all intersecting EAs
+                    for ea_feat, _ in intersecting_eas:
+                        new_geom = ea_feat.geometry().difference(go_geom).makeValid()
+                        ea_feat.setGeometry(new_geom)
+                        
+                    # Create Special EA feature
+                    special_ea_feat = QgsFeature(previous_ea_source.fields())
+                    special_ea_feat.setGeometry(go_geom)
+                    
+                    # Copy standard attributes from primary or fallback EA
+                    special_ea_attrs = None
+                    if primary_ea_feat:
+                        special_ea_attrs = list(primary_ea_feat.attributes())
+                    else:
+                        fallback_ea_feat = None
+                        for ea_feat in all_ea_features:
+                            if resolve_ea_parent_barangay(ea_feat) == parent_bar_geo:
+                                fallback_ea_feat = ea_feat
+                                break
+                        if fallback_ea_feat:
+                            special_ea_attrs = list(fallback_ea_feat.attributes())
+                        else:
+                            special_ea_attrs = [None] * previous_ea_source.fields().count()
+                            
+                    # Update geocode attribute
+                    geocode_field_idx = previous_ea_source.fields().indexOf(barangay_id_field)
+                    if geocode_field_idx != -1 and geocode_field_idx < len(special_ea_attrs):
+                        special_ea_attrs[geocode_field_idx] = parent_bar_geo
+                        
+                    special_ea_feat.setAttributes(special_ea_attrs)
+                    
+                    special_ea_counter += 1
+                    new_fid = max_fid + special_ea_counter
+                    special_ea_feat.setId(new_fid)
+                    
+                    # Save Special EA in memory
+                    go_source_id = str(go_feat.attribute("id")) if go_feat.fields().indexOf("id") != -1 and go_feat.attribute("id") is not None else str(go_feat.id())
+                    special_ea_info[new_fid] = {
+                        'special_type': special_type,
+                        'source_id': go_source_id,
+                        'remarks': 'Generated from Overlap layer',
+                        'original_code': str(primary_ea_feat.attribute(ea_id_field)) if primary_ea_feat else (str(fallback_ea_feat.attribute(ea_id_field)) if fallback_ea_feat else "000")
+                    }
+                    special_ea_ids.add(new_fid)
+                    special_ea_features.append(special_ea_feat)
+
+            if gap_source is not None:
+                feedback.pushInfo(f"{gaps_count} Gap polygons processed.")
+            if overlap_source is not None:
+                feedback.pushInfo(f"{overlaps_count} Overlap polygons processed.")
+            feedback.pushInfo(f"Creating {special_ea_counter} Special EAs...")
+            
+            # Add new Special EA features to cached list
+            all_ea_features.extend(special_ea_features)
 
         # Extract 5-digit geocode prefix for output layer naming
         geocode_prefix = ""
@@ -1273,6 +1604,16 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         # Add correspondence_ea_geocode field if not already present
         if "correspondence_ea_geocode" not in [f.name() for f in out_fields]:
             out_fields.append(QgsField("correspondence_ea_geocode", QVariant.String))
+
+        # Add special EA fields if not already present
+        if "ea_type" not in [f.name() for f in out_fields]:
+            out_fields.append(QgsField("ea_type", QVariant.String))
+        if "special_type" not in [f.name() for f in out_fields]:
+            out_fields.append(QgsField("special_type", QVariant.String))
+        if "source_id" not in [f.name() for f in out_fields]:
+            out_fields.append(QgsField("source_id", QVariant.String))
+        if "remarks" not in [f.name() for f in out_fields]:
+            out_fields.append(QgsField("remarks", QVariant.String))
 
 
         out_wkb_type = QgsWkbTypes.multiType(previous_ea_source.wkbType())
@@ -1509,6 +1850,31 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 previous_ea_source.sourceCrs(), target_crs, context.transformContext()
             )
 
+        # Build Gap and Overlap spatial indexes if layers are supplied
+        gap_index = None
+        gap_features = []
+        gap_to_ea_transform = None
+        if gap_source is not None:
+            gap_index = QgsSpatialIndex()
+            for go_feat in gap_source.getFeatures():
+                if go_feat.geometry() and not go_feat.geometry().isEmpty():
+                    gap_index.insertFeature(go_feat)
+                    gap_features.append(go_feat)
+            if gap_source.sourceCrs() != previous_ea_source.sourceCrs():
+                gap_to_ea_transform = QgsCoordinateTransform(gap_source.sourceCrs(), previous_ea_source.sourceCrs(), context.transformContext())
+
+        overlap_index = None
+        overlap_features = []
+        overlap_to_ea_transform = None
+        if overlap_source is not None:
+            overlap_index = QgsSpatialIndex()
+            for go_feat in overlap_source.getFeatures():
+                if go_feat.geometry() and not go_feat.geometry().isEmpty():
+                    overlap_index.insertFeature(go_feat)
+                    overlap_features.append(go_feat)
+            if overlap_source.sourceCrs() != previous_ea_source.sourceCrs():
+                overlap_to_ea_transform = QgsCoordinateTransform(overlap_source.sourceCrs(), previous_ea_source.sourceCrs(), context.transformContext())
+
         # Phase 2 scans ALL EAs in the source layer — identical to what the preview widget sees.
         # Only the later processing phases (Phases 5-9) use the barangay-filtered all_ea_features.
         for _dc_feat in previous_ea_source.getFeatures():
@@ -1538,7 +1904,38 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
 
             # 1. Determine if it is a delineation candidate
             is_delin = False
-            if eadel_indi_col_idx != -1:
+            
+            # Check gap/overlap intersection
+            intersects_gap_or_overlap = False
+            if _dc_feat.geometry() and not _dc_feat.geometry().isEmpty():
+                if gap_index:
+                    candidates = gap_index.intersects(_dc_feat.geometry().boundingBox())
+                    for go_fid in candidates:
+                        go_feat = next((f for f in gap_features if f.id() == go_fid), None)
+                        if go_feat:
+                            go_geom = go_feat.geometry()
+                            if gap_to_ea_transform:
+                                go_geom = QgsGeometry(go_geom)
+                                go_geom.transform(gap_to_ea_transform)
+                            if _dc_feat.geometry().intersects(go_geom):
+                                intersects_gap_or_overlap = True
+                                break
+                if not intersects_gap_or_overlap and overlap_index:
+                    candidates = overlap_index.intersects(_dc_feat.geometry().boundingBox())
+                    for go_fid in candidates:
+                        go_feat = next((f for f in overlap_features if f.id() == go_fid), None)
+                        if go_feat:
+                            go_geom = go_feat.geometry()
+                            if overlap_to_ea_transform:
+                                go_geom = QgsGeometry(go_geom)
+                                go_geom.transform(overlap_to_ea_transform)
+                            if _dc_feat.geometry().intersects(go_geom):
+                                intersects_gap_or_overlap = True
+                                break
+                            
+            if intersects_gap_or_overlap:
+                is_delin = True
+            elif eadel_indi_col_idx != -1:
                 val = _dc_feat.attribute(eadel_indi_col_idx)
                 is_delin = (val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"))
             
@@ -1572,6 +1969,11 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                     delineation_candidate_bar_geocodes.add(parent_bar)
             elif is_merge:
                 merge_candidate_ids.add(_dc_feat.id())
+
+        # Add all Special EA IDs as placeholders to merge_candidate_ids so they are loaded into Phase 2's ea_by_id/ea_index and matched with building points
+        if gap_source is not None or overlap_source is not None:
+            for special_fid in special_ea_info.keys():
+                merge_candidate_ids.add(special_fid)
 
         # Write to delineation candidate sink (both initiators and other EAs within their barangays)
         if delin_candidate_sink is not None:
@@ -1788,7 +2190,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         ea_by_id = temp_ea_by_id
 
 # Stream buildings on-the-fly and match to starting EAs using candidate spatial index memory
-        feedback.pushInfo("Phase 2/8: Extracting candidate building points building points to EAs...")
+        feedback.pushInfo("Assigning building points...")
         # Pre-cache EA geometries to enable internal GEOS prepared geometry acceleration
         ea_geometries = {fid: feat.geometry() for fid, feat in ea_by_id.items()}
         ea_id_to_buildings = {}
@@ -3075,7 +3477,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         multi_feedback.setCurrentStep(3)
         multi_feedback.setProgressText(f"{_PHASE_LABELS[3]} [0/{previous_ea_count:,}]...")
         # Load starting EAs directly from Previous EA layer
-        feedback.pushInfo("Phase 4/8: Loading previous EAs into memory (caching only, no sink writing)...")
+        feedback.pushInfo("Recalculating household counts...")
         
         # Find index of hhcount/household field in Previous EA Layer
         prev_ea_pop_idx = previous_ea_source.fields().indexOf(household_field)
@@ -3191,7 +3593,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                     val = b['pop']
                 b['bldgpoints_value'] = val / _total_bldg_val if _total_bldg_val > 0.0 else 0.0
 
-            eas.append({
+            ea_dict = {
                 'geom': clean_geom,
                 'buildings': assigned_bldgs,
                 'hh_count': _ea_hh_count,
@@ -3204,7 +3606,23 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 'is_new': False,
                 'split_by': 'none',
                 'parent_barangay': bar_geo
-            })
+            }
+
+            if (gap_source is not None or overlap_source is not None) and feat.id() in special_ea_ids:
+                spec_info = special_ea_info[feat.id()]
+                ea_dict['is_special_ea'] = True
+                ea_dict['ea_type'] = 'SPECIAL'
+                ea_dict['special_type'] = spec_info['special_type']
+                ea_dict['source_id'] = spec_info['source_id']
+                ea_dict['remarks'] = spec_info['remarks']
+                ea_dict['is_new'] = True
+
+                # Check threshold compliance
+                if _ea_hh_count >= min_household:
+                    if feat.id() in merge_candidate_ids:
+                        merge_candidate_ids.remove(feat.id())
+                        
+            eas.append(ea_dict)
 
         # Calculate max original EA sequence number per parent barangay from all EAs in the active barangays
         max_ea_number = {}
@@ -3455,6 +3873,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                             # Skip neighbours whose original EAN was a delineation candidate
                             if neighbor.get('original_id') in delineation_candidate_ids:
                                 continue
+                            if neighbor.get('is_special_ea', False) and not is_merge_candidate(neighbor):
+                                continue
                             if ea['geom'].touches(neighbor['geom']) or ea['geom'].intersects(neighbor['geom']):
                                 combined_hh = ea['hh_count'] + neighbor['hh_count']
                                 score = combined_hh
@@ -3524,6 +3944,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                                 continue
                             if is_merge_candidate(neighbor):
                                 continue
+                            if neighbor.get('is_special_ea', False) and not is_merge_candidate(neighbor):
+                                continue
                                 
                             # Check contiguity
                             if ea['geom'].touches(neighbor['geom']) or ea['geom'].intersects(neighbor['geom']):
@@ -3545,6 +3967,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                                 if neighbor.get('original_id') in delineation_candidate_ids:
                                     continue
                                 if is_merge_candidate(neighbor):
+                                    continue
+                                if neighbor.get('is_special_ea', False) and not is_merge_candidate(neighbor):
                                     continue
                                     
                                 if ea['geom'].touches(neighbor['geom']) or ea['geom'].intersects(neighbor['geom']):
@@ -3616,7 +4040,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             return bar_eas
 
         # --- Main Splitting Process (Parallelized per Barangay) ---
-        feedback.pushInfo("Phase 5/8: Per-barangay splitting process [SPLIT-FIRST]...")
+        feedback.pushInfo("Running normal delineation...")
         
         # Group starting EAs by parent barangay and sort by geocode for deterministic ordering
         barangay_groups = {}
@@ -3721,7 +4145,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             raise QgsProcessingException("Algorithm cancelled by user.")
 
         # ── Phase 7: Iterative per-barangay merging loop ─────────────────────────────────────
-        feedback.pushInfo("Phase 6/8: Iterative per-barangay merging loop [PRIORITIZE CONTIGUOUS MERGES TO 299 HH]...")
+        feedback.pushInfo("Running merging...")
         
         # Group split EAs by parent barangay
         barangay_split_groups = {}
@@ -3812,7 +4236,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         # A global last-resort pass that enforces [min_household, max_household] on every EA
         # in the output list. Runs after per-barangay processing; handles any remaining
         # violations that the iterative loop could not resolve within its 25-iteration budget.
-        feedback.pushInfo("Phase 7/8: Final compliance sweep...")
+        feedback.pushInfo("Running compliance sweep...")
         # Temporary bypass to disable Phase 8
         compliance_changed = False
         compliance_pass = 0
@@ -3886,6 +4310,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         continue
                     if is_delineation_candidate(nb):
                         continue
+                    if nb.get('is_special_ea', False) and not is_merge_candidate(nb):
+                        continue
                     if ea['geom'].touches(nb['geom']) or ea['geom'].intersects(nb['geom']):
                         combined = ea['hh_count'] + nb['hh_count']
                         if min_household < combined < max_household:  # strictly > 100 and < 300
@@ -3902,6 +4328,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         if nb['parent_barangay'] != bar:
                             continue
                         if is_delineation_candidate(nb):
+                            continue
+                        if nb.get('is_special_ea', False) and not is_merge_candidate(nb):
                             continue
                         if ea['geom'].touches(nb['geom']) or ea['geom'].intersects(nb['geom']):
                             combined = ea['hh_count'] + nb['hh_count']
@@ -3921,6 +4349,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         if nb['parent_barangay'] != bar:
                             continue
                         if is_delineation_candidate(nb):
+                            continue
+                        if nb.get('is_special_ea', False) and not is_merge_candidate(nb):
                             continue
                         combined = ea['hh_count'] + nb['hh_count']
                         if combined < max_household:
@@ -4057,7 +4487,16 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                     seq_num = max_ea_number.get(bar, 0) + 1 + new_ea_counter
                     seq_str = f"{seq_num:03d}"
                     new_ea_counter += 1
-                    ea['new_ea_code'] = orig_last3 + seq_str
+                    if ea.get('is_special_ea', False):
+                        orig_code_str = str(ea['original_code']).strip() if ea['original_code'] is not None else ""
+                        if orig_code_str.endswith(".0"):
+                            orig_code_str = orig_code_str[:-2]
+                        if len(orig_code_str) > 9:
+                            ea['new_ea_code'] = orig_code_str[:9] + seq_str
+                        else:
+                            ea['new_ea_code'] = seq_str
+                    else:
+                        ea['new_ea_code'] = orig_last3 + seq_str
                 else:
                     # If it is unchanged, retain the original EA code
                     orig_code_str = str(ea['original_code']).strip() if ea['original_code'] is not None else ""
@@ -4417,12 +4856,19 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             out_feat = QgsFeature(out_fields)
             out_feat.setGeometry(geom)
             
-            # Pad the attributes list to match out_fields count
-            attrs = list(ea['attributes'])
-            needed = out_fields.count() - len(attrs)
-            if needed > 0:
-                attrs.extend([None] * needed)
-            out_feat.setAttributes(attrs)
+            # Use name-based field mapping to correctly copy all EA input layer field values.
+            # This is robust to field-order differences between ea['attributes'] (which was
+            # captured from previous_ea_source.fields() positionally) and out_fields.
+            src_fields = previous_ea_source.fields()
+            src_attrs = ea['attributes']
+            mapped_attrs = []
+            for f in out_fields:
+                src_idx = src_fields.indexOf(f.name())
+                if src_idx != -1 and src_idx < len(src_attrs):
+                    mapped_attrs.append(src_attrs[src_idx])
+                else:
+                    mapped_attrs.append(None)
+            out_feat.setAttributes(mapped_attrs)
             
             final_pop = ea['original_hhcount'] if is_unchanged_retain else ea['hh_count']
 
@@ -4458,6 +4904,27 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             if split_by_idx != -1:
                 out_feat.setAttribute(split_by_idx, ea.get('split_by', 'none'))
 
+            # Also update the original ean field if it exists
+            ean_field_idx = out_fields.indexOf(ea_id_field)
+            if ean_field_idx != -1:
+                out_feat.setAttribute(ean_field_idx, ea['new_ea_code'])
+
+            ea_type_idx = out_fields.indexOf("ea_type")
+            if ea_type_idx != -1:
+                out_feat.setAttribute(ea_type_idx, ea.get('ea_type', 'STANDARD'))
+                
+            special_type_idx = out_fields.indexOf("special_type")
+            if special_type_idx != -1:
+                out_feat.setAttribute(special_type_idx, ea.get('special_type', None))
+                
+            source_id_idx = out_fields.indexOf("source_id")
+            if source_id_idx != -1:
+                out_feat.setAttribute(source_id_idx, ea.get('source_id', None))
+                
+            remarks_idx = out_fields.indexOf("remarks")
+            if remarks_idx != -1:
+                out_feat.setAttribute(remarks_idx, ea.get('remarks', None))
+
             # Add correspondence_ea_geocode (concatenated map_uuid, geocode, sy)
             corr_ea_geo_idx = out_fields.indexOf("correspondence_ea_geocode")
             if corr_ea_geo_idx != -1:
@@ -4486,8 +4953,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
 #            if not sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
 #                feedback.reportError(f"Failed to add EA {i} to sink.")
 
-            # Add to delineated sink if it was split
-            if ea.get('from_split', False):
+            # Add to delineated sink if it was split, or if it is a Special EA (Gap/Overlap)
+            if ea.get('from_split', False) or ea.get('is_special_ea', False):
                 if delineated_sink is not None:
                     if not delineated_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
                         feedback.reportError(f"Failed to add EA {i} to delineated sink.")
@@ -4803,6 +5270,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         feedback.pushInfo(f"Total number of EAs processed: {total_proc}")
         feedback.pushInfo(f"Total number of delineation candidates identified (hhcount >= 300): {total_cand}")
         feedback.pushInfo("--------------------------------------------------")
+        feedback.pushInfo("Completed.")
 
         return outputs
 
