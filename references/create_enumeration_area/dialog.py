@@ -1080,37 +1080,6 @@ class EALauncherDialog(QDialog):
         total_hh = 0.0
         ea_count = 0
 
-        # Build gap and overlap spatial indexes if layers are selected
-        gap_layer = self.gap_combo.currentLayer()
-        gap_index = None
-        gap_features = []
-        gap_to_ea_transform = None
-        if gap_layer:
-            from qgis.core import QgsSpatialIndex
-            gap_index = QgsSpatialIndex()
-            for g_feat in gap_layer.getFeatures():
-                if g_feat.geometry() and not g_feat.geometry().isEmpty():
-                    gap_index.insertFeature(g_feat)
-                    gap_features.append(g_feat)
-            if gap_layer.crs() != prev_ea_layer.crs():
-                from qgis.core import QgsCoordinateTransform, QgsProject
-                gap_to_ea_transform = QgsCoordinateTransform(gap_layer.crs(), prev_ea_layer.crs(), QgsProject.instance())
-
-        overlap_layer = self.overlap_combo.currentLayer()
-        overlap_index = None
-        overlap_features = []
-        overlap_to_ea_transform = None
-        if overlap_layer:
-            from qgis.core import QgsSpatialIndex
-            overlap_index = QgsSpatialIndex()
-            for o_feat in overlap_layer.getFeatures():
-                if o_feat.geometry() and not o_feat.geometry().isEmpty():
-                    overlap_index.insertFeature(o_feat)
-                    overlap_features.append(o_feat)
-            if overlap_layer.crs() != prev_ea_layer.crs():
-                from qgis.core import QgsCoordinateTransform, QgsProject
-                overlap_to_ea_transform = QgsCoordinateTransform(overlap_layer.crs(), prev_ea_layer.crs(), QgsProject.instance())
-
         # Loop with responsive chunking to prevent QGIS from hanging
         for idx, feat in enumerate(prev_ea_layer.getFeatures()):
             if idx > 0 and idx % 100 == 0:
@@ -1120,9 +1089,9 @@ class EALauncherDialog(QDialog):
             ean_str = str(ean_val).strip() if ean_val is not None else ""
             if ean_str.endswith(".0"):
                 ean_str = ean_str[:-2]
-                
+
             ea_name_str = self._get_ea_name(feat, ean_str, fields)
-                
+
             bgy_name_val = feat.attribute(bgy_name_idx) if bgy_name_idx != -1 else ""
             if bgy_name_val is None or bgy_name_val == NULL:
                 bgy_name_str = "Unknown"
@@ -1130,48 +1099,20 @@ class EALauncherDialog(QDialog):
                 bgy_name_str = str(bgy_name_val).strip()
                 if bgy_name_str.endswith(".0"):
                     bgy_name_str = bgy_name_str[:-2]
-                    
+
             hh_val = feat.attribute(hh_idx)
             try:
                 hh = float(hh_val) if hh_val is not None else 0.0
             except Exception:
                 hh = 0.0
-                
+
             total_hh += hh
             ea_count += 1
 
-            intersects_gap_or_overlap = False
-            if feat.geometry() and not feat.geometry().isEmpty():
-                if gap_index:
-                    candidates = gap_index.intersects(feat.geometry().boundingBox())
-                    for go_fid in candidates:
-                        go_feat = next((f for f in gap_features if f.id() == go_fid), None)
-                        if go_feat:
-                            go_geom = go_feat.geometry()
-                            if gap_to_ea_transform:
-                                go_geom = QgsGeometry(go_geom)
-                                go_geom.transform(gap_to_ea_transform)
-                            if feat.geometry().intersects(go_geom):
-                                intersects_gap_or_overlap = True
-                                break
-                if not intersects_gap_or_overlap and overlap_index:
-                    candidates = overlap_index.intersects(feat.geometry().boundingBox())
-                    for go_fid in candidates:
-                        go_feat = next((f for f in overlap_features if f.id() == go_fid), None)
-                        if go_feat:
-                            go_geom = go_feat.geometry()
-                            if overlap_to_ea_transform:
-                                go_geom = QgsGeometry(go_geom)
-                                go_geom.transform(overlap_to_ea_transform)
-                            if feat.geometry().intersects(go_geom):
-                                intersects_gap_or_overlap = True
-                                break
-
-            if intersects_gap_or_overlap:
+            # Classify purely by hhcount thresholds
+            if hh > max_hh:
                 self.all_delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh))
-            elif hh >= max_hh:
-                self.all_delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh))
-            elif hh <= min_hh:
+            elif hh < min_hh:
                 self.all_merge_candidates.append((ean_str, ea_name_str, bgy_name_str, hh))
 
         # Update KPI Dashboard Stats

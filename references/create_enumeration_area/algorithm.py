@@ -1975,54 +1975,56 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             for special_fid in special_ea_info.keys():
                 merge_candidate_ids.add(special_fid)
 
-        # Write to delineation candidate sink (both initiators and other EAs within their barangays)
+        # Write to delineation candidate sink — only strict for_delineation candidates
+        # (EAs flagged by household threshold). Excludes context/reference EAs and
+        # Gap/Overlap Special EAs which are separately output to delineated_ea2026.
         if delin_candidate_sink is not None:
             for feat in previous_ea_source.getFeatures():
                 if multi_feedback.isCanceled():
                     raise QgsProcessingException("Algorithm cancelled by user.")
-                parent_bar = resolve_ea_parent_barangay(feat)
-                if parent_bar and parent_bar in delineation_candidate_bar_geocodes:
-                    out_feat = QgsFeature(delin_cand_fields)
-                    _dc_geom = feat.geometry()
-                    if ea_to_target:
-                        _dc_geom = QgsGeometry(_dc_geom)
-                        _dc_geom.transform(ea_to_target)
-                    out_feat.setGeometry(_dc_geom)
-                    attrs = []
-                    for f in delin_cand_fields:
-                        orig_idx = feat.fields().indexOf(f.name())
-                        if orig_idx != -1:
-                            attrs.append(feat.attribute(orig_idx))
-                        else:
-                            attrs.append(None)
-                    out_feat.setAttributes(attrs)
-                    corr_ea_geo_idx = delin_cand_fields.indexOf("correspondence_ea_geocode")
-                    if corr_ea_geo_idx != -1:
-                        map_uuid_idx = delin_cand_fields.indexOf("map_uuid")
-                        geocode_idx = delin_cand_fields.indexOf("geocode")
-                        sy_idx = delin_cand_fields.indexOf("sy")
-                        map_uuid_val = out_feat.attribute(map_uuid_idx) if map_uuid_idx != -1 else ""
-                        geocode_val = out_feat.attribute(geocode_idx) if geocode_idx != -1 else ""
-                        sy_val = out_feat.attribute(sy_idx) if sy_idx != -1 else ""
-                        map_uuid_str = str(map_uuid_val) if map_uuid_val is not None else ""
-                        geocode_str = str(geocode_val) if geocode_val is not None else ""
-                        sy_str = str(sy_val) if sy_val is not None else ""
-                        if map_uuid_str.endswith(".0"): map_uuid_str = map_uuid_str[:-2]
-                        if geocode_str.endswith(".0"): geocode_str = geocode_str[:-2]
-                        if sy_str.endswith(".0"): sy_str = sy_str[:-2]
-                        out_feat.setAttribute(corr_ea_geo_idx, f"{map_uuid_str}:{geocode_str}:{sy_str}")
+                # Only include this EA if it is a confirmed delineation candidate
+                if feat.id() not in delineation_candidate_ids:
+                    continue
+                out_feat = QgsFeature(delin_cand_fields)
+                _dc_geom = feat.geometry()
+                if ea_to_target:
+                    _dc_geom = QgsGeometry(_dc_geom)
+                    _dc_geom.transform(ea_to_target)
+                out_feat.setGeometry(_dc_geom)
+                attrs = []
+                for f in delin_cand_fields:
+                    orig_idx = feat.fields().indexOf(f.name())
+                    if orig_idx != -1:
+                        attrs.append(feat.attribute(orig_idx))
+                    else:
+                        attrs.append(None)
+                out_feat.setAttributes(attrs)
+                corr_ea_geo_idx = delin_cand_fields.indexOf("correspondence_ea_geocode")
+                if corr_ea_geo_idx != -1:
+                    map_uuid_idx = delin_cand_fields.indexOf("map_uuid")
+                    geocode_idx = delin_cand_fields.indexOf("geocode")
+                    sy_idx = delin_cand_fields.indexOf("sy")
+                    map_uuid_val = out_feat.attribute(map_uuid_idx) if map_uuid_idx != -1 else ""
+                    geocode_val = out_feat.attribute(geocode_idx) if geocode_idx != -1 else ""
+                    sy_val = out_feat.attribute(sy_idx) if sy_idx != -1 else ""
+                    map_uuid_str = str(map_uuid_val) if map_uuid_val is not None else ""
+                    geocode_str = str(geocode_val) if geocode_val is not None else ""
+                    sy_str = str(sy_val) if sy_val is not None else ""
+                    if map_uuid_str.endswith(".0"): map_uuid_str = map_uuid_str[:-2]
+                    if geocode_str.endswith(".0"): geocode_str = geocode_str[:-2]
+                    if sy_str.endswith(".0"): sy_str = sy_str[:-2]
+                    out_feat.setAttribute(corr_ea_geo_idx, f"{map_uuid_str}:{geocode_str}:{sy_str}")
+                
+                eadel_indi_idx = delin_cand_fields.indexOf("eadel_indi")
+                if eadel_indi_idx != -1:
+                    out_feat.setAttribute(eadel_indi_idx, "for_delineation")
+                
+                # Clear fid attribute to let OGR generate sequential IDs
+                fid_idx = delin_cand_fields.indexOf("fid")
+                if fid_idx != -1:
+                    out_feat.setAttribute(fid_idx, None)
                     
-                    eadel_indi_idx = delin_cand_fields.indexOf("eadel_indi")
-                    if eadel_indi_idx != -1:
-                        indi_val = "for_delineation" if feat.id() in delineation_candidate_ids else "ea_reference"
-                        out_feat.setAttribute(eadel_indi_idx, indi_val)
-                    
-                    # Clear fid attribute to let OGR generate sequential IDs
-                    fid_idx = delin_cand_fields.indexOf("fid")
-                    if fid_idx != -1:
-                        out_feat.setAttribute(fid_idx, None)
-                        
-                    delin_candidate_sink.addFeature(out_feat)
+                delin_candidate_sink.addFeature(out_feat)
 
         feedback.pushInfo(
             f"Delineation Candidate Index: {len(delineation_candidate_ids)} EA(s) flagged "
