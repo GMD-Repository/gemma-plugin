@@ -330,6 +330,26 @@ class EALauncherDialog(QDialog):
         self.river_status_lbl.setObjectName("statusLbl")
         inputs_layout.addWidget(self.river_status_lbl)
 
+        # Gap (Optional)
+        inputs_layout.addWidget(QLabel("Gap Layer (Polygon, Optional)"))
+        self.gap_combo = QgsMapLayerComboBox()
+        self.gap_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
+        self.gap_combo.setAllowEmptyLayer(True)
+        inputs_layout.addWidget(self.gap_combo)
+        self.gap_status_lbl = QLabel("Optional.")
+        self.gap_status_lbl.setObjectName("statusLbl")
+        inputs_layout.addWidget(self.gap_status_lbl)
+
+        # Overlap (Optional)
+        inputs_layout.addWidget(QLabel("Overlap Layer (Polygon, Optional)"))
+        self.overlap_combo = QgsMapLayerComboBox()
+        self.overlap_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
+        self.overlap_combo.setAllowEmptyLayer(True)
+        inputs_layout.addWidget(self.overlap_combo)
+        self.overlap_status_lbl = QLabel("Optional.")
+        self.overlap_status_lbl.setObjectName("statusLbl")
+        inputs_layout.addWidget(self.overlap_status_lbl)
+
         scroll_layout.addWidget(inputs_card)
 
         # 2. Parameters Section
@@ -698,6 +718,8 @@ class EALauncherDialog(QDialog):
         self.prev_ea_combo.currentIndexChanged.connect(self.validate_layer_inputs)
         self.road_combo.currentIndexChanged.connect(self.validate_layer_inputs)
         self.river_combo.currentIndexChanged.connect(self.validate_layer_inputs)
+        self.gap_combo.currentIndexChanged.connect(self.validate_layer_inputs)
+        self.overlap_combo.currentIndexChanged.connect(self.validate_layer_inputs)
         
         self.min_hh_spin.valueChanged.connect(self.trigger_auto_refresh)
         self.max_hh_spin.valueChanged.connect(self.trigger_auto_refresh)
@@ -863,6 +885,8 @@ class EALauncherDialog(QDialog):
         pravea_keywords = ["previous", "prev", "ea", "enumeration"]
         road_keywords = ["road", "highway", "street", "way", "route"]
         river_keywords = ["river", "stream", "water", "drainage", "creek"]
+        gap_keywords = ["gap", "gaps"]
+        overlap_keywords = ["overlap", "overlaps"]
         
         for layer in layers:
             if not isinstance(layer, QgsVectorLayer):
@@ -871,7 +895,15 @@ class EALauncherDialog(QDialog):
             
             # Barangay Layer (Polygon)
             if layer.geometryType() == 2:  # Polygon
-                if any(k in name_lower for k in barangay_keywords) and not any(k in name_lower for k in pravea_keywords):
+                if any(k in name_lower for k in gap_keywords):
+                    idx = self.gap_combo.findText(layer.name())
+                    if idx != -1:
+                        self.gap_combo.setCurrentIndex(idx)
+                elif any(k in name_lower for k in overlap_keywords):
+                    idx = self.overlap_combo.findText(layer.name())
+                    if idx != -1:
+                        self.overlap_combo.setCurrentIndex(idx)
+                elif any(k in name_lower for k in barangay_keywords) and not any(k in name_lower for k in pravea_keywords):
                     idx = self.bar_combo.findText(layer.name())
                     if idx != -1:
                         self.bar_combo.setCurrentIndex(idx)
@@ -963,6 +995,24 @@ class EALauncherDialog(QDialog):
         else:
             self.river_status_lbl.setText(f"🟢 Active: {river_layer.featureCount()} line features loaded.")
             self.river_status_lbl.setStyleSheet("color: #1a7f37;")
+
+        # 6. Gap Layer (Optional)
+        gap_layer = self.gap_combo.currentLayer()
+        if not gap_layer:
+            self.gap_status_lbl.setText("🟡 Optional: Gap workflow will be skipped.")
+            self.gap_status_lbl.setStyleSheet("color: #d17a00; font-style: italic;")
+        else:
+            self.gap_status_lbl.setText(f"🟢 Active: {gap_layer.featureCount()} polygon features loaded.")
+            self.gap_status_lbl.setStyleSheet("color: #1a7f37;")
+
+        # 7. Overlap Layer (Optional)
+        overlap_layer = self.overlap_combo.currentLayer()
+        if not overlap_layer:
+            self.overlap_status_lbl.setText("🟡 Optional: Overlap workflow will be skipped.")
+            self.overlap_status_lbl.setStyleSheet("color: #d17a00; font-style: italic;")
+        else:
+            self.overlap_status_lbl.setText(f"🟢 Active: {overlap_layer.featureCount()} polygon features loaded.")
+            self.overlap_status_lbl.setStyleSheet("color: #1a7f37;")
             
         self.trigger_auto_refresh()
 
@@ -1030,6 +1080,37 @@ class EALauncherDialog(QDialog):
         total_hh = 0.0
         ea_count = 0
 
+        # Build gap and overlap spatial indexes if layers are selected
+        gap_layer = self.gap_combo.currentLayer()
+        gap_index = None
+        gap_features = []
+        gap_to_ea_transform = None
+        if gap_layer:
+            from qgis.core import QgsSpatialIndex
+            gap_index = QgsSpatialIndex()
+            for g_feat in gap_layer.getFeatures():
+                if g_feat.geometry() and not g_feat.geometry().isEmpty():
+                    gap_index.insertFeature(g_feat)
+                    gap_features.append(g_feat)
+            if gap_layer.crs() != prev_ea_layer.crs():
+                from qgis.core import QgsCoordinateTransform, QgsProject
+                gap_to_ea_transform = QgsCoordinateTransform(gap_layer.crs(), prev_ea_layer.crs(), QgsProject.instance())
+
+        overlap_layer = self.overlap_combo.currentLayer()
+        overlap_index = None
+        overlap_features = []
+        overlap_to_ea_transform = None
+        if overlap_layer:
+            from qgis.core import QgsSpatialIndex
+            overlap_index = QgsSpatialIndex()
+            for o_feat in overlap_layer.getFeatures():
+                if o_feat.geometry() and not o_feat.geometry().isEmpty():
+                    overlap_index.insertFeature(o_feat)
+                    overlap_features.append(o_feat)
+            if overlap_layer.crs() != prev_ea_layer.crs():
+                from qgis.core import QgsCoordinateTransform, QgsProject
+                overlap_to_ea_transform = QgsCoordinateTransform(overlap_layer.crs(), prev_ea_layer.crs(), QgsProject.instance())
+
         # Loop with responsive chunking to prevent QGIS from hanging
         for idx, feat in enumerate(prev_ea_layer.getFeatures()):
             if idx > 0 and idx % 100 == 0:
@@ -1059,7 +1140,36 @@ class EALauncherDialog(QDialog):
             total_hh += hh
             ea_count += 1
 
-            if hh >= max_hh:
+            intersects_gap_or_overlap = False
+            if feat.geometry() and not feat.geometry().isEmpty():
+                if gap_index:
+                    candidates = gap_index.intersects(feat.geometry().boundingBox())
+                    for go_fid in candidates:
+                        go_feat = next((f for f in gap_features if f.id() == go_fid), None)
+                        if go_feat:
+                            go_geom = go_feat.geometry()
+                            if gap_to_ea_transform:
+                                go_geom = QgsGeometry(go_geom)
+                                go_geom.transform(gap_to_ea_transform)
+                            if feat.geometry().intersects(go_geom):
+                                intersects_gap_or_overlap = True
+                                break
+                if not intersects_gap_or_overlap and overlap_index:
+                    candidates = overlap_index.intersects(feat.geometry().boundingBox())
+                    for go_fid in candidates:
+                        go_feat = next((f for f in overlap_features if f.id() == go_fid), None)
+                        if go_feat:
+                            go_geom = go_feat.geometry()
+                            if overlap_to_ea_transform:
+                                go_geom = QgsGeometry(go_geom)
+                                go_geom.transform(overlap_to_ea_transform)
+                            if feat.geometry().intersects(go_geom):
+                                intersects_gap_or_overlap = True
+                                break
+
+            if intersects_gap_or_overlap:
+                self.all_delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh))
+            elif hh >= max_hh:
                 self.all_delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh))
             elif hh <= min_hh:
                 self.all_merge_candidates.append((ean_str, ea_name_str, bgy_name_str, hh))
@@ -1468,6 +1578,8 @@ class EALauncherDialog(QDialog):
         prev_ea_layer = self.prev_ea_combo.currentLayer()
         road_layer = self.road_combo.currentLayer()
         river_layer = self.river_combo.currentLayer()
+        gap_layer = self.gap_combo.currentLayer()
+        overlap_layer = self.overlap_combo.currentLayer()
 
         if not bar_layer or not bldg_layer or not prev_ea_layer:
             self.log_console.append(
@@ -1484,6 +1596,8 @@ class EALauncherDialog(QDialog):
             'PREVIOUS_EA_INPUT': prev_ea_layer,
             'ROAD_INPUT': road_layer,
             'RIVER_INPUT': river_layer,
+            'GAP_INPUT': gap_layer,
+            'OVERLAP_INPUT': overlap_layer,
             'SNAP_TOLERANCE': self.tolerance_spin.value(),
             'MIN_HOUSEHOLD': self.min_hh_spin.value(),
             'MAX_HOUSEHOLD': self.max_hh_spin.value(),
