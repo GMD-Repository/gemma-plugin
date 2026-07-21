@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 /***************************************************************************
- qfieldmodDialog
+ gmd_pipeline
                                  A QGIS plugin
  Sync your projects to QField
                              -------------------

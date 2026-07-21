@@ -10,5 +10,6 @@ build/
 *.db-shm
 *.db-wal
 
-# context-mem
-.context-mem/
+node_modules
+docs/.vitepress/dist
+docs/.vitepress/cache
