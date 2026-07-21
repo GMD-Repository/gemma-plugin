@@ -363,7 +363,8 @@ jobs:
             // Exclude .git, .github, __pycache__, .pyc files, and the zip itself
             execSync(
               `zip -r "${zipName}" . ` +
-              `-x ".git/*" ".github/*" "__pycache__/*" "*.pyc" "${zipName}"`,
+              `-x ".git/*" ".github/*" "__pycache__/*" "*.pyc" "${zipName}" ` +
+              `"docs/*" "node_modules/*" "package.json" "pnpm-lock.yaml" ".agents/*"`,
               { stdio: 'inherit' }
             );
 
