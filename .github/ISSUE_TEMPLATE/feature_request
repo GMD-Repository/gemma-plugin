@@ -1,0 +1,41 @@
+name: Feature Request
+description: Suggest a new idea or improvement
+title: "[FEATURE]: "
+labels: ["enhancement"]
+assignees: []
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the feature or improvement you'd like to see.
+      placeholder: E.g., Add a dark mode toggle to the user dashboard.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps / Flow
+      description: Describe how this feature should work or step-by-step how a user would interact with it.
+      placeholder: |
+        1. User opens Settings
+        2. User toggles 'Dark Theme' switch
+        3. App immediately switches theme without reloading
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestions
+    attributes:
+      label: Suggestions
+      description: Any specific design ideas, libraries, or extra details to keep in mind?
+      placeholder: E.g., We could reuse the color tokens from the marketing site.
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        **Attachments:** Feel free to drag and drop mockups, wireframes, or reference images into any box above!
