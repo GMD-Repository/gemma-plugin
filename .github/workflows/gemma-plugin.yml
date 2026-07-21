@@ -1,4 +1,4 @@
-name: Release QGIS Plugin
+name: Release Gemma Plugin
 
 on:
   workflow_dispatch:
