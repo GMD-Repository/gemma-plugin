@@ -57,7 +57,7 @@ class EventEater(QObject):
 
 class ProjectConfigurationWidget(WidgetUi, QgsOptionsPageWidget):
     """
-    Configuration widget for qfieldmod on a particular project.
+    Configuration widget for gmd_pipeline on a particular project.
     """
 
     def _project_config_get(self, name, default=None):

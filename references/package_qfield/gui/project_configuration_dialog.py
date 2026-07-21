@@ -26,7 +26,7 @@ from .project_configuration_widget import ProjectConfigurationWidget
 
 class ProjectConfigurationDialog(QDialog):
     """
-    Configuration dialog for qfieldmod on a particular project.
+    Configuration dialog for gmd_pipeline on a particular project.
     """
 
     def __init__(self, parent=None):

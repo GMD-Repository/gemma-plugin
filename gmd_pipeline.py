@@ -161,13 +161,36 @@ class GMDPipeline(object):
         Package to QField
         """
         from .gmd_scripts.package_qfield import show_package_dialog
+        
+        # --- COMMENTED OUT PASSWORD FEATURE ---
+        #import hashlib
+        #from qgis.PyQt.QtWidgets import QInputDialog, QLineEdit, QMessageBox
+        
+        #SUPERVISOR_PASSWORD = "bf315bbc2404a161fafeb42995c6197ca17d689b33e7082bfbf2aae386ab755b"
+        
+        #password, ok = QInputDialog.getText(
+        #    self.iface.mainWindow(), 
+        #    "Supervisor Access Required", 
+        #    "Please enter the supervisor password to access Package for QField:", 
+        #    QLineEdit.Password
+        #)
+        
+        #if ok and hashlib.sha256(password.encode()).hexdigest() == SUPERVISOR_PASSWORD:
+        #    self.push_dlg = show_package_dialog(
+        #        self.iface, 
+        #        self.offline_editing, 
+        #        self.push_dialog_finished
+        #    )
+        #elif ok:
+        #    QMessageBox.warning(self.iface.mainWindow(), "Access Denied", "Incorrect password.")
+        #--------------------------------------
 
+        # Directly open the dialog (original behavior)
         self.push_dlg = show_package_dialog(
             self.iface, 
             self.offline_editing, 
             self.push_dialog_finished
         )
-
     def show_create_ea_dialog(self):
         """Open the Create Enumeration Areas dialog."""
         from .gmd_scripts.create_enumeration_area import show_create_ea_dialog

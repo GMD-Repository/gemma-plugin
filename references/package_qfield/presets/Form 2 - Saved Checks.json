@@ -1,0 +1,72 @@
+{
+    "Geotagged Building Points": {
+        "all_layers": [
+            "tarlac_pretest \u2014 069_ea",
+            "tarlac_pretest \u2014 069_bldg_point",
+            "tarlac_pretest \u2014 069_road",
+            "pppmmbbbeeeeee",
+            "tarlac_pretest \u2014 069_landmark",
+            "tarlac_pretest \u2014 069_river",
+            "tarlac_pretest \u2014 069_bgy"
+        ],
+        "checked_layers": [
+            "pppmmbbbeeeeee"
+        ],
+        "group_checked": true,
+        "qml_styles": {
+            "tarlac_pretest \u2014 069_ea": "4. Base Layer EA",
+            "tarlac_pretest \u2014 069_road": "6. Base Layer Road",
+            "tarlac_pretest \u2014 069_landmark": "2. Base Layer Landmark",
+            "tarlac_pretest \u2014 069_river": "7. Base Layer River",
+            "tarlac_pretest \u2014 069_bgy": "5. Base Layer Barangay"
+        }
+    },
+    "Reference Building Points": {
+        "all_layers": [
+            "tarlac_pretest \u2014 069_ea",
+            "tarlac_pretest \u2014 069_bldg_point",
+            "tarlac_pretest \u2014 069_road",
+            "pppmmbbbeeeeee",
+            "tarlac_pretest \u2014 069_landmark",
+            "tarlac_pretest \u2014 069_river",
+            "tarlac_pretest \u2014 069_bgy"
+        ],
+        "checked_layers": [
+            "tarlac_pretest \u2014 069_bldg_point"
+        ],
+        "group_checked": true,
+        "qml_styles": {
+            "tarlac_pretest \u2014 069_ea": "4. Base Layer EA",
+            "tarlac_pretest \u2014 069_road": "6. Base Layer Road",
+            "tarlac_pretest \u2014 069_landmark": "2. Base Layer Landmark",
+            "tarlac_pretest \u2014 069_river": "7. Base Layer River",
+            "tarlac_pretest \u2014 069_bgy": "5. Base Layer Barangay"
+        }
+    },
+    "Base Layers": {
+        "all_layers": [
+            "tarlac_pretest \u2014 069_ea",
+            "tarlac_pretest \u2014 069_bldg_point",
+            "tarlac_pretest \u2014 069_road",
+            "pppmmbbbeeeeee",
+            "tarlac_pretest \u2014 069_landmark",
+            "tarlac_pretest \u2014 069_river",
+            "tarlac_pretest \u2014 069_bgy"
+        ],
+        "checked_layers": [
+            "tarlac_pretest \u2014 069_ea",
+            "tarlac_pretest \u2014 069_road",
+            "tarlac_pretest \u2014 069_landmark",
+            "tarlac_pretest \u2014 069_river",
+            "tarlac_pretest \u2014 069_bgy"
+        ],
+        "group_checked": true,
+        "qml_styles": {
+            "tarlac_pretest \u2014 069_ea": "4. Base Layer EA",
+            "tarlac_pretest \u2014 069_road": "6. Base Layer Road",
+            "tarlac_pretest \u2014 069_landmark": "2. Base Layer Landmark",
+            "tarlac_pretest \u2014 069_river": "7. Base Layer River",
+            "tarlac_pretest \u2014 069_bgy": "5. Base Layer Barangay"
+        }
+    }
+}
