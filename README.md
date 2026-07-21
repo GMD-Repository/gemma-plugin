@@ -1,4 +1,4 @@
-[![Release QGIS Plugin](https://github.com/Geotags-GMD/gemma-plugin/actions/workflows/release-plugin.yml/badge.svg?branch=main)](https://github.com/Geotags-GMD/gemma-plugin/actions/workflows/release-plugin.yml)
+[![Release QGIS Plugin](https://github.com/GMD-Repository/gemma-plugin/actions/workflows/release-plugin.yml/badge.svg?branch=main)](https://github.com/GMD-Repository/gemma-plugin/actions/workflows/release-plugin.yml)
 
 # Git Workflow Guide
 
@@ -16,7 +16,7 @@ If you do not have the project on your computer yet:
 1. Open VS Code.
 2. Press `Ctrl + Shift + P` to open the Command Palette.
 3. Type **Git: Clone** and hit Enter.
-4. Paste the repository URL: `https://github.com/Geotags-GMD/gemma-plugin.git`
+4. Paste the repository URL: `https://github.com/GMD-Repository/gemma-plugin.git`
 5. When prompted to select a folder, navigate to your QGIS plugins directory:
    `C:\Users\Admin\AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins\`
    and click **Select Repository Location**.
