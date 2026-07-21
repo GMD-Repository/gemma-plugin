@@ -24,7 +24,7 @@ changelog=3.0.0: Improved overall functionality and performance of the GEMMA Plu
     1.0.0: Initial release with Gaps and Overlaps Checker.
 
 #tracker=
-repository=https://github.com/Geotags-GMD/gemma-plugin.git
+repository=https://github.com/GMD-Repository/gemma-plugin.git
 hasProcessingProvider=yes
 tags=GMD,1Map,overlap,gap,QField,packaging
 category=Processing Provider
