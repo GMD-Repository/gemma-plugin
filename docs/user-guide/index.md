@@ -62,11 +62,5 @@ features:
     details: Delineate enumeration areas from barangay boundaries for census and survey field operations.
     link: /tools/create-enumeration-areas
     linkText: View Guide
-  - icon:
-      src: /icons/reports.png
-    title: Sync MBI Layer
-    details: Synchronize MBI reporting layers with Google Sheets for centralized tracking and monitoring.
-    link: /tools/sync-mbi-layer
-    linkText: View Guide
 ---
 
