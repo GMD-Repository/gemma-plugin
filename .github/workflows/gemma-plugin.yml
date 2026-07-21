@@ -1,0 +1,610 @@
+name: Release QGIS Plugin
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Release Type (stable = full release, major/minor/patch = pre-release)'
+        required: true
+        default: 'stable'
+        type: choice
+        options:
+          - stable
+          - major
+          - minor
+          - patch
+
+permissions:
+  contents: write
+  models: read
+
+jobs:
+  release:
+    name: Build & Release Plugin
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full history for tag comparison
+
+      # ── 2. Resolve version and release type ──────────────────────────
+      - name: Resolve version and release type
+        id: resolve-version
+        uses: actions/github-script@v7
+        env:
+          INPUT_RELEASE_TYPE: ${{ inputs.release_type }}
+        with:
+          github-token: ${{ secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            // Read current version from metadata.txt
+            const metadataPath = 'metadata.txt';
+            const metadata = fs.readFileSync(metadataPath, 'utf8');
+            const versionMatch = metadata.match(/^version=(\S+)/m);
+            if (!versionMatch) {
+              core.setFailed('Could not find version in metadata.txt');
+              return;
+            }
+            let version = versionMatch[1];
+            console.log(`Current version in metadata.txt: ${version}`);
+
+            // Determine release type input (default to 'stable' on push to main)
+            const eventName = context.eventName;
+            const releaseTypeInput = eventName === 'workflow_dispatch' 
+              ? process.env.INPUT_RELEASE_TYPE 
+              : 'stable';
+
+            let isStable = true;
+            let finalVersion = version;
+
+            if (eventName === 'workflow_dispatch' && ['major', 'minor', 'patch'].includes(releaseTypeInput)) {
+              // Parse clean semver: X.Y.Z
+              const semverMatch = version.match(/^(\d+)\.(\d+)\.(\d+)/);
+              if (!semverMatch) {
+                core.setFailed(`Current version ${version} is not standard SemVer X.Y.Z for bumping`);
+                return;
+              }
+              let major = parseInt(semverMatch[1], 10);
+              let minor = parseInt(semverMatch[2], 10);
+              let patch = parseInt(semverMatch[3], 10);
+
+              if (releaseTypeInput === 'major') {
+                major += 1;
+                minor = 0;
+                patch = 0;
+              } else if (releaseTypeInput === 'minor') {
+                minor += 1;
+                patch = 0;
+              } else if (releaseTypeInput === 'patch') {
+                patch += 1;
+              }
+
+              finalVersion = `${major}.${minor}.${patch}`;
+              isStable = false; // major, minor, patch manual runs are pre-releases
+
+              console.log(`Bumping version (${releaseTypeInput}): ${version} -> ${finalVersion}`);
+
+              // Write back to metadata.txt
+              const updatedMetadata = metadata.replace(/^version=\S+/m, `version=${finalVersion}`);
+              fs.writeFileSync(metadataPath, updatedMetadata);
+              console.log('Updated metadata.txt with new version');
+            } else {
+              // Push trigger or stable release_type input
+              // If the version has a hyphen (e.g. 1.1.0-alpha), it is pre-release
+              isStable = !version.includes('-');
+              finalVersion = version;
+              console.log(`Using existing version: ${finalVersion} (Stable: ${isStable})`);
+            }
+
+            const tag = `v${finalVersion}`;
+            core.setOutput('version', finalVersion);
+            core.setOutput('tag', tag);
+            core.setOutput('prerelease', isStable ? 'false' : 'true');
+            core.setOutput('release_type', releaseTypeInput);
+
+      # ── 3. Check if this version was already released ────────────────
+      - name: Check for existing tag
+        id: check-tag
+        run: |
+          TAG="${{ steps.resolve-version.outputs.tag }}"
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $TAG already exists — skipping release."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Tag $TAG does not exist — proceeding with release."
+          fi
+
+      # ── 4. Generate AI changelog & create release ────────────────────
+      - name: Generate changelog and create release
+        if: steps.check-tag.outputs.exists == 'false'
+        id: create-release
+        uses: actions/github-script@v7
+        env:
+          PLUGIN_VERSION: ${{ steps.resolve-version.outputs.version }}
+          PLUGIN_TAG:     ${{ steps.resolve-version.outputs.tag }}
+          IS_PRERELEASE:  ${{ steps.resolve-version.outputs.prerelease }}
+          AI_MODEL_TOKEN: ${{ secrets.AI_TOKEN }}
+        with:
+          github-token: ${{ secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const version = process.env.PLUGIN_VERSION;
+            const tag     = process.env.PLUGIN_TAG;
+
+            console.log(`Building release for GEMMA Plugin v${version} (${tag})`);
+
+            // ── Helpers ─────────────────────────────────────────────────
+
+            function cleanLine(line) {
+              return line
+                .replace(/^\*\s+/, '')
+                .replace(/\s+by @[\w-]+ in https?:\/\/\S+/g, '')
+                .replace(/\s+in https?:\/\/\S+/g, '')
+                .replace(/…$/, '')
+                .replace(/^(feat|fix|refactor|perf|docs|style|test|chore|build)(\([^)]*\))?[!:]?\s*/i, '')
+                .trim();
+            }
+
+            function isNoise(line) {
+              if (!line || line.length < 5)                    return true;
+              if (/^Merge (branch|pull request)/i.test(line))  return true;
+              if (/^(Bugfix|Feature|Hotfix)\//i.test(line))    return true;
+              if (/^release v\d+/i.test(line))                 return true;
+              if (/^update changelog/i.test(line))             return true;
+              if (/^(chore|ci|bump|wip)\s*[:(]/i.test(line))   return true;
+              if (/^merge\s/i.test(line))                      return true;
+              return false;
+            }
+
+            const unique = (arr) =>
+              [...new Map(arr.map(x => [x.toLowerCase(), x])).values()];
+
+
+            // ── 1. Find previous release tag ────────────────────────────
+
+            const { data: tags } = await github.rest.repos.listTags({
+              owner:    context.repo.owner,
+              repo:     context.repo.repo,
+              per_page: 20,
+            });
+
+            const previousTag = tags
+              .map(t => t.name)
+              .filter(name => /^v\d+\.\d+\.\d+$/.test(name) && name !== tag)
+              .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))[0];
+
+            console.log(`Previous tag: ${previousTag ?? '(none — first release)'}`);
+
+
+            // ── 2. Collect raw change lines ─────────────────────────────
+
+            let prLines     = [];
+            let commitLines = [];
+
+            // Source A — PR titles via auto-generated release notes
+            try {
+              const { data: notes } = await github.rest.repos.generateReleaseNotes({
+                owner:    context.repo.owner,
+                repo:     context.repo.repo,
+                tag_name: tag,
+                ...(previousTag ? { previous_tag_name: previousTag } : {}),
+              });
+              prLines = notes.body
+                .split('\n')
+                .filter(l => l.startsWith('* '))
+                .map(cleanLine)
+                .filter(l => !isNoise(l));
+              console.log(`PR lines collected: ${prLines.length}`);
+            } catch (err) {
+              console.log(`⚠️  generateReleaseNotes failed: ${err.message}`);
+            }
+
+            // Source B — direct commits
+            if (previousTag) {
+              try {
+                const { data: compare } = await github.rest.repos.compareCommits({
+                  owner: context.repo.owner,
+                  repo:  context.repo.repo,
+                  base:  previousTag,
+                  head:  'HEAD',
+                });
+                commitLines = compare.commits
+                  .map(c => cleanLine(c.commit.message.split('\n')[0]))
+                  .filter(l => !isNoise(l));
+                console.log(`Commit lines collected: ${commitLines.length}`);
+              } catch (err) {
+                console.log(`⚠️  compareCommits failed: ${err.message}`);
+              }
+            }
+
+            const allRawLines = unique([...prLines, ...commitLines]).slice(0, 25);
+            console.log(`Total raw lines for AI: ${allRawLines.length}`);
+
+
+            // ── 3. AI-powered changelog ─────────────────────────────────
+
+            const AI_SYSTEM_PROMPT = `\
+            You are the release notes writer for GEMMA Plugin, a QGIS processing plugin used by the Geospatial Management Division (GMD) of the Philippine Statistics Authority.
+
+            The plugin provides GIS processing tools: gap/overlap checking, geometry repair, LGU CRS correction, metadata updates, QField packaging, and more.
+
+            ## Output contract
+            - Respond with a **JSON array of strings only** — no markdown, no code fences, no preamble.
+            - Each string is one standalone highlight sentence (max 20 words).
+            - 5–10 items maximum; merge closely related changes into one item.
+            - Use past-tense action verbs: Added, Improved, Fixed, Updated, Removed.
+            - Write for GIS technicians — keep it clear but you may use GIS terms (layer, CRS, shapefile, QField).
+            - NEVER return an empty array. If changes seem internal, reframe them as user-facing improvements.
+            - Do NOT include emojis or version numbers.
+
+            ## Good examples
+            ["Added new Geometry Repair Toolkit for fixing invalid polygon geometries",
+             "Improved gap and overlap detection speed for large municipality datasets",
+             "Fixed CRS assignment issue when processing LGU boundary layers"]
+
+            ## Bad examples
+            ["Refactored pipeline","Bumped dependencies","chore: update CI"]`;
+
+            let highlights  = [];
+            let aiGenerated = false;
+
+            if (allRawLines.length > 0) {
+              try {
+                console.log('Calling GitHub Models API...');
+                const aiRes = await fetch(
+                  'https://models.github.ai/inference/chat/completions',
+                  {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type':  'application/json',
+                      'Authorization': `Bearer ${process.env.AI_MODEL_TOKEN}`,
+                    },
+                    body: JSON.stringify({
+                      model:       'openai/gpt-4o-mini',
+                      temperature: 0.2,
+                      max_tokens:  600,
+                      messages: [
+                        { role: 'system', content: AI_SYSTEM_PROMPT },
+                        {
+                          role: 'user',
+                          content: [
+                            `Summarize the following changes for GEMMA Plugin v${version}:`,
+                            '',
+                            allRawLines.map(l => `- ${l}`).join('\n'),
+                          ].join('\n'),
+                        },
+                      ],
+                    }),
+                  }
+                );
+
+                console.log(`GitHub Models API: HTTP ${aiRes.status}`);
+
+                if (aiRes.ok) {
+                  const aiData  = await aiRes.json();
+                  const rawText = aiData.choices?.[0]?.message?.content?.trim() ?? '';
+                  console.log(`AI raw output: ${rawText.slice(0, 300)}`);
+
+                  const cleaned = rawText
+                    .replace(/^```(?:json)?\s*/i, '')
+                    .replace(/\s*```$/i, '')
+                    .trim();
+
+                  const parsed = JSON.parse(cleaned);
+                  if (Array.isArray(parsed) && parsed.length > 0) {
+                    highlights  = parsed;
+                    aiGenerated = true;
+                    console.log(`✅ AI changelog: ${highlights.length} items`);
+                  } else {
+                    throw new Error('AI returned empty array');
+                  }
+                } else {
+                  const errBody = await aiRes.text();
+                  throw new Error(`HTTP ${aiRes.status} — ${errBody.slice(0, 400)}`);
+                }
+              } catch (err) {
+                console.log(`⚠️  AI failed: ${err.message}`);
+                console.log('Falling back to raw commit lines.');
+                highlights = allRawLines.slice(0, 8);
+              }
+            }
+
+            if (highlights.length === 0) {
+              highlights = [
+                'Improved overall plugin stability and performance',
+                'Applied internal updates and maintenance fixes',
+              ];
+              console.log('⚠️  No changes found — using generic fallback');
+            }
+
+
+            // ── 4. Update metadata.txt changelog ────────────────────────
+
+            const metadataPath = 'metadata.txt';
+            let metadata = fs.readFileSync(metadataPath, 'utf8');
+
+            // Build new changelog entry
+            const newEntry = `${version}: ${highlights.join('; ')}`;
+
+            // Find the changelog= line and prepend the new version
+            const changelogRegex = /^(changelog=)(.*)$/m;
+            const match = metadata.match(changelogRegex);
+
+            if (match) {
+              const existingChangelog = match[2].trim();
+              const updatedChangelog  = `${newEntry}\n    ${existingChangelog}`;
+              metadata = metadata.replace(changelogRegex, `changelog=${updatedChangelog}`);
+            } else {
+              // No changelog field exists — add one after the about= block
+              metadata = metadata.replace(
+                /^(about=.*)$/m,
+                `$1\n\nchangelog=${newEntry}`
+              );
+            }
+
+            fs.writeFileSync(metadataPath, metadata);
+            console.log('✅ metadata.txt updated with new changelog entry');
+
+
+            // ── 5. Build QGIS plugin ZIP ────────────────────────────────
+
+            const { execSync } = require('child_process');
+
+            const zipName = `gemma-plugin-v${version}.zip`;
+
+            // Create plugin ZIP with proper folder structure
+            // Exclude .git, .github, __pycache__, .pyc files, and the zip itself
+            execSync(
+              `zip -r "${zipName}" . ` +
+              `-x ".git/*" ".github/*" "__pycache__/*" "*.pyc" "${zipName}"`,
+              { stdio: 'inherit' }
+            );
+
+            // Re-package with root folder gemma-plugin/ (QGIS convention)
+            const tmpDir = `_tmp_plugin_${Date.now()}`;
+            execSync(`mkdir -p ${tmpDir}/gemma-plugin`);
+            execSync(
+              `unzip -o "${zipName}" -d ${tmpDir}/gemma-plugin`,
+              { stdio: 'inherit' }
+            );
+            execSync(`rm "${zipName}"`);
+            execSync(
+              `cd ${tmpDir} && zip -r "../${zipName}" gemma-plugin/`,
+              { stdio: 'inherit' }
+            );
+            execSync(`rm -rf ${tmpDir}`);
+
+            console.log(`✅ Plugin ZIP created: ${zipName}`);
+
+
+            // ── 6. Create GitHub Release ────────────────────────────────
+
+            const bulletList  = highlights.map(h => `- ${h}`).join('\n');
+            const releaseBody = [
+              `## What's New in v${version}`,
+              '',
+              bulletList,
+              '',
+              '---',
+              '**Installation:** Download the `.zip` file below and install in QGIS via *Plugins → Manage and Install Plugins → Install from ZIP*.',
+            ].join('\n');
+
+            const isPrerelease = process.env.IS_PRERELEASE === 'true';
+            const { data: release } = await github.rest.repos.createRelease({
+              owner:            context.repo.owner,
+              repo:             context.repo.repo,
+              tag_name:         tag,
+              target_commitish: 'main',
+              name:             `GEMMA Plugin v${version}`,
+              body:             releaseBody,
+              draft:            false,
+              prerelease:       isPrerelease,
+            });
+
+            console.log(`✅ Release created: ${release.html_url}`);
+
+            // Upload ZIP as release asset
+            const zipBuffer = fs.readFileSync(zipName);
+            await github.rest.repos.uploadReleaseAsset({
+              owner:      context.repo.owner,
+              repo:       context.repo.repo,
+              release_id: release.id,
+              name:       zipName,
+              data:       zipBuffer,
+            });
+
+            console.log(`✅ ZIP uploaded as release asset`);
+
+            // Export for later steps
+            core.setOutput('release_url', release.html_url);
+            core.setOutput('release_body', bulletList);
+            core.setOutput('zip_name', zipName);
+
+
+            // ── 7. Job summary ──────────────────────────────────────────
+
+            const dateStr = new Date().toLocaleDateString('en-US', {
+              month: 'long', day: 'numeric', year: 'numeric',
+            });
+
+            const summary = [
+              `# GEMMA Plugin — Plugin Release`,
+              ``,
+              `> **Version:** \`v${version}\`  ·  **Date:** ${dateStr}  ·  **AI Generated:** ${aiGenerated ? '✅ Yes' : '⚠️ Fallback'}`,
+              ``,
+              `---`,
+              ``,
+              `## What's New`,
+              ``,
+              bulletList,
+              ``,
+              `---`,
+              ``,
+              `| Field | Value |`,
+              `|-------|-------|`,
+              `| Tag | \`${tag}\` |`,
+              `| Previous Tag | \`${previousTag ?? 'none (first release)'}\` |`,
+              `| PR Lines | ${prLines.length} |`,
+              `| Commit Lines | ${commitLines.length} |`,
+              `| ZIP File | \`${zipName}\` |`,
+              `| Release | [View on GitHub](${release.html_url}) |`,
+            ].join('\n');
+
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary + '\n');
+
+      # ── 5. Create PR for metadata.txt changes ────────────────────────
+      - name: Create PR for metadata changes
+        if: steps.check-tag.outputs.exists == 'false'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update changelog for v${{ steps.resolve-version.outputs.version }}"
+          committer: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+          author: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+          branch: "patch/metadata-v${{ steps.resolve-version.outputs.version }}"
+          title: "chore: update changelog for v${{ steps.resolve-version.outputs.version }}"
+          body: |
+            This is an automated pull request to update `metadata.txt` with the release notes for version ${{ steps.resolve-version.outputs.version }}.
+            
+            Please merge this PR to keep the branch history updated.
+          delete-branch: true
+
+      # ── 6. Send email notification ───────────────────────────────────
+      - name: Notify team — ready to test
+        if: steps.check-tag.outputs.exists == 'false' && success()
+        uses: dawidd6/action-send-mail@v6
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: "GEMMA Plugin CI <${{ secrets.MAIL_USERNAME }}>"
+          to:   ${{ secrets.EMAIL_TO }}
+          subject: "[GEMMA Plugin] v${{ steps.resolve-version.outputs.version }} — ${{ steps.resolve-version.outputs.prerelease == 'true' && 'Pre-release' || 'Release' }} Ready"
+          html_body: |
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>GEMMA Plugin Notification</title>
+              <style>
+                body { 
+                  font-family: Arial, sans-serif; 
+                  line-height: 1.5; 
+                  color: #333; 
+                  margin: 0; 
+                  padding: 0; 
+                  background-color: #f5f5f5;
+                }
+
+                .email-container { 
+                  max-width: 600px; 
+                  margin: 16px auto; 
+                  background-color: #ffffff; 
+                }
+
+                .content { 
+                  padding: 24px; 
+                }
+
+                .title {
+                  font-size: 20px;
+                  font-weight: bold;
+                  margin-bottom: 8px;
+                }
+
+                .text {
+                  font-size: 14px;
+                  color: #555;
+                  margin-bottom: 12px;
+                }
+
+                .box { 
+                  background-color: #f8fafc; 
+                  border: 1px solid #e2e8f0; 
+                  padding: 16px; 
+                  margin: 14px 0; 
+                }
+
+                .box-title { 
+                  font-size: 15px; 
+                  font-weight: bold; 
+                  margin-bottom: 6px; 
+                }
+
+                .list { 
+                  font-size: 14px;
+                  margin: 6px 0;
+                }
+
+                .button { 
+                  display: inline-block; 
+                  background-color: #2563a8; 
+                  color: #ffffff; 
+                  padding: 10px 18px; 
+                  text-decoration: none; 
+                  border-radius: 4px; 
+                  font-size: 13px;
+                  font-weight: bold;
+                  margin: 6px 0;
+                }
+              </style>
+            </head>
+
+            <body>
+              <div class="email-container">
+                <div class="content">
+                  <div class="title">${{ steps.resolve-version.outputs.prerelease == 'true' && 'Pre-release' || 'Stable Release' }} Ready</div>
+                  <div class="text">
+                    Version <strong>v${{ steps.resolve-version.outputs.version }}</strong> of <strong>GEMMA Plugin</strong> has been successfully built and is ready.
+                  </div>
+
+                  <!-- What's New -->
+                  <div class="box">
+                    <div class="box-title">What's New</div>
+                    <div style="white-space: pre-wrap; font-size: 14px; margin-top: 10px;">${{ steps.create-release.outputs.release_body }}</div>
+                  </div>
+
+                  <!-- Release Details -->
+                  <div class="box">
+                    <div class="box-title">Release Details</div>
+                    <div class="text"><strong>Version:</strong> v${{ steps.resolve-version.outputs.version }}</div>
+                    <div class="text"><strong>Platform:</strong> QGIS Plugin (.zip)</div>
+                    <div class="text"><strong>Triggered by:</strong> ${{ github.actor }}</div>
+                    <div class="text"><strong>Status:</strong> ${{ steps.resolve-version.outputs.prerelease == 'true' && 'Pre-release (Testing)' || 'Stable Release' }}</div>
+                  </div>
+
+                  <!-- Download & Test -->
+                  <div class="box">
+                    <div class="box-title">Download &amp; Test</div>
+                    <div class="text">
+                      Download the zip package and install it in QGIS via <em>Plugins → Manage and Install Plugins → Install from ZIP</em>.
+                    </div>
+
+                    <a href="https://github.com/${{ github.repository }}/releases/download/v${{ steps.resolve-version.outputs.version }}/${{ steps.create-release.outputs.zip_name }}"
+                       class="button"
+                       style="color: #ffffff !important; text-decoration: none;">
+                      Download Plugin ZIP
+                    </a>
+
+                    <div style="margin-top:6px;font-size:12px;color:#777;line-height:1.4;">
+                      If the link returns a <strong>404</strong>, the assets may still be processing.
+                      You can manually download from the
+                      <a href="https://github.com/${{ github.repository }}/releases" style="color:#2563a8;text-decoration:none;">
+                        Releases page
+                      </a>.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </body>
+            </html>
