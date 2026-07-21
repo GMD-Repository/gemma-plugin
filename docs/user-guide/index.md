@@ -4,7 +4,7 @@ layout: home
 hero:
   name: "GEMMA Plugin"
   text: "GIS Extension for Map Management and Analysis"
-  tagline: A standardized and harmonized pipeline and tools for GMD activities - developed by the Geospatial Management Division of the Philippine Statistics Authority.
+  tagline: A standardized and harmonized pipeline and tools for GMD activities
   actions:
     - theme: brand
       text: Get Started
