@@ -2,7 +2,7 @@ name: Feature Request
 description: Suggest a new idea or improvement
 title: "[FEATURE]: "
 labels: ["enhancement"]
-assignees: [] # List default GitHub usernames here like ["username1"] if needed
+assignees: []
 body:
   - type: textarea
     id: description
