@@ -4,17 +4,18 @@
 
 # GEMMA - GIS Extension for Map Management and Analysis
 
-**GEMMA** is a QGIS processing plugin developed by the **Geospatial Management Division (GMD)**.
+**GEMMA** is a QGIS processing plugin developed by the **Geospatial Management Division (GMD)** of the **Philippine Statistics Authority (PSA)**.
 
 It provides a comprehensive set of GIS tools for map management and analysis activities, including boundary checking, geometry repair, metadata management, enumeration area creation, and field data collection packaging.
 
 ---
 
-## 📚 Documentation
+## 📚 Documentation & Changelog
 
 Complete user guides and documentation are available on our [Documentation Site](https://gmd-repository.github.io/gemma-plugin/) or directly in the repository:
 
 - 🚀 [Getting Started Guide](docs/user-guide/getting-started.md)
+- 📜 [Changelog](CHANGELOG.md) / [Docs Changelog Page](docs/user-guide/changelog.md)
 - 🛠️ **Tool Guides:**
   - 🗺️ [MBI Checker](docs/user-guide/tools/mbi-checker.md) — Detect gaps & overlaps in barangay boundaries with building point validation.
   - 🧩 [Fill Polygon Gaps](docs/user-guide/tools/fill-polygon-gaps.md) — Automatically fill gaps between polygon boundaries.
@@ -24,7 +25,6 @@ Complete user guides and documentation are available on our [Documentation Site]
   - 🔧 [Geometry Repair Toolkit](docs/user-guide/tools/geometry-repair-toolkit.md) — Detect and repair duplicate, null, or invalid shapes.
   - 📱 [Package for QField](docs/user-guide/tools/package-qfield.md) — Prepare QGIS projects for mobile field collection (`Ctrl+Alt+Q`).
   - 📐 [Create Enumeration Areas](docs/user-guide/tools/create-enumeration-areas.md) — Delineate enumeration areas for census & field operations.
-  - 📊 [Sync MBI Layer](docs/user-guide/tools/sync-mbi-layer.md) — Synchronize MBI reporting layers directly with Google Sheets.
 
 ---
 
@@ -45,9 +45,6 @@ Accessible from the **QGIS Processing Toolbox** under **GMD Pipeline**:
 ### Field Operations & Enumeration (`GeMa → QField`)
 - **Package for QField** (`Ctrl+Alt+Q`): Package your QGIS project for field data collection using QField with drag-and-drop layer management.
 - **Create Enumeration Areas**: Delineate enumeration areas from barangay boundaries for census and survey field operations.
-
-### Reports & Monitoring (`GeMa → Reports`)
-- **Sync MBI Layer**: Synchronize MBI reporting layers with Google Sheets for centralized tracking and monitoring.
 
 ---
 
