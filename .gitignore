@@ -11,3 +11,5 @@ build/
 *.db-wal
 
 node_modules
+docs/.vitepress/dist
+docs/.vitepress/cache
