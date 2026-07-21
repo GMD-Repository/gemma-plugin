@@ -32,12 +32,12 @@ export default defineConfig({
           { text: 'Geometry Repair Toolkit', link: '/tools/geometry-repair-toolkit' },
           { text: 'Package for QField', link: '/tools/package-qfield' },
           { text: 'Create Enumeration Areas', link: '/tools/create-enumeration-areas' },
-          { text: 'Sync MBI Layer (Google Sheets)', link: '/tools/sync-mbi-layer' },
         ]
       },
+      { text: 'Changelog', link: '/changelog' },
       {
         text: 'Download',
-        link: 'https://github.com/Geotags-GMD/gemma-plugin/releases/latest'
+        link: 'https://github.com/GMD-Repository/gemma-plugin/releases/latest'
       },
     ],
 
@@ -46,6 +46,7 @@ export default defineConfig({
         text: 'Introduction',
         items: [
           { text: 'Getting Started', link: '/getting-started' },
+          { text: 'Changelog', link: '/changelog' },
         ]
       },
       {
@@ -72,13 +73,6 @@ export default defineConfig({
         items: [
           { text: 'Package for QField', link: '/tools/package-qfield' },
           { text: 'Create Enumeration Areas', link: '/tools/create-enumeration-areas' },
-        ]
-      },
-      {
-        text: 'Reports',
-        collapsed: false,
-        items: [
-          { text: 'Sync MBI Layer', link: '/tools/sync-mbi-layer' },
         ]
       },
     ],

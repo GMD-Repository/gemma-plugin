@@ -35,7 +35,7 @@ Look for the file named `gemma-plugin-v*.zip` under the **Assets** section of th
 
 After installation, verify that everything is working:
 
-1. Check the **GeMa** menu in the menu bar — you should see submenus for **Reports**, **Tools**, and **QField**.
+1. Check the **GeMa** menu in the menu bar — you should see submenus for **Tools** and **QField**.
 2. Open the **Processing Toolbox** (`Ctrl+Alt+T`) and look for the **GMD Pipeline** group — you should see all the 1Map tools listed there.
 3. The **GeMa Toolbar** should display icons for **Package for QField** and **Create Enumeration Areas**.
 
@@ -68,12 +68,6 @@ These tools are accessible from the **QGIS Processing Toolbox** under the **GMD 
 | [Package for QField](/tools/package-qfield) | GeMa → QField → Package for QField | `Ctrl+Alt+Q` |
 | [Create Enumeration Areas](/tools/create-enumeration-areas) | GeMa → QField → Create Enumeration Areas | — |
 
-### GeMa Menu — Reports
-
-| Tool | Access |
-|------|--------|
-| [Sync MBI Layer](/tools/sync-mbi-layer) | GeMa → Reports → Sync MBI Layer |
-
 ## Updating the Plugin
 
 To update to a newer version:
@@ -85,17 +79,7 @@ To update to a newer version:
 
 ## Changelog
 
-See the [Releases page](https://github.com/GMD-Repository/gemma-plugin/releases) for a full version history with release notes.
-
-### Version History
-
-| Version | Highlights |
-|---------|-----------|
-| **3.0.0** | Improved overall functionality and performance; added CI/CD release automation |
-| **2.0.0** | Added Create Enumeration Areas; improved QField Package Dialog with drag-and-drop; harmonized plugin naming to GEMMA |
-| **1.2.0** | Added Fill Polygon Gaps, Update Metadata, Fix LGU CRS, Create Enumeration Areas |
-| **1.1.0** | Integrated Package for QField |
-| **1.0.0** | Initial release with Gaps and Overlaps Checker |
+For a full version history, version highlights, and detailed release notes, please see our dedicated [Changelog Page](/changelog) or check the [GitHub Releases](https://github.com/GMD-Repository/gemma-plugin/releases) page.
 
 ## Support
 
