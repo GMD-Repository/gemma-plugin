@@ -10,7 +10,7 @@
     <file_name>gemma-plugin-v3.0.0.zip</file_name>
     <icon>https://gmd-repository.github.io/gemma-plugin/icons/icon.png</icon>
     <author_name>Geospatial Management Division</author_name>
-    <download_url>https://github.com/GMD-Repository/gemma-plugin/releases/download/v3.0.0/gemma-plugin-v3.0.0.zip</download_url>
+    <download_url>https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/v3.0.0/gemma-plugin-v3.0.0.zip</download_url>
     <upload_date>2026-01-15</upload_date>
     <update_date>2026-01-15</update_date>
     <experimental>True</experimental>
