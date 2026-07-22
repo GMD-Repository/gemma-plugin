@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <?xml-stylesheet type="text/xsl" href=""?>
 <plugins>
-  <pyqgis_plugin name="GEMMA" version="3.0.0">
+  <pyqgis_plugin name="gemma-plugin" version="3.0.0">
     <description>GIS Extension for Map Management and Analysis</description>
     <about>A comprehensive QGIS processing plugin developed by the Geospatial Management Division (GMD) of the Philippine Statistics Authority (PSA). Provides tools for boundary checking, geometry repair, metadata management, and field data collection packaging.</about>
     <version>3.0.0</version>
