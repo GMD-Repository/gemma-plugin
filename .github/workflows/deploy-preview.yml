@@ -45,7 +45,7 @@ jobs:
           token: ${{ secrets.PREVIEW_REPO_TOKEN || secrets.GITHUB_TOKEN }}
           tag_name: ${{ steps.rev.outputs.revision }}
           name: GEMMA Preview ${{ steps.rev.outputs.revision }}
-          prerelease: true
+          prerelease: false
           draft: false
           files: ${{ steps.package.outputs.zip_name }}
           body: |
