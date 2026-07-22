@@ -11,11 +11,12 @@ onMounted(async () => {
     if (res.ok) {
       const data = await res.json()
       if (data.downloadUrl) {
-        // Dynamic auto-update for hero Download button
-        const downloadBtns = document.querySelectorAll<HTMLAnchorElement>('.VPHero .actions a')
-        downloadBtns.forEach(btn => {
-          if (btn.textContent?.trim().toLowerCase().includes('download')) {
-            btn.href = data.downloadUrl
+        // Dynamic auto-update for both hero and top nav bar Download links
+        const downloadLinks = document.querySelectorAll<HTMLAnchorElement>('a')
+        downloadLinks.forEach(link => {
+          const text = link.textContent?.trim().toLowerCase()
+          if (text === 'download' || text === 'direct download') {
+            link.href = data.downloadUrl
           }
         })
       }
