@@ -28,6 +28,7 @@ Installing via custom repository allows QGIS to automatically detect and notify 
    ```
    https://gmd-repository.github.io/gemma-plugin/gemma.xml
    ```
+
 6. Click **OK**, then click **Reload All Repositories**.
 7. Go to the **All** tab, search for **GEMMA**, and click **Install Plugin**.
 

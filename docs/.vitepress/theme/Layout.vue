@@ -42,18 +42,21 @@ onMounted(async () => {
 <style scoped>
 .gemma-repo-wrapper {
   position: relative;
-  padding: 12px 24px 24px;
+  padding: 0 24px 24px;
+  margin-top: -16px;
 }
 
 @media (min-width: 640px) {
   .gemma-repo-wrapper {
-    padding: 12px 48px 24px;
+    padding: 0 48px 24px;
+    margin-top: -24px;
   }
 }
 
 @media (min-width: 960px) {
   .gemma-repo-wrapper {
-    padding: 12px 64px 24px;
+    padding: 0 64px 24px;
+    margin-top: -32px;
   }
 }
 
