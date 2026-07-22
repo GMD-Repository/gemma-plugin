@@ -354,8 +354,10 @@ jobs:
             function updateMarkdownChangelog(filePath) {
               if (fs.existsSync(filePath)) {
                 let content = fs.readFileSync(filePath, 'utf8');
-                const firstSectionIndex = content.indexOf('## [');
-                if (firstSectionIndex !== -1) {
+                // Match both "## [version]" (CHANGELOG.md) and "## version" (docs changelog)
+                const sectionMatch = content.match(/^## [\[\d]/m);
+                if (sectionMatch) {
+                  const firstSectionIndex = sectionMatch.index;
                   content = content.slice(0, firstSectionIndex) + changelogSection + content.slice(firstSectionIndex);
                 } else {
                   content += `\n\n${changelogSection}`;
