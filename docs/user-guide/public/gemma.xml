@@ -12,13 +12,13 @@
     <download_url>https://github.com/GMD-Repository/gemma-plugin/releases/download/v3.0.0/gemma-plugin-v3.0.0.zip</download_url>
     <icon>https://gmd-repository.github.io/gemma-plugin/icons/icon.png</icon>
     <file_name>gemma-plugin.zip</file_name>
-    <upload_date>2026-01-15</upload_date>
-    <update_date>2026-01-15</update_date>
+    <upload_date>2026-07-22</upload_date>
+    <update_date>2026-07-22</update_date>
     <experimental>False</experimental>
     <deprecated>False</deprecated>
     <tracker>https://github.com/GMD-Repository/gemma-plugin/issues</tracker>
     <repository>https://github.com/GMD-Repository/gemma-plugin</repository>
-    <tags>GMD,1Map,overlap,gap,QField,packaging,geometry,repair</tags>
+    <tags>GMD,1Map,overlap,gap,QField,packaging</tags>
     <category>Processing Provider</category>
     <server>False</server>
   </pyqgis_plugin>

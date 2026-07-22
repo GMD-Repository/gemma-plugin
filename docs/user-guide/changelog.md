@@ -77,3 +77,18 @@ Changelogs of all GEMMA Plugin stable releases, which are also available [on Git
 - Initial release featuring the **MBI Checker** (Gaps and Overlaps Checker).
 
 <Contributors :contributors="['kentemman-gmd', 'velascojasper0']" />
+
+
+## [3.0.0] - 2026
+
+### Highlights
+- Added LGU CRS and Geometry Alignment Algorithm to Processing Provider
+- Removed unnecessary subfolder and added README for better documentation
+- Introduced QP Generation and Create Enumeration Areas QGIS Plugin
+- Registered EA Delineation processing provider with UI actions and interactive candidate preview
+- Improved Package Dialog functionality by resolving bugs
+- Harmonized legacy plugin references and introduced default presets for user convenience
+- Updated GEMMA repository URLs and renamed GMD Pipeline to GEMMA
+- Implemented GitHub Actions workflow for automated plugin releases and notifications
+- Initialized documentation site with tool guides and enhanced README for clarity
+
