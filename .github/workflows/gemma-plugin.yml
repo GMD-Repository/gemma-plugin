@@ -380,7 +380,7 @@ jobs:
             execSync(
               `zip -r "${zipName}" . ` +
               `-x ".git/*" ".github/*" "__pycache__/*" "*.pyc" "${zipName}" ` +
-              `"docs/*" "node_modules/*" "package.json" "pnpm-lock.yaml" ".agents/*"`,
+              `"docs/*" "node_modules/*" "package.json" "pnpm-lock.yaml" "tsconfig*.json" ".agents/*"`,
               { stdio: 'inherit' }
             );
 
