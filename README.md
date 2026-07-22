@@ -1,4 +1,4 @@
-[![Release GEMMA Plugin](https://github.com/GMD-Repository/gemma-plugin/actions/workflows/release-plugin.yml/badge.svg?branch=main)](https://github.com/GMD-Repository/gemma-plugin/actions/workflows/release-plugin.yml)
+[![Release GEMMA Plugin](https://github.com/GMD-Repository/gemma-plugin/actions/workflows/gemma-plugin.yml/badge.svg?branch=main)](https://github.com/GMD-Repository/gemma-plugin/actions/workflows/gemma-plugin.yml)
 [![Deploy Documentation](https://github.com/GMD-Repository/gemma-plugin/actions/workflows/deploy-docs.yml/badge.svg?branch=main)](https://github.com/GMD-Repository/gemma-plugin/actions/workflows/deploy-docs.yml)
 ![QGIS Version](https://img.shields.io/badge/QGIS-3.0%2B-brightgreen)
 
