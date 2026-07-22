@@ -34,19 +34,63 @@ jobs:
           echo "rev_num=${REVISION}" >> $GITHUB_OUTPUT
           echo "Calculated revision: r${REVISION}"
 
-      - name: Package QGIS Plugin ZIP
+      - name: Package QGIS Plugin ZIP & Update Preview Metadata
         id: package
-        run: |
-          ZIP_NAME="gemma-plugin-${{ steps.rev.outputs.revision }}.zip"
-          RAW_ZIP="raw_preview.zip"
-          zip -r "${RAW_ZIP}" . -x "*.git*" "*.github*" "docs/*" ".antigravity*" "node_modules/*" "*.zip" "__pycache__/*" "*.pyc" "package.json" "pnpm-lock.yaml" "tsconfig*.json" ".agents/*"
-          TMP_DIR="_tmp_plugin_$(date +%s)"
-          mkdir -p "${TMP_DIR}/gemma-plugin"
-          unzip -q "${RAW_ZIP}" -d "${TMP_DIR}/gemma-plugin"
-          rm "${RAW_ZIP}"
-          (cd "${TMP_DIR}" && zip -r "../${ZIP_NAME}" gemma-plugin/)
-          rm -rf "${TMP_DIR}"
-          echo "zip_name=${ZIP_NAME}" >> $GITHUB_OUTPUT
+        uses: actions/github-script@v7
+        env:
+          REVISION: ${{ steps.rev.outputs.revision }}
+          BRANCH_NAME: ${{ github.ref_name }}
+        with:
+          script: |
+            const fs = require('fs');
+            const { execSync } = require('child_process');
+
+            const revision = process.env.REVISION;
+            const branch   = process.env.BRANCH_NAME;
+            const zipName  = `gemma-plugin-${revision}.zip`;
+            const rawZip   = 'raw_preview.zip';
+
+            // 1. Create initial zip of repo
+            execSync(`zip -r "${rawZip}" . -x "*.git*" "*.github*" "docs/*" ".antigravity*" "node_modules/*" "*.zip" "__pycache__/*" "*.pyc" "package.json" "pnpm-lock.yaml" "tsconfig*.json" ".agents/*"`);
+
+            // 2. Unzip into temporary folder
+            const tmpDir = `_tmp_plugin_${Date.now()}`;
+            fs.mkdirSync(`${tmpDir}/gemma-plugin`, { recursive: true });
+            execSync(`unzip -q "${rawZip}" -d "${tmpDir}/gemma-plugin"`);
+            fs.unlinkSync(rawZip);
+
+            // 3. Modify metadata.txt inside plugin folder
+            const metaPath = `${tmpDir}/gemma-plugin/metadata.txt`;
+            let metaContent = fs.readFileSync(metaPath, 'utf8');
+
+            const vMatch = metaContent.match(/^version=(.*)$/m);
+            const baseVersion = vMatch ? vMatch[1].trim() : '3.0.0';
+            const previewVersion = `${baseVersion}-${revision}`;
+
+            let commitMsg = '';
+            try {
+              commitMsg = execSync('git log -1 --pretty=format:"%s"').toString().trim();
+            } catch (e) {
+              commitMsg = 'Automated preview release';
+            }
+
+            // Update plugin name to GEMMA (Beta) and version to base-revision (e.g. 3.0.0-r124)
+            metaContent = metaContent.replace(/^name=.*$/m, 'name=GEMMA (Beta)');
+            metaContent = metaContent.replace(/^version=.*$/m, `version=${previewVersion}`);
+
+            // Prepend preview changelog entry
+            const previewChangelog = `${previewVersion}: Preview build ${revision} [${branch}] - ${commitMsg}`;
+            metaContent = metaContent.replace(/^changelog=/m, `changelog=${previewChangelog}\n    `);
+
+            fs.writeFileSync(metaPath, metaContent, 'utf8');
+            console.log(`✅ Packaged metadata.txt updated: name=GEMMA (Beta), version=${previewVersion}`);
+
+            // 4. Create final plugin ZIP
+            execSync(`cd "${tmpDir}" && zip -r "../${zipName}" gemma-plugin/`);
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+
+            core.setOutput('zip_name', zipName);
+            core.setOutput('preview_version', previewVersion);
 
       - name: Publish to Preview Repository
         uses: actions/github-script@v7
@@ -110,16 +154,18 @@ jobs:
         env:
           REVISION: ${{ steps.rev.outputs.revision }}
           ZIP_NAME: ${{ steps.package.outputs.zip_name }}
+          PREVIEW_VERSION: ${{ steps.package.outputs.preview_version }}
         with:
           script: |
             const fs = require('fs');
 
-            const revision = process.env.REVISION;
-            const zipName  = process.env.ZIP_NAME;
-            const today    = new Date().toISOString().split('T')[0];
-            const previewOwner = 'GMD-Repository';
-            const previewRepo  = 'gemma-plugin-preview';
-            const baseUrl  = 'https://gmd-repository.github.io/gemma-plugin';
+            const revision       = process.env.REVISION;
+            const zipName        = process.env.ZIP_NAME;
+            const previewVersion = process.env.PREVIEW_VERSION;
+            const today          = new Date().toISOString().split('T')[0];
+            const previewOwner   = 'GMD-Repository';
+            const previewRepo    = 'gemma-plugin-preview';
+            const baseUrl        = 'https://gmd-repository.github.io/gemma-plugin';
 
             // ── Read metadata.txt for QGIS info ─────────────
             const metadata = fs.readFileSync('metadata.txt', 'utf8');
@@ -128,12 +174,11 @@ jobs:
               return m ? m[1].trim() : '';
             };
 
-            const version = getField('version');
+            const versionStr = previewVersion.startsWith('v') ? previewVersion : `v${previewVersion}`;
             const downloadUrl = `https://github.com/${previewOwner}/${previewRepo}/releases/download/${revision}/${zipName}`;
             const releaseUrl  = `https://github.com/${previewOwner}/${previewRepo}/releases/tag/${revision}`;
 
             // ── 1. Generate gemma-beta.xml ──────────────────
-            const versionStr = version.startsWith('v') ? version : `v${version}`;
             const gemmaBetaXml = `<?xml version="1.0" encoding="UTF-8"?>
             <?xml-stylesheet type="text/xsl" href=""?>
             <plugins>
@@ -163,10 +208,11 @@ jobs:
             fs.writeFileSync('docs/user-guide/public/gemma-beta.xml', gemmaBetaXml);
             console.log('✅ gemma-beta.xml generated with preview repo URLs');
             console.log(`   Download URL: ${downloadUrl}`);
+            console.log(`   Version: ${versionStr}`);
 
             // ── 2. Generate latest-beta.json ────────────────
             const latestBetaJson = {
-              version,
+              version: previewVersion,
               tag: revision,
               releaseDate: today,
               repositoryUrl: `${baseUrl}/gemma-beta.xml`,
