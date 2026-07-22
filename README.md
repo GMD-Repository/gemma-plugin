@@ -1,8 +1,18 @@
-[![Release GEMMA Plugin](https://github.com/GMD-Repository/gemma-plugin/actions/workflows/gemma-plugin.yml/badge.svg?branch=main)](https://github.com/GMD-Repository/gemma-plugin/actions/workflows/gemma-plugin.yml)
-[![Deploy Documentation](https://github.com/GMD-Repository/gemma-plugin/actions/workflows/deploy-docs.yml/badge.svg?branch=main)](https://github.com/GMD-Repository/gemma-plugin/actions/workflows/deploy-docs.yml)
-![QGIS Version](https://img.shields.io/badge/QGIS-3.0%2B-brightgreen)
+<h1 align="center">GEMMA - GIS Extension for Map Management and Analysis</h1>
 
-# GEMMA - GIS Extension for Map Management and Analysis
+<p align="center">
+  <a href="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/gemma-plugin.yml"><img src="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/gemma-plugin.yml/badge.svg?branch=main" alt="Release GEMMA Plugin"></a>
+  <a href="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/deploy-docs.yml"><img src="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/deploy-docs.yml/badge.svg?branch=main" alt="Deploy Documentation"></a>
+  <a href="https://github.com/GMD-Repository/gemma-plugin/releases"><img src="https://img.shields.io/github/downloads/GMD-Repository/gemma-plugin/total" alt="Total Downloads"></a>
+  <img src="https://img.shields.io/badge/QGIS-3.0%2B-brightgreen" alt="QGIS Version">
+</p>
+
+<h2 align="center">Download</h2>
+
+<p align="center">
+  <a href="https://github.com/GMD-Repository/gemma-plugin/releases/latest"><img src="https://img.shields.io/github/v/release/GMD-Repository/gemma-plugin?label=Stable&color=007ec6" alt="Stable Release"></a>
+  <a href="https://github.com/GMD-Repository/gemma-plugin/releases"><img src="https://img.shields.io/github/v/release/GMD-Repository/gemma-plugin?include_prereleases&label=Beta&color=38344e" alt="Beta Release"></a>
+</p>
 
 **GEMMA** is a QGIS processing plugin developed by the **Geospatial Management Division (GMD)** of the **Philippine Statistics Authority (PSA)**.
 
