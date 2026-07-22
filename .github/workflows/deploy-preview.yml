@@ -192,7 +192,7 @@ jobs:
                 <homepage>${baseUrl}/</homepage>
                 <download_url>${downloadUrl}</download_url>
                 <icon>${baseUrl}/icons/icon.png</icon>
-                <file_name>${zipName}</file_name>
+                <file_name>gemma-plugin.zip</file_name>
                 <upload_date>${today}</upload_date>
                 <update_date>${today}</update_date>
                 <experimental>True</experimental>
