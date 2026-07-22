@@ -2,61 +2,78 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
-## 3.0.0 <Badge type="tip" text="Latest" />
-<time>Jan 15, 2026</time>
+## 3.0.1 <Badge type="tip" text="Latest" />
+<time>Jul 21, 2026</time>
 
 ### ✨ New Features
-- Added **VitePress Documentation Site** with full user guide and tool reference pages ([@pacoleslaw](https://github.com/pacoleslaw))
-- Added **Geometry Repair Toolkit** for automated geometry validation and repair ([@pacoleslaw](https://github.com/pacoleslaw))
-- Added **CI/CD Workflows** for automated plugin ZIP packaging and release ([@pacoleslaw](https://github.com/pacoleslaw))
+- **VitePress Documentation Site**: Published interactive documentation hosted via GitHub Pages with full user guide, tool documentation, and getting started instructions.
+- **CI/CD Documentation Deployment**: Added GitHub Actions workflow (`deploy-docs.yml`) for automated documentation site building and deployment.
+- **Project Documentation**: Comprehensive update to project README with tool guides, installation steps, and architecture overview.
 
-### 🚀 Improvements
-- Improved overall performance and stability of processing algorithms and UI widgets ([@pacoleslaw](https://github.com/pacoleslaw))
+<Contributors :contributors="['velascojasper0', 'tatsmenot', 'kentemman-gmd']" />
 
-### ⚙️ Changes
-- Renamed release workflow from QGIS Plugin to GEMMA Plugin ([@pacoleslaw](https://github.com/pacoleslaw))
-- Harmonized branding and nomenclature to GEMMA across all UI elements and documentation ([@nbacquiano-ui](https://github.com/nbacquiano-ui))
+## 3.0.0
+<time>Jul 21, 2026</time>
 
-<Contributors :contributors="['pacoleslaw', 'nbacquiano-ui']" />
+### ✨ New Features
+- **Geometry Repair Toolkit**: Integrated automated geometry validation and repair tool (detect duplicate geometries, null geometries, invalid shapes, wrong feature types with auto-fix).
+- **CI/CD Workflows**: Added GitHub Actions release workflow (`release-plugin.yml`) for automated plugin packaging & release ZIP creation.
+
+### ⚙️ Improvements & Changes
+- Improved overall performance and stability of processing algorithms and UI widgets.
+- Renamed release workflow from QGIS Plugin to GEMMA Plugin.
+- Harmonized branding and nomenclature to GEMMA across all UI elements and documentation.
+
+<Contributors :contributors="['nbacquiano-ui', 'kentemman-gmd', 'velascojasper0']" />
 
 ## 2.0.0
-<time>Jun 01, 2025</time>
+<time>Jul 21, 2026</time>
 
 ### ✨ New Features
-- Added **Create Enumeration Areas** for census and survey field operations ([@pacoleslaw](https://github.com/pacoleslaw))
-- Improved **Package for QField** dialog with drag-and-drop layer management ([@nbacquiano-ui](https://github.com/nbacquiano-ui))
-- Added **Interactive EA Preview Widget** for candidate enumeration area polygons ([@pacoleslaw](https://github.com/pacoleslaw))
-- Added **GitHub Issue Templates** for bug reports and feature requests ([@nbacquiano-ui](https://github.com/nbacquiano-ui))
+- **Create Enumeration Areas**: Added EA delineation capabilities for census and survey field operations.
+- **Package for QField Enhancements**: Improved package dialog with drag-and-drop layer management for QField exports.
+- **Interactive EA Preview Widget**: Interactive map preview widget for candidate enumeration area polygons.
+- **GitHub Templates**: Added issue templates for bug reports and feature requests.
 
 ### ⚙️ Changes
-- Registered EA Delineation processing provider with new UI actions ([@pacoleslaw](https://github.com/pacoleslaw))
-- Introduced default presets for enhanced user experience ([@nbacquiano-ui](https://github.com/nbacquiano-ui))
-- Updated repository URLs and documentation links ([@pacoleslaw](https://github.com/pacoleslaw))
+- Registered EA Delineation processing provider with new UI actions.
+- Introduced default presets for enhanced user experience.
+- Removed unnecessary cache files to streamline plugin performance.
+- Updated repository URLs and documentation links.
 
-<Contributors :contributors="['pacoleslaw', 'nbacquiano-ui']" />
+<Contributors :contributors="['kentemman-gmd', 'velascojasper0', 'nbacquiano-ui']" />
 
 ## 1.2.0
-<time>Mar 01, 2025</time>
+<time>Jul 02, 2026</time>
 
 ### ✨ New Features
-- Added **Fill Polygon Gaps** to automatically fill gaps between polygon boundaries ([@pacoleslaw](https://github.com/pacoleslaw))
-- Added **Update Metadata** to auto-populate LGU PSGC metadata using reference tables ([@pacoleslaw](https://github.com/pacoleslaw))
-- Added **Fix LGU CRS / Geometry** to reposition and rescale LGU boundary layers to EPSG:4326 ([@pacoleslaw](https://github.com/pacoleslaw))
+- **Fill Polygon Gaps**: Automatically fill gaps between polygon boundaries.
+- **Update Metadata**: Auto-populate LGU PSGC metadata using reference lookup tables.
+- **Fix LGU CRS / Geometry**: Reposition and rescale LGU boundary layers to standard EPSG:4326.
+- **Create Enumeration Areas**: Initial integration of EA delineation processing provider.
 
-<Contributors :contributors="['pacoleslaw']" />
+<Contributors :contributors="['kentemman-gmd', 'velascojasper0']" />
+
+## 1.1.1
+<time>Jul 02, 2026</time>
+
+### ⚙️ Improvements
+- Auto-release metadata workflow improvements and bug fixes.
+
+<Contributors :contributors="['kentemman-gmd']" />
 
 ## 1.1.0
-<time>Jan 15, 2025</time>
+<time>Jul 02, 2026</time>
 
 ### ✨ New Features
-- Integrated **Package for QField** tool from qfieldmod plugin ([@pacoleslaw](https://github.com/pacoleslaw))
+- Integrated **Package for QField** tool from `qfieldmod` plugin.
 
-<Contributors :contributors="['pacoleslaw']" />
+<Contributors :contributors="['velascojasper0']" />
 
 ## 1.0.0
-<time>Nov 01, 2024</time>
+<time>Jul 21, 2026</time>
 
 ### ✨ New Features
-- Initial release featuring the **MBI Checker** (Gaps and Overlaps Checker) ([@pacoleslaw](https://github.com/pacoleslaw))
+- Initial release featuring the **MBI Checker** (Gaps and Overlaps Checker).
 
-<Contributors :contributors="['pacoleslaw']" />
+<Contributors :contributors="['kentemman-gmd', 'velascojasper0']" />
