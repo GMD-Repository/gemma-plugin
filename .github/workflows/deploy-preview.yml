@@ -1,0 +1,57 @@
+name: Publish Preview Release
+
+on:
+  push:
+    branches:
+      - beta
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release-preview:
+    name: Build & Release Preview
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Calculate Revision Number
+        id: rev
+        run: |
+          REVISION=$(git rev-list --count HEAD)
+          echo "revision=r${REVISION}" >> $GITHUB_OUTPUT
+          echo "rev_num=${REVISION}" >> $GITHUB_OUTPUT
+          echo "Calculated revision: r${REVISION}"
+
+      - name: Package QGIS Plugin ZIP
+        id: package
+        run: |
+          ZIP_NAME="gemma-plugin-${{ steps.rev.outputs.revision }}.zip"
+          zip -r "${ZIP_NAME}" . -x "*.git*" "*.github*" "docs/*" ".antigravity*" "node_modules/*"
+          echo "zip_name=${ZIP_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Publish to Preview Repository
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: GMD-Repository/gemma-plugin-preview
+          token: ${{ secrets.PREVIEW_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+          tag_name: ${{ steps.rev.outputs.revision }}
+          name: GEMMA Preview ${{ steps.rev.outputs.revision }}
+          prerelease: true
+          draft: false
+          files: ${{ steps.package.outputs.zip_name }}
+          body: |
+            ## 🚀 GEMMA Preview Build (${{ steps.rev.outputs.revision }})
+
+            Automated preview release generated from branch `${{ github.ref_name }}`.
+
+            ### Installation:
+            1. Download `${{ steps.package.outputs.zip_name }}` below.
+            2. Open QGIS → **Plugins** → **Manage and Install Plugins** → **Install from ZIP**.
+            3. Select the downloaded ZIP file and click **Install Plugin**.

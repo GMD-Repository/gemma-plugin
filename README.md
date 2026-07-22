@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/GMD-Repository/gemma-plugin/releases/latest"><img src="https://img.shields.io/github/v/release/GMD-Repository/gemma-plugin?label=Stable&color=007ec6" alt="Stable Release"></a>
-  <a href="https://github.com/GMD-Repository/gemma-plugin/releases"><img src="https://img.shields.io/github/v/release/GMD-Repository/gemma-plugin?include_prereleases&label=Beta&color=38344e" alt="Beta Release"></a>
+  <a href="https://github.com/GMD-Repository/gemma-plugin-preview/releases"><img src="https://img.shields.io/github/v/release/GMD-Repository/gemma-plugin-preview?include_prereleases&label=Beta&color=38344e" alt="Beta Release"></a>
 </p>
 
 **GEMMA** is a QGIS processing plugin developed by the **Geospatial Management Division (GMD)** of the **Philippine Statistics Authority (PSA)**.
