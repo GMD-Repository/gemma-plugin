@@ -12,7 +12,8 @@ email=gmd.support@psa.gov.ph
 
 about=This plugin is developed by the Geospatial Management Division to provide a comprehenive set of tools that could be used for map management and analyses for different sorts of activities.
 
-changelog=1.0.0: Initial release with Gaps and Overlaps Checker.
+changelog=1.0.0: Added LGU CRS and Geometry Alignment Algorithm to Processing Provider; Removed unnecessary subfolder and added README for better documentation; Introduced QP Generation and Create Enumeration Areas QGIS Plugin; Registered EA Delineation processing provider with UI actions and interactive preview support; Improved Package Dialog functionality by solving existing bugs; Harmonized legacy plugin references and introduced default presets for user convenience; Enhanced drag-and-drop support for improved user experience; Renamed GMD Pipeline to GEMMA and updated repository URLs; Implemented GitHub Actions workflow for automated GEMMA Plugin releases; Initialized VitePress documentation site with tool guides and updated README
+    1.0.0: Initial release with Gaps and Overlaps Checker.
 
 #tracker=
 repository=https://github.com/GMD-Repository/gemma-plugin.git
