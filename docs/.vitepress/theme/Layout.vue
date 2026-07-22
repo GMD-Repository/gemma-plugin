@@ -1,7 +1,29 @@
 <script setup lang="ts">
 import DefaultTheme from 'vitepress/theme'
+import { onMounted } from 'vue'
+import { withBase } from 'vitepress'
 
 const { Layout } = DefaultTheme
+
+onMounted(async () => {
+  try {
+    const res = await fetch(withBase('/latest.json'))
+    if (res.ok) {
+      const data = await res.json()
+      if (data.downloadUrl) {
+        // Dynamic auto-update for hero Download button
+        const downloadBtns = document.querySelectorAll<HTMLAnchorElement>('.VPHero .actions a')
+        downloadBtns.forEach(btn => {
+          if (btn.textContent?.trim().toLowerCase().includes('download')) {
+            btn.href = data.downloadUrl
+          }
+        })
+      }
+    }
+  } catch (e) {
+    console.warn('Could not update download URL from latest.json:', e)
+  }
+})
 </script>
 
 <template>

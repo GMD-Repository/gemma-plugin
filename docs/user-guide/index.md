@@ -10,7 +10,7 @@ hero:
       text: Get Started
       link: /getting-started
     - theme: alt
-      text: Direct Download
+      text: Download
       link: https://github.com/GMD-Repository/gemma-plugin/releases/download/v3.0.0/gemma-plugin-v3.0.0.zip
     - theme: alt
       text: View Changelog
