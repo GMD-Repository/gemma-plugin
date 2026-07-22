@@ -5,8 +5,13 @@ const props = defineProps<{
   contributors: string[]
 }>()
 
+const cleanContributors = computed(() => {
+  if (!props.contributors) return []
+  return Array.from(new Set(props.contributors.filter(user => user && !user.includes('[bot]'))))
+})
+
 const formattedNames = computed(() => {
-  const list = props.contributors
+  const list = cleanContributors.value
   if (!list || list.length === 0) return ''
   if (list.length === 1) return list[0]
   if (list.length === 2) return `${list[0]} and ${list[1]}`
@@ -17,10 +22,10 @@ const formattedNames = computed(() => {
 </script>
 
 <template>
-  <div class="contributors" v-if="contributors && contributors.length">
+  <div class="contributors" v-if="cleanContributors.length">
     <h3>Contributors</h3>
     <ul class="avatars-list">
-      <li v-for="user in contributors" :key="user">
+      <li v-for="user in cleanContributors" :key="user">
         <a
           :href="`https://github.com/${user}`"
           :title="`${user} profile on GitHub`"

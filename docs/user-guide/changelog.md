@@ -1,25 +1,28 @@
-# Changelogs
+# Changelog
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
-
-## [1.0.0] - 2026
-
-### Highlights
-- Added LGU CRS and Geometry Alignment Algorithm to Processing Provider
-- Removed unnecessary subfolder and added README for better documentation
-- Introduced QP Generation and Create Enumeration Areas QGIS Plugin
-- Registered EA Delineation processing provider with UI actions and interactive preview support
-- Improved Package Dialog functionality by solving existing bugs
-- Harmonized legacy plugin references and introduced default presets for user convenience
-- Enhanced drag-and-drop support for improved user experience
-- Renamed GMD Pipeline to GEMMA and updated repository URLs
-- Implemented GitHub Actions workflow for automated GEMMA Plugin releases
-- Initialized VitePress documentation site with tool guides and updated README
 
 ## 1.0.0
 <time>Jul 21, 2026</time>
 
 ### ✨ New Features
-- Initial release featuring the **MBI Checker** (Gaps and Overlaps Checker).
+- **MBI Checker**: Gaps and Overlaps Checker for boundary polygon integrity validation.
+- **Create Enumeration Areas & QP Generation**: Automated EA delineation and Quick Plan generation.
+- **Fix LGU CRS & Geometry**: Coordinate reference system alignment algorithm and geometry repair tools.
+- **Fill Polygon Gaps**: Automatic gap identification and filling for polygon layers.
+- **Geometry Repair Toolkit**: Comprehensive toolkit for fixing invalid geometries and topological errors.
+- **Export Preliminary Polygons**: Export tools for field survey preliminary polygon data.
+- **Package for QField**: Packaging dialog and tools for offline mobile GIS workflows in QField.
+- **Join Barangay Attributes**: Advanced fuzzy matching algorithm for joining administrative attributes.
 
-<Contributors :contributors="['kentemman-gmd', 'velascojasper0']" />
+### ⚡ Improvements & Fixes
+- Improved Package Dialog functionality and introduced default presets for user convenience.
+- Enhanced drag-and-drop support for improved user experience.
+- Harmonized legacy plugin references and updated repository metadata.
+
+### 🔧 Infrastructure & Documentation
+- Initialized VitePress documentation site with comprehensive user guides and tool documentation.
+- Implemented automated GitHub Actions workflows for plugin packaging, release management, and preview builds.
+
+<Contributors :contributors="['kentemman-gmd', 'velascojasper0', 'psacjperez', 'tatsmenot', 'pacoleslaw', 'nbacquiano-ui']" />
+

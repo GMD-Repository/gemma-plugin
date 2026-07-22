@@ -347,28 +347,32 @@ jobs:
 
             // ── 4b. Update CHANGELOG.md & docs/user-guide/changelog.md ─
 
-            const year = new Date().getFullYear();
+            const dateObj = new Date();
+            const dateStr = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            const isoDate = dateObj.toISOString().split('T')[0];
             const markdownBullets = highlights.map(h => `- ${h}`).join('\n');
-            const changelogSection = `## [${version}] - ${year}\n\n### Highlights\n${markdownBullets}\n\n`;
 
-            function updateMarkdownChangelog(filePath) {
+            const rootChangelogSection = `## [${version}] - ${isoDate}\n\n### Added\n${markdownBullets}\n\n`;
+            const docsChangelogSection = `## ${version}\n<time>${dateStr}</time>\n\n### ✨ New Features\n${markdownBullets}\n\n<Contributors :contributors="['kentemman-gmd', 'velascojasper0', 'psacjperez', 'tatsmenot', 'pacoleslaw', 'nbacquiano-ui']" />\n\n`;
+
+            function updateMarkdownFile(filePath, newSection) {
               if (fs.existsSync(filePath)) {
                 let content = fs.readFileSync(filePath, 'utf8');
-                // Match both "## [version]" (CHANGELOG.md) and "## version" (docs changelog)
                 const sectionMatch = content.match(/^## [\[\d]/m);
                 if (sectionMatch) {
                   const firstSectionIndex = sectionMatch.index;
-                  content = content.slice(0, firstSectionIndex) + changelogSection + content.slice(firstSectionIndex);
+                  content = content.slice(0, firstSectionIndex) + newSection + content.slice(firstSectionIndex);
                 } else {
-                  content += `\n\n${changelogSection}`;
+                  content += `\n\n${newSection}`;
                 }
                 fs.writeFileSync(filePath, content);
                 console.log(`✅ ${filePath} updated with new release section`);
               }
             }
 
-            updateMarkdownChangelog('CHANGELOG.md');
-            updateMarkdownChangelog('docs/user-guide/changelog.md');
+            updateMarkdownFile('CHANGELOG.md', rootChangelogSection);
+            updateMarkdownFile('docs/user-guide/changelog.md', docsChangelogSection);
+
 
 
             // ── 5. Build QGIS plugin ZIP ────────────────────────────────
@@ -578,11 +582,11 @@ jobs:
             const contributors = [];
             try {
               const { execSync } = require('child_process');
-              const log = execSync('git log --format="%aN" -20', { encoding: 'utf8' });
-              const names = [...new Set(log.trim().split('\n').filter(Boolean))];
-              contributors.push(...names.slice(0, 5));
+              const log = execSync('git log --format="%aN" -30', { encoding: 'utf8' });
+              const names = [...new Set(log.trim().split('\n').filter(name => name && !name.includes('[bot]') && !name.includes('github-actions')))];
+              contributors.push(...names.slice(0, 10));
             } catch (e) {
-              contributors.push('GMD Team');
+              contributors.push('kentemman-gmd', 'velascojasper0');
             }
 
             const newRelease = {

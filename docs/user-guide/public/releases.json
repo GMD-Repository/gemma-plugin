@@ -8,10 +8,11 @@
       "prerelease": false,
       "contributors": [
         "kentemman-gmd",
-        "github-actions[bot]",
         "velascojasper0",
         "psacjperez",
-        "tatsmenot"
+        "tatsmenot",
+        "pacoleslaw",
+        "nbacquiano-ui"
       ],
       "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.0/gemma-plugin-v1.0.0.zip",
       "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.0",
@@ -22,18 +23,19 @@
       ],
       "changes": {
         "features": [
-          "Added LGU CRS and Geometry Alignment Algorithm to Processing Provider",
-          "Removed unnecessary subfolder and added README for better documentation",
-          "Introduced QP Generation and Create Enumeration Areas QGIS Plugin",
-          "Registered EA Delineation processing provider with UI actions and interactive preview support",
-          "Harmonized legacy plugin references and introduced default presets for user convenience",
-          "Renamed GMD Pipeline to GEMMA and updated repository URLs",
-          "Implemented GitHub Actions workflow for automated GEMMA Plugin releases",
-          "Initialized VitePress documentation site with tool guides and updated README"
+          "MBI Checker (Gaps and Overlaps Checker)",
+          "Create Enumeration Areas & QP Generation",
+          "Fix LGU CRS and Geometry Alignment Algorithm",
+          "Fill Polygon Gaps tool",
+          "Geometry Repair Toolkit",
+          "Export Preliminary Polygons tool",
+          "Package for QField offline workflow support",
+          "Join Barangay Attributes fuzzy matching algorithm"
         ],
         "improvements": [
-          "Improved Package Dialog functionality by solving existing bugs",
-          "Enhanced drag-and-drop support for improved user experience"
+          "Improved Package Dialog functionality and introduced default presets",
+          "Enhanced drag-and-drop support for user convenience",
+          "Harmonized legacy plugin references and updated metadata"
         ],
         "changes": [],
         "fixes": [],
