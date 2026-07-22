@@ -7,10 +7,10 @@
     <version>3.0.0</version>
     <qgis_minimum_version>3.0</qgis_minimum_version>
     <homepage>https://gmd-repository.github.io/gemma-plugin/</homepage>
-    <file_name>gemma-plugin-r100.zip</file_name>
+    <file_name>gemma-plugin-r106.zip</file_name>
     <icon>https://gmd-repository.github.io/gemma-plugin/icons/icon.png</icon>
     <author_name>Geospatial Management Division</author_name>
-    <download_url>https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r100/gemma-plugin-r100.zip</download_url>
+    <download_url>https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r106/gemma-plugin-r106.zip</download_url>
     <upload_date>2026-07-22</upload_date>
     <update_date>2026-07-22</update_date>
     <experimental>True</experimental>
