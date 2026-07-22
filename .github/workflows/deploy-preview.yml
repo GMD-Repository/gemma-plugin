@@ -176,21 +176,9 @@ jobs:
             console.log('✅ latest-beta.json generated');
 
       # ── Commit beta channel files back to repo ───────────────────────
-      - name: Create PR for beta channel updates
-        uses: peter-evans/create-pull-request@v6
-        with:
-          token: ${{ secrets.PREVIEW_REPO_TOKEN || secrets.GITHUB_TOKEN }}
-          commit-message: "chore: update beta channel files for preview ${{ steps.rev.outputs.revision }}"
-          committer: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
-          author: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
-          branch: "patch/beta-channel-${{ steps.rev.outputs.revision }}"
-          title: "chore: update beta channel files for preview ${{ steps.rev.outputs.revision }}"
-          body: |
-            Automated update of beta channel files for preview build ${{ steps.rev.outputs.revision }}.
-
-            **Updated files:**
-            - `docs/user-guide/public/gemma-beta.xml` — QGIS beta plugin repository
-            - `docs/user-guide/public/latest-beta.json` — latest beta release info
-
-            These files point to: `gemma-plugin-preview/releases/tag/${{ steps.rev.outputs.revision }}`
-          delete-branch: true
+      - name: Commit beta channel files directly
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/user-guide/public/gemma-beta.xml docs/user-guide/public/latest-beta.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: update beta channel files for preview ${{ steps.rev.outputs.revision }} [skip ci]" && git push)
