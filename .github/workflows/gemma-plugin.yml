@@ -469,6 +469,7 @@ jobs:
               body:             releaseBody,
               draft:            false,
               prerelease:       isPrerelease,
+              make_latest:      isPrerelease ? 'false' : 'true',
             });
 
             console.log(`✅ Release created: ${release.html_url}`);

@@ -39,24 +39,59 @@ jobs:
           echo "zip_name=${ZIP_NAME}" >> $GITHUB_OUTPUT
 
       - name: Publish to Preview Repository
-        uses: softprops/action-gh-release@v2
+        uses: actions/github-script@v7
+        env:
+          REVISION: ${{ steps.rev.outputs.revision }}
+          ZIP_NAME: ${{ steps.package.outputs.zip_name }}
+          BRANCH_NAME: ${{ github.ref_name }}
         with:
-          repository: GMD-Repository/gemma-plugin-preview
-          token: ${{ secrets.PREVIEW_REPO_TOKEN || secrets.GITHUB_TOKEN }}
-          tag_name: ${{ steps.rev.outputs.revision }}
-          name: GEMMA Preview ${{ steps.rev.outputs.revision }}
-          prerelease: false
-          draft: false
-          files: ${{ steps.package.outputs.zip_name }}
-          body: |
-            ## 🚀 GEMMA Preview Build (${{ steps.rev.outputs.revision }})
+          github-token: ${{ secrets.PREVIEW_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
 
-            Automated preview release generated from branch `${{ github.ref_name }}`.
+            const revision  = process.env.REVISION;
+            const zipName   = process.env.ZIP_NAME;
+            const branch    = process.env.BRANCH_NAME;
+            const owner     = 'GMD-Repository';
+            const repo      = 'gemma-plugin-preview';
 
-            ### Installation:
-            1. Download `${{ steps.package.outputs.zip_name }}` below.
-            2. Open QGIS → **Plugins** → **Manage and Install Plugins** → **Install from ZIP**.
-            3. Select the downloaded ZIP file and click **Install Plugin**.
+            const releaseBody = [
+              `## 🚀 GEMMA Preview Build (${revision})`,
+              '',
+              `Automated preview release generated from branch \`${branch}\`.`,
+              '',
+              '### Installation:',
+              `1. Download \`${zipName}\` below.`,
+              '2. Open QGIS → **Plugins** → **Manage and Install Plugins** → **Install from ZIP**.',
+              '3. Select the downloaded ZIP file and click **Install Plugin**.',
+            ].join('\n');
+
+            // Create the release via GitHub API — prerelease: false, make_latest: true
+            const { data: release } = await github.rest.repos.createRelease({
+              owner,
+              repo,
+              tag_name:    revision,
+              name:        `GEMMA Preview ${revision}`,
+              body:        releaseBody,
+              draft:       false,
+              prerelease:  false,
+              make_latest: 'true',
+            });
+
+            console.log(`✅ Release created: ${release.html_url}`);
+            console.log(`   prerelease: ${release.prerelease}`);
+
+            // Upload ZIP as release asset
+            const zipBuffer = fs.readFileSync(zipName);
+            await github.rest.repos.uploadReleaseAsset({
+              owner,
+              repo,
+              release_id: release.id,
+              name:       zipName,
+              data:       zipBuffer,
+            });
+
+            console.log(`✅ ZIP uploaded: ${zipName}`);
 
       # ── Generate beta channel files for QGIS repository ──────────────
       - name: Generate beta channel files
