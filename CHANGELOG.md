@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.0.0] - 2026
 
+### Highlights
+- Added LGU CRS and Geometry Alignment Algorithm to Processing Provider
+- Removed unnecessary subfolder and added README for better documentation
+- Introduced QP Generation and Create Enumeration Areas QGIS Plugin
+- Registered EA Delineation processing provider with UI actions and interactive candidate preview
+- Improved Package Dialog functionality by resolving bugs
+- Harmonized legacy plugin references and introduced default presets for user convenience
+- Updated GEMMA repository URLs and renamed GMD Pipeline to GEMMA
+- Implemented GitHub Actions workflow for automated plugin releases and notifications
+- Initialized documentation site with tool guides and enhanced README for clarity
+
+## [3.0.0] - 2026
+
 ### Added
 - **VitePress Documentation Site**: Published interactive documentation hosted via GitHub Pages with full user guide, tool documentation, and getting started instructions.
 - **Geometry Repair Toolkit**: Integrated automated geometry validation and repair tool (detect duplicate geometries, null geometries, invalid shapes, wrong feature types with auto-fix).
