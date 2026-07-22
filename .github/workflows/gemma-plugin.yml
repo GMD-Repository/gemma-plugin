@@ -484,21 +484,163 @@ jobs:
 
             fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary + '\n');
 
-      # ── 5. Create PR for metadata and changelog changes ──────────────
+      # ── 5. Generate QGIS repository data files ────────────────────────
+      - name: Generate QGIS repository data files
+        if: steps.check-tag.outputs.exists == 'false'
+        uses: actions/github-script@v7
+        env:
+          PLUGIN_VERSION: ${{ steps.resolve-version.outputs.version }}
+          PLUGIN_TAG:     ${{ steps.resolve-version.outputs.tag }}
+        with:
+          script: |
+            const fs = require('fs');
+
+            const version = process.env.PLUGIN_VERSION;
+            const tag     = process.env.PLUGIN_TAG;
+            const today   = new Date().toISOString().split('T')[0];
+            const owner   = context.repo.owner;
+            const repo    = context.repo.repo;
+            const zipName = `gemma-plugin-v${version}.zip`;
+            const baseUrl = `https://gmd-repository.github.io/gemma-plugin`;
+
+            // ── Read metadata.txt for QGIS info ─────────────
+            const metadata = fs.readFileSync('metadata.txt', 'utf8');
+            const getField = (key) => {
+              const m = metadata.match(new RegExp(`^${key}=(.*)$`, 'm'));
+              return m ? m[1].trim() : '';
+            };
+
+            // ── Generate gemma.xml ──────────────────────────
+            const gemmaXml = `<?xml version="1.0" encoding="UTF-8"?>
+            <?xml-stylesheet type="text/xsl" href=""?>
+            <plugins>
+              <pyqgis_plugin name="${getField('name')}" version="${version}">
+                <description>${getField('description')}</description>
+                <about>${getField('about').replace(/&/g, '&amp;').replace(/</g, '&lt;')}</about>
+                <version>${version}</version>
+                <qgis_minimum_version>${getField('qgisMinimumVersion')}</qgis_minimum_version>
+                <homepage>${baseUrl}/</homepage>
+                <file_name>${zipName}</file_name>
+                <icon>${baseUrl}/icons/icon.png</icon>
+                <author_name>${getField('author')}</author_name>
+                <download_url>https://github.com/${owner}/${repo}/releases/download/${tag}/${zipName}</download_url>
+                <upload_date>${today}</upload_date>
+                <update_date>${today}</update_date>
+                <experimental>${getField('experimental')}</experimental>
+                <deprecated>${getField('deprecated')}</deprecated>
+                <tracker>https://github.com/${owner}/${repo}/issues</tracker>
+                <repository>https://github.com/${owner}/${repo}</repository>
+                <tags>${getField('tags')}</tags>
+                <category>${getField('category')}</category>
+                <server>${getField('server')}</server>
+              </pyqgis_plugin>
+            </plugins>`.replace(/^            /gm, '');
+
+            fs.writeFileSync('docs/user-guide/public/gemma.xml', gemmaXml);
+            console.log('✅ gemma.xml generated');
+
+            // ── Generate latest.json ────────────────────────
+            const latestJson = {
+              version,
+              tag,
+              releaseDate: today,
+              repositoryUrl: `${baseUrl}/gemma.xml`,
+              downloadUrl: `https://github.com/${owner}/${repo}/releases/download/${tag}/${zipName}`,
+              releaseUrl: `https://github.com/${owner}/${repo}/releases/tag/${tag}`,
+              changelogUrl: `${baseUrl}/changelog/${tag}`
+            };
+
+            fs.writeFileSync('docs/user-guide/public/latest.json', JSON.stringify(latestJson, null, 2));
+            console.log('✅ latest.json generated');
+
+            // ── Update releases.json ────────────────────────
+            let releasesData = { latest: version, releases: [] };
+            const releasesPath = 'docs/user-guide/public/releases.json';
+            if (fs.existsSync(releasesPath)) {
+              try {
+                releasesData = JSON.parse(fs.readFileSync(releasesPath, 'utf8'));
+              } catch (e) {
+                console.log('⚠️  Could not parse existing releases.json, starting fresh');
+              }
+            }
+
+            // Parse release body into categories
+            const releaseBody = `${{ steps.create-release.outputs.release_body }}`;
+            const features = [];
+            const improvements = [];
+            const fixes = [];
+            const changes = [];
+
+            for (const line of releaseBody.split('\n')) {
+              const cleaned = line.replace(/^-\s*/, '').trim();
+              if (!cleaned) continue;
+              if (/^(fix|bug)/i.test(cleaned)) fixes.push(cleaned);
+              else if (/^(improv|enhanc|optimi)/i.test(cleaned)) improvements.push(cleaned);
+              else features.push(cleaned);
+            }
+
+            // Detect contributors from git
+            const contributors = [];
+            try {
+              const { execSync } = require('child_process');
+              const log = execSync('git log --format="%aN" -20', { encoding: 'utf8' });
+              const names = [...new Set(log.trim().split('\n').filter(Boolean))];
+              contributors.push(...names.slice(0, 5));
+            } catch (e) {
+              contributors.push('GMD Team');
+            }
+
+            const newRelease = {
+              version,
+              date: today,
+              tag,
+              contributors,
+              downloadUrl: latestJson.downloadUrl,
+              releaseUrl: latestJson.releaseUrl,
+              qgisVersions: ['3.34', '3.40', '3.44'],
+              changes: {
+                features,
+                improvements,
+                changes,
+                fixes,
+                breaking: [],
+                deprecated: [],
+                dependencies: []
+              }
+            };
+
+            // Remove existing entry for this version if present
+            releasesData.releases = releasesData.releases.filter(r => r.version !== version);
+            // Add new release at the beginning
+            releasesData.releases.unshift(newRelease);
+            releasesData.latest = version;
+
+            fs.writeFileSync(releasesPath, JSON.stringify(releasesData, null, 2));
+            console.log(`✅ releases.json updated (${releasesData.releases.length} releases)`);
+
+      # ── 6. Create PR for metadata and changelog changes ──────────────
       - name: Create PR for metadata and changelog changes
         if: steps.check-tag.outputs.exists == 'false'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
-          commit-message: "chore: update changelogs for v${{ steps.resolve-version.outputs.version }}"
+          commit-message: "chore: update changelogs and repository data for v${{ steps.resolve-version.outputs.version }}"
           committer: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
           author: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
           branch: "patch/metadata-v${{ steps.resolve-version.outputs.version }}"
-          title: "chore: update changelogs for v${{ steps.resolve-version.outputs.version }}"
+          title: "chore: update changelogs and repository data for v${{ steps.resolve-version.outputs.version }}"
           body: |
-            This is an automated pull request to update `metadata.txt`, `CHANGELOG.md`, and `docs/user-guide/changelog.md` with release notes for version ${{ steps.resolve-version.outputs.version }}.
+            This is an automated pull request to update release data for version ${{ steps.resolve-version.outputs.version }}.
             
-            Please merge this PR to keep repository history and documentation synchronized.
+            **Updated files:**
+            - `metadata.txt` — version and changelog
+            - `CHANGELOG.md` — release notes
+            - `docs/user-guide/changelog.md` — docs changelog
+            - `docs/user-guide/public/gemma.xml` — QGIS plugin repository
+            - `docs/user-guide/public/latest.json` — latest release info
+            - `docs/user-guide/public/releases.json` — all releases data
+            
+            Please merge this PR to keep repository history, documentation, and QGIS repository synchronized.
           delete-branch: true
 
       # ── 6. Send email notification ───────────────────────────────────
