@@ -1,46 +1,72 @@
-# Changelog
+# Changelogs
 
-All notable changes to the **GEMMA** (GIS Extension for Map Management and Analysis) QGIS plugin are documented here.
+Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
-For detailed release assets, visit the [GitHub Releases](https://github.com/GMD-Repository/gemma-plugin/releases) page.
+---
 
-## [3.0.0] - 2026
+## 3.0.0 <Badge type="tip" text="Latest" />
+<time>Jan 15, 2026</time>
 
-### Added
-- **VitePress Documentation Site**: Published interactive documentation site with comprehensive user guides and tool reference pages.
-- **Geometry Repair Toolkit**: Integrated automated geometry validation and repair tool (detect duplicate geometries, null geometries, invalid shapes, wrong feature types with auto-fix).
-- **CI/CD Automation**: Added GitHub Actions workflows for automated plugin ZIP packaging & release and documentation site deployment.
+### ✨ New Features
+- Added **VitePress Documentation Site** with full user guide and tool reference pages ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added **Geometry Repair Toolkit** for automated geometry validation and repair ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added **CI/CD Workflows** for automated plugin ZIP packaging and release ([@pacoleslaw](https://github.com/pacoleslaw))
 
-### Changed
-- Improved overall performance and stability of processing algorithms and UI widgets.
-- Harmonized branding and nomenclature to GEMMA across all UI elements and documentation.
+### 🚀 Improvements
+- Improved overall performance and stability of processing algorithms and UI widgets ([@pacoleslaw](https://github.com/pacoleslaw))
 
-## [2.0.0]
+### ⚙️ Changes
+- Renamed release workflow from QGIS Plugin to GEMMA Plugin ([@pacoleslaw](https://github.com/pacoleslaw))
+- Harmonized branding and nomenclature to GEMMA across all UI elements and documentation ([@nbacquiano-ui](https://github.com/nbacquiano-ui))
 
-### Added
-- **Create Enumeration Areas**: Added EA delineation capabilities for census and survey field operations.
-- **Package for QField Enhancements**: Improved package dialog with drag-and-drop layer management for QField exports.
-- **Interactive EA Preview Widget**: Interactive map preview for candidate enumeration area polygons.
-- **GitHub Templates**: Added issue templates for bug reports and feature requests.
+<Contributors :contributors="['pacoleslaw', 'nbacquiano-ui']" />
 
-### Changed
-- Registered EA Delineation processing provider with new UI actions.
-- Introduced default presets for enhanced user experience.
-- Updated repository URLs and documentation links.
+---
 
-## [1.2.0]
+## 2.0.0
+<time>Jun 01, 2025</time>
 
-### Added
-- **Fill Polygon Gaps**: Automatically fill gaps between polygon boundaries.
-- **Update Metadata**: Auto-populate LGU PSGC metadata using reference lookup tables.
-- **Fix LGU CRS / Geometry**: Reposition and rescale LGU boundary layers to standard EPSG:4326.
+### ✨ New Features
+- Added **Create Enumeration Areas** for census and survey field operations ([@pacoleslaw](https://github.com/pacoleslaw))
+- Improved **Package for QField** dialog with drag-and-drop layer management ([@nbacquiano-ui](https://github.com/nbacquiano-ui))
+- Added **Interactive EA Preview Widget** for candidate enumeration area polygons ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added **GitHub Issue Templates** for bug reports and feature requests ([@nbacquiano-ui](https://github.com/nbacquiano-ui))
 
-## [1.1.0]
+### ⚙️ Changes
+- Registered EA Delineation processing provider with new UI actions ([@pacoleslaw](https://github.com/pacoleslaw))
+- Introduced default presets for enhanced user experience ([@nbacquiano-ui](https://github.com/nbacquiano-ui))
+- Updated repository URLs and documentation links ([@pacoleslaw](https://github.com/pacoleslaw))
 
-### Added
-- Integrated **Package for QField** tool from `qfieldmod` plugin.
+<Contributors :contributors="['pacoleslaw', 'nbacquiano-ui']" />
 
-## [1.0.0]
+---
 
-### Added
-- Initial release featuring the **MBI Checker** (Gaps and Overlaps Checker).
+## 1.2.0
+<time>Mar 01, 2025</time>
+
+### ✨ New Features
+- Added **Fill Polygon Gaps** to automatically fill gaps between polygon boundaries ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added **Update Metadata** to auto-populate LGU PSGC metadata using reference tables ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added **Fix LGU CRS / Geometry** to reposition and rescale LGU boundary layers to EPSG:4326 ([@pacoleslaw](https://github.com/pacoleslaw))
+
+<Contributors :contributors="['pacoleslaw']" />
+
+---
+
+## 1.1.0
+<time>Jan 15, 2025</time>
+
+### ✨ New Features
+- Integrated **Package for QField** tool from qfieldmod plugin ([@pacoleslaw](https://github.com/pacoleslaw))
+
+<Contributors :contributors="['pacoleslaw']" />
+
+---
+
+## 1.0.0
+<time>Nov 01, 2024</time>
+
+### ✨ New Features
+- Initial release featuring the **MBI Checker** (Gaps and Overlaps Checker) ([@pacoleslaw](https://github.com/pacoleslaw))
+
+<Contributors :contributors="['pacoleslaw']" />
