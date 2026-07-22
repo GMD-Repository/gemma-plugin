@@ -2,8 +2,6 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
----
-
 ## 3.0.0 <Badge type="tip" text="Latest" />
 <time>Jan 15, 2026</time>
 
@@ -21,8 +19,6 @@ Changelogs of all GEMMA Plugin stable releases, which are also available [on Git
 
 <Contributors :contributors="['pacoleslaw', 'nbacquiano-ui']" />
 
----
-
 ## 2.0.0
 <time>Jun 01, 2025</time>
 
@@ -39,8 +35,6 @@ Changelogs of all GEMMA Plugin stable releases, which are also available [on Git
 
 <Contributors :contributors="['pacoleslaw', 'nbacquiano-ui']" />
 
----
-
 ## 1.2.0
 <time>Mar 01, 2025</time>
 
@@ -51,8 +45,6 @@ Changelogs of all GEMMA Plugin stable releases, which are also available [on Git
 
 <Contributors :contributors="['pacoleslaw']" />
 
----
-
 ## 1.1.0
 <time>Jan 15, 2025</time>
 
@@ -60,8 +52,6 @@ Changelogs of all GEMMA Plugin stable releases, which are also available [on Git
 - Integrated **Package for QField** tool from qfieldmod plugin ([@pacoleslaw](https://github.com/pacoleslaw))
 
 <Contributors :contributors="['pacoleslaw']" />
-
----
 
 ## 1.0.0
 <time>Nov 01, 2024</time>
