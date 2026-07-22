@@ -64,15 +64,10 @@ async function copyUrl() {
 <style scoped>
 .qgis-repo-card {
   background-color: var(--vp-c-bg-soft);
-  border: 1px solid var(--vp-c-divider);
   border-radius: 12px;
   padding: 16px 20px;
   margin: 0;
-  transition: border-color 0.25s, background-color 0.25s;
-}
-
-.qgis-repo-card:hover {
-  border-color: var(--vp-c-brand-1);
+  transition: background-color 0.25s;
 }
 
 .card-header {
@@ -118,7 +113,6 @@ async function copyUrl() {
   align-items: center;
   justify-content: space-between;
   background-color: var(--vp-c-bg-alt);
-  border: 1px solid var(--vp-c-divider);
   border-radius: 8px;
   padding: 8px 12px 8px 16px;
   gap: 12px;
