@@ -3,12 +3,14 @@ name: Publish Preview Release
 on:
   push:
     branches:
+      - main
       - beta
       - dev
   workflow_dispatch:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   build-and-release-preview:
@@ -55,3 +57,96 @@ jobs:
             1. Download `${{ steps.package.outputs.zip_name }}` below.
             2. Open QGIS → **Plugins** → **Manage and Install Plugins** → **Install from ZIP**.
             3. Select the downloaded ZIP file and click **Install Plugin**.
+
+      # ── Generate beta channel files for QGIS repository ──────────────
+      - name: Generate beta channel files
+        id: beta-files
+        uses: actions/github-script@v7
+        env:
+          REVISION: ${{ steps.rev.outputs.revision }}
+          ZIP_NAME: ${{ steps.package.outputs.zip_name }}
+        with:
+          script: |
+            const fs = require('fs');
+
+            const revision = process.env.REVISION;
+            const zipName  = process.env.ZIP_NAME;
+            const today    = new Date().toISOString().split('T')[0];
+            const previewOwner = 'GMD-Repository';
+            const previewRepo  = 'gemma-plugin-preview';
+            const baseUrl  = 'https://gmd-repository.github.io/gemma-plugin';
+
+            // ── Read metadata.txt for QGIS info ─────────────
+            const metadata = fs.readFileSync('metadata.txt', 'utf8');
+            const getField = (key) => {
+              const m = metadata.match(new RegExp(`^${key}=(.*)$`, 'm'));
+              return m ? m[1].trim() : '';
+            };
+
+            const version = getField('version');
+            const downloadUrl = `https://github.com/${previewOwner}/${previewRepo}/releases/download/${revision}/${zipName}`;
+            const releaseUrl  = `https://github.com/${previewOwner}/${previewRepo}/releases/tag/${revision}`;
+
+            // ── 1. Generate gemma-beta.xml ──────────────────
+            const gemmaBetaXml = `<?xml version="1.0" encoding="UTF-8"?>
+            <?xml-stylesheet type="text/xsl" href=""?>
+            <plugins>
+              <pyqgis_plugin name="${getField('name')} (Beta)" version="${version}">
+                <description>${getField('description')} (Beta)</description>
+                <about>${getField('about').replace(/&/g, '&amp;').replace(/</g, '&lt;')} (Beta Channel)</about>
+                <version>${version}</version>
+                <qgis_minimum_version>${getField('qgisMinimumVersion')}</qgis_minimum_version>
+                <homepage>${baseUrl}/</homepage>
+                <file_name>${zipName}</file_name>
+                <icon>${baseUrl}/icons/icon.png</icon>
+                <author_name>${getField('author')}</author_name>
+                <download_url>${downloadUrl}</download_url>
+                <upload_date>${today}</upload_date>
+                <update_date>${today}</update_date>
+                <experimental>True</experimental>
+                <deprecated>${getField('deprecated')}</deprecated>
+                <tracker>https://github.com/${previewOwner}/gemma-plugin/issues</tracker>
+                <repository>https://github.com/${previewOwner}/gemma-plugin</repository>
+                <tags>${getField('tags')},beta</tags>
+                <category>${getField('category')}</category>
+                <server>${getField('server')}</server>
+              </pyqgis_plugin>
+            </plugins>`.replace(/^            /gm, '');
+
+            fs.writeFileSync('docs/user-guide/public/gemma-beta.xml', gemmaBetaXml);
+            console.log('✅ gemma-beta.xml generated with preview repo URLs');
+            console.log(`   Download URL: ${downloadUrl}`);
+
+            // ── 2. Generate latest-beta.json ────────────────
+            const latestBetaJson = {
+              version,
+              tag: revision,
+              releaseDate: today,
+              repositoryUrl: `${baseUrl}/gemma-beta.xml`,
+              downloadUrl,
+              releaseUrl,
+              changelogUrl: `${baseUrl}/changelog/${revision}`
+            };
+
+            fs.writeFileSync('docs/user-guide/public/latest-beta.json', JSON.stringify(latestBetaJson, null, 2));
+            console.log('✅ latest-beta.json generated');
+
+      # ── Commit beta channel files back to repo ───────────────────────
+      - name: Create PR for beta channel updates
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.PREVIEW_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update beta channel files for preview ${{ steps.rev.outputs.revision }}"
+          committer: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+          author: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+          branch: "patch/beta-channel-${{ steps.rev.outputs.revision }}"
+          title: "chore: update beta channel files for preview ${{ steps.rev.outputs.revision }}"
+          body: |
+            Automated update of beta channel files for preview build ${{ steps.rev.outputs.revision }}.
+
+            **Updated files:**
+            - `docs/user-guide/public/gemma-beta.xml` — QGIS beta plugin repository
+            - `docs/user-guide/public/latest-beta.json` — latest beta release info
+
+            These files point to: `gemma-plugin-preview/releases/tag/${{ steps.rev.outputs.revision }}`
+          delete-branch: true
