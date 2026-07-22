@@ -1,9 +1,9 @@
 {
-  "version": "3.0.0-r131",
-  "tag": "r131",
+  "version": "3.0.0-r134",
+  "tag": "r134",
   "releaseDate": "2026-07-22",
   "repositoryUrl": "https://gmd-repository.github.io/gemma-plugin/gemma-beta.xml",
-  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r131/gemma-plugin-r131.zip",
-  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r131",
-  "changelogUrl": "https://gmd-repository.github.io/gemma-plugin/changelog/r131"
+  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r134/gemma-plugin-r134.zip",
+  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r134",
+  "changelogUrl": "https://gmd-repository.github.io/gemma-plugin/changelog/r134"
 }
