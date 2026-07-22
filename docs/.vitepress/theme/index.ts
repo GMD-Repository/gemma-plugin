@@ -1,7 +1,6 @@
 import DefaultTheme from 'vitepress/theme'
 import type { Theme } from 'vitepress'
 import Layout from './Layout.vue'
-import './custom.css'
 
 import QGISRepositoryCard from './components/QGISRepositoryCard.vue'
 import LatestReleaseCard from './components/LatestReleaseCard.vue'
