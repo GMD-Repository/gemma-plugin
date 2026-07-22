@@ -1,0 +1,9 @@
+{
+  "version": "3.0.0",
+  "tag": "v3.0.0",
+  "releaseDate": "2026-01-15",
+  "repositoryUrl": "https://gmd-repository.github.io/gemma-plugin/gemma-beta.xml",
+  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v3.0.0/gemma-plugin-v3.0.0.zip",
+  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v3.0.0",
+  "changelogUrl": "https://gmd-repository.github.io/gemma-plugin/changelog/v3.0.0"
+}

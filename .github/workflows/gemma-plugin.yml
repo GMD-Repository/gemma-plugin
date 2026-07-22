@@ -4,15 +4,27 @@ on:
   workflow_dispatch:
     inputs:
       release_type:
-        description: 'Release Type (stable = full release, major/minor/patch = pre-release)'
+        description: 'Release Target Channel (stable = prod release gemma.xml, rc = internal beta gemma-beta.xml)'
         required: true
         default: 'stable'
         type: choice
         options:
           - stable
-          - major
-          - minor
+          - rc
+      bump_type:
+        description: 'SemVer Bump (auto = detect from version, minor, patch, major)'
+        required: false
+        default: 'auto'
+        type: choice
+        options:
+          - auto
           - patch
+          - minor
+          - major
+      custom_version:
+        description: 'Custom Version (optional manual override e.g. 3.1.0-RC1)'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -36,6 +48,8 @@ jobs:
         uses: actions/github-script@v7
         env:
           INPUT_RELEASE_TYPE: ${{ inputs.release_type }}
+          INPUT_BUMP_TYPE: ${{ inputs.bump_type }}
+          INPUT_CUSTOM_VERSION: ${{ inputs.custom_version }}
         with:
           github-token: ${{ secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
@@ -49,55 +63,79 @@ jobs:
               core.setFailed('Could not find version in metadata.txt');
               return;
             }
-            let version = versionMatch[1];
-            console.log(`Current version in metadata.txt: ${version}`);
+            let currentVersion = versionMatch[1];
+            console.log(`Current version in metadata.txt: ${currentVersion}`);
 
-            // Determine release type input (default to 'stable' on push to main)
-            const eventName = context.eventName;
-            const releaseTypeInput = eventName === 'workflow_dispatch' 
-              ? process.env.INPUT_RELEASE_TYPE 
-              : 'stable';
+            const releaseTypeInput = process.env.INPUT_RELEASE_TYPE || 'stable';
+            const bumpTypeInput = process.env.INPUT_BUMP_TYPE || 'auto';
+            const customVersionInput = (process.env.INPUT_CUSTOM_VERSION || '').trim();
 
             let isStable = true;
-            let finalVersion = version;
+            let finalVersion = currentVersion;
 
-            if (eventName === 'workflow_dispatch' && ['major', 'minor', 'patch'].includes(releaseTypeInput)) {
-              // Parse clean semver: X.Y.Z
-              const semverMatch = version.match(/^(\d+)\.(\d+)\.(\d+)/);
-              if (!semverMatch) {
-                core.setFailed(`Current version ${version} is not standard SemVer X.Y.Z for bumping`);
-                return;
+            if (customVersionInput) {
+              finalVersion = customVersionInput.replace(/^v/i, '');
+              isStable = !finalVersion.includes('-');
+              console.log(`Using custom version input: ${finalVersion} (Stable: ${isStable})`);
+            } else if (releaseTypeInput === 'rc') {
+              isStable = false; // internal pre-release
+              const rcMatch = currentVersion.match(/^(\d+\.\d+\.\d+)-RC(\d+)$/i);
+              if (rcMatch) {
+                const baseVer = rcMatch[1];
+                const rcNum = parseInt(rcMatch[2], 10) + 1;
+                finalVersion = `${baseVer}-RC${rcNum}`;
+                console.log(`Incrementing RC version: ${currentVersion} -> ${finalVersion}`);
+              } else {
+                const semverMatch = currentVersion.match(/^(\d+)\.(\d+)\.(\d+)/);
+                if (!semverMatch) {
+                  core.setFailed(`Current version ${currentVersion} is not standard SemVer X.Y.Z for RC bump`);
+                  return;
+                }
+                let major = parseInt(semverMatch[1], 10);
+                let minor = parseInt(semverMatch[2], 10);
+                let patch = parseInt(semverMatch[3], 10);
+
+                const bump = bumpTypeInput === 'auto' ? 'minor' : bumpTypeInput;
+                if (bump === 'major') {
+                  major += 1; minor = 0; patch = 0;
+                } else if (bump === 'patch') {
+                  patch += 1;
+                } else {
+                  minor += 1; patch = 0;
+                }
+                finalVersion = `${major}.${minor}.${patch}-RC1`;
+                console.log(`Creating new RC version (${bump}): ${currentVersion} -> ${finalVersion}`);
               }
-              let major = parseInt(semverMatch[1], 10);
-              let minor = parseInt(semverMatch[2], 10);
-              let patch = parseInt(semverMatch[3], 10);
-
-              if (releaseTypeInput === 'major') {
-                major += 1;
-                minor = 0;
-                patch = 0;
-              } else if (releaseTypeInput === 'minor') {
-                minor += 1;
-                patch = 0;
-              } else if (releaseTypeInput === 'patch') {
-                patch += 1;
+            } else {
+              // releaseTypeInput === 'stable'
+              if (currentVersion.includes('-')) {
+                finalVersion = currentVersion.replace(/-.*$/, '');
+                isStable = true;
+                console.log(`Promoting RC to Stable release: ${currentVersion} -> ${finalVersion}`);
+              } else if (bumpTypeInput !== 'auto') {
+                const semverMatch = currentVersion.match(/^(\d+)\.(\d+)\.(\d+)/);
+                if (semverMatch) {
+                  let major = parseInt(semverMatch[1], 10);
+                  let minor = parseInt(semverMatch[2], 10);
+                  let patch = parseInt(semverMatch[3], 10);
+                  if (bumpTypeInput === 'major') { major += 1; minor = 0; patch = 0; }
+                  else if (bumpTypeInput === 'minor') { minor += 1; patch = 0; }
+                  else if (bumpTypeInput === 'patch') { patch += 1; }
+                  finalVersion = `${major}.${minor}.${patch}`;
+                }
+                isStable = true;
+                console.log(`Bumping stable version (${bumpTypeInput}): ${currentVersion} -> ${finalVersion}`);
+              } else {
+                finalVersion = currentVersion;
+                isStable = !finalVersion.includes('-');
+                console.log(`Using stable version: ${finalVersion}`);
               }
+            }
 
-              finalVersion = `${major}.${minor}.${patch}`;
-              isStable = false; // major, minor, patch manual runs are pre-releases
-
-              console.log(`Bumping version (${releaseTypeInput}): ${version} -> ${finalVersion}`);
-
-              // Write back to metadata.txt
+            if (currentVersion !== finalVersion) {
               const updatedMetadata = metadata.replace(/^version=\S+/m, `version=${finalVersion}`);
               fs.writeFileSync(metadataPath, updatedMetadata);
-              console.log('Updated metadata.txt with new version');
-            } else {
-              // Push trigger or stable release_type input
-              // If the version has a hyphen (e.g. 1.1.0-alpha), it is pre-release
-              isStable = !version.includes('-');
-              finalVersion = version;
-              console.log(`Using existing version: ${finalVersion} (Stable: ${isStable})`);
+              console.log('Updated metadata.txt with final version:', finalVersion);
             }
 
             const tag = `v${finalVersion}`;
@@ -491,17 +529,19 @@ jobs:
         env:
           PLUGIN_VERSION: ${{ steps.resolve-version.outputs.version }}
           PLUGIN_TAG:     ${{ steps.resolve-version.outputs.tag }}
+          IS_PRERELEASE:  ${{ steps.resolve-version.outputs.prerelease }}
         with:
           script: |
             const fs = require('fs');
 
-            const version = process.env.PLUGIN_VERSION;
-            const tag     = process.env.PLUGIN_TAG;
-            const today   = new Date().toISOString().split('T')[0];
-            const owner   = context.repo.owner;
-            const repo    = context.repo.repo;
-            const zipName = `gemma-plugin-v${version}.zip`;
-            const baseUrl = `https://gmd-repository.github.io/gemma-plugin`;
+            const version      = process.env.PLUGIN_VERSION;
+            const tag          = process.env.PLUGIN_TAG;
+            const isPrerelease = process.env.IS_PRERELEASE === 'true';
+            const today        = new Date().toISOString().split('T')[0];
+            const owner        = context.repo.owner;
+            const repo         = context.repo.repo;
+            const zipName      = `gemma-plugin-v${version}.zip`;
+            const baseUrl      = `https://gmd-repository.github.io/gemma-plugin`;
 
             // ── Read metadata.txt for QGIS info ─────────────
             const metadata = fs.readFileSync('metadata.txt', 'utf8');
@@ -510,13 +550,13 @@ jobs:
               return m ? m[1].trim() : '';
             };
 
-            // ── Generate gemma.xml ──────────────────────────
-            const gemmaXml = `<?xml version="1.0" encoding="UTF-8"?>
+            // ── 1. Generate gemma-beta.xml (Internal Beta Channel) ──
+            const gemmaBetaXml = `<?xml version="1.0" encoding="UTF-8"?>
             <?xml-stylesheet type="text/xsl" href=""?>
             <plugins>
-              <pyqgis_plugin name="${getField('name')}" version="${version}">
-                <description>${getField('description')}</description>
-                <about>${getField('about').replace(/&/g, '&amp;').replace(/</g, '&lt;')}</about>
+              <pyqgis_plugin name="${getField('name')} (Beta)" version="${version}">
+                <description>${getField('description')} (Beta)</description>
+                <about>${getField('about').replace(/&/g, '&amp;').replace(/</g, '&lt;')} (Beta Channel)</about>
                 <version>${version}</version>
                 <qgis_minimum_version>${getField('qgisMinimumVersion')}</qgis_minimum_version>
                 <homepage>${baseUrl}/</homepage>
@@ -526,34 +566,79 @@ jobs:
                 <download_url>https://github.com/${owner}/${repo}/releases/download/${tag}/${zipName}</download_url>
                 <upload_date>${today}</upload_date>
                 <update_date>${today}</update_date>
-                <experimental>${getField('experimental')}</experimental>
+                <experimental>${isPrerelease ? 'True' : 'False'}</experimental>
                 <deprecated>${getField('deprecated')}</deprecated>
                 <tracker>https://github.com/${owner}/${repo}/issues</tracker>
                 <repository>https://github.com/${owner}/${repo}</repository>
-                <tags>${getField('tags')}</tags>
+                <tags>${getField('tags')},beta</tags>
                 <category>${getField('category')}</category>
                 <server>${getField('server')}</server>
               </pyqgis_plugin>
             </plugins>`.replace(/^            /gm, '');
 
-            fs.writeFileSync('docs/user-guide/public/gemma.xml', gemmaXml);
-            console.log('✅ gemma.xml generated');
+            fs.writeFileSync('docs/user-guide/public/gemma-beta.xml', gemmaBetaXml);
+            console.log('✅ gemma-beta.xml generated (Internal Beta channel)');
 
-            // ── Generate latest.json ────────────────────────
-            const latestJson = {
+            const latestBetaJson = {
               version,
               tag,
               releaseDate: today,
-              repositoryUrl: `${baseUrl}/gemma.xml`,
+              repositoryUrl: `${baseUrl}/gemma-beta.xml`,
               downloadUrl: `https://github.com/${owner}/${repo}/releases/download/${tag}/${zipName}`,
               releaseUrl: `https://github.com/${owner}/${repo}/releases/tag/${tag}`,
               changelogUrl: `${baseUrl}/changelog/${tag}`
             };
 
-            fs.writeFileSync('docs/user-guide/public/latest.json', JSON.stringify(latestJson, null, 2));
-            console.log('✅ latest.json generated');
+            fs.writeFileSync('docs/user-guide/public/latest-beta.json', JSON.stringify(latestBetaJson, null, 2));
+            console.log('✅ latest-beta.json generated');
 
-            // ── Update releases.json ────────────────────────
+            // ── 2. Generate gemma.xml ONLY for Stable Releases ───
+            if (!isPrerelease) {
+              const gemmaXml = `<?xml version="1.0" encoding="UTF-8"?>
+              <?xml-stylesheet type="text/xsl" href=""?>
+              <plugins>
+                <pyqgis_plugin name="${getField('name')}" version="${version}">
+                  <description>${getField('description')}</description>
+                  <about>${getField('about').replace(/&/g, '&amp;').replace(/</g, '&lt;')}</about>
+                  <version>${version}</version>
+                  <qgis_minimum_version>${getField('qgisMinimumVersion')}</qgis_minimum_version>
+                  <homepage>${baseUrl}/</homepage>
+                  <file_name>${zipName}</file_name>
+                  <icon>${baseUrl}/icons/icon.png</icon>
+                  <author_name>${getField('author')}</author_name>
+                  <download_url>https://github.com/${owner}/${repo}/releases/download/${tag}/${zipName}</download_url>
+                  <upload_date>${today}</upload_date>
+                  <update_date>${today}</update_date>
+                  <experimental>False</experimental>
+                  <deprecated>${getField('deprecated')}</deprecated>
+                  <tracker>https://github.com/${owner}/${repo}/issues</tracker>
+                  <repository>https://github.com/${owner}/${repo}</repository>
+                  <tags>${getField('tags')}</tags>
+                  <category>${getField('category')}</category>
+                  <server>${getField('server')}</server>
+                </pyqgis_plugin>
+              </plugins>`.replace(/^              /gm, '');
+
+              fs.writeFileSync('docs/user-guide/public/gemma.xml', gemmaXml);
+              console.log('✅ gemma.xml generated (Production channel)');
+
+              const latestJson = {
+                version,
+                tag,
+                releaseDate: today,
+                repositoryUrl: `${baseUrl}/gemma.xml`,
+                downloadUrl: `https://github.com/${owner}/${repo}/releases/download/${tag}/${zipName}`,
+                releaseUrl: `https://github.com/${owner}/${repo}/releases/tag/${tag}`,
+                changelogUrl: `${baseUrl}/changelog/${tag}`
+              };
+
+              fs.writeFileSync('docs/user-guide/public/latest.json', JSON.stringify(latestJson, null, 2));
+              console.log('✅ latest.json generated');
+            } else {
+              console.log('ℹ️ Pre-release run: skipping production gemma.xml and latest.json updates');
+            }
+
+            // ── 3. Update releases.json ──────────────────────
             let releasesData = { latest: version, releases: [] };
             const releasesPath = 'docs/user-guide/public/releases.json';
             if (fs.existsSync(releasesPath)) {
@@ -564,7 +649,6 @@ jobs:
               }
             }
 
-            // Parse release body into categories
             const releaseBody = `${{ steps.create-release.outputs.release_body }}`;
             const features = [];
             const improvements = [];
@@ -579,7 +663,6 @@ jobs:
               else features.push(cleaned);
             }
 
-            // Detect contributors from git
             const contributors = [];
             try {
               const { execSync } = require('child_process');
@@ -594,9 +677,10 @@ jobs:
               version,
               date: today,
               tag,
+              prerelease: isPrerelease,
               contributors,
-              downloadUrl: latestJson.downloadUrl,
-              releaseUrl: latestJson.releaseUrl,
+              downloadUrl: `https://github.com/${owner}/${repo}/releases/download/${tag}/${zipName}`,
+              releaseUrl: `https://github.com/${owner}/${repo}/releases/tag/${tag}`,
               qgisVersions: ['3.34', '3.40', '3.44'],
               changes: {
                 features,
@@ -609,11 +693,11 @@ jobs:
               }
             };
 
-            // Remove existing entry for this version if present
             releasesData.releases = releasesData.releases.filter(r => r.version !== version);
-            // Add new release at the beginning
             releasesData.releases.unshift(newRelease);
-            releasesData.latest = version;
+            if (!isPrerelease) {
+              releasesData.latest = version;
+            }
 
             fs.writeFileSync(releasesPath, JSON.stringify(releasesData, null, 2));
             console.log(`✅ releases.json updated (${releasesData.releases.length} releases)`);
