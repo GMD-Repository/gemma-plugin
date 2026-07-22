@@ -1,16 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <?xml-stylesheet type="text/xsl" href=""?>
 <plugins>
-  <pyqgis_plugin name="GEMMA (Beta)" version="3.0.0">
+  <pyqgis_plugin name="GEMMA (Beta)" version="v3.0.0">
+    <version>v3.0.0</version>
     <description>GIS Extension for Map Management and Analysis (Beta)</description>
     <about>This plugin is developed by the Geospatial Management Division to provide a comprehenive set of tools that could be used for map management and analyses for different sorts of activities. (Beta Channel)</about>
-    <version>3.0.0</version>
+    <author>Geospatial Management Division</author>
+    <author_name>Geospatial Management Division</author_name>
     <qgis_minimum_version>3.0</qgis_minimum_version>
     <homepage>https://gmd-repository.github.io/gemma-plugin/</homepage>
-    <file_name>gemma-plugin-r106.zip</file_name>
-    <icon>https://gmd-repository.github.io/gemma-plugin/icons/icon.png</icon>
-    <author_name>Geospatial Management Division</author_name>
     <download_url>https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r106/gemma-plugin-r106.zip</download_url>
+    <icon>https://gmd-repository.github.io/gemma-plugin/icons/icon.png</icon>
+    <file_name>gemma-plugin-r106.zip</file_name>
     <upload_date>2026-07-22</upload_date>
     <update_date>2026-07-22</update_date>
     <experimental>True</experimental>

@@ -35,7 +35,14 @@ jobs:
         id: package
         run: |
           ZIP_NAME="gemma-plugin-${{ steps.rev.outputs.revision }}.zip"
-          zip -r "${ZIP_NAME}" . -x "*.git*" "*.github*" "docs/*" ".antigravity*" "node_modules/*"
+          RAW_ZIP="raw_preview.zip"
+          zip -r "${RAW_ZIP}" . -x "*.git*" "*.github*" "docs/*" ".antigravity*" "node_modules/*" "*.zip" "__pycache__/*" "*.pyc" "package.json" "pnpm-lock.yaml" "tsconfig*.json" ".agents/*"
+          TMP_DIR="_tmp_plugin_$(date +%s)"
+          mkdir -p "${TMP_DIR}/gemma-plugin"
+          unzip -q "${RAW_ZIP}" -d "${TMP_DIR}/gemma-plugin"
+          rm "${RAW_ZIP}"
+          (cd "${TMP_DIR}" && zip -r "../${ZIP_NAME}" gemma-plugin/)
+          rm -rf "${TMP_DIR}"
           echo "zip_name=${ZIP_NAME}" >> $GITHUB_OUTPUT
 
       - name: Publish to Preview Repository
@@ -123,19 +130,21 @@ jobs:
             const releaseUrl  = `https://github.com/${previewOwner}/${previewRepo}/releases/tag/${revision}`;
 
             // ── 1. Generate gemma-beta.xml ──────────────────
+            const versionStr = version.startsWith('v') ? version : `v${version}`;
             const gemmaBetaXml = `<?xml version="1.0" encoding="UTF-8"?>
             <?xml-stylesheet type="text/xsl" href=""?>
             <plugins>
-              <pyqgis_plugin name="${getField('name')} (Beta)" version="${version}">
+              <pyqgis_plugin name="${getField('name')} (Beta)" version="${versionStr}">
+                <version>${versionStr}</version>
                 <description>${getField('description')} (Beta)</description>
                 <about>${getField('about').replace(/&/g, '&amp;').replace(/</g, '&lt;')} (Beta Channel)</about>
-                <version>${version}</version>
+                <author>${getField('author')}</author>
+                <author_name>${getField('author')}</author_name>
                 <qgis_minimum_version>${getField('qgisMinimumVersion')}</qgis_minimum_version>
                 <homepage>${baseUrl}/</homepage>
-                <file_name>${zipName}</file_name>
-                <icon>${baseUrl}/icons/icon.png</icon>
-                <author_name>${getField('author')}</author_name>
                 <download_url>${downloadUrl}</download_url>
+                <icon>${baseUrl}/icons/icon.png</icon>
+                <file_name>${zipName}</file_name>
                 <upload_date>${today}</upload_date>
                 <update_date>${today}</update_date>
                 <experimental>True</experimental>
