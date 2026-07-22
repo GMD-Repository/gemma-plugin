@@ -16,27 +16,41 @@ The plugin provides a comprehensive set of GIS tools for map management and anal
 
 ## Installation
 
-### Download
+### Method 1: QGIS Plugin Repository (Recommended)
 
-Download the latest release from the [GitHub Releases page](https://github.com/GMD-Repository/gemma-plugin/releases/latest).
-
-Look for the file named `gemma-plugin-v*.zip` under the **Assets** section of the latest release.
-
-### Install via QGIS
+Installing via custom repository allows QGIS to automatically detect and notify you of plugin updates:
 
 1. Open **QGIS**.
 2. Go to **Plugins → Manage and Install Plugins**.
-3. Select the **Install from ZIP** tab.
-4. Click **Browse** and select the downloaded `gemma-plugin-v*.zip` file.
-5. Click **Install Plugin**.
-6. Once installed, you should see the **GeMa** menu in the QGIS menu bar and the **GeMa Toolbar** with quick access buttons.
+3. Select the **Settings** tab.
+4. Click **Add…** to add a repository.
+5. Set Name to `GEMMA Repository` and URL to:
+   ```
+   https://gmd-repository.github.io/gemma-plugin/gemma.xml
+   ```
 
-### Verify Installation
+6. Click **OK**, then click **Reload All Repositories**.
+7. Go to the **All** tab, search for **GEMMA**, and click **Install Plugin**.
+
+---
+
+### Method 2: Install from ZIP
+
+1. Download the latest release from the [GitHub Releases page](https://github.com/GMD-Repository/gemma-plugin/releases/latest).
+2. Open **QGIS**.
+3. Go to **Plugins → Manage and Install Plugins**.
+4. Select the **Install from ZIP** tab.
+5. Click **Browse** and select the downloaded `gemma-plugin-v*.zip` file.
+6. Click **Install Plugin**.
+
+---
+
+## Verify Installation
 
 After installation, verify that everything is working:
 
 1. Check the **GeMa** menu in the menu bar — you should see submenus for **Tools** and **QField**.
-2. Open the **Processing Toolbox** (`Ctrl+Alt+T`) and look for the **GMD Pipeline** group — you should see all the 1Map tools listed there.
+2. Open the **Processing Toolbox** (`Ctrl+Alt+T`) and look for the **GMD Pipeline** group — you should see all the tools listed there.
 3. The **GeMa Toolbar** should display icons for **Package for QField** and **Create Enumeration Areas**.
 
 ## Plugin Structure
@@ -70,16 +84,12 @@ These tools are accessible from the **QGIS Processing Toolbox** under the **GMD 
 
 ## Updating the Plugin
 
-To update to a newer version:
-
-1. Download the latest `.zip` from the [Releases page](https://github.com/GMD-Repository/gemma-plugin/releases/latest).
-2. In QGIS, go to **Plugins → Manage and Install Plugins → Install from ZIP**.
-3. Install the new `.zip` — it will overwrite the previous version.
-4. **Restart QGIS** to ensure all changes take effect.
+- **Repository Install**: QGIS automatically checks for updates on launch. Navigate to **Plugins → Manage and Install Plugins → Upgrade All**.
+- **ZIP Install**: Download the latest ZIP and re-install via **Install from ZIP** to overwrite the previous version.
 
 ## Changelog
 
-For a full version history, version highlights, and detailed release notes, please see our dedicated [Changelog Page](/changelog) or check the [GitHub Releases](https://github.com/GMD-Repository/gemma-plugin/releases) page.
+For version history and detailed release notes, check our dedicated [Changelog Page](/changelog) or visit [GitHub Releases](https://github.com/GMD-Repository/gemma-plugin/releases).
 
 ## Support
 
