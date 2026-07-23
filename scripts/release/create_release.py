@@ -179,3 +179,63 @@ def _upload_release_asset(
     logger.info("✅ ZIP uploaded as release asset: %s", zip_name)
 
     return asset_url
+
+
+def prune_old_releases(
+    owner: str,
+    repo: str,
+    token: str,
+    keep_count: int = 10,
+) -> None:
+    """Delete older GitHub releases and their associated tags, keeping only the latest `keep_count` releases.
+
+    Args:
+        owner: Repository owner.
+        repo: Repository name.
+        token: GitHub API token.
+        keep_count: Number of latest releases to retain (default: 10).
+    """
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+    url = f"{GITHUB_API}/repos/{owner}/{repo}/releases?per_page=100"
+    resp = requests.get(url, headers=headers, timeout=30)
+    if not resp.ok:
+        logger.warning("Could not fetch releases for cleanup: %s", resp.text)
+        return
+
+    releases = resp.json()
+    if len(releases) <= keep_count:
+        logger.info("Found %d releases (<= %d limit). No cleanup needed.", len(releases), keep_count)
+        return
+
+    releases_to_delete = releases[keep_count:]
+    logger.info("Pruning %d old release(s), retaining latest %d...", len(releases_to_delete), keep_count)
+
+    for rel in releases_to_delete:
+        rel_id = rel["id"]
+        tag_name = rel.get("tag_name", "")
+        rel_name = rel.get("name", tag_name)
+
+        # Delete release
+        del_resp = requests.delete(f"{GITHUB_API}/repos/{owner}/{repo}/releases/{rel_id}", headers=headers, timeout=30)
+        if del_resp.status_code in (204, 404):
+            logger.info("Deleted release %s (ID: %s)", rel_name, rel_id)
+        else:
+            logger.warning("Failed to delete release %s: %s", rel_name, del_resp.text)
+
+        # Delete git ref tag
+        if tag_name:
+            tag_resp = requests.delete(
+                f"{GITHUB_API}/repos/{owner}/{repo}/git/refs/tags/{tag_name}",
+                headers=headers,
+                timeout=30,
+            )
+            if tag_resp.status_code in (204, 404):
+                logger.info("Deleted tag %s", tag_name)
+            else:
+                logger.warning("Failed to delete tag %s: %s", tag_name, tag_resp.text)
+
