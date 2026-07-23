@@ -1,4 +1,4 @@
-# Fill Polygon Gaps
+# <img src="/icons/fill.png" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Fill Polygon Gaps
 
 The **Fill Polygon Gaps** tool automatically fills gaps between barangay polygons by assigning uncovered areas to the correct neighboring polygon. It supports a **preview-before-apply** workflow, allowing you to inspect proposed gap fills before committing changes.
 

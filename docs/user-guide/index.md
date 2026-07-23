@@ -24,19 +24,19 @@ features:
     link: /tools/mbi-checker
     linkText: View Guide
   - icon:
-      src: /icons/icon.png
+      src: /icons/fill.png
     title: Fill Polygon Gaps
     details: Automatically fill gaps between polygons by assigning them to the correct neighboring barangay with a preview-before-apply workflow.
     link: /tools/fill-polygon-gaps
     linkText: View Guide
   - icon:
-      src: /icons/upload.png
+      src: /icons/export.png
     title: Export Preliminary Polygons
     details: Merge and export resolved barangay boundary layers into a consolidated preliminary output for 1Map submission.
     link: /tools/export-preliminary-polygons
     linkText: View Guide
   - icon:
-      src: /icons/icon.png
+      src: /icons/update.png
     title: Update LGU PSGC Metadata
     details: Auto-populate PSGC codes, region, province, and city/municipality fields using a reference table with fuzzy name matching.
     link: /tools/update-metadata

@@ -1,4 +1,4 @@
-# Update LGU PSGC Metadata
+# <img src="/icons/update.png" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Update LGU PSGC Metadata
 
 The **Update LGU PSGC Metadata** tool automatically populates PSGC (Philippine Standard Geographic Code) metadata fields in your barangay boundary layers. It uses a reference PSGC table and fuzzy name matching to fill in region, province, city/municipality codes and names.
 

@@ -1,4 +1,4 @@
-# MBI Checker
+# <img src="/icons/overlap.png" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> MBI Checker
 
 The **MBI Checker** (Map-Based Inventory Checker) is the core quality assurance tool for detecting **gaps** and **overlaps** in barangay polygon boundaries. It cross-references boundary polygons with building point layers to produce a comprehensive topology report.
 
