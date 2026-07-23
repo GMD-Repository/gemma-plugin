@@ -56,32 +56,7 @@ jobs:
             --bump-type "${{ inputs.bump_type || 'auto' }}" \
             --custom-version "${{ inputs.custom_version || '' }}"
 
-      # ── 5. Create PR for release artifacts ───────────────────────────
-      - name: Create PR for metadata and changelog changes
-        if: steps.release.outputs.released == 'true'
-        uses: peter-evans/create-pull-request@v6
-        with:
-          token: ${{ secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
-          commit-message: "chore: update changelogs and repository data for v${{ steps.release.outputs.version }}"
-          committer: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
-          author: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
-          branch: "patch/metadata-v${{ steps.release.outputs.version }}"
-          title: "chore: update changelogs and repository data for v${{ steps.release.outputs.version }}"
-          body: |
-            This is an automated pull request to update release data for version ${{ steps.release.outputs.version }}.
-            
-            **Updated files:**
-            - `metadata.txt` — version and changelog
-            - `CHANGELOG.md` — release notes
-            - `docs/user-guide/changelog.md` — docs changelog
-            - `docs/user-guide/public/gemma.xml` — QGIS plugin repository
-            - `docs/user-guide/public/latest.json` — latest release info
-            - `docs/user-guide/public/releases.json` — all releases data
-            
-            Please merge this PR to keep repository history, documentation, and QGIS repository synchronized.
-          delete-branch: true
-
-      # ── 6. Send email notification ───────────────────────────────────
+      # ── 5. Send email notification ───────────────────────────────────
       - name: Notify team — ready to test
         if: steps.release.outputs.released == 'true' && success()
         uses: dawidd6/action-send-mail@v6
@@ -213,3 +188,22 @@ jobs:
               </div>
             </body>
             </html>
+
+      # ── 6. Trigger docs deploy ───────────────────────────────────────
+      - name: Trigger GitHub Pages Deploy
+        if: steps.release.outputs.released == 'true' && success()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            try {
+              await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'deploy-docs.yml',
+                ref: 'main',
+              });
+              console.log('🚀 Triggered Deploy VitePress Docs workflow');
+            } catch (err) {
+              console.log('⚠️ Could not trigger deploy-docs dispatch:', err.message);
+            }

@@ -8,6 +8,9 @@ on:
       - dev
     paths-ignore:
       - 'docs/**'
+      - 'metadata.txt'
+      - 'CHANGELOG.md'
+      - 'README.md'
   workflow_dispatch:
 
 permissions:
