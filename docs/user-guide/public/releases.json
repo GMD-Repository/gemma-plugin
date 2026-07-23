@@ -1,6 +1,43 @@
 {
-  "latest": "1.0.0",
+  "latest": "1.0.1",
   "releases": [
+    {
+      "version": "1.0.1",
+      "date": "2026-07-23",
+      "tag": "v1.0.1",
+      "prerelease": false,
+      "contributors": [
+        "kentemman-gmd",
+        "velascojasper0",
+        "psacjperez"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.1/gemma-plugin-v1.0.1.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.1",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "Implemented automated release pipeline for QGIS plugin packaging and management utilities",
+          "Added release preview workflow badge to README for better visibility"
+        ],
+        "improvements": [
+          "Updated README to reflect new workflows and corrected badge paths",
+          "Overhauled contributing guide to clarify fork-based and team-member workflows",
+          "Updated beta channel files for multiple preview releases to ensure accuracy"
+        ],
+        "changes": [],
+        "fixes": [
+          "Corrected workflow badge paths and labels in README.md",
+          "Removed redundant local documentation sections in favor of the external documentation site"
+        ],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
     {
       "version": "1.0.0",
       "date": "2026-07-22",

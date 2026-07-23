@@ -2,6 +2,27 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.1
+<time>Jul 23, 2026</time>
+
+### ✨ New Features
+- Implemented automated release pipeline for QGIS plugin packaging and management utilities
+- Added release preview workflow badge to README for better visibility
+
+### ⚡ Improvements & Fixes
+- Updated README to reflect new workflows and corrected badge paths
+- Overhauled contributing guide to clarify fork-based and team-member workflows
+- Updated beta channel files for multiple preview releases to ensure accuracy
+
+### 🐛 Bug Fixes
+- Corrected workflow badge paths and labels in README.md
+- Removed redundant local documentation sections in favor of the external documentation site
+
+### 📚 Documentation
+- Updated documentation tracking system to streamline release processes
+
+<Contributors :contributors="['kentemman-gmd', 'velascojasper0', 'psacjperez']" />
+
 ## 1.0.0
 <time>Jul 21, 2026</time>
 
