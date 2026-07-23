@@ -59,21 +59,3 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add docs/user-guide/public/gemma-beta.xml docs/user-guide/public/latest-beta.json
           git diff --quiet && git diff --staged --quiet || (git commit -m "chore: update beta channel files for preview ${{ steps.preview.outputs.revision }}" && git push https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git HEAD:main)
-
-      # ── 6. Trigger docs deploy ───────────────────────────────────────
-      - name: Trigger GitHub Pages Deploy
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.PREVIEW_REPO_TOKEN || secrets.GITHUB_TOKEN }}
-          script: |
-            try {
-              await github.rest.actions.createWorkflowDispatch({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: 'deploy-docs.yml',
-                ref: 'main',
-              });
-              console.log('🚀 Triggered Deploy VitePress Docs workflow');
-            } catch (err) {
-              console.log('⚠️ Could not trigger deploy-docs dispatch:', err.message);
-            }
