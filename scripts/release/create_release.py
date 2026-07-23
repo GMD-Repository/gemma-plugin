@@ -40,7 +40,7 @@ def create_github_release(
     zip_path: Path,
     token: str,
     prerelease: bool = False,
-    target_commitish: str = "main",
+    target_commitish: str | None = None,
     release_name: str | None = None,
 ) -> ReleaseResult:
     """Create a GitHub Release and upload the plugin ZIP as an asset.
@@ -54,7 +54,7 @@ def create_github_release(
         zip_path: Path to the plugin ZIP file.
         token: GitHub API token.
         prerelease: Whether this is a pre-release.
-        target_commitish: Target branch for the release tag.
+        target_commitish: Target branch for the release tag. Defaults to None (uses repo default branch).
         release_name: Custom release name. Defaults to "GEMMA Plugin v{version}".
 
     Returns:
@@ -66,37 +66,58 @@ def create_github_release(
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
+    name = release_name or f"GEMMA Plugin v{version}"
+
     # Build release body
-    if prerelease:
+    if prerelease or "Preview" in name:
         body = _build_preview_body(version, highlights, tag)
     else:
         body = _build_stable_body(version, highlights)
 
-    name = release_name or f"GEMMA Plugin v{version}"
-
     # Create the release
     logger.info("Creating GitHub Release: %s (prerelease=%s)", name, prerelease)
+
+    payload: dict[str, Any] = {
+        "tag_name": tag,
+        "name": name,
+        "body": body,
+        "draft": False,
+        "prerelease": prerelease,
+        "make_latest": "true" if not prerelease else "false",
+    }
+    if target_commitish:
+        payload["target_commitish"] = target_commitish
 
     create_resp = requests.post(
         f"{GITHUB_API}/repos/{owner}/{repo}/releases",
         headers=headers,
-        json={
-            "tag_name": tag,
-            "target_commitish": target_commitish,
-            "name": name,
-            "body": body,
-            "draft": False,
-            "prerelease": prerelease,
-            "make_latest": "true" if not prerelease else "false",
-        },
+        json=payload,
         timeout=30,
     )
-    create_resp.raise_for_status()
-    release_data = create_resp.json()
 
-    release_url = release_data["html_url"]
-    release_id = release_data["id"]
-    logger.info("✅ Release created: %s", release_url)
+    if create_resp.status_code == 422 and "already_exists" in create_resp.text:
+        logger.warning("Release or tag '%s' already exists on %s/%s. Fetching existing release...", tag, owner, repo)
+        get_resp = requests.get(
+            f"{GITHUB_API}/repos/{owner}/{repo}/releases/tags/{tag}",
+            headers=headers,
+            timeout=30,
+        )
+        if get_resp.ok:
+            release_data = get_resp.json()
+            release_url = release_data["html_url"]
+            release_id = release_data["id"]
+            logger.info("✅ Found existing release: %s (ID: %s)", release_url, release_id)
+        else:
+            logger.error("Failed to fetch existing release (%d): %s", get_resp.status_code, get_resp.text)
+            create_resp.raise_for_status()
+    else:
+        if not create_resp.ok:
+            logger.error("Failed to create GitHub release (%d): %s", create_resp.status_code, create_resp.text)
+        create_resp.raise_for_status()
+        release_data = create_resp.json()
+        release_url = release_data["html_url"]
+        release_id = release_data["id"]
+        logger.info("✅ Release created: %s", release_url)
 
     # Upload the ZIP as a release asset
     asset_url = _upload_release_asset(
@@ -154,10 +175,35 @@ def _upload_release_asset(
     Returns:
         The browser download URL for the uploaded asset.
     """
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
     zip_name = zip_path.name
     file_size = zip_path.stat().st_size
 
     logger.info("Uploading release asset: %s (%d bytes)", zip_name, file_size)
+
+    # Delete existing asset with same name if present
+    rel_resp = requests.get(
+        f"{GITHUB_API}/repos/{owner}/{repo}/releases/{release_id}",
+        headers=headers,
+        timeout=30,
+    )
+    if rel_resp.ok:
+        assets = rel_resp.json().get("assets", [])
+        for asset in assets:
+            if asset.get("name") == zip_name:
+                asset_id = asset.get("id")
+                logger.info("Deleting existing asset %s (ID: %s)...", zip_name, asset_id)
+                del_resp = requests.delete(
+                    f"{GITHUB_API}/repos/{owner}/{repo}/releases/assets/{asset_id}",
+                    headers=headers,
+                    timeout=30,
+                )
+                if not del_resp.ok:
+                    logger.warning("Failed to delete existing asset: %s", del_resp.text)
 
     with open(zip_path, "rb") as f:
         upload_resp = requests.post(
@@ -173,6 +219,8 @@ def _upload_release_asset(
             timeout=120,
         )
 
+    if not upload_resp.ok:
+        logger.error("Failed to upload release asset (%d): %s", upload_resp.status_code, upload_resp.text)
     upload_resp.raise_for_status()
     asset_data = upload_resp.json()
     asset_url = asset_data.get("browser_download_url", "")
