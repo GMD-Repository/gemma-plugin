@@ -27,21 +27,67 @@
   --vp-home-hero-image-background-image: radial-gradient(circle, rgba(45, 212, 191, 0.4) 0%, rgba(20, 184, 166, 0.25) 60%, transparent 80%);
 }
 
-/* Perfect Centering for Static Hero Image & Container */
+/* Navbar Logo Responsiveness */
+.VPNavBarTitle .logo {
+  height: 24px;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+/* 
+ * VPHero Hero Image & Layout Overrides based on VitePress Default Theme CSS (VPHero.vue)
+ * Neutralize VitePress default negative margins on .VPHero .image 
+ * (which defaults to margin: -76px -24px -48px on mobile) to prevent text collision.
+ */
+.VPHero .image {
+  margin: 0 auto 16px auto !important;
+}
+
+@media (min-width: 640px) {
+  .VPHero .image {
+    margin: 0 auto 24px auto !important;
+  }
+}
+
+@media (min-width: 960px) {
+  .VPHero .image {
+    margin: 0 !important;
+  }
+}
+
+/* Responsive Centering & Scaling for Hero Image Container */
 .VPHero .image-container {
   position: relative;
   margin: 0 auto;
-  width: 280px;
-  height: 280px;
+  width: 180px;
+  height: 180px;
+  max-width: 100%;
   display: flex;
   justify-content: center;
   align-items: center;
 }
 
+@media (min-width: 480px) {
+  .VPHero .image-container {
+    width: 220px;
+    height: 220px;
+  }
+}
+
 @media (min-width: 640px) {
+  .VPHero .image-container {
+    width: 260px;
+    height: 260px;
+  }
+}
+
+@media (min-width: 960px) {
   .VPHero .image-container {
     width: 320px;
     height: 320px;
+    transform: none !important;
   }
 }
 
@@ -50,20 +96,13 @@
   top: 50%;
   left: 50%;
   border-radius: 50%;
-  width: 260px;
-  height: 260px;
+  width: 90%;
+  height: 90%;
   transform: translate(-50%, -50%);
   background: var(--vp-home-hero-image-background-image);
   filter: var(--vp-home-hero-image-filter);
   opacity: 0.95;
   pointer-events: none;
-}
-
-@media (min-width: 640px) {
-  .VPHero .image-bg {
-    width: 320px;
-    height: 320px;
-  }
 }
 
 .VPHero .image-src {
@@ -72,14 +111,25 @@
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 1;
-  max-width: 220px;
-  max-height: 220px;
+  max-width: 82%;
+  max-height: 82%;
+  width: auto;
+  height: auto;
   filter: drop-shadow(0 16px 32px rgba(0, 0, 0, 0.3));
 }
 
-@media (min-width: 640px) {
-  .VPHero .image-src {
-    max-width: 260px;
-    max-height: 260px;
-  }
+/* Hero Typography Spacing & Line Heights */
+.VPHero .name {
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
+.VPHero .text {
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.VPHero .tagline {
+  margin-top: 0;
+  margin-bottom: 24px;
 }
