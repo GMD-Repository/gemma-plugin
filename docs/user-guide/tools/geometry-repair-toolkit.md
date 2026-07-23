@@ -1,4 +1,4 @@
-# Geometry Repair Toolkit
+# <img src="/icons/reports.png" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Geometry Repair Toolkit
 
 The **Geometry Repair Toolkit** is a standalone dialog-based tool for validating and repairing polygon geometries. It provides a comprehensive interface for detecting and fixing common geometry issues across your polygon layers.
 
