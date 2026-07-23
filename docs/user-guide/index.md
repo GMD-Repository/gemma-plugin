@@ -2,12 +2,12 @@
 layout: home
 
 hero:
-  name: "GEMMA Plugin"
-  text: "GIS Extension for Map Management and Analysis"
-  tagline: A standardized and harmonized pipeline and tools for GMD activities
+  name: "GEMMA"
+  text: "GIS Extension for Map Management & Analysis"
+  tagline: Standardized & harmonized GIS tools and processing pipeline for GMD activities
   image:
     src: /icons/gemma.png
-    alt: GEMMA Plugin Logo
+    alt: GEMMA Logo
   actions:
     - theme: brand
       text: Get Started
@@ -15,9 +15,6 @@ hero:
     - theme: alt
       text: Download
       link: https://github.com/GMD-Repository/gemma-plugin/releases/download/v3.0.0/gemma-plugin-v3.0.0.zip
-    - theme: alt
-      text: View Changelog
-      link: /changelog
 
 features:
   - icon:
@@ -46,8 +43,8 @@ features:
     linkText: View Guide
   - icon:
       src: /icons/crs.png
-    title: Fix LGU CRS / Geometry
-    details: Reposition and rescale an LGU boundary layer to match a reference layer's coordinate system, outputting in EPSG:4326.
+    title: Fix LGU CRS
+    details: Batch-correct or reposition vector layers digitized in local arbitrary grid coordinates (~0 to ~100,000) to standard WGS 84 (EPSG:4326) using 2D Affine OLS transformation.
     link: /tools/fix-lgu-crs
     linkText: View Guide
   - icon:
