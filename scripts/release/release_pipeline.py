@@ -68,6 +68,52 @@ METADATA_PATH = "metadata.txt"
 # ── Stable Release Pipeline ──────────────────────────────────────────────────
 
 
+def commit_and_push_stable_release(
+    version: str,
+    token: str,
+    repo_full: str,
+    dry_run: bool = False,
+) -> None:
+    """Commit updated release metadata and documentation directly to main."""
+    if dry_run:
+        logger.info("[DRY RUN] Skipping git commit and push for stable release")
+        return
+
+    logger.info("═══ Commit & Push release metadata directly to main ═══")
+    try:
+        subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
+        subprocess.run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"], check=True)
+
+        files_to_commit = [
+            "metadata.txt",
+            "CHANGELOG.md",
+            "docs/user-guide/changelog.md",
+            "docs/user-guide/public/gemma.xml",
+            "docs/user-guide/public/latest.json",
+            "docs/user-guide/public/releases.json",
+        ]
+
+        for file_path in files_to_commit:
+            if Path(file_path).exists():
+                subprocess.run(["git", "add", file_path], check=True)
+
+        diff_check = subprocess.run(["git", "diff", "--staged", "--quiet"])
+        if diff_check.returncode != 0:
+            commit_msg = f"chore(release): update metadata and release data for v{version} [skip ci]"
+            subprocess.run(["git", "commit", "-m", commit_msg], check=True)
+            if token:
+                remote_url = f"https://x-access-token:{token}@github.com/{repo_full}.git"
+                subprocess.run(["git", "push", remote_url, "HEAD:main"], check=True)
+            else:
+                subprocess.run(["git", "push", "origin", "HEAD:main"], check=True)
+            logger.info("✅ Direct release commit pushed to main for v%s", version)
+        else:
+            logger.info("No modified release metadata files to commit.")
+    except subprocess.CalledProcessError as err:
+        logger.error("Failed to commit/push release metadata: %s", err)
+        raise
+
+
 def run_stable_pipeline(args: argparse.Namespace) -> None:
     """Execute the full stable release pipeline.
 
@@ -157,6 +203,9 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
     # ── Step 7: Update gemma.xml ──────────────────────────────────────────
     logger.info("═══ Step 7: Update gemma.xml ═══")
     update_stable_xml(METADATA_PATH, version, tag, owner, repo)
+
+    # ── Step 7b: Commit & Push release metadata directly to main ─────────
+    commit_and_push_stable_release(version, github_token, repo_full, dry_run=args.dry_run)
 
     # ── Step 8: Build plugin ZIP ──────────────────────────────────────────
     logger.info("═══ Step 8: Build plugin ZIP ═══")
