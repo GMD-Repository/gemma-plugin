@@ -58,7 +58,7 @@ from scripts.release.update_docs import (
 )
 from scripts.release.update_repository_xml import update_stable_xml, update_beta_xml
 from scripts.release.build_plugin import build_plugin_zip
-from scripts.release.create_release import create_github_release
+from scripts.release.create_release import create_github_release, prune_old_releases
 
 logger = logging.getLogger(__name__)
 
@@ -292,6 +292,13 @@ def run_preview_pipeline(args: argparse.Namespace) -> None:
             prerelease=False,  # Preview repo treats these as latest
             release_name=f"GEMMA Preview {revision}",
         )
+        logger.info("═══ Step 3b: Prune old preview releases ═══")
+        prune_old_releases(
+            owner=preview_owner,
+            repo=preview_repo,
+            token=github_token,
+            keep_count=args.max_previews,
+        )
 
     # ── Step 4: Update gemma-beta.xml ─────────────────────────────────────
     logger.info("═══ Step 4: Update gemma-beta.xml ═══")
@@ -350,6 +357,12 @@ def parse_args() -> argparse.Namespace:
         "--branch",
         default="main",
         help="Branch name (preview mode only). Default: main.",
+    )
+    parser.add_argument(
+        "--max-previews",
+        type=int,
+        default=10,
+        help="Maximum number of preview releases to retain (preview mode only). Default: 10.",
     )
     parser.add_argument(
         "--dry-run",
