@@ -1,9 +1,8 @@
 <h1 align="center">GEMMA - GIS Extension for Map Management and Analysis</h1>
 
 <p align="center">
-  <a href="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/release-stable.yml"><img src="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/gemma-plugin.yml/badge.svg?branch=main" alt="Release GEMMA Plugin"></a>
-  <a href="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/release-preview.yml"><img src="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/gemma-plugin.yml/badge.svg?branch=main" alt="Release GEMMA Plugin"></a>
-  <a href="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/deploy-docs.yml"><img src="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/deploy-docs.yml/badge.svg?branch=main" alt="Deploy Documentation"></a>
+  <a href="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/release-stable.yml"><img src="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/release-stable.yml/badge.svg?branch=main" alt="Release GEMMA Plugin"></a>
+  <a href="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/release-preview.yml"><img src="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/release-preview.yml/badge.svg?branch=main" alt="Release GEMMA Plugin (Preview)"></a>
   <a href="https://github.com/GMD-Repository/gemma-plugin/releases"><img src="https://img.shields.io/github/downloads/GMD-Repository/gemma-plugin/total" alt="Total Downloads"></a>
   <img src="https://img.shields.io/badge/QGIS-3.0%2B-brightgreen" alt="QGIS Version">
 </p>
@@ -21,63 +20,9 @@ It provides a comprehensive set of GIS tools for map management and analysis act
 
 ---
 
-## 📚 Documentation & Changelog
+## 📚 Documentation
 
-Complete user guides and documentation are available on our [Documentation Site](https://gmd-repository.github.io/gemma-plugin/) or directly in the repository:
-
-- 🚀 [Getting Started Guide](docs/user-guide/getting-started.md)
-- 📜 [Changelog](CHANGELOG.md) / [Docs Changelog Page](docs/user-guide/changelog.md)
-- 🛠️ **Tool Guides:**
-  - 🗺️ [MBI Checker](docs/user-guide/tools/mbi-checker.md) — Detect gaps & overlaps in barangay boundaries with building point validation.
-  - 🧩 [Fill Polygon Gaps](docs/user-guide/tools/fill-polygon-gaps.md) — Automatically fill gaps between polygon boundaries.
-  - 📤 [Export Preliminary Polygons](docs/user-guide/tools/export-preliminary-polygons.md) — Merge & export resolved boundary layers for 1Map.
-  - 🏷️ [Update LGU PSGC Metadata](docs/user-guide/tools/update-metadata.md) — Auto-populate PSGC metadata fields using reference tables.
-  - 🌐 [Fix LGU CRS / Geometry](docs/user-guide/tools/fix-lgu-crs.md) — Reposition and rescale LGU boundary layers to EPSG:4326.
-  - 🔧 [Geometry Repair Toolkit](docs/user-guide/tools/geometry-repair-toolkit.md) — Detect and repair duplicate, null, or invalid shapes.
-  - 📱 [Package for QField](docs/user-guide/tools/package-qfield.md) — Prepare QGIS projects for mobile field collection (`Ctrl+Alt+Q`).
-  - 📐 [Create Enumeration Areas](docs/user-guide/tools/create-enumeration-areas.md) — Delineate enumeration areas for census & field operations.
-
----
-
-## ✨ Features & Tools Overview
-
-### 1Map Processing Tools (Processing Toolbox)
-Accessible from the **QGIS Processing Toolbox** under **GMD Pipeline**:
-
-- **MBI Checker**: Detect overlaps and gaps between barangay polygon boundaries with building point validation. Supports exporting styled MBI layers as GPKG.
-- **Fill Polygon Gaps**: Automatically fill gaps between neighbor polygons with a preview-before-apply workflow.
-- **Export Preliminary Polygons**: Merge and export resolved barangay boundary layers into a consolidated preliminary output for 1Map submission.
-- **Update LGU PSGC Metadata**: Auto-populate PSGC codes, region, province, and city/municipality fields using fuzzy name matching.
-- **Fix LGU CRS / Geometry**: Reposition and rescale an LGU boundary layer to match a reference layer's coordinate system (EPSG:4326).
-
-### Geometry & Repair Tools (`GeMa → Tools`)
-- **Geometry Repair Toolkit**: Validate and repair polygon geometries — detect duplicates, null geometries, invalid shapes, and wrong feature types with auto-fix capabilities.
-
-### Field Operations & Enumeration (`GeMa → QField`)
-- **Package for QField** (`Ctrl+Alt+Q`): Package your QGIS project for field data collection using QField with drag-and-drop layer management.
-- **Create Enumeration Areas**: Delineate enumeration areas from barangay boundaries for census and survey field operations.
-
----
-
-## 💻 Requirements
-
-| Requirement | Minimum Version | Notes |
-|---|---|---|
-| **QGIS** | 3.0 or later | Recommended: 3.28+ LTR |
-| **Python** | 3.x | Bundled with QGIS |
-| **OS** | Windows, macOS, Linux | Tested on Windows 10/11 |
-
----
-
-## ⚙️ Installation
-
-1. **Download the latest release**: Go to the [Releases Page](https://github.com/GMD-Repository/gemma-plugin/releases/latest) and download `gemma-plugin-v*.zip`.
-2. **Open QGIS**: Go to `Plugins` → `Manage and Install Plugins...`
-3. **Install from ZIP**:
-   - Select the **Install from ZIP** tab.
-   - Browse and select the downloaded `.zip` file.
-   - Click **Install Plugin**.
-4. **Verify**: You should now see the **GeMa** menu on the QGIS menu bar, the **GMD Pipeline** group in the Processing Toolbox, and the **GeMa Toolbar**.
+For installation guides, tool references, and the changelog, visit the **[GEMMA Documentation Site](https://gmd-repository.github.io/gemma-plugin/)**.
 
 ---
 
