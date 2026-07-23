@@ -5,6 +5,9 @@ hero:
   name: "GEMMA Plugin"
   text: "GIS Extension for Map Management and Analysis"
   tagline: A standardized and harmonized pipeline and tools for GMD activities
+  image:
+    src: /icons/gemma.png
+    alt: GEMMA Plugin Logo
   actions:
     - theme: brand
       text: Get Started
