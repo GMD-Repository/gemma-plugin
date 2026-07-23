@@ -1,11 +1,3 @@
-# ***************************************************************************
-# *                                                                         *
-# *   This program is free software; you can redistribute it and/or modify  *
-# *   it under the terms of the GNU General Public License as published by  *
-# *   the Free Software Foundation; either version 2 of the License, or     *
-# *   (at your option) any later version.                                   *
-# *                                                                         *
-# ***************************************************************************
 
 import uuid
 import os
@@ -28,7 +20,7 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QMessageBox,
 )
-from PyQt5.QtGui import QFont, QColor
+from PyQt5.QtGui import QFont, QColor, QIcon
 from qgis.core import (
     NULL,
     QgsField,
@@ -985,6 +977,14 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
         Returns the unique ID of the group this algorithm belongs to.
         """
         return "gmdtoolkits"
+
+    def icon(self):
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', 'update.png')
+        if not os.path.exists(icon_path):
+            icon_path = os.path.join(os.path.dirname(__file__), 'icons', 'update.png')
+        if os.path.exists(icon_path):
+            return QIcon(icon_path)
+        return super().icon()
 
     def shortHelpString(self) -> str:
         """

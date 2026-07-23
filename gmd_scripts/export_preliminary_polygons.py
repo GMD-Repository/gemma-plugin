@@ -47,7 +47,7 @@ class ExportPreliminaryPolygons(QgsProcessingAlgorithm):
         return ExportPreliminaryPolygons()
 
     def icon(self):
-        return QIcon(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons/upload.png'))
+        return QIcon(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons/export.png'))
 
     INPUT1 = 'INPUT1'
 

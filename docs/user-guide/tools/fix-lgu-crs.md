@@ -1,20 +1,20 @@
-# Fix LGU CRS / Geometry
+# <img src="/icons/crs.png" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Fix LGU CRS
 
-The **Fix LGU CRS / Geometry** tool repositions an LGU (Local Government Unit) boundary layer to align with a correctly positioned reference layer. It computes scale and translation transforms based on bounding box comparison and outputs the corrected layer in **EPSG:4326** (WGS 84).
+The **Fix LGU CRS** tool batch-corrects or repositions vector layers digitized in local arbitrary grid coordinates (~0 to ~100,000) to true WGS84 coordinates (**EPSG:4326**). It fits a 2D Affine transformation matrix via Ordinary Least Squares (OLS) based on control points and transforms all geometry vertices to standard WGS 84.
 
 ## Access
 
-- **Processing Toolbox:** GMD Pipeline → 1Map → Fix LGU CRS / Geometry
+- **Processing Toolbox:** GMD Pipeline → 1Map → Fix LGU CRS
 - **Algorithm ID:** `gmd_pipeline:fixlgucrs`
 
 ## When to Use
 
 Use this tool when:
 
-- An LGU boundary layer is in an unknown or incorrect coordinate reference system
-- Boundaries appear in the wrong location or at the wrong scale on the map
-- You need to align an LGU layer to a reference layer from a trusted source
-- The layer needs to be converted to WGS 84 (EPSG:4326) for standardization
+- An LGU layer was digitized in a local, arbitrary, or unknown coordinate system (~0 to ~100,000)
+- Boundaries appear out of position or offset from geographic coordinates
+- You need to transform local grid geometries to standardized WGS 84 (EPSG:4326)
+- Control point attributes (`XI`, `YI`, `LongitudeI`, `LatitudeI`) exist in the layer or target coordinates are provided via a reference layer
 
 ## Parameters
 
@@ -22,51 +22,41 @@ Use this tool when:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| **LGU Layer** | Feature Source (Any Geometry) | The layer to be corrected — this is the mispositioned or misscaled layer |
-| **Reference Layer** | Feature Source (Any Geometry) | A correctly positioned layer to align the LGU layer to |
+| **Input Local Grid Layer** | Feature Source (Any Geometry) | The local grid layer to be corrected |
+| **Reference WGS84 Layer** | Feature Source (Any Geometry) [Optional] | Optional reference layer in EPSG:4326 used for target coordinates if attributes are absent |
 
 ### Outputs
 
 | Output | Type | Description |
 |--------|------|-------------|
-| **Fixed Layer** | Feature Sink | The corrected geometry output in EPSG:4326 |
-| **Scale** | Number | The computed scale factor applied |
-| **TX** | Number | The computed X-axis translation |
-| **TY** | Number | The computed Y-axis translation |
+| **Corrected Layer** | Feature Sink | The transformed geometry layer in EPSG:4326 |
 
 ## How It Works
 
-1. **Bounding Box Comparison** — The tool compares the bounding boxes of the LGU layer and the reference layer.
-2. **Scale Computation** — The scale factor is calculated as the ratio of the reference layer width to the LGU layer width:
-   ```
-   scale = reference_width / lgu_width
-   ```
-3. **Translation Computation** — Translation values are computed to align the center points:
-   ```
-   tx = ref_center_x - (lgu_center_x × scale)
-   ty = ref_center_y - (lgu_center_y × scale)
-   ```
-4. **Geometry Transform** — Each feature's geometry is transformed using the computed scale and translation values.
-5. **CRS Assignment** — The output layer is assigned EPSG:4326 as its coordinate reference system.
+1. **Smart Zero-Config Feature Auto-Detection**:
+   - Automatically detects `XI`, `YI`, `LongitudeI`, `LatitudeI` attribute fields if present in the input layer.
+   - Automatically falls back to feature geometry centroids for local $(X, Y)$ if `XI`/`YI` attributes are absent.
+   - Uses the `Reference WGS84 Layer` point centroids for target $(Longitude, Latitude)$ if target attribute fields are missing.
+
+2. **2D Affine OLS Matrix Computation**:
+   - Fits a 2D affine transformation matrix via Ordinary Least Squares:
+     $$\text{Longitude} = a \cdot X + b \cdot Y + c$$
+     $$\text{Latitude} = d \cdot X + e \cdot Y + f$$
+
+3. **Residual Reporting**:
+   - Calculates per-point Euclidean distance error across control points and reports the fit matrix and maximum residual to the QGIS Processing Log window.
+
+4. **Geometry Transformation & Output**:
+   - Transforms all geometry vertices using the fitted 2D affine matrix.
+   - Sets output layer CRS to **EPSG:4326** (WGS 84).
 
 ## Supported Geometry Types
 
-The tool handles:
-- **Polygon** and **MultiPolygon** geometries — full ring-by-ring vertex transformation
-- **Other geometry types** — vertex-level transformation via geometry mapping
-
-## Output Details
-
-The transform values (Scale, TX, TY) are displayed in the **Processing Results** panel after the algorithm completes. These values can be useful for:
-
-- Documenting the correction applied
-- Verifying that the transform was reasonable
-- Applying the same correction to other layers from the same source
+The tool handles all vector geometry types:
+- **Point** and **MultiPoint**
+- **LineString** and **MultiLineString**
+- **Polygon** and **MultiPolygon**
 
 ::: tip
-Both the LGU layer and the reference layer must be loaded in your QGIS project before running the tool.
-:::
-
-::: warning
-This tool assumes both layers represent the same geographic area. The bounding box alignment will produce incorrect results if the layers cover different extents.
+If your layer already contains `XI`, `YI`, `LongitudeI`, and `LatitudeI` attributes, you can run the tool in 1 click without selecting an extra reference layer!
 :::
