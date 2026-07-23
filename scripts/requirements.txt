@@ -1,0 +1,2 @@
+# Release pipeline dependencies
+requests>=2.31.0

@@ -1,0 +1,215 @@
+name: Release Gemma Plugin (Stable)
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'SemVer Bump (auto = detect from version, minor, patch, major)'
+        required: false
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+      custom_version:
+        description: 'Custom Version (optional manual override e.g. 3.1.0)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  models: read
+
+jobs:
+  release:
+    name: Build & Release Plugin
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── 2. Setup Python ──────────────────────────────────────────────
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # ── 3. Install dependencies ──────────────────────────────────────
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+
+      # ── 4. Run release pipeline ──────────────────────────────────────
+      - name: Run release pipeline
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
+          AI_TOKEN: ${{ secrets.AI_TOKEN }}
+        run: |
+          python scripts/release/release_pipeline.py \
+            --mode stable \
+            --bump-type "${{ inputs.bump_type || 'auto' }}" \
+            --custom-version "${{ inputs.custom_version || '' }}"
+
+      # ── 5. Create PR for release artifacts ───────────────────────────
+      - name: Create PR for metadata and changelog changes
+        if: steps.release.outputs.released == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update changelogs and repository data for v${{ steps.release.outputs.version }}"
+          committer: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+          author: "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+          branch: "patch/metadata-v${{ steps.release.outputs.version }}"
+          title: "chore: update changelogs and repository data for v${{ steps.release.outputs.version }}"
+          body: |
+            This is an automated pull request to update release data for version ${{ steps.release.outputs.version }}.
+            
+            **Updated files:**
+            - `metadata.txt` — version and changelog
+            - `CHANGELOG.md` — release notes
+            - `docs/user-guide/changelog.md` — docs changelog
+            - `docs/user-guide/public/gemma.xml` — QGIS plugin repository
+            - `docs/user-guide/public/latest.json` — latest release info
+            - `docs/user-guide/public/releases.json` — all releases data
+            
+            Please merge this PR to keep repository history, documentation, and QGIS repository synchronized.
+          delete-branch: true
+
+      # ── 6. Send email notification ───────────────────────────────────
+      - name: Notify team — ready to test
+        if: steps.release.outputs.released == 'true' && success()
+        uses: dawidd6/action-send-mail@v6
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: "GEMMA Plugin CI <${{ secrets.MAIL_USERNAME }}>"
+          to:   ${{ secrets.EMAIL_TO }}
+          subject: "[GEMMA Plugin] v${{ steps.release.outputs.version }} — Stable Release Ready"
+          html_body: |
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>GEMMA Plugin Notification</title>
+              <style>
+                body { 
+                  font-family: Arial, sans-serif; 
+                  line-height: 1.5; 
+                  color: #333; 
+                  margin: 0; 
+                  padding: 0; 
+                  background-color: #f5f5f5;
+                }
+
+                .email-container { 
+                  max-width: 600px; 
+                  margin: 16px auto; 
+                  background-color: #ffffff; 
+                }
+
+                .content { 
+                  padding: 24px; 
+                }
+
+                .title {
+                  font-size: 20px;
+                  font-weight: bold;
+                  margin-bottom: 8px;
+                }
+
+                .text {
+                  font-size: 14px;
+                  color: #555;
+                  margin-bottom: 12px;
+                }
+
+                .box { 
+                  background-color: #f8fafc; 
+                  border: 1px solid #e2e8f0; 
+                  padding: 16px; 
+                  margin: 14px 0; 
+                }
+
+                .box-title { 
+                  font-size: 15px; 
+                  font-weight: bold; 
+                  margin-bottom: 6px; 
+                }
+
+                .list { 
+                  font-size: 14px;
+                  margin: 6px 0;
+                }
+
+                .button { 
+                  display: inline-block; 
+                  background-color: #2563a8; 
+                  color: #ffffff; 
+                  padding: 10px 18px; 
+                  text-decoration: none; 
+                  border-radius: 4px; 
+                  font-size: 13px;
+                  font-weight: bold;
+                  margin: 6px 0;
+                }
+              </style>
+            </head>
+
+            <body>
+              <div class="email-container">
+                <div class="content">
+                  <div class="title">Stable Release Ready</div>
+                  <div class="text">
+                    Version <strong>v${{ steps.release.outputs.version }}</strong> of <strong>GEMMA Plugin</strong> has been successfully built and is ready.
+                  </div>
+
+                  <!-- What's New -->
+                  <div class="box">
+                    <div class="box-title">What's New</div>
+                    <div style="white-space: pre-wrap; font-size: 14px; margin-top: 10px;">${{ steps.release.outputs.release_body }}</div>
+                  </div>
+
+                  <!-- Release Details -->
+                  <div class="box">
+                    <div class="box-title">Release Details</div>
+                    <div class="text"><strong>Version:</strong> v${{ steps.release.outputs.version }}</div>
+                    <div class="text"><strong>Platform:</strong> QGIS Plugin (.zip)</div>
+                    <div class="text"><strong>Triggered by:</strong> ${{ github.actor }}</div>
+                    <div class="text"><strong>Status:</strong> Stable Release</div>
+                  </div>
+
+                  <!-- Download & Test -->
+                  <div class="box">
+                    <div class="box-title">Download &amp; Test</div>
+                    <div class="text">
+                      Download the zip package and install it in QGIS via <em>Plugins → Manage and Install Plugins → Install from ZIP</em>.
+                    </div>
+
+                    <a href="https://github.com/${{ github.repository }}/releases/download/v${{ steps.release.outputs.version }}/${{ steps.release.outputs.zip_name }}"
+                       class="button"
+                       style="color: #ffffff !important; text-decoration: none;">
+                      Download Plugin ZIP
+                    </a>
+
+                    <div style="margin-top:6px;font-size:12px;color:#777;line-height:1.4;">
+                      If the link returns a <strong>404</strong>, the assets may still be processing.
+                      You can manually download from the
+                      <a href="https://github.com/${{ github.repository }}/releases" style="color:#2563a8;text-decoration:none;">
+                        Releases page
+                      </a>.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </body>
+            </html>
