@@ -6,7 +6,7 @@ on:
     paths:
       - 'docs/**'
   workflow_run:
-    workflows: ["Release Gemma Plugin", "Publish Preview Release"]
+    workflows: ["Release Gemma Plugin (Stable)", "Publish Preview Release"]
     types:
       - completed
   workflow_dispatch:
