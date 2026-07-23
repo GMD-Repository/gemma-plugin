@@ -16,6 +16,7 @@ from .gmd_scripts.export_preliminary_polygons import ExportPreliminaryPolygons
 from .gmd_scripts.fill_polygon_gaps import FillPolygonGapsAlgorithm
 from .gmd_scripts.update_metadata_modified import UpdateLguPsgcMetadataAlgorithm
 from .gmd_scripts.lgu_fix_processing import FixLGUCRSAlgorithm
+from .gmd_scripts.join_barangay_attributes import JoinBarangayAttributes
 #from .gmd_scripts.gsheet_csv import
 
 class GmdPipelineProvider(QgsProcessingProvider):
@@ -42,6 +43,7 @@ class GmdPipelineProvider(QgsProcessingProvider):
         self.addAlgorithm(FillPolygonGapsAlgorithm())
         self.addAlgorithm(UpdateLguPsgcMetadataAlgorithm())
         self.addAlgorithm(FixLGUCRSAlgorithm())
+        self.addAlgorithm(JoinBarangayAttributes())
 
     def id(self):
         return 'gmd_pipeline'
