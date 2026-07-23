@@ -67,7 +67,7 @@ These tools are accessible from the **QGIS Processing Toolbox** under the **GMD 
 | [Fill Polygon Gaps](/tools/fill-polygon-gaps) | Fill gaps between polygon boundaries |
 | [Export Preliminary Polygons](/tools/export-preliminary-polygons) | Merge and export resolved boundary layers |
 | [Update LGU PSGC Metadata](/tools/update-metadata) | Auto-populate PSGC metadata fields |
-| [Fix LGU CRS / Geometry](/tools/fix-lgu-crs) | Reproject and reposition LGU layers |
+| [Fix LGU CRS](/tools/fix-lgu-crs) | Batch-correct local grid coordinates (~0 to ~100,000) to EPSG:4326 |
 
 ### GeMa Menu — Tools
 

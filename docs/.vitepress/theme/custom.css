@@ -1,0 +1,85 @@
+/* Custom VitePress Theme Styles - GEMMA Brand Palette */
+
+:root {
+  /* Brand color palette (Teal matching GEMMA logo) */
+  --vp-c-brand-1: #0d9488;
+  --vp-c-brand-2: #0f766e;
+  --vp-c-brand-3: #115e59;
+  --vp-c-brand-soft: rgba(13, 148, 136, 0.14);
+
+  /* Solid Hero Name Color (No Gradient) */
+  --vp-home-hero-name-color: var(--vp-c-brand-1);
+  --vp-home-hero-name-background: none;
+
+  /* Hero Image Background Glow Aura (Soft subtle Teal) */
+  --vp-home-hero-image-background-image: radial-gradient(circle, rgba(20, 184, 166, 0.35) 0%, rgba(13, 148, 136, 0.2) 60%, transparent 80%);
+  --vp-home-hero-image-filter: blur(56px);
+}
+
+.dark {
+  --vp-c-brand-1: #2dd4bf;
+  --vp-c-brand-2: #14b8a6;
+  --vp-c-brand-3: #0d9488;
+  --vp-c-brand-soft: rgba(45, 212, 191, 0.16);
+
+  --vp-home-hero-name-color: var(--vp-c-brand-1);
+  --vp-home-hero-name-background: none;
+  --vp-home-hero-image-background-image: radial-gradient(circle, rgba(45, 212, 191, 0.4) 0%, rgba(20, 184, 166, 0.25) 60%, transparent 80%);
+}
+
+/* Perfect Centering for Static Hero Image & Container */
+.VPHero .image-container {
+  position: relative;
+  margin: 0 auto;
+  width: 280px;
+  height: 280px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+@media (min-width: 640px) {
+  .VPHero .image-container {
+    width: 320px;
+    height: 320px;
+  }
+}
+
+.VPHero .image-bg {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border-radius: 50%;
+  width: 260px;
+  height: 260px;
+  transform: translate(-50%, -50%);
+  background: var(--vp-home-hero-image-background-image);
+  filter: var(--vp-home-hero-image-filter);
+  opacity: 0.95;
+  pointer-events: none;
+}
+
+@media (min-width: 640px) {
+  .VPHero .image-bg {
+    width: 320px;
+    height: 320px;
+  }
+}
+
+.VPHero .image-src {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+  max-width: 220px;
+  max-height: 220px;
+  filter: drop-shadow(0 16px 32px rgba(0, 0, 0, 0.3));
+}
+
+@media (min-width: 640px) {
+  .VPHero .image-src {
+    max-width: 260px;
+    max-height: 260px;
+  }
+}

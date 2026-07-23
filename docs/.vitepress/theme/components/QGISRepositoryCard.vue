@@ -25,12 +25,10 @@ async function copyUrl() {
 <template>
   <div class="qgis-repo-card">
     <div class="card-header">
-      <div class="header-icon">
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
-      </div>
+      
       <div class="header-text">
         <h3 class="title">QGIS Plugin Repository URL</h3>
-        <p class="subtitle">Copy the repository URL below to add it in QGIS Plugin Manager (Plugins → Manage and Install Plugins → Settings → Add...)</p>
+        <p class="subtitle">Copy the repository URL below to add it in QGIS Plugin Manager</p>
       </div>
     </div>
 
@@ -50,7 +48,7 @@ async function copyUrl() {
           Copied
         </span>
         <span v-else class="copy-status">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
           </svg>
@@ -64,15 +62,9 @@ async function copyUrl() {
 <style scoped>
 .qgis-repo-card {
   background-color: var(--vp-c-bg-soft);
-  border: 1px solid var(--vp-c-divider);
   border-radius: 12px;
   padding: 16px 20px;
   margin: 0;
-  transition: border-color 0.25s, background-color 0.25s;
-}
-
-.qgis-repo-card:hover {
-  border-color: var(--vp-c-brand-1);
 }
 
 .card-header {
@@ -113,20 +105,16 @@ async function copyUrl() {
   line-height: 1.4;
 }
 
+/* Code block styling matching standard VitePress Markdown code blocks */
 .code-block-container {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background-color: var(--vp-c-bg);
+  background-color: var(--vp-code-block-bg, var(--vp-c-bg-alt));
   border: 1px solid var(--vp-c-divider);
   border-radius: 8px;
-  padding: 8px 12px 8px 16px;
+  padding: 10px 14px 10px 16px;
   gap: 12px;
-  transition: border-color 0.25s;
-}
-
-.code-block-container:hover {
-  border-color: var(--vp-c-brand-1);
 }
 
 .code-content {
@@ -134,15 +122,15 @@ async function copyUrl() {
   padding: 0;
   overflow-x: auto;
   font-family: var(--vp-font-family-mono);
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   line-height: 1.5;
   flex: 1;
   min-width: 0;
 }
 
 .code-content code {
-  color: var(--vp-c-brand-1);
-  font-weight: 500;
+  color: var(--vp-c-text-1);
+  font-weight: 400;
   white-space: nowrap;
 }
 
@@ -169,14 +157,14 @@ async function copyUrl() {
 }
 
 .copy-btn:hover {
-  background-color: var(--vp-c-bg-alt);
+  background-color: var(--vp-c-bg);
   color: var(--vp-c-text-1);
   border-color: var(--vp-c-brand-1);
 }
 
 .copy-btn.copied {
-  color: var(--vp-c-green-1);
-  border-color: var(--vp-c-green-1);
-  background-color: var(--vp-c-green-soft);
+  color: var(--vp-c-brand-1);
+  border-color: var(--vp-c-brand-1);
+  background-color: var(--vp-c-brand-soft);
 }
 </style>
