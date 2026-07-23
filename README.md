@@ -1,8 +1,8 @@
 <h1 align="center">GEMMA - GIS Extension for Map Management and Analysis</h1>
 
 <p align="center">
-  <a href="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/release-stable.yml"><img src="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/gemma-plugin.yml/badge.svg?branch=main" alt="Release GEMMA Plugin"></a>
-  <a href="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/release-preview.yml"><img src="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/gemma-plugin.yml/badge.svg?branch=main" alt="Release GEMMA Plugin"></a>
+  <a href="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/release-stable.yml"><img src="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/release-stable.yml/badge.svg?branch=main" alt="Release GEMMA Plugin"></a>
+  <a href="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/release-preview.yml"><img src="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/release-preview.yml/badge.svg?branch=main" alt="Release GEMMA Plugin (Preview)"></a>
   <a href="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/deploy-docs.yml"><img src="https://github.com/GMD-Repository/gemma-plugin/actions/workflows/deploy-docs.yml/badge.svg?branch=main" alt="Deploy Documentation"></a>
   <a href="https://github.com/GMD-Repository/gemma-plugin/releases"><img src="https://img.shields.io/github/downloads/GMD-Repository/gemma-plugin/total" alt="Total Downloads"></a>
   <img src="https://img.shields.io/badge/QGIS-3.0%2B-brightgreen" alt="QGIS Version">
