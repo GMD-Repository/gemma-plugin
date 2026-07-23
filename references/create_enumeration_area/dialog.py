@@ -270,7 +270,7 @@ class EALauncherDialog(QDialog):
         inputs_header_layout.addWidget(self.detect_btn)
 
         # Fill missing hhcount from building points
-        self.fill_missing_btn = QPushButton("🧮 Fill missing hhcount")
+        self.fill_missing_btn = QPushButton("Fill missing hhcount")
         self.fill_missing_btn.setObjectName("fillMissingBtn")
         self.fill_missing_btn.setToolTip("Compute and populate missing EA hhcount values from building points within each EA polygon.")
         self.fill_missing_btn.clicked.connect(self.fill_missing_hhcount)
@@ -330,6 +330,26 @@ class EALauncherDialog(QDialog):
         self.river_status_lbl.setObjectName("statusLbl")
         inputs_layout.addWidget(self.river_status_lbl)
 
+        # Gap (Optional)
+        inputs_layout.addWidget(QLabel("Gap Layer (Polygon, Optional)"))
+        self.gap_combo = QgsMapLayerComboBox()
+        self.gap_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
+        self.gap_combo.setAllowEmptyLayer(True)
+        inputs_layout.addWidget(self.gap_combo)
+        self.gap_status_lbl = QLabel("Optional.")
+        self.gap_status_lbl.setObjectName("statusLbl")
+        inputs_layout.addWidget(self.gap_status_lbl)
+
+        # Overlap (Optional)
+        inputs_layout.addWidget(QLabel("Overlap Layer (Polygon, Optional)"))
+        self.overlap_combo = QgsMapLayerComboBox()
+        self.overlap_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
+        self.overlap_combo.setAllowEmptyLayer(True)
+        inputs_layout.addWidget(self.overlap_combo)
+        self.overlap_status_lbl = QLabel("Optional.")
+        self.overlap_status_lbl.setObjectName("statusLbl")
+        inputs_layout.addWidget(self.overlap_status_lbl)
+
         scroll_layout.addWidget(inputs_card)
 
         # 2. Parameters Section
@@ -356,7 +376,7 @@ class EALauncherDialog(QDialog):
         params_layout.addWidget(QLabel("Snapping Tolerance (meters) for road/river alignment"))
         self.tolerance_spin = QDoubleSpinBox()
         self.tolerance_spin.setRange(0.0, 999.0)
-        self.tolerance_spin.setValue(20.0)
+        self.tolerance_spin.setValue(15.0)
         params_layout.addWidget(self.tolerance_spin)
 
         # Compactness optimization
@@ -412,6 +432,11 @@ class EALauncherDialog(QDialog):
         outputs_layout.addWidget(QLabel("Merge Candidate Layer"))
         self.merge_cand_path, self.merge_cand_edit = self._file_picker_row()
         outputs_layout.addLayout(self.merge_cand_path)
+
+        # Extracted Building Points Layer
+        outputs_layout.addWidget(QLabel("Extracted Building Points Layer"))
+        self.extracted_bldg_path, self.extracted_bldg_edit = self._file_picker_row()
+        outputs_layout.addLayout(self.extracted_bldg_path)
 
         scroll_layout.addWidget(self._create_collapsible_section("Output Layers", outputs_card))
         scroll.setWidget(scroll_content)
@@ -693,6 +718,8 @@ class EALauncherDialog(QDialog):
         self.prev_ea_combo.currentIndexChanged.connect(self.validate_layer_inputs)
         self.road_combo.currentIndexChanged.connect(self.validate_layer_inputs)
         self.river_combo.currentIndexChanged.connect(self.validate_layer_inputs)
+        self.gap_combo.currentIndexChanged.connect(self.validate_layer_inputs)
+        self.overlap_combo.currentIndexChanged.connect(self.validate_layer_inputs)
         
         self.min_hh_spin.valueChanged.connect(self.trigger_auto_refresh)
         self.max_hh_spin.valueChanged.connect(self.trigger_auto_refresh)
@@ -858,6 +885,8 @@ class EALauncherDialog(QDialog):
         pravea_keywords = ["previous", "prev", "ea", "enumeration"]
         road_keywords = ["road", "highway", "street", "way", "route"]
         river_keywords = ["river", "stream", "water", "drainage", "creek"]
+        gap_keywords = ["gap", "gaps"]
+        overlap_keywords = ["overlap", "overlaps"]
         
         for layer in layers:
             if not isinstance(layer, QgsVectorLayer):
@@ -866,7 +895,15 @@ class EALauncherDialog(QDialog):
             
             # Barangay Layer (Polygon)
             if layer.geometryType() == 2:  # Polygon
-                if any(k in name_lower for k in barangay_keywords) and not any(k in name_lower for k in pravea_keywords):
+                if any(k in name_lower for k in gap_keywords):
+                    idx = self.gap_combo.findText(layer.name())
+                    if idx != -1:
+                        self.gap_combo.setCurrentIndex(idx)
+                elif any(k in name_lower for k in overlap_keywords):
+                    idx = self.overlap_combo.findText(layer.name())
+                    if idx != -1:
+                        self.overlap_combo.setCurrentIndex(idx)
+                elif any(k in name_lower for k in barangay_keywords) and not any(k in name_lower for k in pravea_keywords):
                     idx = self.bar_combo.findText(layer.name())
                     if idx != -1:
                         self.bar_combo.setCurrentIndex(idx)
@@ -958,6 +995,24 @@ class EALauncherDialog(QDialog):
         else:
             self.river_status_lbl.setText(f"🟢 Active: {river_layer.featureCount()} line features loaded.")
             self.river_status_lbl.setStyleSheet("color: #1a7f37;")
+
+        # 6. Gap Layer (Optional)
+        gap_layer = self.gap_combo.currentLayer()
+        if not gap_layer:
+            self.gap_status_lbl.setText("🟡 Optional: Gap workflow will be skipped.")
+            self.gap_status_lbl.setStyleSheet("color: #d17a00; font-style: italic;")
+        else:
+            self.gap_status_lbl.setText(f"🟢 Active: {gap_layer.featureCount()} polygon features loaded.")
+            self.gap_status_lbl.setStyleSheet("color: #1a7f37;")
+
+        # 7. Overlap Layer (Optional)
+        overlap_layer = self.overlap_combo.currentLayer()
+        if not overlap_layer:
+            self.overlap_status_lbl.setText("🟡 Optional: Overlap workflow will be skipped.")
+            self.overlap_status_lbl.setStyleSheet("color: #d17a00; font-style: italic;")
+        else:
+            self.overlap_status_lbl.setText(f"🟢 Active: {overlap_layer.featureCount()} polygon features loaded.")
+            self.overlap_status_lbl.setStyleSheet("color: #1a7f37;")
             
         self.trigger_auto_refresh()
 
@@ -1034,9 +1089,9 @@ class EALauncherDialog(QDialog):
             ean_str = str(ean_val).strip() if ean_val is not None else ""
             if ean_str.endswith(".0"):
                 ean_str = ean_str[:-2]
-                
+
             ea_name_str = self._get_ea_name(feat, ean_str, fields)
-                
+
             bgy_name_val = feat.attribute(bgy_name_idx) if bgy_name_idx != -1 else ""
             if bgy_name_val is None or bgy_name_val == NULL:
                 bgy_name_str = "Unknown"
@@ -1044,19 +1099,20 @@ class EALauncherDialog(QDialog):
                 bgy_name_str = str(bgy_name_val).strip()
                 if bgy_name_str.endswith(".0"):
                     bgy_name_str = bgy_name_str[:-2]
-                    
+
             hh_val = feat.attribute(hh_idx)
             try:
                 hh = float(hh_val) if hh_val is not None else 0.0
             except Exception:
                 hh = 0.0
-                
+
             total_hh += hh
             ea_count += 1
 
-            if hh >= max_hh:
+            # Classify purely by hhcount thresholds
+            if hh > max_hh:
                 self.all_delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh))
-            elif hh <= min_hh:
+            elif hh < min_hh:
                 self.all_merge_candidates.append((ean_str, ea_name_str, bgy_name_str, hh))
 
         # Update KPI Dashboard Stats
@@ -1463,6 +1519,8 @@ class EALauncherDialog(QDialog):
         prev_ea_layer = self.prev_ea_combo.currentLayer()
         road_layer = self.road_combo.currentLayer()
         river_layer = self.river_combo.currentLayer()
+        gap_layer = self.gap_combo.currentLayer()
+        overlap_layer = self.overlap_combo.currentLayer()
 
         if not bar_layer or not bldg_layer or not prev_ea_layer:
             self.log_console.append(
@@ -1479,6 +1537,8 @@ class EALauncherDialog(QDialog):
             'PREVIOUS_EA_INPUT': prev_ea_layer,
             'ROAD_INPUT': road_layer,
             'RIVER_INPUT': river_layer,
+            'GAP_INPUT': gap_layer,
+            'OVERLAP_INPUT': overlap_layer,
             'SNAP_TOLERANCE': self.tolerance_spin.value(),
             'MIN_HOUSEHOLD': self.min_hh_spin.value(),
             'MAX_HOUSEHOLD': self.max_hh_spin.value(),
@@ -1492,6 +1552,7 @@ class EALauncherDialog(QDialog):
             'MERGED_OUTPUT': self.merged_edit.text() or 'TEMPORARY_OUTPUT',
             'DELINEATION_CANDIDATE_OUTPUT': self.delin_cand_edit.text() or 'TEMPORARY_OUTPUT',
             'MERGE_CANDIDATE_OUTPUT': self.merge_cand_edit.text() or 'TEMPORARY_OUTPUT',
+            'EXTRACTED_BUILDINGS_OUTPUT': self.extracted_bldg_edit.text() or 'TEMPORARY_OUTPUT',
         }
 
         # Clear UI state
