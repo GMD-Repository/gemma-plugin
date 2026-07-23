@@ -487,13 +487,20 @@ class PackageDialog(QDialog, DialogUi):
         return combo
 
     def _get_active_layer_name(self, layer_item):
-        """Helper to get the true active layer name assigned to a tree item."""
+        """Helper to get the true active layer name assigned to a tree item.
+
+        Tree items store the layer name in different columns depending on how
+        they were created:
+          - User-created groups: text(0)="" , text(1)=layer_name
+          - Preset-loaded groups: text(0)=layer_name, text(1)=""
+          - Base Layers group: text(0)=role_label, column 1=combo widget
+        """
         assigned_combo = self.layer_groups_tree.itemWidget(layer_item, 1)
         if assigned_combo:
             if assigned_combo.currentData() is not None:
                 return assigned_combo.currentText()
             return None
-        return layer_item.text(1)
+        return layer_item.text(1) or layer_item.text(0) or None
 
     def _on_assigned_layer_changed(self, layer_item):
         """Handle layer assignment changes, updating visibility and syncing QML styles."""
@@ -1051,25 +1058,46 @@ class PackageDialog(QDialog, DialogUi):
         
         for i in range(self.layer_groups_tree.topLevelItemCount()):
             group_item = self.layer_groups_tree.topLevelItem(i)
+            group_name_dbg = group_item.text(0)
             
             # Apply styles to ALL layers in the tree, even if unchecked or in unchecked group
             for j in range(group_item.childCount()):
                 layer_item = group_item.child(j)
                 
                 active_name = self._get_active_layer_name(layer_item)
+                print(f"[STYLE DEBUG] Group='{group_name_dbg}' Item j={j} "
+                      f"text(0)='{layer_item.text(0)}' text(1)='{layer_item.text(1)}' "
+                      f"→ active_name='{active_name}'")
+                
                 if not active_name or active_name == self.tr("— None —"):
+                    print(f"[STYLE DEBUG]   SKIP: active_name is empty or '— None —'")
                     continue
                     
                 if active_name not in styled_layers:
                     qml_combo = self.layer_groups_tree.itemWidget(layer_item, 2)
+                    print(f"[STYLE DEBUG]   qml_combo widget exists: {qml_combo is not None}")
                     if qml_combo:
                         qml_name = qml_combo.currentText()
+                        print(f"[STYLE DEBUG]   qml_name='{qml_name}'")
                         if qml_name and qml_name != self.tr("(None)"):
                             qgis_layer = project.mapLayersByName(active_name)
+                            print(f"[STYLE DEBUG]   mapLayersByName('{active_name}') found {len(qgis_layer)} layer(s)")
                             if qgis_layer:
-                                if apply_qml_to_layer(qgis_layer[0], qml_name):
+                                from ..utils.style_utils import get_qml_file_path
+                                qml_path = get_qml_file_path(qml_name)
+                                print(f"[STYLE DEBUG]   QML path: '{qml_path}'")
+                                print(f"[STYLE DEBUG]   QML file exists: {os.path.isfile(qml_path)}")
+                                result = apply_qml_to_layer(qgis_layer[0], qml_name)
+                                print(f"[STYLE DEBUG]   apply_qml_to_layer returned: {result}")
+                                if result:
                                     styled_count += 1
                                     styled_layers.add(active_name)
+                        else:
+                            print(f"[STYLE DEBUG]   SKIP: qml_name is empty or '(None)'")
+                    else:
+                        print(f"[STYLE DEBUG]   SKIP: no QML combo widget on column 2")
+                else:
+                    print(f"[STYLE DEBUG]   SKIP: already styled '{active_name}'")
             
             # If the group name is unchecked, skip applying grouping to QGIS
             if group_item.checkState(0) == Qt.Unchecked:
@@ -1101,6 +1129,19 @@ class PackageDialog(QDialog, DialogUi):
                         # Remove original
                         layer_tree_layer.parent().removeChildNode(layer_tree_layer)
 
+        # Refresh legend for all styled layers after regrouping (clone/move
+        # can cause legend icons to go stale).
+        for styled_name in styled_layers:
+            matched = project.mapLayersByName(styled_name)
+            if matched:
+                matched[0].triggerRepaint()
+                try:
+                    self.iface.layerTreeView().refreshLayerSymbology(matched[0].id())
+                except Exception:
+                    pass
+        self.iface.mapCanvas().refresh()
+
+        print(f"[STYLE DEBUG] DONE — styled_count={styled_count}, styled_layers={styled_layers}")
         msg = self.tr("Groups applied to QGIS Layers Panel.")
         if styled_count:
             msg += "\n" + self.tr(f"{styled_count} layer(s) styled with QML.")

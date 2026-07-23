@@ -39,7 +39,7 @@ class GMDPipeline(object):
             submenu.setIcon(QIcon(icon))
             self.gema_menu.addMenu(submenu)
         else:
-            self.iface.addPluginToMenu("&GeMa", submenu.menuAction())
+            self.iface.addPluginToMenu("&Gemma", submenu.menuAction())
 
 
     def initProcessing(self):
@@ -54,7 +54,7 @@ class GMDPipeline(object):
     def initGui(self):
         self.initProcessing()
 
-        self.gema_menu = QMenu("GeMa")
+        self.gema_menu = QMenu("Gemma")
         self.iface.mainWindow().menuBar().insertMenu(self.iface.firstRightStandardMenu().menuAction(), self.gema_menu)
 
         self.reports_menu = QMenu(u'Reports')
@@ -93,8 +93,8 @@ class GMDPipeline(object):
         self.qfield_menu.addAction(self.create_ea_action)
 
         # QField toolbar icon
-        self.toolbar = self.iface.addToolBar("GeMa Toolbar")
-        self.toolbar.setObjectName("GeMa Toolbar")
+        self.toolbar = self.iface.addToolBar("Gemma Toolbar")
+        self.toolbar.setObjectName("Gemma Toolbar")
         self.package_qfield_toolbar_action = QAction(
             packager_icon, "Package for QField", self.iface.mainWindow()
         )

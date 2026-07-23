@@ -589,14 +589,6 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         """Returns the translated algorithm name for display."""
         return "Create Enumeration Areas"
 
-    def group(self) -> str:
-        """Returns the name of the algorithm group."""
-        return "1MAP"
-
-    def groupId(self) -> str:
-        """Returns the unique ID of the group."""
-        return "1map"
-
     def shortHelpString(self) -> str:
         """Returns a short description of the algorithm."""
         return (
