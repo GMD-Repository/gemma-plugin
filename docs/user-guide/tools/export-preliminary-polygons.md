@@ -1,4 +1,4 @@
-# Export Preliminary Polygons
+# <img src="/icons/export.png" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Export Preliminary Polygons
 
 The **Export Preliminary Polygons** tool merges resolved barangay boundary layers into a consolidated output for 1Map preliminary submission. After you've resolved all overlaps and gaps, use this tool to produce the final merged dataset.
 

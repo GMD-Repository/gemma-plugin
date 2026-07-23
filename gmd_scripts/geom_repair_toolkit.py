@@ -1,12 +1,3 @@
-# =============================================================================
-# GEOMETRY VALIDATION AND REPAIR TOOLKIT v1.1.0
-# 
-#
-#
-#
-#   Tab 1 — Geometry Checker
-#
-# =============================================================================
 
 from qgis.PyQt.QtCore import QVariant, QThread, QObject, pyqtSignal, Qt, QRect, QEvent
 from qgis.PyQt.QtWidgets import (
