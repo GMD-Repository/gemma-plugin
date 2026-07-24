@@ -1,6 +1,37 @@
 {
-  "latest": "1.0.2",
+  "latest": "1.0.3",
   "releases": [
+    {
+      "version": "1.0.3",
+      "date": "2026-07-24",
+      "tag": "v1.0.3",
+      "prerelease": false,
+      "contributors": [
+        "kentemman-gmd"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.3/gemma-plugin-v1.0.3.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.3",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "Added function to update index.md download link with the latest version"
+        ],
+        "improvements": [
+          "Updated Vitepress navbar version during releases for better user navigation"
+        ],
+        "changes": [],
+        "fixes": [
+          "Updated beta channel files for previews r234, r236, and r238"
+        ],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
     {
       "version": "1.0.2",
       "date": "2026-07-24",

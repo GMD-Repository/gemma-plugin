@@ -6,13 +6,14 @@
 name=GEMMA
 qgisMinimumVersion=3.0
 description=GIS Extension for Map Management and Analysis
-version=1.0.2
+version=1.0.3
 author=Geospatial Management Division
 email=gmd.support@psa.gov.ph
 
 about=This plugin is developed by the Geospatial Management Division to provide a comprehenive set of tools that could be used for map management and analyses for different sorts of activities.
 
-changelog=1.0.2: Added interactive preview widget for enumeration area candidate selection in the delineation algorithm; Implemented enumeration area delineation algorithm with interactive preview UI; Added dynamic QTabWidget preview for enumeration area delineation and merging; Improved user interface responsiveness across various components; Updated icons and fixed LGU CRS issues for better usability; Refactored delineation process to a single-pass execution for efficiency; Fixed UNIQUE constraint bugs related to feature IDs in enumeration area processing; Removed redundant greeting from README for clarity; Updated developer documentation to include new enumeration area delineation features; Enhanced README to reflect recent updates and improvements
+changelog=1.0.3: Added function to update index.md download link with the latest version; Updated Vitepress navbar version during releases for better user navigation; Updated beta channel files for previews r234, r236, and r238
+    1.0.2: Added interactive preview widget for enumeration area candidate selection in the delineation algorithm; Implemented enumeration area delineation algorithm with interactive preview UI; Added dynamic QTabWidget preview for enumeration area delineation and merging; Improved user interface responsiveness across various components; Updated icons and fixed LGU CRS issues for better usability; Refactored delineation process to a single-pass execution for efficiency; Fixed UNIQUE constraint bugs related to feature IDs in enumeration area processing; Removed redundant greeting from README for clarity; Updated developer documentation to include new enumeration area delineation features; Enhanced README to reflect recent updates and improvements
     1.0.1: Implemented automated release pipeline for QGIS plugin packaging and management utilities; Added release preview workflow badge to README for better visibility; Updated README to reflect new workflows and corrected badge paths; Overhauled contributing guide to clarify fork-based and team-member workflows; Updated beta channel files for multiple preview releases to ensure accuracy; Corrected workflow badge paths and labels in README.md; Removed redundant local documentation sections in favor of the external documentation site; Updated documentation tracking system to streamline release processes
     1.0.0: Initial release featuring MBI Checker, EA Delineation, CRS Alignment, Geometry Repair Toolkit, Fill Polygon Gaps, Join Barangay Attributes, Export Preliminary Polygons, and Package for QField.
 

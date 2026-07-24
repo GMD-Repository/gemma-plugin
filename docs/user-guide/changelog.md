@@ -2,6 +2,20 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.3
+<time>Jul 24, 2026</time>
+
+### ✨ New Features
+- Added function to update index.md download link with the latest version
+
+### ⚡ Improvements & Fixes
+- Updated Vitepress navbar version during releases for better user navigation
+
+### 🐛 Bug Fixes
+- Updated beta channel files for previews r234, r236, and r238
+
+<Contributors :contributors="['kentemman-gmd']" />
+
 ## 1.0.2
 <time>Jul 24, 2026</time>
 

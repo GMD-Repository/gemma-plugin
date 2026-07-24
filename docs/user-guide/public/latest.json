@@ -1,9 +1,9 @@
 {
-  "version": "1.0.2",
-  "tag": "v1.0.2",
+  "version": "1.0.3",
+  "tag": "v1.0.3",
   "releaseDate": "2026-07-24",
   "repositoryUrl": "https://gmd-repository.github.io/gemma-plugin/gemma.xml",
-  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.2/gemma-plugin-v1.0.2.zip",
-  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.2",
-  "changelogUrl": "https://gmd-repository.github.io/gemma-plugin/changelog/v1.0.2"
+  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.3/gemma-plugin-v1.0.3.zip",
+  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.3",
+  "changelogUrl": "https://gmd-repository.github.io/gemma-plugin/changelog/v1.0.3"
 }
