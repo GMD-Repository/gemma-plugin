@@ -1,9 +1,9 @@
 {
-  "version": "1.0.2-r236",
-  "tag": "r236",
+  "version": "1.0.2-r238",
+  "tag": "r238",
   "releaseDate": "2026-07-24",
   "repositoryUrl": "https://gmd-repository.github.io/gemma-plugin/gemma-beta.xml",
-  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r236/gemma-plugin-r236.zip",
-  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r236",
-  "changelogUrl": "https://gmd-repository.github.io/gemma-plugin/changelog/r236"
+  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r238/gemma-plugin-r238.zip",
+  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r238",
+  "changelogUrl": "https://gmd-repository.github.io/gemma-plugin/changelog/r238"
 }
