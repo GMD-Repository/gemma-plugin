@@ -1,6 +1,42 @@
 {
-  "latest": "1.0.1",
+  "latest": "1.0.2",
   "releases": [
+    {
+      "version": "1.0.2",
+      "date": "2026-07-24",
+      "tag": "v1.0.2",
+      "prerelease": false,
+      "contributors": [
+        "kentemman-gmd"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.2/gemma-plugin-v1.0.2.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.2",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "Added interactive preview widget for enumeration area candidate selection in the delineation algorithm",
+          "Implemented enumeration area delineation algorithm with interactive preview UI",
+          "Added dynamic QTabWidget preview for enumeration area delineation and merging"
+        ],
+        "improvements": [
+          "Improved user interface responsiveness across various components",
+          "Updated icons and fixed LGU CRS issues for better usability",
+          "Refactored delineation process to a single-pass execution for efficiency"
+        ],
+        "changes": [],
+        "fixes": [
+          "Fixed UNIQUE constraint bugs related to feature IDs in enumeration area processing",
+          "Removed redundant greeting from README for clarity"
+        ],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
     {
       "version": "1.0.1",
       "date": "2026-07-23",
