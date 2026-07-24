@@ -2,6 +2,21 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.4
+<time>Jul 24, 2026</time>
+
+### ✨ New Features
+- Added functionality to update index.md download link with the latest version
+
+### ⚡ Improvements & Fixes
+- Updated beta channel files for multiple preview releases to ensure latest features are available
+
+### 🐛 Bug Fixes
+- Corrected regex escape sequence in update_index_md.py for better functionality
+- Fixed regex pattern to match index.md YAML format accurately
+
+<Contributors :contributors="['kentemman-gmd']" />
+
 ## 1.0.3
 <time>Jul 24, 2026</time>
 
