@@ -26,13 +26,13 @@ It provides a comprehensive set of GIS tools for map management and analysis act
 
 ---
 
-## 📚 Documentation
+## Documentation
 
 For installation guides, tool references, and the changelog, visit the **[GEMMA Documentation Site](https://gmd-repository.github.io/gemma-plugin/)**.
 
 ---
 
-## 🤝 Contributing & Git Workflow Guide
+## Contributing & Git Workflow Guide
 
 We welcome contributions from everyone! Choose the workflow that matches your role:
 
@@ -43,7 +43,7 @@ We welcome contributions from everyone! Choose the workflow that matches your ro
 
 ---
 
-### 🍴 For Contributors (Fork & Pull Request)
+### For Contributors (Fork & Pull Request)
 
 If you are **not** a member of the GMD team, follow this fork-based workflow.
 
@@ -102,7 +102,7 @@ Before starting new work, sync your fork with the upstream repository:
 
 ---
 
-### 🔧 For Developers (Branch Workflow)
+### For Developers (Branch Workflow)
 
 If you are a **GMD team member** with push access to the repository, use this direct branching workflow.
 
@@ -159,7 +159,7 @@ Now that you are on your personal branch (double-check the bottom-left corner to
 
 ---
 
-## 📬 Support & Contact
+## Support & Contact
 
 - **Issues & Feature Requests**: [GitHub Issues](https://github.com/GMD-Repository/gemma-plugin/issues)
 - **Email**: gmd.support@psa.gov.ph
