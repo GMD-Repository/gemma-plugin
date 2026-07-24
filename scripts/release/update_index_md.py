@@ -36,7 +36,8 @@ def update_index_download_link(version: str, owner: str = "GMD-Repository", repo
     
     # Pattern to match the download link
     # https://github.com/GMD-Repository/gemma-plugin/releases/download/vX.X.X/gemma-plugin-vX.X.X.zip
-    pattern = r'(link: https://github\.com/[^/]+/[^/]+/releases/download/v)[\d\.]+(/gemma-plugin-v)[\d\.]+(\.\zip)'
+    # Using raw string and properly escaping the dot
+    pattern = r'(link: https://github\.com/[^/]+/[^/]+/releases/download/v)[\d\.]+(/gemma-plugin-v)[\d\.]+(\\.zip)'
     replacement = rf'\g<1>{version}\g<2>{version}\g<3>'
     
     updated_content = re.sub(pattern, replacement, content)
