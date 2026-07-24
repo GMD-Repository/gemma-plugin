@@ -2,6 +2,29 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.2
+<time>Jul 24, 2026</time>
+
+### ✨ New Features
+- Added interactive preview widget for enumeration area candidate selection in the delineation algorithm
+- Implemented enumeration area delineation algorithm with interactive preview UI
+- Added dynamic QTabWidget preview for enumeration area delineation and merging
+
+### ⚡ Improvements & Fixes
+- Improved user interface responsiveness across various components
+- Updated icons and fixed LGU CRS issues for better usability
+- Refactored delineation process to a single-pass execution for efficiency
+
+### 🐛 Bug Fixes
+- Fixed UNIQUE constraint bugs related to feature IDs in enumeration area processing
+- Removed redundant greeting from README for clarity
+
+### 📚 Documentation
+- Updated developer documentation to include new enumeration area delineation features
+- Enhanced README to reflect recent updates and improvements
+
+<Contributors :contributors="['kentemman-gmd']" />
+
 ## 1.0.1
 <time>Jul 23, 2026</time>
 
