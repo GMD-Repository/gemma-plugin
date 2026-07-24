@@ -34,11 +34,11 @@ def update_index_download_link(version: str, owner: str = "GMD-Repository", repo
     content = index_file.read_text(encoding='utf-8')
     original_content = content
     
-    # Pattern to match the download link
-    # https://github.com/GMD-Repository/gemma-plugin/releases/download/vX.X.X/gemma-plugin-vX.X.X.zip
-    # Using raw string and properly escaping the dot
-    pattern = r'(link: https://github\.com/[^/]+/[^/]+/releases/download/v)[\d\.]+(/gemma-plugin-v)[\d\.]+(\\.zip)'
-    replacement = rf'\g<1>{version}\g<2>{version}\g<3>'
+    # Pattern to match the download link in YAML format
+    # link: https://github.com/GMD-Repository/gemma-plugin/releases/download/vX.X.X/gemma-plugin-vX.X.X.zip
+    # Match: link: https://github.com/{owner}/{repo}/releases/download/vX.X.X/gemma-plugin-vX.X.X.zip
+    pattern = r'(link: https://github\.com/[^/]+/[^/]+/releases/download/v)[\d\.]+(/gemma-plugin-v)[\d\.]+\.zip'
+    replacement = rf'\g<1>{version}\g<2>{version}.zip'
     
     updated_content = re.sub(pattern, replacement, content)
     
