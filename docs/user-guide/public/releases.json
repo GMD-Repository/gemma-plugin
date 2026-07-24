@@ -1,6 +1,38 @@
 {
-  "latest": "1.0.3",
+  "latest": "1.0.4",
   "releases": [
+    {
+      "version": "1.0.4",
+      "date": "2026-07-24",
+      "tag": "v1.0.4",
+      "prerelease": false,
+      "contributors": [
+        "kentemman-gmd"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.4/gemma-plugin-v1.0.4.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.4",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "Added functionality to update index.md download link with the latest version"
+        ],
+        "improvements": [
+          "Updated beta channel files for multiple preview releases to ensure latest features are available"
+        ],
+        "changes": [],
+        "fixes": [
+          "Corrected regex escape sequence in update_index_md.py for better functionality",
+          "Fixed regex pattern to match index.md YAML format accurately"
+        ],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
     {
       "version": "1.0.3",
       "date": "2026-07-24",
