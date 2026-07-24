@@ -7,6 +7,7 @@ Handles:
 - docs/user-guide/public/releases.json (full release history)
 - docs/user-guide/public/latest.json (stable release pointer)
 - docs/user-guide/public/latest-beta.json (preview release pointer)
+- docs/user-guide/index.md (homepage download link)
 
 Extracted from gemma-plugin.yml lines 348–617.
 """
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 from scripts.utils.changelog import (
@@ -31,6 +33,7 @@ logger = logging.getLogger(__name__)
 # Base paths (relative to repo root)
 CHANGELOG_PATH = "CHANGELOG.md"
 DOCS_CHANGELOG_PATH = "docs/user-guide/changelog.md"
+INDEX_MD_PATH = "docs/user-guide/index.md"
 PUBLIC_DIR = "docs/user-guide/public"
 RELEASES_JSON_PATH = f"{PUBLIC_DIR}/releases.json"
 LATEST_JSON_PATH = f"{PUBLIC_DIR}/latest.json"
@@ -63,6 +66,46 @@ def update_changelogs(
     # Update docs changelog
     docs_section = format_vitepress_changelog(version, date_display, changes, contributors)
     insert_changelog_section(DOCS_CHANGELOG_PATH, docs_section)
+
+
+def update_index_md_download_link(
+    version: str,
+    tag: str,
+    owner: str = "GMD-Repository",
+    repo: str = "gemma-plugin",
+) -> None:
+    """Update the homepage download link in index.md to point to the latest version.
+
+    Args:
+        version: Version string (e.g. "1.5.0").
+        tag: Git tag (e.g. "v1.5.0").
+        owner: GitHub org/user.
+        repo: GitHub repository name.
+    """
+    zip_name = f"gemma-plugin-{tag}.zip"
+    download_url = f"https://github.com/{owner}/{repo}/releases/download/{tag}/{zip_name}"
+    
+    # Read current index.md
+    content = read_text(INDEX_MD_PATH)
+    if not content:
+        logger.warning("⚠️  Could not read index.md")
+        return
+    
+    # Replace the download link in the hero actions section
+    # Pattern matches: link: https://github.com/.../releases/download/...
+    pattern = r"(- theme: alt\s+text: Download\s+link: )https://github\.com/[^/]+/[^/]+/releases/download/[^\s]+"
+    updated_content = re.sub(
+        pattern,
+        rf"\1{download_url}",
+        content,
+        flags=re.MULTILINE
+    )
+    
+    if updated_content != content:
+        write_text(INDEX_MD_PATH, updated_content)
+        logger.info("✅ index.md download link updated to %s", tag)
+    else:
+        logger.warning("⚠️  Could not find download link pattern in index.md")
 
 
 def update_latest_json(
