@@ -66,8 +66,9 @@ jobs:
           secure: true
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          from: "GEMMA Plugin CI <${{ secrets.MAIL_USERNAME }}>"
-          to:   ${{ secrets.EMAIL_TO }}
+          from: "GMD Support <gmd.support@psa.gov.ph>"
+          to: ${{ secrets.EMAIL_TO }}
+          reply_to: gmd.support@psa.gov.ph
           subject: "[GEMMA Plugin] v${{ steps.release.outputs.version }} — Stable Release Ready"
           html_body: |
             <!DOCTYPE html>
