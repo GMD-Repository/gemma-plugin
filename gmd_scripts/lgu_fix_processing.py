@@ -112,10 +112,12 @@ class FixLGUCRSAlgorithm(QgsProcessingAlgorithm):
         return '1map'
 
     def icon(self):
-        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', 'crs.png')
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', 'crs.svg')
+        if not os.path.exists(icon_path):
+            icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', 'crs.png')
         if os.path.exists(icon_path):
             return QIcon(icon_path)
-        return QIcon()
+        return QIcon(":/images/themes/default/mActionFilter.svg")
 
     def shortHelpString(self):
         """
