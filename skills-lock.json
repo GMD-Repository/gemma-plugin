@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "qgis-pyscript": {
+      "source": "kentemman-gmd/qgis-script-skill",
+      "sourceType": "github",
+      "skillPath": "skills/qgis-pyscript/SKILL.md",
+      "computedHash": "4aaa445649c3a43a3e2bef03386871891709b752279c2fa3bcae8e70374979cf"
+    }
+  }
+}
