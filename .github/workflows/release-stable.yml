@@ -32,6 +32,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          token: ${{ secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
       # ── 2. Setup Python ──────────────────────────────────────────────
@@ -66,9 +67,9 @@ jobs:
           secure: true
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          from: "GMD Support <gmd.support@psa.gov.ph>"
+          from: ${{ secrets.MAIL_FROM }}
           to: ${{ secrets.EMAIL_TO }}
-          reply_to: gmd.support@psa.gov.ph
+          reply_to: ${{ secrets.MAIL_REPLY_TO || secrets.MAIL_FROM }}
           subject: "[GEMMA Plugin] v${{ steps.release.outputs.version }} — Stable Release Ready"
           html_body: |
             <!DOCTYPE html>
