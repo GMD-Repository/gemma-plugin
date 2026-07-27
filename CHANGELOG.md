@@ -5,6 +5,26 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] - 2026-07-27
+
+### Added
+- Added new skills for enhanced functionality in GIS processing
+- Implemented EA delineation algorithm for improved boundary analysis
+- Added QGISRepositoryCard component for easy plugin repository URL copying
+
+### Changed
+- Rebranded submenu to Gemma and fixed QML style application in QField packaging
+- Improved automated documentation and release metadata generation pipeline
+- Updated beta channel files for previews r257, r260, and r262
+
+### Fixed
+- Removed emojis from README section headers for a cleaner presentation
+- Fixed issues by removing deprecated utility functions and unused configuration files
+
+### Documentation
+- Added reference documentation for PyQGIS architecture, coding standards, and basic usage
+- Registered the new qgis-pyscript skill in skills-lock.json
+
 ## [1.0.4] - 2026-07-24
 
 ### Added

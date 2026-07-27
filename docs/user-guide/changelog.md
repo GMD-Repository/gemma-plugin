@@ -2,6 +2,29 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.5
+<time>Jul 27, 2026</time>
+
+### ✨ New Features
+- Added new skills for enhanced functionality in GIS processing
+- Implemented EA delineation algorithm for improved boundary analysis
+- Added QGISRepositoryCard component for easy plugin repository URL copying
+
+### ⚡ Improvements & Fixes
+- Rebranded submenu to Gemma and fixed QML style application in QField packaging
+- Improved automated documentation and release metadata generation pipeline
+- Updated beta channel files for previews r257, r260, and r262
+
+### 🐛 Bug Fixes
+- Removed emojis from README section headers for a cleaner presentation
+- Fixed issues by removing deprecated utility functions and unused configuration files
+
+### 📚 Documentation
+- Added reference documentation for PyQGIS architecture, coding standards, and basic usage
+- Registered the new qgis-pyscript skill in skills-lock.json
+
+<Contributors :contributors="['kentemman-gmd', 'velascojasper0']" />
+
 ## 1.0.4
 <time>Jul 24, 2026</time>
 
