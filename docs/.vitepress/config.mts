@@ -33,6 +33,7 @@ export default defineConfig({
               { text: 'Export Preliminary Polygons', link: '/tools/export-preliminary-polygons' },
               { text: 'Update LGU PSGC Metadata', link: '/tools/update-metadata' },
               { text: 'Fix LGU CRS / Geometry', link: '/tools/fix-lgu-crs' },
+              { text: 'Join Barangay Attributes', link: '/tools/join-barangay-attributes' },
             ]
           },
           {
@@ -51,7 +52,7 @@ export default defineConfig({
         ]
       },
       {
-        text: 'v1.0.5',
+        text: 'v1.0.7',
         items: [
           { text: 'Changelog', link: '/changelog' },
           { text: 'Download Latest', link: 'https://github.com/GMD-Repository/gemma-plugin/releases/latest' },
@@ -77,6 +78,7 @@ export default defineConfig({
           { text: 'Export Preliminary Polygons', link: '/tools/export-preliminary-polygons' },
           { text: 'Update LGU PSGC Metadata', link: '/tools/update-metadata' },
           { text: 'Fix LGU CRS / Geometry', link: '/tools/fix-lgu-crs' },
+          { text: 'Join Barangay Attributes', link: '/tools/join-barangay-attributes' },
         ]
       },
       {
