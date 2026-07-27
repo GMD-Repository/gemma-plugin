@@ -6,13 +6,14 @@
 name=GEMMA
 qgisMinimumVersion=3.0
 description=GIS Extension for Map Management and Analysis
-version=1.0.9
+version=1.0.10
 author=Geospatial Management Division
 email=gmd.support@psa.gov.ph
 
 about=This plugin is developed by the Geospatial Management Division to provide a comprehenive set of tools that could be used for map management and analyses for different sorts of activities.
 
-changelog=1.0.9: Added GitHub Actions workflow to automate stable plugin releases and notifications; Updated beta channel files for preview version r283
+changelog=1.0.10: Added a Getting Started guide to assist new users in utilizing the GEMMA Plugin; Updated beta channel files for preview versions r287 and r289 to ensure compatibility; Updated documentation generator skill definition for better clarity
+    1.0.9: Added GitHub Actions workflow to automate stable plugin releases and notifications; Updated beta channel files for preview version r283
     1.0.8: Added GitHub Actions workflow for automating stable plugin releases and email notifications; Updated beta channel files for preview r276 and r279
     1.0.7: Added automated release workflow for stable plugin builds with email notifications; Updated beta channel files for preview version r272
     1.0.6: Added interactive TablePreviewWidgetWrapper for visualizing enumeration area delineation and merging; Updated PyQGIS processing scripts and tool icons for improved performance and usability; Updated user guide documentation for better clarity and guidance; Updated user guide to reflect recent changes and enhancements
