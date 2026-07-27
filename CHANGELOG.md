@@ -5,6 +5,18 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6] - 2026-07-27
+
+### Added
+- Added interactive TablePreviewWidgetWrapper for visualizing enumeration area delineation and merging
+
+### Changed
+- Updated PyQGIS processing scripts and tool icons for improved performance and usability
+- Updated user guide documentation for better clarity and guidance
+
+### Documentation
+- Updated user guide to reflect recent changes and enhancements
+
 ## [1.0.5] - 2026-07-27
 
 ### Added

@@ -2,6 +2,21 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.6
+<time>Jul 27, 2026</time>
+
+### ✨ New Features
+- Added interactive TablePreviewWidgetWrapper for visualizing enumeration area delineation and merging
+
+### ⚡ Improvements & Fixes
+- Updated PyQGIS processing scripts and tool icons for improved performance and usability
+- Updated user guide documentation for better clarity and guidance
+
+### 📚 Documentation
+- Updated user guide to reflect recent changes and enhancements
+
+<Contributors :contributors="['kentemman-gmd', 'pacoleslaw', 'velascojasper0']" />
+
 ## 1.0.5
 <time>Jul 27, 2026</time>
 
