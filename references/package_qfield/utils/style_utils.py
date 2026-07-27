@@ -127,10 +127,43 @@ def apply_qml_to_layer(layer, display_name):
         return False
     qml_path = get_qml_file_path(display_name)
     if not os.path.isfile(qml_path):
+        print(f"[QML ERROR] File does not exist: {qml_path}")
         return False
-    msg, success = layer.loadNamedStyle(qml_path)
+
+    # Normalize path to forward slashes for QGIS C++ API compatibility
+    normalized_path = qml_path.replace("\\", "/")
+    
+    # Try 1: Standard loadNamedStyle with normalized path
+    res = layer.loadNamedStyle(normalized_path)
+    print(f"[QML LOAD RESULT] Layer='{layer.name()}' QML='{display_name}' raw_res={res}")
+    
+    msg = res[0] if isinstance(res, tuple) else ""
+    success = res[1] if isinstance(res, tuple) else bool(res)
+
+    # If QGIS fell back to 'Loaded from Provider', try importing via QDomDocument
+    if msg == "Loaded from Provider" or not success:
+        print(f"[QML RETRY] loadNamedStyle returned '{msg}'. Attempting importNamedStyle via QDomDocument...")
+        try:
+            from qgis.PyQt.QtXml import QDomDocument
+            doc = QDomDocument()
+            with open(qml_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            if doc.setContent(content):
+                msg, success = layer.importNamedStyle(doc)
+                print(f"[QML QDOM RESULT] importNamedStyle msg='{msg}' success={success}")
+            else:
+                print(f"[QML QDOM ERROR] Failed to parse XML content of {qml_path}")
+        except Exception as e:
+            print(f"[QML QDOM EXCEPTION] {e}")
+
+    print(f"[QML FINAL RESULT] Layer='{layer.name()}' msg='{msg}' success={success}")
     if success:
         layer.triggerRepaint()
+        try:
+            from qgis.utils import iface
+            iface.layerTreeView().refreshLayerSymbology(layer.id())
+        except Exception as e:
+            print(f"[QML ERROR] refreshLayerSymbology failed: {e}")
     return success
 
 
@@ -153,3 +186,4 @@ def apply_embedded_qml_styles(project=None):
         results[lname] = match
 
     return results
+
