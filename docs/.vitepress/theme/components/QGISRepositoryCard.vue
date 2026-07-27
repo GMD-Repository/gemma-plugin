@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 
-const repoUrl = 'https://gmd-repository.github.io/gemma-plugin/gemma.xml'
+const repoUrl = 'https://gemma-plugin.vercel.app/gemma.xml'
 const copied = ref(false)
 
 async function copyUrl() {
