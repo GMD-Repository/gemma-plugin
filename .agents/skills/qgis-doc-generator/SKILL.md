@@ -15,7 +15,7 @@ This skill documents the mandatory end-to-end workflow for authoring, structurin
 graph TD
     A[PyQGIS Script / Tool Source] --> B[Step 1: Extract Metadata & Parameters]
     B --> C[Step 2: Create Tool Page in docs/user-guide/tools/]
-    C --> D[Step 3: Register in Index Card List]
+    C --> D[Step 3: Register in Index Card List & Getting Started]
     D --> E[Step 4: Update Nav & Sidebar in config.mts]
     E --> F[Step 5: Verify Icon Assets via qgis-icon-updater]
     F --> G[Step 6: Build & Test via pnpm run docs:build]
@@ -97,7 +97,9 @@ Use this tool when:
 
 ---
 
-### Step 3: Register in Index Card Grid (`docs/user-guide/index.md`)
+### Step 3: Register in Index Card Grid (`docs/user-guide/index.md`) & Getting Started (`docs/user-guide/getting-started.md`)
+
+#### 3.1 Register in Index Card Grid (`docs/user-guide/index.md`)
 Open `docs/user-guide/index.md` and add the card entry under the appropriate category section:
 
 ```yaml
@@ -107,6 +109,13 @@ Open `docs/user-guide/index.md` and add the card entry under the appropriate cat
     details: [1-sentence concise description of what the tool does].
     link: /tools/<tool-slug>
     linkText: View Guide
+```
+
+#### 3.2 Register in Getting Started Page (`docs/user-guide/getting-started.md`)
+Open `docs/user-guide/getting-started.md` and add the tool link and description under the matching category table (`Processing Toolbox — GMD Pipeline`, `GeMa Menu — Tools`, or `GeMa Menu — QField`):
+
+```markdown
+| [Tool Title](/tools/<tool-slug>) | [1-sentence concise description of what the tool does] |
 ```
 
 ---
