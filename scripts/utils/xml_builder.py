@@ -12,8 +12,8 @@ from xml.sax.saxutils import escape as xml_escape_impl
 
 logger = logging.getLogger(__name__)
 
-# Base URL for GitHub Pages
-BASE_URL = "https://gmd-repository.github.io/gemma-plugin"
+# Base URL for Vercel deployment
+BASE_URL = "https://gemma-plugin.vercel.app"
 
 # XML template for a QGIS plugin repository entry
 PLUGIN_XML_TEMPLATE = """\
