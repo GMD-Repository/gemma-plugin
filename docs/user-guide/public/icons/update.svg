@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!-- Table / Metadata Card (Vibrant Emerald Teal) -->
+  <path d="M 4 3.5 C 4 2.67 4.67 2 5.5 2 L 14 2 L 19.5 7.5 L 19.5 20.5 C 19.5 21.33 18.83 22 18 22 L 5.5 22 C 4.67 22 4 21.33 4 20.5 Z" fill="#10B981" fill-opacity="0.15" stroke="#10B981" stroke-width="1.8"/>
+  <path d="M 13.5 2 L 13.5 7.5 L 19.5 7.5" fill="none" stroke="#10B981" stroke-width="1.5"/>
+  
+  <!-- Data Table Field Lines -->
+  <line x1="7" y1="9" x2="11.5" y2="9" stroke="#10B981" stroke-width="1.8" stroke-linecap="round"/>
+  <line x1="7" y1="13" x2="11.5" y2="13" stroke="#10B981" stroke-width="1.8" stroke-linecap="round"/>
+  <line x1="7" y1="17" x2="10.5" y2="17" stroke="#10B981" stroke-width="1.8" stroke-linecap="round"/>
+
+  <!-- Update / Sync Circular Badge (Vibrant Violet / Purple) -->
+  <circle cx="16.5" cy="16.5" r="5.5" fill="#8B5CF6" stroke="#FFFFFF" stroke-width="1.2"/>
+  <path d="M 14.5 16.5 A 2 2 0 0 1 18 15.3 L 19 14.5" fill="none" stroke="#FFFFFF" stroke-width="1.4" stroke-linecap="round"/>
+  <polygon points="19,13.5 19.3,16 17,15" fill="#FFFFFF"/>
+  <path d="M 18.5 16.5 A 2 2 0 0 1 15 17.7 L 14 18.5" fill="none" stroke="#FFFFFF" stroke-width="1.4" stroke-linecap="round"/>
+  <polygon points="14,19.5 13.7,17 16,18" fill="#FFFFFF"/>
+</svg>
