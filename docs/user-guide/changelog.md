@@ -2,6 +2,17 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.9
+<time>Jul 27, 2026</time>
+
+### ✨ New Features
+- Added GitHub Actions workflow to automate stable plugin releases and notifications
+
+### ⚡ Improvements & Fixes
+- Updated beta channel files for preview version r283
+
+<Contributors :contributors="['kentemman-gmd', 'pacoleslaw', 'velascojasper0']" />
+
 ## 1.0.8
 <time>Jul 27, 2026</time>
 
