@@ -6,13 +6,14 @@
 name=GEMMA
 qgisMinimumVersion=3.0
 description=GIS Extension for Map Management and Analysis
-version=1.0.6
+version=1.0.7
 author=Geospatial Management Division
 email=gmd.support@psa.gov.ph
 
 about=This plugin is developed by the Geospatial Management Division to provide a comprehenive set of tools that could be used for map management and analyses for different sorts of activities.
 
-changelog=1.0.6: Added interactive TablePreviewWidgetWrapper for visualizing enumeration area delineation and merging; Updated PyQGIS processing scripts and tool icons for improved performance and usability; Updated user guide documentation for better clarity and guidance; Updated user guide to reflect recent changes and enhancements
+changelog=1.0.7: Added automated release workflow for stable plugin builds with email notifications; Updated beta channel files for preview version r272
+    1.0.6: Added interactive TablePreviewWidgetWrapper for visualizing enumeration area delineation and merging; Updated PyQGIS processing scripts and tool icons for improved performance and usability; Updated user guide documentation for better clarity and guidance; Updated user guide to reflect recent changes and enhancements
     1.0.5: Added new skills for enhanced functionality in GIS processing; Implemented EA delineation algorithm for improved boundary analysis; Added QGISRepositoryCard component for easy plugin repository URL copying; Rebranded submenu to Gemma and fixed QML style application in QField packaging; Improved automated documentation and release metadata generation pipeline; Updated beta channel files for previews r257, r260, and r262; Removed emojis from README section headers for a cleaner presentation; Fixed issues by removing deprecated utility functions and unused configuration files; Added reference documentation for PyQGIS architecture, coding standards, and basic usage; Registered the new qgis-pyscript skill in skills-lock.json
     1.0.4: Added functionality to update index.md download link with the latest version; Updated beta channel files for multiple preview releases to ensure latest features are available; Corrected regex escape sequence in update_index_md.py for better functionality; Fixed regex pattern to match index.md YAML format accurately
     1.0.3: Added function to update index.md download link with the latest version; Updated Vitepress navbar version during releases for better user navigation; Updated beta channel files for previews r234, r236, and r238

@@ -1,6 +1,37 @@
 {
-  "latest": "1.0.6",
+  "latest": "1.0.7",
   "releases": [
+    {
+      "version": "1.0.7",
+      "date": "2026-07-27",
+      "tag": "v1.0.7",
+      "prerelease": false,
+      "contributors": [
+        "kentemman-gmd",
+        "pacoleslaw",
+        "velascojasper0"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.7/gemma-plugin-v1.0.7.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.7",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "Added automated release workflow for stable plugin builds with email notifications"
+        ],
+        "improvements": [
+          "Updated beta channel files for preview version r272"
+        ],
+        "changes": [],
+        "fixes": [],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
     {
       "version": "1.0.6",
       "date": "2026-07-27",
