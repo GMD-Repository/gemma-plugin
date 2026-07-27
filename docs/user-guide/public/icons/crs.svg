@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!-- Globe / CRS Grid (Vibrant Sky Blue / Cyan) -->
+  <circle cx="11" cy="13" r="8" fill="#38BDF8" fill-opacity="0.15" stroke="#38BDF8" stroke-width="1.8"/>
+  <ellipse cx="11" cy="13" rx="3.8" ry="8" fill="none" stroke="#38BDF8" stroke-width="1.4"/>
+  <line x1="3" y1="13" x2="19" y2="13" stroke="#38BDF8" stroke-width="1.4"/>
+  <line x1="11" y1="5" x2="11" y2="21" stroke="#38BDF8" stroke-width="1.4"/>
+  
+  <!-- Transform Arrow (Vibrant Amber / Sun Gold) -->
+  <path d="M 4 19 Q 8 9 15.5 6.5" fill="none" stroke="#FF9F43" stroke-width="2.2" stroke-linecap="round"/>
+  <polygon points="17,3.5 17.5,9 13,6.5" fill="#FF9F43"/>
+  
+  <!-- Target Pin / Crosshair (Vibrant Coral Pink) -->
+  <circle cx="17.5" cy="5.5" r="3.5" fill="#F43F5E" stroke="#FFFFFF" stroke-width="1"/>
+  <circle cx="17.5" cy="5.5" r="1.2" fill="#FFFFFF"/>
+</svg>

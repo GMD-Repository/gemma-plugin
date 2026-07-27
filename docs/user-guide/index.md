@@ -36,16 +36,22 @@ features:
     link: /tools/export-preliminary-polygons
     linkText: View Guide
   - icon:
-      src: /icons/update.png
+      src: /icons/update.svg
     title: Update LGU PSGC Metadata
     details: Auto-populate PSGC codes, region, province, and city/municipality fields using a reference table with fuzzy name matching.
     link: /tools/update-metadata
     linkText: View Guide
   - icon:
-      src: /icons/crs.png
+      src: /icons/crs.svg
     title: Fix LGU CRS
     details: Batch-correct or reposition vector layers digitized in local arbitrary grid coordinates (~0 to ~100,000) to standard WGS 84 (EPSG:4326) using 2D Affine OLS transformation.
     link: /tools/fix-lgu-crs
+    linkText: View Guide
+  - icon:
+      src: /icons/upload.svg
+    title: Join Barangay Attributes
+    details: Perform enhanced attribute joins between LGU vector layers and PSGC reference tables using fuzzy matching and Roman numeral normalization.
+    link: /tools/join-barangay-attributes
     linkText: View Guide
   - icon:
       src: /icons/reports.png
