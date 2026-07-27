@@ -127,7 +127,7 @@ def update_latest_json(
         owner: GitHub org/user.
         repo: GitHub repository name.
     """
-    base_url = "https://gmd-repository.github.io/gemma-plugin"
+    base_url = "https://gemma-plugin.vercel.app"
     zip_name = f"gemma-plugin-{tag}.zip"
 
     data = {
@@ -161,7 +161,7 @@ def update_latest_beta_json(
         preview_owner: GitHub org/user for preview repo.
         preview_repo: GitHub repository name for previews.
     """
-    base_url = "https://gmd-repository.github.io/gemma-plugin"
+    base_url = "https://gemma-plugin.vercel.app"
     zip_name = f"gemma-plugin-{revision}.zip"
 
     data = {

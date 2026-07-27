@@ -28,7 +28,7 @@ It provides a comprehensive set of GIS tools for map management and analysis act
 
 ## Documentation
 
-For installation guides, tool references, and the changelog, visit the **[GEMMA Documentation Site](https://gmd-repository.github.io/gemma-plugin/)**.
+For installation guides, tool references, and the changelog, visit the **[GEMMA Documentation Site](https://gemma-plugin.vercel.app/)**.
 
 ---
 

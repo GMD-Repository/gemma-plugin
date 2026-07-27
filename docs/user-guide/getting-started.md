@@ -26,7 +26,7 @@ Installing via custom repository allows QGIS to automatically detect and notify 
 4. Click **Add…** to add a repository.
 5. Set Name to `GEMMA Repository` and URL to:
    ```
-   https://gmd-repository.github.io/gemma-plugin/gemma.xml
+   https://gemma-plugin.vercel.app/gemma.xml
    ```
 
 6. Click **OK**, then click **Reload All Repositories**.
