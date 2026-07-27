@@ -5,6 +5,14 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.8] - 2026-07-27
+
+### Added
+- Added GitHub Actions workflow for automating stable plugin releases and email notifications
+
+### Changed
+- Updated beta channel files for preview r276 and r279
+
 ## [1.0.7] - 2026-07-27
 
 ### Added
