@@ -3869,16 +3869,21 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                             neighbor = bar_eas[best_neighbor_idx]
                             merged_geom = ea['geom'].combine(neighbor['geom'])
                             merged_geom = merged_geom.buffer(0.0, 3)
-                            
+
+                            # Inherit EA code and attributes from the EA with the highest hhcount.
+                            # On a tie the merge candidate (ea) wins as it was the initiator.
+                            dominant  = ea if ea['hh_count'] >= neighbor['hh_count'] else neighbor
+                            recessive = neighbor if ea['hh_count'] >= neighbor['hh_count'] else ea
+
                             merged_ea = {
                                 'geom': merged_geom,
                                 'buildings': ea.get('buildings', []) + neighbor.get('buildings', []),
                                 'hh_count': ea['hh_count'] + neighbor['hh_count'],
-                                'original_hhcount': ea.get('original_hhcount', 0) if ea['hh_count'] >= neighbor['hh_count'] else neighbor.get('original_hhcount', 0),
+                                'original_hhcount': dominant.get('original_hhcount', 0),
                                 'bldg_count': ea.get('bldg_count', 0) + neighbor.get('bldg_count', 0),
-                                'attributes': list(ea['attributes']) if ea['hh_count'] >= neighbor['hh_count'] else list(neighbor['attributes']),
-                                'original_id': ea['original_id'] if ea['hh_count'] >= neighbor['hh_count'] else neighbor['original_id'],
-                                'original_code': ea['original_code'] if ea['hh_count'] >= neighbor['hh_count'] else neighbor['original_code'],
+                                'attributes': list(dominant['attributes']),
+                                'original_id': dominant['original_id'],
+                                'original_code': dominant['original_code'],
                                 'is_new': True,
                                 'split_by': ea.get('split_by', 'none'),
                                 'from_merge': True,
@@ -3895,7 +3900,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                             merged_indices.add(best_neighbor_idx)
                             merged_indices.add(idx)
                             changed = True
-                            fback.pushInfo(f"[Barangay {bar_code}] Force-merged 0-household EA (code={ea['original_code']}) with adjacent neighbor (pop={neighbor['hh_count']}) -> Combined={merged_ea['hh_count']}")
+                            fback.pushInfo(f"[Barangay {bar_code}] Force-merged 0-household EA (code={recessive['original_code']}) into dominant EA (code={dominant['original_code']}, pop={dominant['hh_count']}) -> Combined={merged_ea['hh_count']}")
                             continue
                             
                     # Skip merging if this EA was generated from a split AND is already at or above min_household.
@@ -3974,15 +3979,20 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                             merged_geom = ea['geom'].combine(neighbor['geom'])
                             merged_geom = merged_geom.buffer(0.0, 3)
 
+                            # Inherit EA code and attributes from the EA with the highest hhcount.
+                            # On a tie the merge candidate (ea) wins as it was the initiator.
+                            dominant  = ea if ea['hh_count'] >= neighbor['hh_count'] else neighbor
+                            recessive = neighbor if ea['hh_count'] >= neighbor['hh_count'] else ea
+
                             merged_ea = {
                                 'geom': merged_geom,
                                 'buildings': ea.get('buildings', []) + neighbor.get('buildings', []),
                                 'hh_count': ea['hh_count'] + neighbor['hh_count'],
-                                'original_hhcount': ea.get('original_hhcount', 0) if ea['hh_count'] >= neighbor['hh_count'] else neighbor.get('original_hhcount', 0),
+                                'original_hhcount': dominant.get('original_hhcount', 0),
                                 'bldg_count': ea.get('bldg_count', 0) + neighbor.get('bldg_count', 0),
-                                'attributes': list(ea['attributes']) if ea['hh_count'] >= neighbor['hh_count'] else list(neighbor['attributes']),
-                                'original_id': ea['original_id'] if ea['hh_count'] >= neighbor['hh_count'] else neighbor['original_id'],
-                                'original_code': ea['original_code'] if ea['hh_count'] >= neighbor['hh_count'] else neighbor['original_code'],
+                                'attributes': list(dominant['attributes']),
+                                'original_id': dominant['original_id'],
+                                'original_code': dominant['original_code'],
                                 'is_new': True,
                                 'split_by': ea.get('split_by', 'none'),
                                 'from_merge': True,
@@ -3999,7 +4009,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                             merged_indices.add(best_neighbor_idx)
                             merged_indices.add(idx)
                             changed = True
-                            fback.pushInfo(f"[Barangay {bar_code}] Merged small EA (pop={ea['hh_count']}) with adjacent neighbor (pop={neighbor['hh_count']}) -> Combined={merged_ea['hh_count']}")
+                            fback.pushInfo(f"[Barangay {bar_code}] Merged small EA (code={recessive['original_code']}, pop={recessive['hh_count']}) into dominant EA (code={dominant['original_code']}, pop={dominant['hh_count']}) -> Combined={merged_ea['hh_count']}")
                         else:
                             new_eas.append(ea)
                     else:
@@ -4465,8 +4475,10 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         orig_last3 = orig_last3[:3] # FIX: take first 3 digits of mother EA suffix
                         
                 # Determine sequence number suffix YYY
-                # If it is a newly generated/modified EA, number starting from max_ea_number + 1
-                if ea.get('is_new', False):
+                # If it is a newly generated/modified EA, number starting from max_ea_number + 1.
+                # Exception: merged EAs always inherit the dominant EA's original code unchanged —
+                # no new sequential suffix is generated for merges.
+                if ea.get('is_new', False) and not ea.get('from_merge', False):
                     seq_num = max_ea_number.get(bar, 0) + 1 + new_ea_counter
                     seq_str = f"{seq_num:03d}"
                     new_ea_counter += 1
@@ -4478,7 +4490,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         # XXXYYY mother-child concept (first 3 digits of mother EA + last 3 digits next sequence suffix)
                         ea['new_ea_code'] = orig_last3 + seq_str
                 else:
-                    # If it is unchanged, retain the original EA code
+                    # Unchanged EAs retain their original code.
+                    # Merged EAs retain the dominant (highest-hhcount) EA's original code.
                     orig_code_str = str(ea['original_code']).strip() if ea['original_code'] is not None else ""
                     if orig_code_str.endswith(".0"):
                         orig_code_str = orig_code_str[:-2]
