@@ -67,9 +67,9 @@ jobs:
           secure: true
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          from: ${{ secrets.MAIL_FROM }}
+          from: ${{ secrets.MAIL_FROM || secrets.MAIL_USERNAME }}
           to: ${{ secrets.EMAIL_TO }}
-          reply_to: ${{ secrets.MAIL_REPLY_TO || secrets.MAIL_FROM }}
+          reply_to: ${{ secrets.MAIL_REPLY_TO || secrets.MAIL_FROM || secrets.MAIL_USERNAME }}
           subject: "[GEMMA Plugin] v${{ steps.release.outputs.version }} — Stable Release Ready"
           html_body: |
             <!DOCTYPE html>
@@ -165,22 +165,35 @@ jobs:
                     <div class="text"><strong>Status:</strong> Stable Release</div>
                   </div>
 
-                  <!-- Download & Test -->
+                  <!-- How to Get Updates & Installation -->
                   <div class="box">
-                    <div class="box-title">Download &amp; Test</div>
-                    <div class="text">
-                      Download the zip package and install it in QGIS via <em>Plugins → Manage and Install Plugins → Install from ZIP</em>.
+                    <div class="box-title">Plugin Updates &amp; Installation</div>
+                    
+                    <div class="text" style="margin-bottom: 10px;">
+                      <strong>Existing QGIS Setup:</strong> If you already added the GEMMA repository in QGIS, QGIS will automatically notify you of this new release. Open QGIS and go to <em>Plugins → Manage and Install Plugins → Upgrade All</em>.
                     </div>
 
-                    <a href="https://github.com/${{ github.repository }}/releases/download/v${{ steps.release.outputs.version }}/${{ steps.release.outputs.zip_name }}"
-                       class="button"
-                       style="color: #ffffff !important; text-decoration: none;">
-                      Download Plugin ZIP
-                    </a>
+                    <div class="text" style="margin-bottom: 12px;">
+                      <strong>Official Website &amp; Setup:</strong> Visit our website for installation guides, documentation, and repository settings:
+                    </div>
 
-                    <div style="margin-top:6px;font-size:12px;color:#777;line-height:1.4;">
-                      If the link returns a <strong>404</strong>, the assets may still be processing.
-                      You can manually download from the
+                    <div style="margin-bottom: 10px;">
+                      <a href="https://gemma-plugin.vercel.app/getting-started"
+                         class="button"
+                         style="color: #ffffff !important; text-decoration: none; margin-right: 8px;">
+                        Visit Website
+                      </a>
+
+                      <a href="https://github.com/${{ github.repository }}/releases/download/v${{ steps.release.outputs.version }}/${{ steps.release.outputs.zip_name }}"
+                         class="button"
+                         style="background-color: #475569; color: #ffffff !important; text-decoration: none;">
+                        Download Plugin ZIP
+                      </a>
+                    </div>
+
+                    <div style="margin-top:8px;font-size:12px;color:#777;line-height:1.4;">
+                      If the ZIP link returns a <strong>404</strong>, assets may still be processing.
+                      You can also check the
                       <a href="https://github.com/${{ github.repository }}/releases" style="color:#2563a8;text-decoration:none;">
                         Releases page
                       </a>.
