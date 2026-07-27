@@ -178,7 +178,7 @@ jobs:
                     </div>
 
                     <div style="margin-bottom: 10px;">
-                      <a href="https://gemma-plugin.vercel.app/getting-started"
+                      <a href="https://gemma-plugin.vercel.app/getting-started.html"
                          class="button"
                          style="color: #ffffff !important; text-decoration: none; margin-right: 8px;">
                         Visit Website
