@@ -28,7 +28,7 @@ Respond with a **JSON object only** — no markdown, no code fences, no preamble
 - Write for GIS technicians — keep it clear but use GIS terms (layer, CRS, shapefile, QField).
 - NEVER return empty for ALL arrays. If changes seem internal, reframe as user-facing improvements.
 - Do NOT include emojis or version numbers.
-- Preserve author attribution markdown links (e.g. ([@username](https://github.com/username))) at the end of items when summarizing.
+- ALWAYS preserve and include human author/contributor attribution markdown links (e.g. ([@username](https://github.com/username))) at the end of summarized items, EXCEPT for bot accounts (e.g. github-actions[bot] or any user containing [bot]).
 - Put each item in the correct category.
 
 ## Good Examples
@@ -36,9 +36,9 @@ Respond with a **JSON object only** — no markdown, no code fences, no preamble
 ```json
 {
   "summary": "This release adds geometry repair tools and improves boundary checking performance.",
-  "features": ["Added new Geometry Repair Toolkit for fixing invalid polygon geometries"],
-  "improvements": ["Improved gap and overlap detection speed for large municipality datasets"],
-  "fixes": ["Fixed CRS assignment issue when processing LGU boundary layers"],
+  "features": ["Added new Geometry Repair Toolkit for fixing invalid polygon geometries ([@kentemman-gmd](https://github.com/kentemman-gmd))"],
+  "improvements": ["Improved gap and overlap detection speed for large municipality datasets ([@velascojasper0](https://github.com/velascojasper0))"],
+  "fixes": ["Fixed CRS assignment issue when processing LGU boundary layers ([@psacjperez](https://github.com/psacjperez))"],
   "documentation": [],
   "breaking_changes": []
 }
