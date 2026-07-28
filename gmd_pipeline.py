@@ -116,14 +116,17 @@ class GMDPipeline(object):
         Unload plugin components upon disable or QGIS exit.
         Removes UI elements (menus, toolbars) and deregisters Processing providers symmetrically.
         """
-        if self.gema_menu:
-            try:
-                self.iface.mainWindow().menuBar().removeAction(self.gema_menu.menuAction())
-                self.gema_menu.deleteLater()
-            except Exception:
-                pass
-            self.gema_menu = None
+        # 1. Close open dialogs safely to prevent dangling Qt window callbacks
+        for dlg_attr in ('geometry_toolkit_dlg', 'push_dlg', 'ea_dlg'):
+            dlg = getattr(self, dlg_attr, None)
+            if dlg:
+                try:
+                    dlg.close()
+                except Exception:
+                    pass
+                setattr(self, dlg_attr, None)
 
+        # 2. Remove toolbar and menu elements
         if self.toolbar:
             try:
                 self.iface.mainWindow().removeToolBar(self.toolbar)
@@ -132,33 +135,38 @@ class GMDPipeline(object):
                 pass
             self.toolbar = None
 
+        if self.gema_menu:
+            try:
+                self.iface.mainWindow().menuBar().removeAction(self.gema_menu.menuAction())
+                self.gema_menu.deleteLater()
+            except Exception:
+                pass
+            self.gema_menu = None
+
+        # 3. Remove Processing Providers safely by Provider ID string to avoid C++ SIP double-free crashes
+        registry = QgsApplication.processingRegistry()
+
         if self.provider:
             try:
-                QgsApplication.processingRegistry().removeProvider(self.provider)
-            except RuntimeError:
-                # Wrapped C++ object was already deleted by QGIS
-                pass
-            except Exception as e:
-                QgsMessageLog.logMessage(
-                    f"Error removing GMD Pipeline provider: {e}",
-                    "GMD",
-                    Qgis.MessageLevel.Warning,
-                )
+                provider_id = self.provider.id()
+                registry.removeProvider(provider_id)
+            except Exception:
+                try:
+                    registry.removeProvider(self.provider)
+                except Exception:
+                    pass
             finally:
                 self.provider = None
 
         if self.ea_provider:
             try:
-                QgsApplication.processingRegistry().removeProvider(self.ea_provider)
-            except RuntimeError:
-                # Wrapped C++ object was already deleted by QGIS
-                pass
-            except Exception as e:
-                QgsMessageLog.logMessage(
-                    f"Error removing EA Delineation provider: {e}",
-                    "GMD",
-                    Qgis.MessageLevel.Warning,
-                )
+                provider_id = self.ea_provider.id()
+                registry.removeProvider(provider_id)
+            except Exception:
+                try:
+                    registry.removeProvider(self.ea_provider)
+                except Exception:
+                    pass
             finally:
                 self.ea_provider = None
 
