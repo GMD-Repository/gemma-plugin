@@ -30,8 +30,16 @@ from scripts.utils.github import get_contributors
 
 logger = logging.getLogger(__name__)
 
+# Output paths (relative to repo root)
+PUBLIC_DIR = "docs/user-guide/public"
 ICONS_DIR = "icons"
 PUBLIC_ICONS_DIR = f"{PUBLIC_DIR}/icons"
+CHANGELOG_PATH = "CHANGELOG.md"
+DOCS_CHANGELOG_PATH = "docs/user-guide/changelog.md"
+INDEX_MD_PATH = "docs/user-guide/index.md"
+LATEST_JSON_PATH = f"{PUBLIC_DIR}/latest.json"
+LATEST_BETA_JSON_PATH = f"{PUBLIC_DIR}/latest-beta.json"
+RELEASES_JSON_PATH = f"{PUBLIC_DIR}/releases.json"
 
 
 def sync_docs_icons() -> None:
