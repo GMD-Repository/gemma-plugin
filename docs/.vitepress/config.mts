@@ -9,14 +9,14 @@ export default defineConfig({
   description: "GIS Extension for Map Management and Analysis — A QGIS processing plugin by the Geospatial Management Division (GMD) of the Philippine Statistics Authority.",
 
   head: [
-    ['link', { rel: 'icon', type: 'image/png', href: '/icons/gemma.png' }],
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/icons/gemma.svg' }],
     ['meta', { name: 'author', content: 'Geospatial Management Division — Philippine Statistics Authority' }],
     ['meta', { name: 'keywords', content: 'QGIS, GIS, plugin, GEMMA, GMD, PSA, 1Map, QField, geometry, overlaps, gaps' }],
   ],
 
   themeConfig: {
     // https://vitepress.dev/reference/default-theme-config
-    logo: '/icons/gemma.png',
+    logo: '/icons/gemma.svg',
     siteTitle: 'GEMMA Plugin',
 
     nav: [
