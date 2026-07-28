@@ -93,7 +93,13 @@ def format_vitepress_changelog(
         Formatted markdown section for docs/user-guide/changelog.md.
     """
     if contributors is None:
-        contributors = DEFAULT_CONTRIBUTORS
+        extracted: set[str] = set()
+        for items_list in changes.values():
+            for item in items_list:
+                for match in re.findall(r"https://github\.com/([\w-]+)", item):
+                    if match not in ["GMD-Repository", "gemma-plugin"] and not ("[bot]" in match or "github-actions" in match):
+                        extracted.add(match)
+        contributors = list(extracted) if extracted else DEFAULT_CONTRIBUTORS
 
     lines = [f"## {version}", f"<time>{date_display}</time>", ""]
 
