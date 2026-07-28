@@ -2,6 +2,22 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.13
+<time>Jul 28, 2026</time>
+
+### ✨ New Features
+- Added automated GitHub Actions workflows for both preview and stable plugin releases ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- Implemented automated release pipeline with email notifications and changelog generation ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### ⚡ Improvements & Fixes
+- Improved plugin unload logic by safely removing UI elements and handling processing provider cleanup ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- Simplified unload logic and cleanup processing provider removal in gmd_pipeline.py ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### 🐛 Bug Fixes
+- Added safe dialog closure and robust processing provider removal to prevent QGIS crashes on plugin unload ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+<Contributors :contributors="['kentemman-gmd']" />
+
 ## 1.0.12
 <time>Jul 28, 2026</time>
 

@@ -5,6 +5,19 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.13] - 2026-07-28
+
+### Added
+- Added automated GitHub Actions workflows for both preview and stable plugin releases ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- Implemented automated release pipeline with email notifications and changelog generation ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### Changed
+- Improved plugin unload logic by safely removing UI elements and handling processing provider cleanup ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- Simplified unload logic and cleanup processing provider removal in gmd_pipeline.py ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### Fixed
+- Added safe dialog closure and robust processing provider removal to prevent QGIS crashes on plugin unload ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
 ## [1.0.12] - 2026-07-28
 
 ### Added
