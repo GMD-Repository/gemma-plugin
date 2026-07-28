@@ -8,7 +8,7 @@ import sys
 import inspect
 import processing
 
-from qgis.core import QgsApplication, QgsMessageLog, QgsProcessingProvider, QgsOfflineEditing, QgsProject
+from qgis.core import QgsApplication, QgsMessageLog, QgsProcessingProvider, QgsOfflineEditing, QgsProject, Qgis
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtCore import QCoreApplication, Qt
 
@@ -111,33 +111,55 @@ class GMDPipeline(object):
         self.offline_editing = QgsOfflineEditing()
 
 
-    def unload(self):
-        self.iface.mainWindow().menuBar().removeAction(self.gema_menu.menuAction())
+    def unload(self) -> None:
+        """
+        Unload plugin components upon disable or QGIS exit.
+        Removes UI elements (menus, toolbars) and deregisters Processing providers symmetrically.
+        """
+        if self.gema_menu:
+            try:
+                self.iface.mainWindow().menuBar().removeAction(self.gema_menu.menuAction())
+                self.gema_menu.deleteLater()
+            except Exception:
+                pass
+            self.gema_menu = None
 
         if self.toolbar:
-            del self.toolbar
+            try:
+                self.iface.mainWindow().removeToolBar(self.toolbar)
+                self.toolbar.deleteLater()
+            except Exception:
+                pass
             self.toolbar = None
 
         if self.provider:
             try:
                 QgsApplication.processingRegistry().removeProvider(self.provider)
+            except RuntimeError:
+                # Wrapped C++ object was already deleted by QGIS
+                pass
             except Exception as e:
-                QgsApplication.instance().messageLog().logMessage(
+                QgsMessageLog.logMessage(
                     f"Error removing GMD Pipeline provider: {e}",
-                    'GMD')
+                    "GMD",
+                    Qgis.MessageLevel.Warning,
+                )
             finally:
-                del self.provider
                 self.provider = None
 
         if self.ea_provider:
             try:
                 QgsApplication.processingRegistry().removeProvider(self.ea_provider)
+            except RuntimeError:
+                # Wrapped C++ object was already deleted by QGIS
+                pass
             except Exception as e:
-                QgsApplication.instance().messageLog().logMessage(
+                QgsMessageLog.logMessage(
                     f"Error removing EA Delineation provider: {e}",
-                    'GMD')
+                    "GMD",
+                    Qgis.MessageLevel.Warning,
+                )
             finally:
-                del self.ea_provider
                 self.ea_provider = None
 
     def sync_report_act(self):
