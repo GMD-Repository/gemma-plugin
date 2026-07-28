@@ -31,7 +31,7 @@ jobs:
       # ── 1. Generate Gemma Bot Token ──────────────────────────────────
       - name: Generate Gemma Bot Token
         id: generate-token
-        if: ${{ secrets.BOT_APP_ID != '' && secrets.BOT_PRIVATE_KEY != '' }}
+        continue-on-error: true
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ secrets.BOT_APP_ID }}
