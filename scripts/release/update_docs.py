@@ -30,14 +30,30 @@ from scripts.utils.github import get_contributors
 
 logger = logging.getLogger(__name__)
 
-# Base paths (relative to repo root)
-CHANGELOG_PATH = "CHANGELOG.md"
-DOCS_CHANGELOG_PATH = "docs/user-guide/changelog.md"
-INDEX_MD_PATH = "docs/user-guide/index.md"
-PUBLIC_DIR = "docs/user-guide/public"
-RELEASES_JSON_PATH = f"{PUBLIC_DIR}/releases.json"
-LATEST_JSON_PATH = f"{PUBLIC_DIR}/latest.json"
-LATEST_BETA_JSON_PATH = f"{PUBLIC_DIR}/latest-beta.json"
+ICONS_DIR = "icons"
+PUBLIC_ICONS_DIR = f"{PUBLIC_DIR}/icons"
+
+
+def sync_docs_icons() -> None:
+    """Synchronize icons from root icons/ folder to docs public folders."""
+    import shutil
+    icons_src = Path(ICONS_DIR)
+    public_icons_dst = Path(PUBLIC_ICONS_DIR)
+    public_root_dst = Path(PUBLIC_DIR)
+
+    if not icons_src.exists():
+        return
+
+    public_icons_dst.mkdir(parents=True, exist_ok=True)
+    public_root_dst.mkdir(parents=True, exist_ok=True)
+
+    for item in icons_src.iterdir():
+        if item.is_file():
+            shutil.copy2(item, public_icons_dst / item.name)
+            if item.name in ["gemma.svg", "icon.png", "gemma.png"]:
+                shutil.copy2(item, public_root_dst / item.name)
+
+    logger.info("✅ Synced all web icons to %s", public_icons_dst)
 
 
 def update_changelogs(

@@ -28,6 +28,7 @@ Respond with a **JSON object only** — no markdown, no code fences, no preamble
 - Write for GIS technicians — keep it clear but use GIS terms (layer, CRS, shapefile, QField).
 - NEVER return empty for ALL arrays. If changes seem internal, reframe as user-facing improvements.
 - Do NOT include emojis or version numbers.
+- Preserve author attribution markdown links (e.g. ([@username](https://github.com/username))) at the end of items when summarizing.
 - Put each item in the correct category.
 
 ## Good Examples
