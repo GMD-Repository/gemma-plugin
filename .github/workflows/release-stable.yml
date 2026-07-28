@@ -28,27 +28,38 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────
+      # ── 1. Generate Gemma Bot Token ──────────────────────────────────
+      - name: Generate Gemma Bot Token
+        id: generate-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      # ── 2. Checkout ──────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          token: ${{ steps.generate-token.outputs.token || secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      # ── 2. Setup Python ──────────────────────────────────────────────
+      # ── 3. Setup Python ──────────────────────────────────────────────
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # ── 3. Install dependencies ──────────────────────────────────────
+      # ── 4. Install dependencies ──────────────────────────────────────
       - name: Install dependencies
         run: pip install -r scripts/requirements.txt
 
-      # ── 4. Run release pipeline ──────────────────────────────────────
+      # ── 5. Run release pipeline ──────────────────────────────────────
       - name: Run release pipeline
         id: release
         env:
-          GITHUB_TOKEN: ${{ secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.generate-token.outputs.token || secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
           AI_TOKEN: ${{ secrets.AI_TOKEN }}
         run: |
           python scripts/release/release_pipeline.py \
@@ -66,8 +77,9 @@ jobs:
           secure: true
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          from: "GEMMA Plugin CI <${{ secrets.MAIL_USERNAME }}>"
-          to:   ${{ secrets.EMAIL_TO }}
+          from: ${{ secrets.MAIL_FROM || secrets.MAIL_USERNAME }}
+          to: ${{ secrets.EMAIL_TO }}
+          reply_to: ${{ secrets.MAIL_REPLY_TO || secrets.MAIL_FROM || secrets.MAIL_USERNAME }}
           subject: "[GEMMA Plugin] v${{ steps.release.outputs.version }} — Stable Release Ready"
           html_body: |
             <!DOCTYPE html>
@@ -151,7 +163,7 @@ jobs:
                   <!-- What's New -->
                   <div class="box">
                     <div class="box-title">What's New</div>
-                    <div style="white-space: pre-wrap; font-size: 14px; margin-top: 10px;">${{ steps.release.outputs.release_body }}</div>
+                    <div style="font-size: 14px; margin-top: 10px;">${{ steps.release.outputs.release_body_html || steps.release.outputs.release_body }}</div>
                   </div>
 
                   <!-- Release Details -->
@@ -163,22 +175,35 @@ jobs:
                     <div class="text"><strong>Status:</strong> Stable Release</div>
                   </div>
 
-                  <!-- Download & Test -->
+                  <!-- How to Get Updates & Installation -->
                   <div class="box">
-                    <div class="box-title">Download &amp; Test</div>
-                    <div class="text">
-                      Download the zip package and install it in QGIS via <em>Plugins → Manage and Install Plugins → Install from ZIP</em>.
+                    <div class="box-title">Plugin Updates &amp; Installation</div>
+                    
+                    <div class="text" style="margin-bottom: 10px;">
+                      <strong>Existing QGIS Setup:</strong> If you already added the GEMMA repository in QGIS, QGIS will automatically notify you of this new release. Open QGIS and go to <em>Plugins → Manage and Install Plugins → GEMMA → Upgrade Plugin</em>.
                     </div>
 
-                    <a href="https://github.com/${{ github.repository }}/releases/download/v${{ steps.release.outputs.version }}/${{ steps.release.outputs.zip_name }}"
-                       class="button"
-                       style="color: #ffffff !important; text-decoration: none;">
-                      Download Plugin ZIP
-                    </a>
+                    <div class="text" style="margin-bottom: 12px;">
+                      <strong>Official Website &amp; Setup:</strong> Visit our website for installation guides, documentation, and repository settings:
+                    </div>
 
-                    <div style="margin-top:6px;font-size:12px;color:#777;line-height:1.4;">
-                      If the link returns a <strong>404</strong>, the assets may still be processing.
-                      You can manually download from the
+                    <div style="margin-bottom: 10px;">
+                      <a href="https://gemma-plugin.vercel.app/getting-started.html"
+                         class="button"
+                         style="color: #ffffff !important; text-decoration: none; margin-right: 8px;">
+                        Visit Website
+                      </a>
+
+                      <a href="https://github.com/${{ github.repository }}/releases/download/v${{ steps.release.outputs.version }}/${{ steps.release.outputs.zip_name }}"
+                         class="button"
+                         style="background-color: #475569; color: #ffffff !important; text-decoration: none;">
+                        Download Plugin ZIP
+                      </a>
+                    </div>
+
+                    <div style="margin-top:8px;font-size:12px;color:#777;line-height:1.4;">
+                      If the ZIP link returns a <strong>404</strong>, assets may still be processing.
+                      You can also check the
                       <a href="https://github.com/${{ github.repository }}/releases" style="color:#2563a8;text-decoration:none;">
                         Releases page
                       </a>.

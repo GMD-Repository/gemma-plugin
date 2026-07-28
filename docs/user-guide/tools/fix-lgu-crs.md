@@ -1,4 +1,4 @@
-# <img src="/icons/crs.png" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Fix LGU CRS
+# <img src="/icons/crs.svg" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Fix LGU CRS
 
 The **Fix LGU CRS** tool batch-corrects or repositions vector layers digitized in local arbitrary grid coordinates (~0 to ~100,000) to true WGS84 coordinates (**EPSG:4326**). It fits a 2D Affine transformation matrix via Ordinary Least Squares (OLS) based on control points and transforms all geometry vertices to standard WGS 84.
 
