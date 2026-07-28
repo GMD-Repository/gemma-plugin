@@ -4,8 +4,8 @@ The **Package for QField** tool packages your QGIS project and its data for fiel
 
 ## Access
 
-- **Menu:** GeMa → QField → Package for QField
-- **Toolbar:** GeMa Toolbar → Package for QField icon
+- **Menu:** Gemma → QField → Package for QField
+- **Toolbar:** Gemma Toolbar → Package for QField icon
 - **Shortcut:** `Ctrl+Alt+Q`
 
 ## When to Use
@@ -36,7 +36,7 @@ The tool creates a complete QField-compatible project package including:
 ## How to Use
 
 1. Open your QGIS project with all the layers you want to include
-2. Launch the tool via **GeMa → QField → Package for QField** (or `Ctrl+Alt+Q`)
+2. Launch the tool via **Gemma → QField → Package for QField** (or `Ctrl+Alt+Q`)
 3. In the Package Dialog:
    - Review the layer list
    - Configure which layers should be available offline
