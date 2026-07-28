@@ -12,7 +12,7 @@ email=gmd.support@psa.gov.ph
 
 about=This plugin is developed by the Geospatial Management Division to provide a comprehenive set of tools that could be used for map management and analyses for different sorts of activities.
 
-changelog=1.0.10: Added a Getting Started guide to assist new users in utilizing the GEMMA Plugin; Updated beta channel files for preview versions r287 and r289 to ensure compatibility; Updated documentation generator skill definition for better clarity
+changelog=1.0.10: Added a Getting Started guide to assist new users in utilizing the GEMMA Plugin ([@kentemman-gmd](https://github.com/kentemman-gmd)); Updated beta channel files for preview versions r287 and r289 to ensure compatibility ([@kentemman-gmd](https://github.com/kentemman-gmd)); Updated documentation generator skill definition for better clarity ([@kentemman-gmd](https://github.com/kentemman-gmd))
     1.0.9: Added GitHub Actions workflow to automate stable plugin releases and notifications; Updated beta channel files for preview version r283
     1.0.8: Added GitHub Actions workflow for automating stable plugin releases and email notifications; Updated beta channel files for preview r276 and r279
     1.0.7: Added automated release workflow for stable plugin builds with email notifications; Updated beta channel files for preview version r272

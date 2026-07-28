@@ -6,7 +6,7 @@ hero:
   text: "GIS Extension for Map Management & Analysis"
   tagline: Standardized & harmonized GIS tools and processing pipeline for GMD activities
   image:
-    src: /icons/gemma.png
+    src: /icons/gemma.svg
     alt: GEMMA Logo
   actions:
     - theme: brand
