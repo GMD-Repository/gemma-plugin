@@ -112,7 +112,7 @@ Open `docs/user-guide/index.md` and add the card entry under the appropriate cat
 ```
 
 #### 3.2 Register in Getting Started Page (`docs/user-guide/getting-started.md`)
-Open `docs/user-guide/getting-started.md` and add the tool link and description under the matching category table (`Processing Toolbox — GMD Pipeline`, `GeMa Menu — Tools`, or `GeMa Menu — QField`):
+Open `docs/user-guide/getting-started.md` and add the tool link and description under the matching category table (`Processing Toolbox — GMD Pipeline`, `Gemma Menu — Tools`, or `Gemma Menu — QField`):
 
 ```markdown
 | [Tool Title](/tools/<tool-slug>) | [1-sentence concise description of what the tool does] |
