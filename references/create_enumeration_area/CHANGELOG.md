@@ -2,6 +2,13 @@
 
 All notable changes to the `gmd-pipeline` QGIS plugin will be documented in this file.
 
+## [Unreleased] - 2026-07-28
+
+### Fixed
+
+- **Blank Geographic Fields on Merged EA Output Layer (MERGED_OUTPUT only):** Merged EA features had blank values for `region`, `province`, `city_mun`, `barangay`, `name`, and `ean` fields. The existing `barangay_attrs_cache` (built from the first non-NULL EA per barangay) failed when all source EAs were also blank. Fix adds a `barangay_max_hh_attrs_cache` — a per-barangay lookup that tracks the attributes of the EA with the **highest household count** in the final `eas` list. After the primary cache fill, any field still blank on a merged EA is filled from that highest-hhcount EA's attributes. The highest hhcount always prevails. This secondary fill is scoped exclusively to the `MERGED_OUTPUT` layer (`from_merge=True`). Changes in [algorithm.py](algorithm.py) at Lines ~4861–4875 (`barangay_max_hh_attrs_cache` build) and ~4983–5006 (secondary fill).
+
+
 ## [Unreleased] - 2026-07-02
 
 ### Changed

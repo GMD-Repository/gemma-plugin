@@ -4858,6 +4858,21 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             if _cache:
                 barangay_attrs_cache[_bar] = _cache
 
+        # Build per-barangay highest-hhcount EA attribute cache for merged EA field fill-back.
+        # When a merged EA still has blank geographic fields (region, province, city_mun,
+        # barangay, name, etc.) after the primary barangay_attrs_cache fill, attributes from
+        # the EA in the same barangay with the highest household count are used.
+        # This applies ONLY to the Merged EAs output layer. The highest hhcount always prevails.
+        barangay_max_hh_attrs_cache = {}
+        for _ea in eas:
+            _bar = str(_ea.get('parent_barangay', ''))
+            _hh = _ea.get('hh_count', 0)
+            if _bar not in barangay_max_hh_attrs_cache or _hh > barangay_max_hh_attrs_cache[_bar]['hh']:
+                barangay_max_hh_attrs_cache[_bar] = {
+                    'hh': _hh,
+                    'attributes': _ea.get('attributes', [])
+                }
+
         bldg_out_fields = QgsFields()
         if extracted_buildings_sink is not None:
             bldg_out_fields = QgsFields(building_source.fields())
@@ -4965,6 +4980,30 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                     )
                     if _is_null and _f.name().lower() in _bar_cache:
                         out_feat.setAttribute(_fidx, _bar_cache[_f.name().lower()])
+
+                # Secondary fallback (Merged EAs output layer only): fill any still-blank
+                # geographic fields from the EA in the same barangay with the highest
+                # household count. The highest hhcount always prevails.
+                _max_hh_entry = barangay_max_hh_attrs_cache.get(_bar_key, {})
+                if _max_hh_entry:
+                    _max_hh_attrs = _max_hh_entry.get('attributes', [])
+                    for _fidx, _f in enumerate(out_fields):
+                        _cur = out_feat.attribute(_fidx)
+                        _is_null = (
+                            _cur is None
+                            or (isinstance(_cur, QVariant) and _cur.isNull())
+                            or str(_cur).strip() == ''
+                        )
+                        if _is_null:
+                            _si = next(
+                                (ii for ii in range(_src_fields_cache.count())
+                                 if _src_fields_cache.at(ii).name().lower() == _f.name().lower()),
+                                -1
+                            )
+                            if _si != -1 and _si < len(_max_hh_attrs):
+                                _max_val = _max_hh_attrs[_si]
+                                if _max_val is not None and not (isinstance(_max_val, QVariant) and _max_val.isNull()) and str(_max_val).strip() != '':
+                                    out_feat.setAttribute(_fidx, _max_val)
 
             final_pop = ea['original_hhcount'] if is_unchanged_retain else ea['hh_count']
 
