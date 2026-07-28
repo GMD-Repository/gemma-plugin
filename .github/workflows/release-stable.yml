@@ -153,7 +153,7 @@ jobs:
                   <!-- What's New -->
                   <div class="box">
                     <div class="box-title">What's New</div>
-                    <div style="white-space: pre-wrap; font-size: 14px; margin-top: 10px;">${{ steps.release.outputs.release_body }}</div>
+                    <div style="font-size: 14px; margin-top: 10px;">${{ steps.release.outputs.release_body_html || steps.release.outputs.release_body }}</div>
                   </div>
 
                   <!-- Release Details -->
@@ -170,7 +170,7 @@ jobs:
                     <div class="box-title">Plugin Updates &amp; Installation</div>
                     
                     <div class="text" style="margin-bottom: 10px;">
-                      <strong>Existing QGIS Setup:</strong> If you already added the GEMMA repository in QGIS, QGIS will automatically notify you of this new release. Open QGIS and go to <em>Plugins → Manage and Install Plugins → Upgrade All</em>.
+                      <strong>Existing QGIS Setup:</strong> If you already added the GEMMA repository in QGIS, QGIS will automatically notify you of this new release. Open QGIS and go to <em>Plugins → Manage and Install Plugins → GEMMA → Upgrade Plugin</em>.
                     </div>
 
                     <div class="text" style="margin-bottom: 12px;">
