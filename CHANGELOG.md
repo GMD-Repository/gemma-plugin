@@ -5,6 +5,16 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.14] - 2026-07-28
+
+### Added
+- Added cascading PSGC LGU filter widgets for improved layer selection in QGIS processing tools ([@psacjperez](https://github.com/psacjperez))
+- Implemented QML style management and auto-detection for QField packaging ([@velascojasper0](https://github.com/velascojasper0))
+
+### Changed
+- Enhanced metadata algorithm for better data handling in LGU layers ([@psacjperez](https://github.com/psacjperez))
+- Improved QML style management utility for seamless integration with QField ([@velascojasper0](https://github.com/velascojasper0))
+
 ## [1.0.13] - 2026-07-28
 
 ### Added
