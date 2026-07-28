@@ -71,21 +71,25 @@ def _clean_line(line: str, author_login: str | None = None) -> str:
 
 def _is_noise(line: str) -> bool:
     """Check if a change line is noise that should be filtered out."""
-    if not line or len(line) < 5:
+    if not line or len(line.strip()) < 5:
         return True
     checks = [
         (r"^Merge (branch|pull request)", re.IGNORECASE),
         (r"^(Bugfix|Feature|Hotfix)/", re.IGNORECASE),
-        (r"^release v\d+", re.IGNORECASE),
+        (r"^release\s+(v?\d+|stable|preview)", re.IGNORECASE),
         (r"^update changelog", re.IGNORECASE),
-        (r"^(chore|ci|bump|wip)\s*[:(]", re.IGNORECASE),
+        (r"^update metadata and release data", re.IGNORECASE),
+        (r"^update release-(stable|preview)", re.IGNORECASE),
+        (r"^(chore|ci|bump|wip|build)\s*[:(]", re.IGNORECASE),
         (r"^merge\s", re.IGNORECASE),
         (r"beta channel", re.IGNORECASE),
         (r"github-actions", re.IGNORECASE),
         (r"\[bot\]", re.IGNORECASE),
+        (r"\[skip ci\]", re.IGNORECASE),
+        (r"skip ci", re.IGNORECASE),
     ]
     for pattern, flags in checks:
-        if re.search(pattern, line, flags):
+        if re.search(pattern, line.strip(), flags):
             return True
     return False
 
@@ -134,12 +138,11 @@ def collect_changes(
     # Source A: PR titles from auto-generated release notes
     try:
         notes_body = generate_release_notes(owner, repo, tag, result.previous_tag, token)
-        pr_lines = [
-            _clean_line(line)
-            for line in notes_body.split("\n")
-            if line.startswith("* ")
-        ]
-        pr_lines = [line for line in pr_lines if not _is_noise(line)]
+        for line in notes_body.split("\n"):
+            if line.startswith("* "):
+                raw_pr = line[2:].strip()
+                if not _is_noise(raw_pr):
+                    pr_lines.append(_clean_line(line))
         result.pr_count = len(pr_lines)
         logger.info("PR lines collected: %d", result.pr_count)
     except Exception as e:
@@ -150,10 +153,13 @@ def collect_changes(
         try:
             commits = compare_commits(owner, repo, result.previous_tag, "HEAD", token)
             for c in commits:
-                msg = c["commit"]["message"].split("\n")[0]
-                author_login = c.get("author", {}).get("login") if c.get("author") else None
-                cleaned = _clean_line(msg, author_login=author_login)
-                if not _is_noise(cleaned):
+                msg = c["commit"]["message"].split("\n")[0].strip()
+                author_login = (c.get("author") or {}).get("login") or ""
+                # Skip automated bot commits
+                if "bot" in author_login.lower() or "github-actions" in author_login.lower():
+                    continue
+                if not _is_noise(msg):
+                    cleaned = _clean_line(msg, author_login=author_login if author_login else None)
                     commit_lines.append(cleaned)
             result.commit_count = len(commit_lines)
             logger.info("Commit lines collected: %d", result.commit_count)
