@@ -28,28 +28,37 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────
+      # ── 1. Generate Gemma Bot Token ──────────────────────────────────
+      - name: Generate Gemma Bot Token
+        id: generate-token
+        if: ${{ secrets.BOT_APP_ID != '' && secrets.BOT_PRIVATE_KEY != '' }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+
+      # ── 2. Checkout ──────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ steps.generate-token.outputs.token || secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      # ── 2. Setup Python ──────────────────────────────────────────────
+      # ── 3. Setup Python ──────────────────────────────────────────────
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # ── 3. Install dependencies ──────────────────────────────────────
+      # ── 4. Install dependencies ──────────────────────────────────────
       - name: Install dependencies
         run: pip install -r scripts/requirements.txt
 
-      # ── 4. Run release pipeline ──────────────────────────────────────
+      # ── 5. Run release pipeline ──────────────────────────────────────
       - name: Run release pipeline
         id: release
         env:
-          GITHUB_TOKEN: ${{ secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.generate-token.outputs.token || secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
           AI_TOKEN: ${{ secrets.AI_TOKEN }}
         run: |
           python scripts/release/release_pipeline.py \
