@@ -47,6 +47,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.utils.files import set_github_output, append_step_summary
 from scripts.utils.github import tag_exists
+from scripts.utils.changelog import format_highlights_html
 from scripts.release.update_metadata import resolve_version, update_metadata_changelog
 from scripts.release.collect_changes import collect_changes
 from scripts.release.generate_changelog import generate_changelog
@@ -260,6 +261,7 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
     # Export release body for email notification step
     bullet_list = "\n".join(f"- {h}" for h in changelog.highlights)
     set_github_output("release_body", bullet_list)
+    set_github_output("release_body_html", format_highlights_html(changelog.highlights))
 
     # ── Step 12: Job summary ──────────────────────────────────────────────
     logger.info("═══ Step 12: Write job summary ═══")
