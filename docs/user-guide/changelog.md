@@ -2,6 +2,19 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.14
+<time>Jul 28, 2026</time>
+
+### ✨ New Features
+- Added cascading PSGC LGU filter widgets for improved layer selection in QGIS processing tools ([@psacjperez](https://github.com/psacjperez))
+- Implemented QML style management and auto-detection for QField packaging ([@velascojasper0](https://github.com/velascojasper0))
+
+### ⚡ Improvements & Fixes
+- Enhanced metadata algorithm for better data handling in LGU layers ([@psacjperez](https://github.com/psacjperez))
+- Improved QML style management utility for seamless integration with QField ([@velascojasper0](https://github.com/velascojasper0))
+
+<Contributors :contributors="['kentemman-gmd', 'velascojasper0', 'Jasper Velasco', 'psacjperez']" />
+
 ## 1.0.13
 <time>Jul 28, 2026</time>
 
