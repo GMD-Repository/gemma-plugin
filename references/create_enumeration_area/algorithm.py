@@ -4930,18 +4930,50 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 if _ea_id not in delineation_candidate_ids and _ea_id not in merge_candidate_ids:
                     is_unchanged_retain = True
             
-            # Clean slivers from all EAs, and remove holes from newly created EAs
+            # Clean slivers from all EAs, and remove holes from newly created EAs.
+            # Keep a pre-clean copy so we can fall back if the cleaner eliminates the polygon.
+            geom_pre_clean = QgsGeometry(geom)
             geom = clean_and_remove_holes(geom, remove_holes=(not is_unchanged_retain))
-            
+
+            # Guard: clean_and_remove_holes() returns QgsGeometry() when the polygon area is
+            # below the sliver threshold.  For merged EAs this would produce a feature with a
+            # null extent ("Cannot zoom to selected feature(s): No extent could be determined")
+            # and blank attribute fields.  Fall back to the pre-clean geometry so the merged
+            # EA is still written with a valid extent.  For other EA types, skip with a warning.
+            if geom.isEmpty():
+                if ea.get('from_merge', False):
+                    feedback.pushWarning(
+                        f"[Output] Merged EA (code={ea.get('original_code', '?')}, "
+                        f"pop={ea.get('hh_count', '?')}) was eliminated as a sliver during "
+                        f"hole/sliver cleanup — using pre-clean geometry as fallback."
+                    )
+                    geom = geom_pre_clean
+                else:
+                    feedback.pushWarning(
+                        f"[Output] EA (code={ea.get('original_code', '?')}, "
+                        f"pop={ea.get('hh_count', '?')}) has empty geometry after "
+                        f"hole/sliver cleanup — skipping feature."
+                    )
+                    continue
+
             # Simplify geometry with a tiny tolerance to remove redundant/collinear vertices
             simp_tolerance = 1e-7 if target_crs.isGeographic() else 0.01
             geom = geom.simplify(simp_tolerance)
             geom = geom.makeValid()
-            
+
+            # Final empty-geometry guard: simplify or makeValid may still produce an empty result
+            if geom.isEmpty():
+                feedback.pushWarning(
+                    f"[Output] EA (code={ea.get('original_code', '?')}, "
+                    f"pop={ea.get('hh_count', '?')}) has empty geometry after simplify/makeValid "
+                    f"— skipping feature."
+                )
+                continue
+
             _ea_id = ea.get('original_id')
             if _ea_id in delineation_candidate_ids:
                 final_geom_by_candidate.setdefault(_ea_id, []).append((QgsGeometry(geom), ea))
-            
+
             out_feat = QgsFeature(out_fields)
             out_feat.setGeometry(geom)
             
