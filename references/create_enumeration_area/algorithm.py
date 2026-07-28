@@ -3494,12 +3494,45 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         for feat in all_ea_features:
             temp_index.insertFeature(feat)
             ea_by_id[feat.id()] = feat
-            
+
+        # Helper: resolve a clean 6-digit EAN string from a feature.
+        # Uses the ean field as primary; falls back to the last 6 digits of the
+        # geocode field when ean is blank, 'NULL', 'None', or non-numeric.
+        _ea_fields_ref = previous_ea_source.fields()
+        _geo_field_idx = next(
+            (ii for ii in range(_ea_fields_ref.count())
+             if _ea_fields_ref.at(ii).name().lower() == "geocode"),
+            -1
+        )
+
+        def _resolve_ean_str(feat):
+            _v = feat.attribute(ea_id_field)
+            # Guard: null QVariant serialises to 'NULL' or 'None' in PyQt5
+            if _v is None or (isinstance(_v, QVariant) and _v.isNull()):
+                _s = ""
+            else:
+                _s = str(_v).strip()
+                if _s.endswith(".0"):
+                    _s = _s[:-2]
+                # Reject placeholder strings that are not purely numeric
+                if not _s.lstrip("-").isdigit():
+                    _s = ""
+            if not _s and _geo_field_idx != -1:
+                # Fall back: last 6 digits of the geocode field
+                _gv = feat.attribute(_geo_field_idx)
+                if _gv is not None and not (isinstance(_gv, QVariant) and _gv.isNull()):
+                    _gs = str(_gv).strip()
+                    if _gs.endswith(".0"):
+                        _gs = _gs[:-2]
+                    _digits = "".join(c for c in _gs if c.isdigit())
+                    if len(_digits) >= 6:
+                        _s = _digits[-6:]
+                    elif _digits:
+                        _s = _digits.zfill(6)
+            return _s
+
         for feat in all_ea_features:
-            _ean = feat.attribute(ea_id_field)
-            _ean_str = str(_ean).strip() if _ean is not None else ""
-            if _ean_str.endswith(".0"):
-                _ean_str = _ean_str[:-2]
+            _ean_str = _resolve_ean_str(feat)
             
             _orig_hhcount = 0.0
             if prev_ea_pop_idx != -1:
@@ -3575,10 +3608,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 _orig_hhcount = 0.0
 
             # Bypassing building matches for non-candidates EAs
-            _ean = feat.attribute(ea_id_field)
-            _ean_str = str(_ean).strip() if _ean is not None else ""
-            if _ean_str.endswith(".0"):
-                _ean_str = _ean_str[:-2]
+            _ean_str = _resolve_ean_str(feat)
             is_candidate = (feat.id() in delineation_candidate_ids or feat.id() in merge_candidate_ids)
 
             if not is_candidate:
@@ -4467,14 +4497,42 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                     else:
                         suffix = orig_code_str
                         
-                    # Clean suffix and pad with zeros from the left to ensure exactly 3 digits
-                    orig_last3 = suffix.zfill(3)
-                    if len(orig_last3) > 3:
-                        orig_last3 = orig_last3[:3] # FIX: take first 3 digits of mother EA suffix
+                    # Extract only digit characters from the suffix so non-numeric placeholders
+                    # (e.g. "NUL001") never bleed into the EA code.  Pad to 3 digits; if no
+                    # digits are present at all, fall back to "000".
+                    suffix_digits = "".join(c for c in suffix if c.isdigit())
+                    if len(suffix_digits) >= 3:
+                        orig_last3 = suffix_digits[:3]
+                    elif len(suffix_digits) > 0:
+                        orig_last3 = suffix_digits.zfill(3)
+                    else:
+                        orig_last3 = "000"
                         
-                # Determine sequence number suffix YYY
-                # If it is a newly generated/modified EA, number starting from max_ea_number + 1
-                if ea.get('is_new', False):
+                # Determine the new EA code.
+                if ea.get('from_merge', False):
+                    # Merged EAs retain the original code of the EA with the highest
+                    # household count before merging.  That code is already stored in
+                    # ea['original_code'] (selected at merge time from the dominant EA).
+                    orig_code_str = str(ea['original_code']).strip() if ea['original_code'] is not None else ""
+                    if orig_code_str.endswith(".0"):
+                        orig_code_str = orig_code_str[:-2]
+                    # If original_code is blank or non-numeric (e.g. was a NULL placeholder),
+                    # fall back to the last 6 digits of the geocode stored in attributes.
+                    if not orig_code_str or not orig_code_str.lstrip("-").isdigit():
+                        _attrs = ea.get('attributes', [])
+                        _gv = _attrs[_geo_field_idx] if _geo_field_idx != -1 and _geo_field_idx < len(_attrs) else None
+                        if _gv is not None and not (isinstance(_gv, QVariant) and _gv.isNull()):
+                            _gs = str(_gv).strip()
+                            if _gs.endswith(".0"):
+                                _gs = _gs[:-2]
+                            _digits = "".join(c for c in _gs if c.isdigit())
+                            if len(_digits) >= 6:
+                                orig_code_str = _digits[-6:]
+                            elif _digits:
+                                orig_code_str = _digits.zfill(6)
+                    ea['new_ea_code'] = orig_code_str
+                elif ea.get('is_new', False):
+                    # Newly delineated (split) EAs use the XXXYYY sequence number.
                     seq_num = max_ea_number.get(bar, 0) + 1 + new_ea_counter
                     seq_str = f"{seq_num:03d}"
                     new_ea_counter += 1
@@ -4486,7 +4544,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         # XXXYYY mother-child concept (first 3 digits of mother EA + last 3 digits next sequence suffix)
                         ea['new_ea_code'] = orig_last3 + seq_str
                 else:
-                    # If it is unchanged, retain the original EA code
+                    # Unchanged EAs retain their original EA code.
                     orig_code_str = str(ea['original_code']).strip() if ea['original_code'] is not None else ""
                     if orig_code_str.endswith(".0"):
                         orig_code_str = orig_code_str[:-2]
@@ -4774,6 +4832,32 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
 
         final_geom_by_candidate = {}
 
+        # Build a per-barangay attribute cache from the first non-NULL EA in each group.
+        # Used to fill geographic fields (region, province, city_mun, barangay, name, etc.)
+        # that may be NULL on merged EA output features because the dominant EA's source
+        # attributes were blank, or because a case-mismatch prevented correct field resolution.
+        _src_fields_cache = previous_ea_source.fields()
+        barangay_attrs_cache = {}
+        for _ea in eas:
+            _bar = str(_ea.get('parent_barangay', ''))
+            if _bar in barangay_attrs_cache:
+                continue
+            _src_attrs = _ea.get('attributes', [])
+            _cache = {}
+            for _f in out_fields:
+                _fname_lower = _f.name().lower()
+                _si = next(
+                    (ii for ii in range(_src_fields_cache.count())
+                     if _src_fields_cache.at(ii).name().lower() == _fname_lower),
+                    -1
+                )
+                if _si != -1 and _si < len(_src_attrs):
+                    _val = _src_attrs[_si]
+                    if _val is not None and not (isinstance(_val, QVariant) and _val.isNull()) and str(_val).strip() != '':
+                        _cache[_fname_lower] = _val
+            if _cache:
+                barangay_attrs_cache[_bar] = _cache
+
         bldg_out_fields = QgsFields()
         if extracted_buildings_sink is not None:
             bldg_out_fields = QgsFields(building_source.fields())
@@ -4847,19 +4931,41 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             out_feat.setGeometry(geom)
             
             # Use name-based field mapping to correctly copy all EA input layer field values.
-            # This is robust to field-order differences between ea['attributes'] (which was
-            # captured from previous_ea_source.fields() positionally) and out_fields.
+            # Case-insensitive lookup is used so that source fields named e.g. "Region" are
+            # correctly matched to out_fields entry "region" (QgsFields.indexOf is case-sensitive).
             src_fields = previous_ea_source.fields()
             src_attrs = ea['attributes']
             mapped_attrs = []
             for f in out_fields:
-                src_idx = src_fields.indexOf(f.name())
+                src_idx = next(
+                    (ii for ii in range(src_fields.count())
+                     if src_fields.at(ii).name().lower() == f.name().lower()),
+                    -1
+                )
                 if src_idx != -1 and src_idx < len(src_attrs):
                     mapped_attrs.append(src_attrs[src_idx])
                 else:
                     mapped_attrs.append(None)
             out_feat.setAttributes(mapped_attrs)
-            
+
+            # For merged EAs, fill any geographic fields that are still NULL/blank
+            # from the per-barangay attribute cache.  All EAs in the same barangay share
+            # the same region, province, city_mun, barangay and name values, so this is safe.
+            # Fields that are intentionally overwritten later (hhcount, bldg_count, etc.)
+            # will be set correctly by the setAttribute calls below.
+            if ea.get('from_merge', False):
+                _bar_key = str(ea.get('parent_barangay', ''))
+                _bar_cache = barangay_attrs_cache.get(_bar_key, {})
+                for _fidx, _f in enumerate(out_fields):
+                    _cur = out_feat.attribute(_fidx)
+                    _is_null = (
+                        _cur is None
+                        or (isinstance(_cur, QVariant) and _cur.isNull())
+                        or str(_cur).strip() == ''
+                    )
+                    if _is_null and _f.name().lower() in _bar_cache:
+                        out_feat.setAttribute(_fidx, _bar_cache[_f.name().lower()])
+
             final_pop = ea['original_hhcount'] if is_unchanged_retain else ea['hh_count']
 
             pop_idx = out_fields.indexOf(output_hh_field)
