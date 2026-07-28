@@ -4321,7 +4321,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 bar = ea['parent_barangay']
 
                 # Pass 1: touching neighbour in same barangay whose combined count is strictly
-                # within (min_household, max_household) — i.e. > 100 and < 300
+                # within (min_household, max_household] — i.e. > 100 and <= 300
                 best_j = -1
                 best_score = float('inf')
                 for j, nb in enumerate(eas):
@@ -4329,56 +4329,36 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         continue
                     if nb['parent_barangay'] != bar:
                         continue
-                    if is_delineation_candidate(nb):
+                    if is_delineation_candidate(nb) or nb.get('original_id') in delineation_candidate_ids:
                         continue
                     if nb.get('is_special_ea', False) and not is_merge_candidate(nb):
                         continue
                     if ea['geom'].touches(nb['geom']) or ea['geom'].intersects(nb['geom']):
                         combined = ea['hh_count'] + nb['hh_count']
-                        if min_household < combined < max_household:  # strictly > 100 and < 300
+                        if min_household < combined <= max_household:  # strictly > 100 and <= 300
                             score = abs(combined - (max_household - 1))
                             if score < best_score:
                                 best_score = score
                                 best_j = j
 
-                # Pass 2: any touching neighbour in same barangay (must be under max)
+                # Pass 2: any touching contiguous neighbour in same barangay (must be <= max_household)
                 if best_j == -1:
                     for j, nb in enumerate(eas):
                         if j == i or j in removed:
                             continue
                         if nb['parent_barangay'] != bar:
                             continue
-                        if is_delineation_candidate(nb):
+                        if is_delineation_candidate(nb) or nb.get('original_id') in delineation_candidate_ids:
                             continue
                         if nb.get('is_special_ea', False) and not is_merge_candidate(nb):
                             continue
                         if ea['geom'].touches(nb['geom']) or ea['geom'].intersects(nb['geom']):
                             combined = ea['hh_count'] + nb['hh_count']
-                            if combined < max_household:
+                            if combined <= max_household:
                                 score = abs(combined - (max_household - 1))
                                 if score < best_score:
                                     best_score = score
                                     best_j = j
-
-                # Pass 3: nearest centroid in same barangay (must be under max)
-                if best_j == -1:
-                    up_centroid = ea['geom'].centroid().asPoint()
-                    best_dist = float('inf')
-                    for j, nb in enumerate(eas):
-                        if j == i or j in removed:
-                            continue
-                        if nb['parent_barangay'] != bar:
-                            continue
-                        if is_delineation_candidate(nb):
-                            continue
-                        if nb.get('is_special_ea', False) and not is_merge_candidate(nb):
-                            continue
-                        combined = ea['hh_count'] + nb['hh_count']
-                        if combined < max_household:
-                            dist = up_centroid.distance(nb['geom'].centroid().asPoint())
-                            if dist < best_dist:
-                                best_dist = dist
-                                best_j = j
 
                 if best_j != -1:
                     nb = eas[best_j]
@@ -5120,17 +5100,28 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
 #            if not sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
 #                feedback.reportError(f"Failed to add EA {i} to sink.")
 
-            # Add to delineated sink if it was split, or if it is a Special EA (Gap/Overlap)
-            if ea.get('from_split', False) or ea.get('is_special_ea', False):
-                if delineated_sink is not None:
-                    if not delineated_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
-                        feedback.reportError(f"Failed to add EA {i} to delineated sink.")
-            
-            # Add to merged sink if it was merged and not split
-            if ea.get('from_merge', False) and not ea.get('from_split', False):
-                if merged_sink is not None:
-                    if not merged_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
-                        feedback.reportError(f"Failed to add EA {i} to merged sink.")
+            # Check if EA feature is blank (empty geometry or missing geocode/ean identifiers)
+            _gc_val = out_feat.attribute(out_fields.indexOf("geocode")) if out_fields.indexOf("geocode") != -1 else None
+            _ean_val = out_feat.attribute(out_fields.indexOf(ea_id_field)) if out_fields.indexOf(ea_id_field) != -1 else None
+            _is_blank_feat = out_feat.geometry().isEmpty() or (
+                (_gc_val is None or (isinstance(_gc_val, QVariant) and _gc_val.isNull()) or str(_gc_val).strip() in ('', 'NULL', 'None'))
+                and (_ean_val is None or (isinstance(_ean_val, QVariant) and _ean_val.isNull()) or str(_ean_val).strip() in ('', 'NULL', 'None'))
+            )
+
+            if _is_blank_feat:
+                feedback.pushWarning(f"[Output] Skipped writing blank EA feature to output layer (code={ea.get('original_code', '?')}).")
+            else:
+                # Add to delineated sink if it was split, or if it is a Special EA (Gap/Overlap)
+                if ea.get('from_split', False) or ea.get('is_special_ea', False):
+                    if delineated_sink is not None:
+                        if not delineated_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
+                            feedback.reportError(f"Failed to add EA {i} to delineated sink.")
+                
+                # Add to merged sink if it was merged and not split
+                if ea.get('from_merge', False) and not ea.get('from_split', False):
+                    if merged_sink is not None:
+                        if not merged_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
+                            feedback.reportError(f"Failed to add EA {i} to merged sink.")
 
             # Add matched buildings to extracted buildings sink
             if extracted_buildings_sink is not None:
