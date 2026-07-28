@@ -2,6 +2,21 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.11
+<time>Jul 28, 2026</time>
+
+### ✨ New Features
+- Added comprehensive user guide documentation for GEMMA plugin tools and initialization
+- Added Contributors component to display repository contributors in documentation
+- Added custom branding styles for VitePress documentation
+
+### ⚡ Improvements & Fixes
+- Enhanced and updated changelogs for better clarity
+- Implemented documentation generation system for streamlined updates
+- Improved automated release creation and documentation update scripts for the GEMMA pipeline
+
+<Contributors :contributors="['kentemman-gmd']" />
+
 ## 1.0.10
 <time>Jul 27, 2026</time>
 

@@ -1,6 +1,39 @@
 {
-  "latest": "1.0.10",
+  "latest": "1.0.11",
   "releases": [
+    {
+      "version": "1.0.11",
+      "date": "2026-07-28",
+      "tag": "v1.0.11",
+      "prerelease": false,
+      "contributors": [
+        "kentemman-gmd"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.11/gemma-plugin-v1.0.11.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.11",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "Added comprehensive user guide documentation for GEMMA plugin tools and initialization",
+          "Added Contributors component to display repository contributors in documentation",
+          "Added custom branding styles for VitePress documentation"
+        ],
+        "improvements": [
+          "Enhanced and updated changelogs for better clarity",
+          "Implemented documentation generation system for streamlined updates",
+          "Improved automated release creation and documentation update scripts for the GEMMA pipeline"
+        ],
+        "changes": [],
+        "fixes": [],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
     {
       "version": "1.0.10",
       "date": "2026-07-27",
