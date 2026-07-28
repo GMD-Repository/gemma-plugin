@@ -47,10 +47,12 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.utils.files import set_github_output, append_step_summary
 from scripts.utils.github import tag_exists
+from scripts.utils.changelog import format_highlights_html
 from scripts.release.update_metadata import resolve_version, update_metadata_changelog
 from scripts.release.collect_changes import collect_changes
 from scripts.release.generate_changelog import generate_changelog
 from scripts.release.update_docs import (
+    sync_docs_icons,
     update_changelogs,
     update_latest_json,
     update_latest_beta_json,
@@ -200,8 +202,9 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
     logger.info("═══ Step 5: Update metadata.txt ═══")
     update_metadata_changelog(METADATA_PATH, version, changelog.highlights)
 
-    # ── Step 6: Update docs + release JSON ────────────────────────────────
-    logger.info("═══ Step 6: Update docs and release JSON ═══")
+    # ── Step 6: Update docs + release JSON + sync icons ───────────────────
+    logger.info("═══ Step 6: Update docs, release JSON, and sync web icons ═══")
+    sync_docs_icons()
     update_changelogs(version, today, changelog.changes)
     update_latest_json(version, tag, today, owner, repo)
     update_releases_json(version, tag, today, changelog.changes, owner=owner, repo=repo)
@@ -258,6 +261,7 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
     # Export release body for email notification step
     bullet_list = "\n".join(f"- {h}" for h in changelog.highlights)
     set_github_output("release_body", bullet_list)
+    set_github_output("release_body_html", format_highlights_html(changelog.highlights))
 
     # ── Step 12: Job summary ──────────────────────────────────────────────
     logger.info("═══ Step 12: Write job summary ═══")

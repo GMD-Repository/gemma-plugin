@@ -49,9 +49,9 @@ Installing via custom repository allows QGIS to automatically detect and notify 
 
 After installation, verify that everything is working:
 
-1. Check the **GeMa** menu in the menu bar — you should see submenus for **Tools** and **QField**.
+1. Check the **Gemma** menu in the menu bar — you should see submenus for **Tools** and **QField**.
 2. Open the **Processing Toolbox** (`Ctrl+Alt+T`) and look for the **GMD Pipeline** group — you should see all the tools listed there.
-3. The **GeMa Toolbar** should display icons for **Package for QField** and **Create Enumeration Areas**.
+3. The **Gemma Toolbar** should display icons for **Package for QField** and **Create Enumeration Areas**.
 
 ## Plugin Structure
 
@@ -68,19 +68,20 @@ These tools are accessible from the **QGIS Processing Toolbox** under the **GMD 
 | [Export Preliminary Polygons](/tools/export-preliminary-polygons) | Merge and export resolved boundary layers |
 | [Update LGU PSGC Metadata](/tools/update-metadata) | Auto-populate PSGC metadata fields |
 | [Fix LGU CRS](/tools/fix-lgu-crs) | Batch-correct local grid coordinates (~0 to ~100,000) to EPSG:4326 |
+| [Join Barangay Attributes](/tools/join-barangay-attributes) | Match vector attributes with official PSGC tables via fuzzy matching and Roman numeral normalization |
 
-### GeMa Menu — Tools
+### Gemma Menu — Tools
 
 | Tool | Access |
 |------|--------|
-| [Geometry Repair Toolkit](/tools/geometry-repair-toolkit) | GeMa → Tools → Geometry Repair Toolkit |
+| [Geometry Repair Toolkit](/tools/geometry-repair-toolkit) | Gemma → Tools → Geometry Repair Toolkit |
 
-### GeMa Menu — QField
+### Gemma Menu — QField
 
 | Tool | Access | Shortcut |
 |------|--------|----------|
-| [Package for QField](/tools/package-qfield) | GeMa → QField → Package for QField | `Ctrl+Alt+Q` |
-| [Create Enumeration Areas](/tools/create-enumeration-areas) | GeMa → QField → Create Enumeration Areas | — |
+| [Package for QField](/tools/package-qfield) | Gemma → QField → Package for QField | `Ctrl+Alt+Q` |
+| [Create Enumeration Areas](/tools/create-enumeration-areas) | Gemma → QField → Create Enumeration Areas | — |
 
 ## Updating the Plugin
 

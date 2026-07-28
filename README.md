@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="icons/gemma.png" alt="GEMMA Logo" width="120">
+  <img src="icons/gemma.svg" alt="GEMMA Logo" width="120">
 </p>
 
 <h1 align="center">GEMMA</h1>

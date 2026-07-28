@@ -1,6 +1,292 @@
 {
-  "latest": "1.0.4",
+  "latest": "1.0.13",
   "releases": [
+    {
+      "version": "1.0.13",
+      "date": "2026-07-28",
+      "tag": "v1.0.13",
+      "prerelease": false,
+      "contributors": [
+        "kentemman-gmd"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.13/gemma-plugin-v1.0.13.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.13",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "Added automated GitHub Actions workflows for both preview and stable plugin releases ([@kentemman-gmd](https://github.com/kentemman-gmd))",
+          "Implemented automated release pipeline with email notifications and changelog generation ([@kentemman-gmd](https://github.com/kentemman-gmd))"
+        ],
+        "improvements": [
+          "Improved plugin unload logic by safely removing UI elements and handling processing provider cleanup ([@kentemman-gmd](https://github.com/kentemman-gmd))",
+          "Simplified unload logic and cleanup processing provider removal in gmd_pipeline.py ([@kentemman-gmd](https://github.com/kentemman-gmd))"
+        ],
+        "changes": [],
+        "fixes": [
+          "Added safe dialog closure and robust processing provider removal to prevent QGIS crashes on plugin unload ([@kentemman-gmd](https://github.com/kentemman-gmd))"
+        ],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
+    {
+      "version": "1.0.12",
+      "date": "2026-07-28",
+      "tag": "v1.0.12",
+      "prerelease": false,
+      "contributors": [
+        "kentemman-gmd"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.12/gemma-plugin-v1.0.12.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.12",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "Added a script to collect and clean GitHub PRs and commits for automated changelog generation ([@kentemman-gmd](https://github.com/kentemman-gmd))",
+          "Added a system prompt for automated release notes generation ([@kentemman-gmd](https://github.com/kentemman-gmd))"
+        ],
+        "improvements": [],
+        "changes": [],
+        "fixes": [],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
+    {
+      "version": "1.0.11",
+      "date": "2026-07-28",
+      "tag": "v1.0.11",
+      "prerelease": false,
+      "contributors": [
+        "kentemman-gmd"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.11/gemma-plugin-v1.0.11.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.11",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "Added comprehensive user guide documentation for GEMMA plugin tools and initialization",
+          "Added Contributors component to display repository contributors in documentation",
+          "Added custom branding styles for VitePress documentation"
+        ],
+        "improvements": [
+          "Enhanced and updated changelogs for better clarity",
+          "Implemented documentation generation system for streamlined updates",
+          "Improved automated release creation and documentation update scripts for the GEMMA pipeline"
+        ],
+        "changes": [],
+        "fixes": [],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
+    {
+      "version": "1.0.10",
+      "date": "2026-07-27",
+      "tag": "v1.0.10",
+      "prerelease": false,
+      "contributors": [
+        "kentemman-gmd",
+        "pacoleslaw"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.10/gemma-plugin-v1.0.10.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.10",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "Added a Getting Started guide to assist new users in utilizing the GEMMA Plugin"
+        ],
+        "improvements": [
+          "Updated beta channel files for preview versions r287 and r289 to ensure compatibility"
+        ],
+        "changes": [],
+        "fixes": [],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
+    {
+      "version": "1.0.9",
+      "date": "2026-07-27",
+      "tag": "v1.0.9",
+      "prerelease": false,
+      "contributors": [
+        "kentemman-gmd",
+        "pacoleslaw",
+        "velascojasper0"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.9/gemma-plugin-v1.0.9.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.9",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "Added GitHub Actions workflow to automate stable plugin releases and notifications"
+        ],
+        "improvements": [
+          "Updated beta channel files for preview version r283"
+        ],
+        "changes": [],
+        "fixes": [],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
+    {
+      "version": "1.0.8",
+      "date": "2026-07-27",
+      "tag": "v1.0.8",
+      "prerelease": false,
+      "contributors": [
+        "kentemman-gmd",
+        "pacoleslaw",
+        "velascojasper0"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.8/gemma-plugin-v1.0.8.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.8",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "Added GitHub Actions workflow for automating stable plugin releases and email notifications"
+        ],
+        "improvements": [
+          "Updated beta channel files for preview r276 and r279"
+        ],
+        "changes": [],
+        "fixes": [],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
+    {
+      "version": "1.0.7",
+      "date": "2026-07-27",
+      "tag": "v1.0.7",
+      "prerelease": false,
+      "contributors": [
+        "kentemman-gmd",
+        "pacoleslaw",
+        "velascojasper0"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.7/gemma-plugin-v1.0.7.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.7",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "Added automated release workflow for stable plugin builds with email notifications"
+        ],
+        "improvements": [
+          "Updated beta channel files for preview version r272"
+        ],
+        "changes": [],
+        "fixes": [],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
+    {
+      "version": "1.0.6",
+      "date": "2026-07-27",
+      "tag": "v1.0.6",
+      "prerelease": false,
+      "contributors": [
+        "kentemman-gmd",
+        "pacoleslaw",
+        "velascojasper0"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.6/gemma-plugin-v1.0.6.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.6",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "Added interactive TablePreviewWidgetWrapper for visualizing enumeration area delineation and merging"
+        ],
+        "improvements": [
+          "Updated PyQGIS processing scripts and tool icons for improved performance and usability",
+          "Updated user guide documentation for better clarity and guidance"
+        ],
+        "changes": [],
+        "fixes": [],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
+    {
+      "version": "1.0.5",
+      "date": "2026-07-27",
+      "tag": "v1.0.5",
+      "prerelease": false,
+      "contributors": [
+        "kentemman-gmd",
+        "velascojasper0"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.5/gemma-plugin-v1.0.5.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.5",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "Added new skills for enhanced functionality in GIS processing",
+          "Implemented EA delineation algorithm for improved boundary analysis",
+          "Added QGISRepositoryCard component for easy plugin repository URL copying"
+        ],
+        "improvements": [
+          "Rebranded submenu to Gemma and fixed QML style application in QField packaging",
+          "Improved automated documentation and release metadata generation pipeline",
+          "Updated beta channel files for previews r257, r260, and r262"
+        ],
+        "changes": [],
+        "fixes": [
+          "Removed emojis from README section headers for a cleaner presentation",
+          "Fixed issues by removing deprecated utility functions and unused configuration files"
+        ],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
     {
       "version": "1.0.4",
       "date": "2026-07-24",
