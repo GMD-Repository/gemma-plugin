@@ -1,11 +1,21 @@
 ---
 name: github-pr-generator
-description: Standard operating procedure and protocol for creating high-quality GitHub Pull Requests, feature branches, conventional commits, and formatting Markdown PR titles and descriptions with PR/issue numbers and author attributions. Always triggers automatically whenever asked to create a PR or submit repository changes.
+description: Standard operating procedure and protocol for creating high-quality GitHub Pull Requests, feature branches, conventional commits, and generating Markdown-formatted PR titles and descriptions for user copy-pasting into GitHub. Always triggers automatically whenever asked to create a PR or format repository changes for submission.
 ---
 
 # GitHub Pull Request Generator Skill
 
-This skill documents the mandatory end-to-end standard operating procedure for creating, structuring, formatting, and submitting GitHub Pull Requests for the GEMMA Plugin repository and related sub-packages.
+This skill documents the mandatory end-to-end standard operating procedure for preparing, structuring, formatting, and generating copy-pasteable Markdown Pull Requests for the GEMMA Plugin repository and related sub-packages.
+
+---
+
+## Core Policy: Copy-Paste Generation (No Auto-PR Submission)
+
+Do **NOT** attempt to automatically create or submit Pull Requests directly via API tools or CLI calls unless the user explicitly requests automatic submission.
+
+Instead, the agent must:
+1. Stage, commit, and push the local feature branch to `origin`.
+2. Generate and present the complete **PR Title** and **PR Description** inside clean, copy-pasteable GitHub-flavored Markdown code blocks so the user can paste them directly into GitHub.
 
 ---
 
@@ -16,7 +26,7 @@ graph TD
     A[Code Changes & Staging] --> B[Step 1: Create Feature Branch]
     B --> C[Step 2: Conventional Commit]
     C --> D[Step 3: Push Branch to Origin]
-    D --> E[Step 4: Generate Markdown PR Title & Body]
+    D --> E[Step 4: Output Copy-Pasteable Markdown PR Format]
 ```
 
 ---
@@ -68,14 +78,15 @@ git push -u origin fix/release-contributors-attribution
 
 ## Step 4: PR Markdown Output Standard
 
-When presenting the Pull Request to the user or generating PR documentation, output the **PR Title** and **PR Description** inside a formatted Markdown code block for easy copy-pasting into GitHub.
+Format the **PR Title** and **PR Description** inside separate Markdown code blocks for instant copy-pasting by the user.
 
 ### Mandatory PR Structure
 
-1. **Title:** Conventional Commit title string (e.g., `fix(release): extract release-specific contributors for VitePress changelogs`).
+1. **Title Code Block:** Conventional Commit title string (e.g., `fix(release): extract release-specific contributors for VitePress changelogs`).
 2. **Summary:** 1–3 sentence high-level overview of what the PR accomplishes.
 3. **Problem / Rationale:** Explanation of why the bug occurred or why the feature was needed.
 4. **Key Changes:** Grouped list of changes per component with file links (`[filename.py](file:///path/to/file)` or repo relative paths).
 5. **Issue & PR Attributions:** Include linked issue/PR numbers (e.g. `(#433)` or `([#91](https://github.com/owner/repo/pull/91))`) and author mentions (`(@username)`).
 6. **Verification:** Steps taken and empirical commands executed to verify the fix.
+
 
