@@ -68,7 +68,7 @@ Format the **PR Title** and **PR Description** inside separate Markdown code blo
 1. **Title Code Block:** Conventional Commit title string (e.g., `fix(release): extract release-specific contributors for VitePress changelogs`).
 2. **Summary:** 1–3 sentence high-level overview of what the PR accomplishes.
 3. **Problem / Rationale:** Explanation of why the bug occurred or why the feature was needed.
-4. **Key Changes:** Grouped list of changes per component with file links (`[filename.py](file:///path/to/file)` or repo relative paths).
+4. **Key Changes:** Grouped list of changes per component using repository relative file paths (e.g., `scripts/utils/changelog.py`).
 5. **Issue & PR Attributions:** Include linked issue/PR numbers (e.g. `(#433)` or `([#91](https://github.com/owner/repo/pull/91))`) and author mentions (`(@username)`).
 6. **Verification:** Steps taken and empirical commands executed to verify the fix.
 
