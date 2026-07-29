@@ -1,6 +1,6 @@
 ---
 name: github-pr-generator
-description: Standard operating procedure and protocol for creating high-quality GitHub Pull Requests, feature branches, conventional commits, formatting Markdown PR titles and descriptions with PR/issue numbers and author attributions, and generating direct GitHub PR links. Always triggers automatically whenever asked to create a PR or submit repository changes.
+description: Standard operating procedure and protocol for creating high-quality GitHub Pull Requests, feature branches, conventional commits, and formatting Markdown PR titles and descriptions with PR/issue numbers and author attributions. Always triggers automatically whenever asked to create a PR or submit repository changes.
 ---
 
 # GitHub Pull Request Generator Skill
@@ -17,7 +17,6 @@ graph TD
     B --> C[Step 2: Conventional Commit]
     C --> D[Step 3: Push Branch to Origin]
     D --> E[Step 4: Generate Markdown PR Title & Body]
-    E --> F[Step 5: Provide Direct GitHub PR URL]
 ```
 
 ---
@@ -80,15 +79,3 @@ When presenting the Pull Request to the user or generating PR documentation, out
 5. **Issue & PR Attributions:** Include linked issue/PR numbers (e.g. `(#433)` or `([#91](https://github.com/owner/repo/pull/91))`) and author mentions (`(@username)`).
 6. **Verification:** Steps taken and empirical commands executed to verify the fix.
 
----
-
-## Step 5: Direct GitHub PR Link Generation
-
-Construct a direct web link for the user to open and submit the PR on GitHub:
-
-```text
-https://github.com/{owner}/{repo}/compare/main...{branch_name}?expand=1&title={url_encoded_title}
-```
-
-Example:
-`https://github.com/GMD-Repository/gemma-plugin/compare/main...fix/release-contributors-attribution?expand=1`
