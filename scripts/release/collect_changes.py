@@ -34,12 +34,12 @@ class CollectedChanges:
 
 
 def _clean_line(line: str, author_login: str | None = None) -> str:
-    """Clean a single change line by removing noise and attaching author mention link.
+    """Clean a single change line by removing noise and attaching author mention link and PR/issue links.
 
     Strips:
     - Leading bullet markers (* )
     - Author attributions (by @user in https://...)
-    - Trailing URLs
+    - Trailing URLs (after extracting PR link)
     - Trailing ellipsis
     - Conventional commit prefixes (feat:, fix:, etc.)
     """
@@ -48,10 +48,22 @@ def _clean_line(line: str, author_login: str | None = None) -> str:
     if author_match and not author:
         author = author_match.group(1)
 
+    pr_num = None
+    pr_url = None
+    pr_match = re.search(r"https?://github\.com/([^/]+)/([^/]+)/(?:pull|issues)/(\d+)", line)
+    if pr_match:
+        pr_num = pr_match.group(3)
+        pr_url = pr_match.group(0)
+    else:
+        num_match = re.search(r"\(#(\d+)\)", line)
+        if num_match:
+            pr_num = num_match.group(1)
+
     cleaned = line.strip()
     cleaned = re.sub(r"^\*\s+", "", cleaned)
     cleaned = re.sub(r"\s+by @[\w-]+ in https?://\S+", "", cleaned)
     cleaned = re.sub(r"\s+in https?://\S+", "", cleaned)
+    cleaned = re.sub(r"\s+\(#\d+\)", "", cleaned)
     cleaned = re.sub(r"…$", "", cleaned)
     cleaned = re.sub(
         r"^(feat|fix|refactor|perf|docs|style|test|chore|build)(\([^)]*\))?[!:]?\s*",
@@ -65,6 +77,14 @@ def _clean_line(line: str, author_login: str | None = None) -> str:
         mention = f"([@{author}](https://github.com/{author}))"
         if mention not in cleaned:
             cleaned = f"{cleaned} {mention}"
+
+    if pr_num:
+        if pr_url:
+            pr_ref = f"([#{pr_num}]({pr_url}))"
+        else:
+            pr_ref = f"(#{pr_num})"
+        if pr_ref not in cleaned and f"#{pr_num}" not in cleaned:
+            cleaned = f"{cleaned} {pr_ref}"
 
     return cleaned
 
