@@ -1,6 +1,6 @@
 ---
 name: github-pr-generator
-description: Standard operating procedure and protocol for creating high-quality GitHub Pull Requests, feature branches, conventional commits, and generating Markdown-formatted PR titles and descriptions for user copy-pasting into GitHub. Always triggers automatically whenever asked to create a PR or format repository changes for submission.
+description: Standard operating procedure and protocol for conventional commits, pushing changes, and generating Markdown-formatted PR titles and descriptions with PR/issue numbers and author attributions for user copy-pasting into GitHub. Always triggers automatically whenever asked to create a PR or format repository changes for submission.
 ---
 
 # GitHub Pull Request Generator Skill
@@ -14,7 +14,7 @@ This skill documents the mandatory end-to-end standard operating procedure for p
 Do **NOT** attempt to automatically create or submit Pull Requests directly via API tools or CLI calls unless the user explicitly requests automatic submission.
 
 Instead, the agent must:
-1. Stage, commit, and push the local feature branch to `origin`.
+1. Stage, commit, and push the local branch changes to `origin`.
 2. Generate and present the complete **PR Title** and **PR Description** inside clean, copy-pasteable GitHub-flavored Markdown code blocks so the user can paste them directly into GitHub.
 
 ---
@@ -23,31 +23,14 @@ Instead, the agent must:
 
 ```mermaid
 graph TD
-    A[Code Changes & Staging] --> B[Step 1: Create Feature Branch]
-    B --> C[Step 2: Conventional Commit]
-    C --> D[Step 3: Push Branch to Origin]
-    D --> E[Step 4: Output Copy-Pasteable Markdown PR Format]
+    A[Current Active Branch & Staging] --> B[Step 1: Conventional Commit]
+    B --> C[Step 2: Push Branch to Origin]
+    C --> D[Step 3: Output Copy-Pasteable Markdown PR Format]
 ```
 
 ---
 
-## Step 1: Feature Branch Naming Protocol
-
-Branch names must be clean, lowercase, hyphen-separated, and prefix-scoped:
-
-- **Bug Fixes:** `fix/<short-description>` (e.g. `fix/release-contributors-attribution`)
-- **Features:** `feat/<feature-name>` (e.g. `feat/qfield-package-dialog`)
-- **Refactoring & Polish:** `refactor/<module-name>`
-- **Documentation:** `docs/<topic-name>`
-- **Maintenance / CI:** `chore/<task-name>`
-
-```bash
-git checkout -b fix/release-contributors-attribution
-```
-
----
-
-## Step 2: Conventional Commit Protocol
+## Step 1: Conventional Commit Protocol
 
 All commits must strictly follow Conventional Commits formatting:
 
@@ -66,17 +49,17 @@ git commit -m "fix(release): extract release-specific contributors for VitePress
 
 ---
 
-## Step 3: Push to Remote Repository
+## Step 2: Push to Remote Repository
 
-Push the local feature branch to `origin`:
+Push the current active branch to `origin`:
 
 ```bash
-git push -u origin fix/release-contributors-attribution
+git push origin <current-branch>
 ```
 
 ---
 
-## Step 4: PR Markdown Output Standard
+## Step 3: PR Markdown Output Standard
 
 Format the **PR Title** and **PR Description** inside separate Markdown code blocks for instant copy-pasting by the user.
 
@@ -88,5 +71,6 @@ Format the **PR Title** and **PR Description** inside separate Markdown code blo
 4. **Key Changes:** Grouped list of changes per component with file links (`[filename.py](file:///path/to/file)` or repo relative paths).
 5. **Issue & PR Attributions:** Include linked issue/PR numbers (e.g. `(#433)` or `([#91](https://github.com/owner/repo/pull/91))`) and author mentions (`(@username)`).
 6. **Verification:** Steps taken and empirical commands executed to verify the fix.
+
 
 
