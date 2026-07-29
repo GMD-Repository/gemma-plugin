@@ -1,11 +1,22 @@
 ---
 name: qgis-doc-generator
-description: Standard operating procedure and protocol for generating, formatting, registering, and building high-quality VitePress documentation pages for QGIS PyQGIS tools, algorithms, and plugins.
+description: Standard operating procedure and protocol for generating, formatting, registering, and building high-quality VitePress documentation pages for QGIS PyQGIS tools, algorithms, and plugins. Always triggers automatically whenever changes occur in gmd_scripts, references, or qml styles.
 ---
 
 # QGIS Tool Documentation Generator Skill
 
 This skill documents the mandatory end-to-end workflow for authoring, structuring, registering, and building documentation pages for QGIS tools within the GEMMA VitePress documentation site (`docs/user-guide/`).
+
+---
+
+## ⚡ Mandatory Code Change Trigger Policy
+
+Documentation MUST always be generated, updated, or verified whenever changes occur in:
+1. `gmd_scripts/` (PyQGIS processing algorithms, scripts, tool logic)
+2. `references/` (Technical references, data schemas, guidelines)
+3. `qml styles/` (Layer style definitions, symbology QML templates)
+
+Whenever any code or asset in these target directories is created, modified, or deleted, automatically execute this skill to maintain synchronized VitePress documentation pages, index card grids, and navigation entries in `docs/user-guide/`.
 
 ---
 

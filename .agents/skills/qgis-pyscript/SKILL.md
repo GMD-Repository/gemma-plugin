@@ -28,6 +28,7 @@ Always apply the **Documentation First Policy**:
 * Analyze requirements before implementation.
 * Create an implementation plan before coding.
 * Validate assumptions against official documentation.
+* **Documentation & Code Auto-Trigger Policy:** Always trigger `qgis-doc-generator` whenever changes (additions, modifications, or deletions) are made to code or resources in `gmd_scripts/`, `references/`, or `qml styles/`.
 * **Architectural & Target Disambiguation (Mandatory First Question):** Before generating code, **always confirm the exact QGIS deliverable type and menu preferences** with the user:
   * **Deliverable Type:**
     1. **Standalone PyQGIS Console Script** (Python script executed in QGIS Python Console Editor tabs)
