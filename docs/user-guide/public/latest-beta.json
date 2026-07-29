@@ -1,9 +1,9 @@
 {
-  "version": "1.0.13-r331",
-  "tag": "r331",
-  "releaseDate": "2026-07-28",
+  "version": "1.0.14-r337",
+  "tag": "r337",
+  "releaseDate": "2026-07-29",
   "repositoryUrl": "https://gemma-plugin.vercel.app/gemma-beta.xml",
-  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r331/gemma-plugin-r331.zip",
-  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r331",
-  "changelogUrl": "https://gemma-plugin.vercel.app/changelog/r331"
+  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r337/gemma-plugin-r337.zip",
+  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r337",
+  "changelogUrl": "https://gemma-plugin.vercel.app/changelog/r337"
 }
