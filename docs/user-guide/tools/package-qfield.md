@@ -45,19 +45,19 @@ The Package Dialog features a dynamic **Layer Groups & Styles** panel allowing c
   - `Form 2 Layout`: Automatically creates standard `Geotagged Building Point`, `Reference Building Point`, and `Base Layers` group folders.
   - `Form 8 Layout`: Automatically creates standard `Verification Layers` and `Base Layers` group folders.
 - **Custom User Presets**:
-  - **`💾 Save`**: Save custom group folder structures for quick re-use across projects.
-  - **`📂 Load`**: Instantly load built-in or user-saved group layouts and drag-and-drop project layers into them.
-  - **`🗑 Delete Preset`**: Delete custom user presets.
+  - **`Save`**: Save custom group folder structures for quick re-use across projects.
+  - **`Load`**: Instantly load built-in or user-saved group layouts and drag-and-drop project layers into them.
+  - **`Delete Preset`**: Delete custom user presets.
 
 ---
 
-### 3. Decoupled Role Properties & Policy Manager (`⚙ Configuration`)
-Configure QField policies per **Assigned Role** under **⚙ Configuration → Layer Properties**:
+### 3. Decoupled Role Properties & Policy Manager (`Configuration`)
+Configure QField policies per **Assigned Role** under **Configuration → Layer Properties**:
 
 - **QField Action**: Choose `Offline Editing` (Writable) vs `Copy / Read-Only` (Background Reference).
-- **Identifiable**: Toggle feature identification visibility in QField (`✓`).
-- **Read-Only**: Lock or unlock editing per layer role (`✓`).
-- **Searchable**: Toggle feature searchability in the QField search bar (`✓`).
+- **Identifiable**: Toggle feature identification visibility in QField.
+- **Read-Only**: Lock or unlock editing per layer role.
+- **Searchable**: Toggle feature searchability in the QField search bar.
 - **Export Format**: Select package container/file format per role:
   - `(data.gpkg)`: Combined GeoPackage dataset for reference layers.
   - `.geojson`: Standalone GeoJSON file format.
@@ -106,12 +106,12 @@ Packaged project layers include QGIS `<customproperties>` metadata that instruct
 1. Open your QGIS project with all required vector and raster layers.
 2. Launch the tool via **GeMa → QField → Package for QField** (`Ctrl+Alt+Q`).
 3. In the **Layer Groups & Styles** panel:
-   - Click **`📂 Load`** to apply a standard preset (e.g. `Form 2 Layout` or `Form 8 Layout`) or **`➕ Add Group`** for custom groupings.
+   - Click **`Load`** to apply a standard preset (e.g. `Form 2 Layout` or `Form 8 Layout`) or **`Add Group`** for custom groupings.
    - Use `Shift` / `Ctrl` to multi-select layers and drag-and-drop them into target group folders.
    - Use `Alt + Up/Down/Left/Right` keys for rapid keyboard reordering.
    - Assign layer roles (`Geotagging Layer`, `Building points`, `EA layer`, etc.).
 4. Click **▶ Apply Groups & Styles** to apply group ordering and QML symbology to your active QGIS project.
-5. (Optional) Open **⚙ Configuration** to set per-role **Export Formats** (`.geojson`, `.gpkg`, `.shp`, `(data.gpkg)`) and editing permissions.
+5. (Optional) Open **Configuration** to set per-role **Export Formats** (`.geojson`, `.gpkg`, `.shp`, `(data.gpkg)`) and editing permissions.
 6. Select your output level (**EA Level** or **Barangay Level**) and select target area(s) from the **Select City/Municipality Tree**.
 7. Click **Package** (or **Batch Export**) to generate self-contained QField projects in the export folder.
 8. Transfer the exported folder to your mobile device and open in QField.
