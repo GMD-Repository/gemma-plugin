@@ -9,7 +9,7 @@ This skill documents the mandatory end-to-end workflow for authoring, structurin
 
 ---
 
-## ⚡ Mandatory Code Change Trigger Policy
+## Mandatory Code Change Trigger Policy
 
 Documentation MUST always be generated, updated, or verified whenever changes occur in:
 1. `gmd_scripts/` (PyQGIS processing algorithms, scripts, tool logic)
@@ -20,7 +20,13 @@ Whenever any code or asset in these target directories is created, modified, or 
 
 ---
 
-## 📋 Full Documentation Generation Protocol
+## Strict No-Emoji Standard
+
+Do NOT use emojis or pictogram characters in tool documentation markdown files (`docs/`), section headers, card details, tables, callout blocks, or UI text labels (with the exception of standard release section category emojis in `docs/user-guide/changelog.md`). Maintain clean, professional, plain-text typography throughout all tool documentation pages.
+
+---
+
+## Full Documentation Generation Protocol
 
 ```mermaid
 graph TD
@@ -34,7 +40,7 @@ graph TD
 
 ---
 
-## 🛠️ Step-by-Step Execution Guide
+## Step-by-Step Execution Guide
 
 ### Step 1: Extract Source Metadata from PyQGIS Script
 Inspect the Python Processing Algorithm (`gmd_scripts/<script_name>.py`) and extract:
