@@ -104,7 +104,12 @@ BUILTIN_PRESETS = {
             "path": ["Base Layers"],
             "is_group": True,
             "checked": True
-        }
+        },
+        {
+            "path": ["Verification Layers2"],
+            "is_group": True,
+            "checked": True
+        },
     ]
 }
 
@@ -1248,6 +1253,7 @@ class PackageDialog(QDialog, DialogUi):
         self.button_box.button(QDialogButtonBox.Reset).clicked.connect(
             self.reset_filter
         )
+        self.button_box.button(QDialogButtonBox.Reset).setText(self.tr("Clear Filter"))
 
         self.devices = None
         self.project_checker = ProjectChecker(QgsProject.instance())
@@ -2882,7 +2888,7 @@ class PackageDialog(QDialog, DialogUi):
 
 
         # --- Row 1: Satellite Image Format dropdown ---
-        format_label = QLabel(self.tr("Satellite Image Format"))
+        format_label = QLabel(self.tr("Satellite Image Source Format"))
         grid.addWidget(format_label, 1, 0)
 
         self._raster_type_combo = QComboBox()
@@ -7067,158 +7073,13 @@ class PackageDialog(QDialog, DialogUi):
             print("No changes needed. Read-only settings already applied.")
 
     def show_help(self):
-        from qgis.PyQt.QtWidgets import QDialog, QVBoxLayout, QTextBrowser, QPushButton
-        from qgis.PyQt.QtCore import QByteArray, QBuffer, QIODevice
+        """Open the Package for QField documentation page in the system browser."""
+        from qgis.PyQt.QtCore import QUrl
+        from qgis.PyQt.QtGui import QDesktopServices
 
-        def widget_to_base64(widget):
-            if not widget: return ""
-            pixmap = widget.grab()
-            byte_array = QByteArray()
-            buffer = QBuffer(byte_array)
-            buffer.open(QIODevice.WriteOnly)
-            pixmap.save(buffer, "PNG")
-            return byte_array.toBase64().data().decode("utf-8")
-
-        try:
-            group_name_img = "<b>[Enter group name...]</b>"
-            add_group_img = "<b>[+]</b>"
-            delete_group_img = "<b>[-]</b>"
-            up_img = "<b>[&#8593;]</b>"
-            down_img = "<b>[&#8595;]</b>"
-            save_preset_img = f'<img src="data:image/png;base64,{widget_to_base64(self.save_preset_btn)}" style="vertical-align: middle;">'
-            load_preset_img = f'<img src="data:image/png;base64,{widget_to_base64(self.load_preset_btn)}" style="vertical-align: middle;">'
-            delete_preset_img = f'<img src="data:image/png;base64,{widget_to_base64(self.delete_preset_btn)}" style="vertical-align: middle;">'
-            apply_groups_img = f'<img src="data:image/png;base64,{widget_to_base64(self.apply_groups_btn)}" style="vertical-align: middle;">'
-            import_qml_img = f'<img src="data:image/png;base64,{widget_to_base64(self.import_qml_btn)}" style="vertical-align: middle;">'
-
-            if hasattr(self, 'run_button') and self.run_button:
-                filter_img = f'<img src="data:image/png;base64,{widget_to_base64(self.run_button)}" style="vertical-align: middle;">'
-            else:
-                filter_img = "<b>[Filter]</b>"
-            if hasattr(self, 'run_clip') and self.run_clip:
-                clip_img = f'<img src="data:image/png;base64,{widget_to_base64(self.run_clip)}" style="vertical-align: middle;">'
-            else:
-                clip_img = "<b>[Clip]</b>"
-            if hasattr(self, 'next_geocode') and self.next_geocode:
-                next_img = f'<img src="data:image/png;base64,{widget_to_base64(self.next_geocode)}" style="vertical-align: middle;">'
-            else:
-                next_img = "<b>[Next Geocode]</b>"
-            if hasattr(self, 'run_batch') and self.run_batch:
-                batch_img = f'<img src="data:image/png;base64,{widget_to_base64(self.run_batch)}" style="vertical-align: middle;">'
-            else:
-                batch_img = "<b>[Batch]</b>" 
-            export_img = f'<img src="data:image/png;base64,{widget_to_base64(self.button_box.button(QDialogButtonBox.Save))}" style="vertical-align: middle;">'
-            
-            reset_btn = self.button_box.button(QDialogButtonBox.Reset)
-            if reset_btn:
-                reset_img = f'<img src="data:image/png;base64,{widget_to_base64(reset_btn)}" style="vertical-align: middle;">'
-            else:
-                reset_img = "<b>[Reset]</b>"
-            dir_btn_img = f'<img src="data:image/png;base64,{widget_to_base64(self.manualDir_btn)}" style="vertical-align: middle;">'
-            tree_select_all_img = f'<img src="data:image/png;base64,{widget_to_base64(self._filter_tree_select_all_btn)}" style="vertical-align: middle;">'
-            tree_deselect_all_img = f'<img src="data:image/png;base64,{widget_to_base64(self._filter_tree_deselect_all_btn)}" style="vertical-align: middle;">'
-            export_all_img = f'<img src="data:image/png;base64,{widget_to_base64(self._export_select_all_btn)}" style="vertical-align: middle;">'
-            export_none_img = f'<img src="data:image/png;base64,{widget_to_base64(self._export_deselect_all_btn)}" style="vertical-align: middle;">'
-        except Exception:
-            group_name_img = "<b>[Enter group name...]</b>"
-            add_group_img = "<b>[+]</b>"
-            delete_group_img = "<b>[-]</b>"
-            up_img = "<b>[↑]</b>"
-            down_img = "<b>[↓]</b>"
-            save_preset_img = "<b>[Save Preset]</b>"
-            load_preset_img = "<b>[Load Preset]</b>"
-            delete_preset_img = "<b>[Delete Preset]</b>"
-            apply_groups_img = "<b>[Apply Groups]</b>"
-            import_qml_img = "<b>[Import QML]</b>"
-            filter_img = "<b>[Filter]</b>"
-            clip_img = "<b>[Clip]</b>"
-            next_img = "<b>[Next Geocode]</b>"
-            batch_img = "<b>[Batch]</b>"
-            export_img = "<b>[Export]</b>"
-            reset_img = "<b>[Reset]</b>"
-            dir_btn_img = "<b>[...]</b>"
-            tree_select_all_img = "<b>[Select All]</b>"
-            tree_deselect_all_img = "<b>[Deselect All]</b>"
-            export_all_img = "<b>[All]</b>"
-            export_none_img = "<b>[None]</b>"
-
-        help_text = f"""
-        <html>
-        <head>
-        <style>
-            body {{ font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; margin: 10px; }}
-            h2 {{ color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 5px; }}
-            h3 {{ color: #2980b9; margin-top: 20px; }}
-            ul {{ margin-top: 5px; margin-bottom: 15px; padding-left: 20px; }}
-            li {{ margin-bottom: 15px; }}
-            b {{ color: #333; }}
-        </style>
-        </head>
-        <body>
-        <h2>QField Package Tool - Help & Overview</h2>
-        
-        <p>This tool allows you to prepare and package your QGIS project for offline use in QField. Here is an overview of all the features and buttons available in the dialog.</p>
-
-        <h3>1. Prepare Project Layers</h3>
-        <p>This tab allows you to organize your layers into specific groups and style them automatically using QML files. Grouping layers here will rearrange them directly in your QGIS project's Layers panel.</p>
-        <ul>
-        <li>{group_name_img} <br><b>Enter Group Name:</b> Type the name of the new group you want to create here.</li>
-        <li>{add_group_img} <b>Add Group:</b> Creates a new group using the text from the input field.</li>
-        <li>{delete_group_img} <b>Delete Group:</b> Removes the currently selected group or layer from the hierarchy.</li>
-        <li>{up_img} <b>Move Up:</b> Moves the selected item up in the list hierarchy.</li>
-        <li>{down_img} <b>Move Down:</b> Moves the selected item down in the list hierarchy.</li>
-        <li>{save_preset_img} <br><b>Save Preset:</b> Saves your current group structure and QML assignments so you can reuse them later.</li>
-        <li>{load_preset_img} <br><b>Load Preset:</b> Loads a previously saved layer grouping preset.</li>
-        <li>{delete_preset_img} <br><b>Delete Preset:</b> Deletes a saved layer grouping preset.</li>
-        <li>{apply_groups_img} <br><b>Create Groups and Apply Style:</b> Updates your actual QGIS project with the groups and layer structure defined in the table above.</li>
-        <li>{import_qml_img} <br><b>Import QML Style(s)...:</b> Opens a file browser to import custom QML styles which can be assigned to your layers in the table.</li>
-        </ul>
-
-        <h3>2. Export Options - Process Settings</h3>
-        <ul>
-        <li><b>Export Directory:</b> Destination folder for your packaged QField projects. Click the {dir_btn_img} button to browse.</li>
-        <li><b>Select Output Level:</b> Choose to export for an EA (Enumeration Area) or for an entire Barangay.</li>
-        <li><b>Select City/Municipality and Barangay:</b> A geographical filter tree to target specific regions.</li>
-        <li>{tree_select_all_img} {tree_deselect_all_img} <br><b>Select All / Deselect All:</b> Quickly check or uncheck all items in the City/Municipality tree above.</li>
-        <li><b>Select BGYs/EAs to Process:</b> The resulting list of specific areas that will be packaged.</li>
-        </ul>
-        
-        <h3>3. Export Options - Layer Assignment & Raster Configuration</h3>
-        <ul>
-        <li><b>Layer Assignment:</b> Use the dropdowns to assign specific QGIS layers (like Barangay, Building points, Roads) to be included in your package.</li>
-        <li><b>Visible Checkboxes:</b> Check the 'Visible' box next to any vector or raster layer to ensure it is turned on by default when the project is opened in QField.</li>
-        <li><b>Satellite Image Directory:</b> Select the folder containing your primary background satellite imagery. Click the {dir_btn_img} button to browse.</li>
-        <li><b>Additional Raster Directory:</b> Select a folder containing additional MBTiles basemaps to overlay in QField.</li>
-        <li><b>Convert satellite to MBTiles:</b> If enabled, converts the primary satellite image into the highly optimized MBTiles format.</li>
-        </ul>
-        
-        <h3>4. Export Options - Individual Export Layers & Progress</h3>
-        <ul>
-        <li><b>Individual Export Layers:</b> Select specific layers from the table to export as separate files (e.g. .geojson or .shp) alongside the packaged project.</li>
-        <li>{export_all_img} {export_none_img} <br><b>Export All / None:</b> Quickly check or uncheck all layers in the individual export table.</li>
-        <li><b>Progress:</b> Shows the 'Total' packaging progress and the current 'Layer' progress.</li>
-        <li>{export_img} <br><b>Export:</b> Exports the currently active geographical area into a QField project folder.</li>
-        </ul>
-        </body>
-        </html>
-        """
-        
-        dlg = QDialog(self)
-        dlg.setWindowTitle(self.tr("Help - Features Overview"))
-        dlg.resize(650, 700)
-        
-        layout = QVBoxLayout(dlg)
-        
-        browser = QTextBrowser(dlg)
-        browser.setOpenExternalLinks(True)
-        browser.setHtml(help_text)
-        layout.addWidget(browser)
-        
-        btn = QPushButton(self.tr("Close"), dlg)
-        btn.clicked.connect(dlg.accept)
-        layout.addWidget(btn)
-        
-        dlg.exec_()
+        QDesktopServices.openUrl(
+            QUrl('https://gemma-plugin.vercel.app/tools/package-qfield.html')
+        )
 
 
 class RasterClipWorker(QThread):
