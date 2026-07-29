@@ -75,6 +75,34 @@ def format_keep_a_changelog(
     return "\n".join(lines) + "\n"
 
 
+def extract_contributors_from_changes(changes: dict[str, list[str]]) -> list[str]:
+    """Extract unique GitHub username logins mentioned in changelog items.
+
+    Preserves insertion order while deduplicating.
+    """
+    seen: set[str] = set()
+    extracted: list[str] = []
+    ignored = {"GMD-Repository", "gemma-plugin", "github-actions", "bot"}
+
+    for items_list in changes.values():
+        if not isinstance(items_list, list):
+            continue
+        for item in items_list:
+            matches_url = re.findall(r"https://github\.com/([\w-]+)", item)
+            matches_at = re.findall(r"@([\w-]+)", item)
+
+            for username in matches_url + matches_at:
+                u_clean = username.strip()
+                if not u_clean:
+                    continue
+                if u_clean in ignored or "[bot]" in u_clean or "github-actions" in u_clean:
+                    continue
+                if u_clean not in seen:
+                    seen.add(u_clean)
+                    extracted.append(u_clean)
+    return extracted
+
+
 def format_vitepress_changelog(
     version: str,
     date_display: str,
@@ -93,13 +121,9 @@ def format_vitepress_changelog(
         Formatted markdown section for docs/user-guide/changelog.md.
     """
     if contributors is None:
-        extracted: set[str] = set()
-        for items_list in changes.values():
-            for item in items_list:
-                for match in re.findall(r"https://github\.com/([\w-]+)", item):
-                    if match not in ["GMD-Repository", "gemma-plugin"] and not ("[bot]" in match or "github-actions" in match):
-                        extracted.add(match)
-        contributors = list(extracted) if extracted else DEFAULT_CONTRIBUTORS
+        contributors = extract_contributors_from_changes(changes)
+    if not contributors:
+        contributors = DEFAULT_CONTRIBUTORS
 
     lines = [f"## {version}", f"<time>{date_display}</time>", ""]
 

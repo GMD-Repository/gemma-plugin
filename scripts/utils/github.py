@@ -154,12 +154,15 @@ def generate_release_notes(
 def get_contributors(count: int = 30) -> list[str]:
     """Get unique contributor names from git log.
 
-    Filters out bots and github-actions. Falls back to a default list
-    if git is unavailable.
+    Filters out bots and github-actions. Maps git full names to GitHub usernames.
+    Falls back to a default list if git is unavailable.
 
     Returns:
         List of unique contributor names.
     """
+    name_to_handle = {
+        "Jasper Velasco": "velascojasper0",
+    }
     try:
         result = subprocess.run(
             ["git", "log", f"--format=%aN", f"-{count}"],
@@ -175,11 +178,12 @@ def get_contributors(count: int = 30) -> list[str]:
             name = name.strip()
             if not name:
                 continue
-            if "[bot]" in name or "github-actions" in name:
+            if "[bot]" in name.lower() or "github-actions" in name.lower() or "bot" in name.lower():
                 continue
-            if name not in seen:
-                seen.add(name)
-                unique.append(name)
+            handle = name_to_handle.get(name, name)
+            if handle not in seen:
+                seen.add(handle)
+                unique.append(handle)
         return unique[:10]
     except (subprocess.CalledProcessError, FileNotFoundError):
         logger.warning("Could not get contributors from git log — using defaults")
