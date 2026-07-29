@@ -69,3 +69,146 @@ jobs:
           git config user.email "gemma-release-bot[bot]@users.noreply.github.com"
           git add docs/user-guide/public/gemma-beta.xml docs/user-guide/public/latest-beta.json
           git diff --quiet && git diff --staged --quiet || (git commit -m "chore: update beta channel files for preview ${{ steps.preview.outputs.revision }} [skip ci]" && git push https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git HEAD:main)
+
+      # ── 7. Send email notification to Triage team ──────────────────
+      - name: Notify Triage team — Preview build ready
+        if: success()
+        uses: dawidd6/action-send-mail@v6
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: ${{ secrets.MAIL_FROM || secrets.MAIL_USERNAME }}
+          to: ${{ secrets.EMAIL_TO_TRIAGE}}
+          reply_to: ${{ secrets.MAIL_REPLY_TO || secrets.MAIL_FROM || secrets.MAIL_USERNAME }}
+          subject: "[GEMMA Plugin] Preview Release ${{ steps.preview.outputs.revision }} Ready"
+          html_body: |
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>GEMMA Plugin Notification</title>
+              <style>
+                body { 
+                  font-family: Arial, sans-serif; 
+                  line-height: 1.5; 
+                  color: #333; 
+                  margin: 0; 
+                  padding: 0; 
+                  background-color: #f5f5f5;
+                }
+
+                .email-container { 
+                  max-width: 600px; 
+                  margin: 16px auto; 
+                  background-color: #ffffff; 
+                }
+
+                .content { 
+                  padding: 24px; 
+                }
+
+                .title {
+                  font-size: 20px;
+                  font-weight: bold;
+                  margin-bottom: 8px;
+                }
+
+                .text {
+                  font-size: 14px;
+                  color: #555;
+                  margin-bottom: 12px;
+                }
+
+                .box { 
+                  background-color: #f8fafc; 
+                  border: 1px solid #e2e8f0; 
+                  padding: 16px; 
+                  margin: 14px 0; 
+                }
+
+                .box-title { 
+                  font-size: 15px; 
+                  font-weight: bold; 
+                  margin-bottom: 6px; 
+                }
+
+                .list { 
+                  font-size: 14px;
+                  margin: 6px 0;
+                }
+
+                .button { 
+                  display: inline-block; 
+                  background-color: #2563a8; 
+                  color: #ffffff; 
+                  padding: 10px 18px; 
+                  text-decoration: none; 
+                  border-radius: 4px; 
+                  font-size: 13px;
+                  font-weight: bold;
+                  margin: 6px 0;
+                }
+              </style>
+            </head>
+
+            <body>
+              <div class="email-container">
+                <div class="content">
+                  <div class="title">Preview Release Ready (Triage Team)</div>
+                  <div class="text">
+                    Preview revision <strong>${{ steps.preview.outputs.revision }}</strong> (version <strong>${{ steps.preview.outputs.preview_version }}</strong>) of <strong>GEMMA Plugin</strong> has been successfully built and is ready for testing by the Triage team.
+                  </div>
+
+                  <!-- Release Details -->
+                  <div class="box">
+                    <div class="box-title">Release Details</div>
+                    <div class="text"><strong>Revision:</strong> ${{ steps.preview.outputs.revision }}</div>
+                    <div class="text"><strong>Version:</strong> ${{ steps.preview.outputs.preview_version }}</div>
+                    <div class="text"><strong>Branch:</strong> ${{ github.ref_name }}</div>
+                    <div class="text"><strong>Platform:</strong> QGIS Plugin (.zip)</div>
+                    <div class="text"><strong>Triggered by:</strong> ${{ github.actor }}</div>
+                    <div class="text"><strong>Status:</strong> Preview / Beta Channel</div>
+                  </div>
+
+                  <!-- How to Get Updates & Installation -->
+                  <div class="box">
+                    <div class="box-title">Plugin Updates &amp; Installation</div>
+                    
+                    <div class="text" style="margin-bottom: 10px;">
+                      <strong>QGIS Beta Channel Setup:</strong> If you already added the GEMMA Beta repository in QGIS, QGIS will automatically notify you of this preview build. Open QGIS and go to <em>Plugins → Manage and Install Plugins → GEMMA → Upgrade Plugin</em>.
+                    </div>
+
+                    <div class="text" style="margin-bottom: 12px;">
+                      <strong>Direct Download &amp; Documentation:</strong> Download the preview ZIP package directly or visit the official website:
+                    </div>
+
+                    <div style="margin-bottom: 10px;">
+                      <a href="https://gemma-plugin.vercel.app/getting-started.html"
+                         class="button"
+                         style="color: #ffffff !important; text-decoration: none; margin-right: 8px;">
+                        Visit Website
+                      </a>
+
+                      <a href="https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/${{ steps.preview.outputs.revision }}/${{ steps.preview.outputs.zip_name }}"
+                         class="button"
+                         style="background-color: #475569; color: #ffffff !important; text-decoration: none;">
+                        Download Preview ZIP
+                      </a>
+                    </div>
+
+                    <div style="margin-top:8px;font-size:12px;color:#777;line-height:1.4;">
+                      If the ZIP link returns a <strong>404</strong>, assets may still be processing.
+                      You can also check the
+                      <a href="https://github.com/GMD-Repository/gemma-plugin-preview/releases" style="color:#2563a8;text-decoration:none;">
+                        Preview Releases page
+                      </a>.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </body>
+            </html>
