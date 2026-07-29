@@ -67,7 +67,18 @@ jobs:
             --bump-type "${{ inputs.bump_type || 'auto' }}" \
             --custom-version "${{ inputs.custom_version || '' }}"
 
-      # ── 5. Send email notification ───────────────────────────────────
+      # ── 5a. Fetch recipients from Google Sheet (Secured) ───────────
+      - name: Fetch email recipients from Google Sheet
+        id: gsheet-emails
+        if: steps.release.outputs.released == 'true' && success()
+        continue-on-error: true
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GSHEET_SPREADSHEET_ID: ${{ secrets.GSHEET_SPREADSHEET_ID }}
+        run: |
+          python scripts/release/gsheet_release.py --fetch-emails --worksheet-emails "email_gemma"
+
+      # ── 6. Send email notification ───────────────────────────────────
       - name: Notify team — ready to test
         if: steps.release.outputs.released == 'true' && success()
         uses: dawidd6/action-send-mail@v6
@@ -78,7 +89,7 @@ jobs:
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
           from: ${{ secrets.MAIL_FROM || secrets.MAIL_USERNAME }}
-          to: ${{ secrets.EMAIL_TO }}
+          to: ${{ steps.gsheet-emails.outputs.recipients || secrets.EMAIL_TO }}
           reply_to: ${{ secrets.MAIL_REPLY_TO || secrets.MAIL_FROM || secrets.MAIL_USERNAME }}
           subject: "[GEMMA Plugin] v${{ steps.release.outputs.version }} — Stable Release Ready"
           html_body: |
@@ -232,3 +243,19 @@ jobs:
             } catch (err) {
               console.log('⚠️ Could not trigger deploy-docs dispatch:', err.message);
             }
+
+      # ── 7. Log release record to Google Sheet (Secured) ──────────────
+      - name: Log release record to Google Sheet
+        if: steps.release.outputs.released == 'true' && success()
+        continue-on-error: true
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GSHEET_SPREADSHEET_ID: ${{ secrets.GSHEET_SPREADSHEET_ID }}
+        run: |
+          python scripts/release/gsheet_release.py \
+            --log-release \
+            --version "${{ steps.release.outputs.version }}" \
+            --zip-name "${{ steps.release.outputs.zip_name }}" \
+            --actor "${{ github.actor }}" \
+            --repo "${{ github.repository }}"
+

@@ -2,6 +2,21 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.15
+<time>Jul 29, 2026</time>
+
+### ✨ New Features
+- Added new user guide page for the Package for QField tool ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### ⚡ Improvements & Fixes
+- Improved CI/CD pipelines for VitePress documentation and defined new documentation skills ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- Implemented automated stable and preview release workflows with email notifications via Google Sheets ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### 📚 Documentation
+- Added documentation skill protocols to enhance user guidance ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+<Contributors :contributors="['velascojasper0', 'kentemman-gmd', 'Jasper Velasco', 'psacjperez']" />
+
 ## 1.0.14
 <time>Jul 28, 2026</time>
 

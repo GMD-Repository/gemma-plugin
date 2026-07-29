@@ -5,6 +5,18 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.15] - 2026-07-29
+
+### Added
+- Added new user guide page for the Package for QField tool ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### Changed
+- Improved CI/CD pipelines for VitePress documentation and defined new documentation skills ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- Implemented automated stable and preview release workflows with email notifications via Google Sheets ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### Documentation
+- Added documentation skill protocols to enhance user guidance ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
 ## [1.0.14] - 2026-07-28
 
 ### Added
