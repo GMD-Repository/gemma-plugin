@@ -1,6 +1,39 @@
 {
-  "latest": "1.0.14",
+  "latest": "1.0.15",
   "releases": [
+    {
+      "version": "1.0.15",
+      "date": "2026-07-29",
+      "tag": "v1.0.15",
+      "prerelease": false,
+      "contributors": [
+        "velascojasper0",
+        "kentemman-gmd",
+        "Jasper Velasco",
+        "psacjperez"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.15/gemma-plugin-v1.0.15.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.15",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "Added new user guide page for the Package for QField tool ([@kentemman-gmd](https://github.com/kentemman-gmd))"
+        ],
+        "improvements": [
+          "Improved CI/CD pipelines for VitePress documentation and defined new documentation skills ([@kentemman-gmd](https://github.com/kentemman-gmd))",
+          "Implemented automated stable and preview release workflows with email notifications via Google Sheets ([@kentemman-gmd](https://github.com/kentemman-gmd))"
+        ],
+        "changes": [],
+        "fixes": [],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
     {
       "version": "1.0.14",
       "date": "2026-07-28",

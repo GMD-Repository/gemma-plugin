@@ -11,7 +11,7 @@ When an icon for any QGIS tool or script algorithm is created or modified, **all
 
 ---
 
-## 🔄 What to Update: The 4-Step Icon Sync Flow
+## What to Update: The 4-Step Icon Sync Flow
 
 ```mermaid
 graph TD
@@ -77,7 +77,7 @@ def icon(self):
 
 ---
 
-## 🧪 Verification Protocol
+## Verification Protocol
 
 Before completing any icon update task, run these verification commands:
 

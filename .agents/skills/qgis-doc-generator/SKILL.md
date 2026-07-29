@@ -1,6 +1,6 @@
 ---
 name: qgis-doc-generator
-description: Standard operating procedure and protocol for generating, formatting, registering, and building high-quality VitePress documentation pages for QGIS PyQGIS tools, algorithms, and plugins.
+description: Standard operating procedure and protocol for generating, formatting, registering, and building high-quality VitePress documentation pages for QGIS PyQGIS tools, algorithms, and plugins. Always triggers automatically whenever changes occur in gmd_scripts, references, or qml styles.
 ---
 
 # QGIS Tool Documentation Generator Skill
@@ -9,7 +9,24 @@ This skill documents the mandatory end-to-end workflow for authoring, structurin
 
 ---
 
-## 📋 Full Documentation Generation Protocol
+## Mandatory Code Change Trigger Policy
+
+Documentation MUST always be generated, updated, or verified whenever changes occur in:
+1. `gmd_scripts/` (PyQGIS processing algorithms, scripts, tool logic)
+2. `references/` (Technical references, data schemas, guidelines)
+3. `qml styles/` (Layer style definitions, symbology QML templates)
+
+Whenever any code or asset in these target directories is created, modified, or deleted, automatically execute this skill to maintain synchronized VitePress documentation pages, index card grids, and navigation entries in `docs/user-guide/`.
+
+---
+
+## Strict No-Emoji Standard
+
+Do NOT use emojis or pictogram characters in tool documentation markdown files (`docs/`), section headers, card details, tables, callout blocks, or UI text labels (with the exception of standard release section category emojis in `docs/user-guide/changelog.md`). Maintain clean, professional, plain-text typography throughout all tool documentation pages.
+
+---
+
+## Full Documentation Generation Protocol
 
 ```mermaid
 graph TD
@@ -23,7 +40,7 @@ graph TD
 
 ---
 
-## 🛠️ Step-by-Step Execution Guide
+## Step-by-Step Execution Guide
 
 ### Step 1: Extract Source Metadata from PyQGIS Script
 Inspect the Python Processing Algorithm (`gmd_scripts/<script_name>.py`) and extract:
