@@ -57,10 +57,6 @@ class GMDPipeline(object):
         self.provider = GmdPipelineProvider()
         QgsApplication.processingRegistry().addProvider(self.provider)
 
-        from .references.create_enumeration_area.provider import EADelineationProvider
-        self.ea_provider = EADelineationProvider()
-        QgsApplication.processingRegistry().addProvider(self.ea_provider)
-
 
     def _quarantine_legacy_plugins(self):
         """
@@ -193,17 +189,6 @@ class GMDPipeline(object):
             finally:
                 del self.provider
                 self.provider = None
-
-        if self.ea_provider:
-            try:
-                QgsApplication.processingRegistry().removeProvider(self.ea_provider)
-            except Exception as e:
-                QgsApplication.instance().messageLog().logMessage(
-                    f"Error removing EA Delineation provider: {e}",
-                    'GMD')
-            finally:
-                del self.ea_provider
-                self.ea_provider = None
 
     def sync_report_act(self):
         from .gmd_scripts import gsheet

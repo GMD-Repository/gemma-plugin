@@ -4,6 +4,7 @@ The **Create Enumeration Areas** tool provides a dialog for delineating enumerat
 
 ## Access
 
+- **Processing Toolbox:** GMD Pipeline → 1Map → Create Enumeration Areas
 - **Menu:** Gemma → QField → Create Enumeration Areas
 - **Toolbar:** Gemma Toolbar → Create Enumeration Areas icon
 

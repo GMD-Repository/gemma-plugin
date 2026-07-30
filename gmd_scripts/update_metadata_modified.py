@@ -1000,7 +1000,7 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
         """
         Returns the unique ID of the group this algorithm belongs to.
         """
-        return "lgutools"
+        return "gmdtoolkits"
 
     def shortHelpString(self) -> str:
         """
