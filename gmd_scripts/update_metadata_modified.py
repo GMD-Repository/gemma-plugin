@@ -28,7 +28,7 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QMessageBox,
 )
-from PyQt5.QtGui import QFont, QColor
+from PyQt5.QtGui import QFont, QColor, QIcon
 from qgis.core import (
     NULL,
     QgsField,
@@ -988,7 +988,7 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
         Returns the translated algorithm name, which should be used for any
         user-visible display of the algorithm name.
         """
-        return "Update_Metadata"
+        return "Update Metadata"
 
     def group(self) -> str:
         """
@@ -1002,6 +1002,19 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
         """
         return "gmdtoolkits"
 
+    def icon(self):
+        """
+        Returns the algorithm icon.
+        """
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', 'update.svg')
+        if not os.path.exists(icon_path):
+            icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', 'update.png')
+        if not os.path.exists(icon_path):
+            icon_path = os.path.join(os.path.dirname(__file__), 'icons', 'update.png')
+        if os.path.exists(icon_path):
+            return QIcon(icon_path)
+        return QIcon(":/images/themes/default/mActionFilter.svg")
+
     def shortHelpString(self) -> str:
         """
         Returns a helper string for the algorithm explaining its parameters.
@@ -1011,7 +1024,7 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
             "Parameters:\n"
             "- LGU boundary layer (polygon): The spatial polygon layer whose attributes you wish to update.\n"
             "- LGU join field (from dropdown): The field in the LGU layer containing Barangay names to match.\n"
-            "- PSGC xlsx file / table: A loaded spreadsheet containing PSGC geocodes and metadata.\n"
+            "- PSGC xlsx file / table: A loaded spreadsheet containing PSGC geocodes and metadata.\n" 
             "- Region filter (from dropdown): Populated automatically from unique Region values in the PSGC sheet.\n"
             "- Province filter (from dropdown): Automatically updates in real-time to list only the provinces belonging to your selected region.\n"
             "- City/Municipality filter (from dropdown): Automatically updates in real-time to list only the cities/municipalities in your selected province.\n"
@@ -1028,7 +1041,7 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
             "7. Dynamically renames the loaded output layer in QGIS using the 5-digit code derived from the matched geocode followed by '_bgy' (e.g. '14000_bgy').\n"
             "8. Automatically saves a permanent copy of the updated LGU layer in the specified output directory as a GeoPackage with the same custom name (e.g., '14000_bgy.gpkg').\n"
             "Support Email: <b>gmd.support@psa.gov.ph</b>\n"
-            "Author: CPA\n"
+            "Author: GMD Staff\n"
         )
 
     def initAlgorithm(self, config: Optional[dict[str, Any]] = None):
