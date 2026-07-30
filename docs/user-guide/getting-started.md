@@ -71,6 +71,7 @@ These tools are accessible from the **QGIS Processing Toolbox** under the **GMD 
 | [Join Barangay Attributes](/tools/join-barangay-attributes) | Match vector attributes with official PSGC tables via fuzzy matching and Roman numeral normalization |
 | [Scan Geometry Errors](/tools/scan-geometry-errors) | Scan polygon layers for specific geometry and topology defects and generate a Point Error Layer |
 | [Repair Polygon Geometries](/tools/repair-polygon-geometries) | Reconstruct invalid polygon geometries and recover missing shapes into a clean vector output layer |
+| [Clip Project Layers by Extent](/tools/clip-project-layers) | Batch clip multiple vector layers to a target administrative polygon boundary with optional buffer |
 
 ### Gemma Menu — Updating of Boundaries
 
