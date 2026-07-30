@@ -148,7 +148,7 @@ class CustomProcessingFeedback(QgsProcessingFeedback):
 class EALauncherDialog(QDialog):
     """Comprehensive Processing UI for Create Enumeration Areas."""
 
-    ALGORITHM_ID = "eadelineation:createea"
+    ALGORITHM_ID = "gmd_pipeline:createea"
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1578,10 +1578,13 @@ class EALauncherDialog(QDialog):
 
         # Execute using QGIS Processing framework
         from qgis import processing
+        from qgis.core import QgsApplication
+        
+        alg_to_run = QgsApplication.processingRegistry().algorithmById(self.ALGORITHM_ID) or self.algo
         
         try:
             results = processing.runAndLoadResults(
-                self.ALGORITHM_ID,
+                alg_to_run,
                 parameters,
                 context=context,
                 feedback=self.feedback
