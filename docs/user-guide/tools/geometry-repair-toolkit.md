@@ -1,15 +1,14 @@
-# <img src="/icons/reports.png" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Geometry Repair Toolkit
+# <img src="/icons/repair_geom.svg" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Geometry Repair Toolkit
 
 The **Geometry Repair Toolkit** is a standalone dialog-based tool for validating, inspecting, and repairing polygon geometries. It provides a comprehensive interface for detecting and fixing common topology and geometry issues across your polygon layers into safe, temporary memory output layers.
 
----
 
 ## Access
 
 - **Menu:** Gemma → Others → Geometry Repair Toolkit
+- **Component Algorithm IDs:** `gmd_pipeline:scangeometryerrors`, `gmd_pipeline:repairpolygongeometries`
 - This tool opens as a **separate dialog window** (not through the Processing Toolbox).
 
----
 
 ## When to Use
 
@@ -20,7 +19,6 @@ Use this tool when:
 - You need to clean up and validate polygon layers before running other GMD tools (such as MBI Checker or Fill Polygon Gaps).
 - You want to identify and fix null geometries, empty shapes, wrong geometry types, or duplicate features.
 
----
 
 ## Features & Tab Structure
 
@@ -28,7 +26,6 @@ The toolkit features a tabbed interface:
 1. **Geometry Fixer (Tab 1)** — Scan layers, inspect detected issues in an interactive table, highlight error geometries on the map canvas, and run automated repairs.
 2. **Help and Information (Tab 2)** — View reference tables for error types, repair mechanisms, output layer behavior, and limitations.
 
----
 
 ## Error Types Reference
 
@@ -44,7 +41,6 @@ The toolkit scans polygon layers for the following topology and geometry issues:
 | **Duplicate Geometry** | Two or more features share the exact same geometry. | Requires manual review / deduplication |
 | **Dangle (Loose End)** | A line endpoint doesn't connect to any other line. | Requires manual review |
 
----
 
 ## How to Use
 
@@ -59,7 +55,6 @@ The toolkit scans polygon layers for the following topology and geometry issues:
 7. Click **Repair Selected Features**. The toolkit routes each checked row to its specific repair mechanism and creates a new temporary repaired memory output layer.
 8. Re-run **Scan Layers** on the temporary output layer to verify all errors are resolved.
 
----
 
 ## Repair Mechanisms & Output Layers
 
@@ -80,7 +75,6 @@ Polygon reconstruction can occasionally leave a feature as a multipart polygon e
 - **Attribute Field Preservation**: Temporary output layers retain all original attribute fields for seamless export.
 - **Logging**: The log panel records layer names, processed feature IDs, repair methods, recovery status, and notes.
 
----
 
 ## Limitations & Review Best Practices
 

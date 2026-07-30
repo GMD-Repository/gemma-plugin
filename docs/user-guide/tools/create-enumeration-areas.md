@@ -1,10 +1,11 @@
-# Create Enumeration Areas
+# <img src="/icons/create_ea.png" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Create Enumeration Areas
 
 The **Create Enumeration Areas** tool provides a dialog for delineating enumeration areas (EAs) from barangay boundaries. EAs are used in census and survey operations to divide barangays into manageable field assignment areas.
 
 ## Access
 
 - **Processing Toolbox:** GMD Pipeline → 1Map → Create Enumeration Areas
+- **Algorithm ID:** `gmd_pipeline:createea`
 - **Menu:** Gemma → EA Delineation → Create Enumeration Areas
 - **Toolbar:** Gemma Toolbar → Create Enumeration Areas icon
 

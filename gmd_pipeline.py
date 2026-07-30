@@ -125,13 +125,17 @@ class GMDPipeline(object):
 
         packager_icon = QIcon(os.path.dirname(__file__) + "/icons/packager.svg")
         create_ea_icon = QIcon(os.path.dirname(__file__) + "/icons/create_ea.png")
-        reports_icon = QIcon(os.path.dirname(__file__) + "/icons/reports.png")
+        sync_mbi_icon = QIcon(os.path.dirname(__file__) + "/icons/sync_mbi.svg")
+        geom_toolkit_icon = QIcon(os.path.dirname(__file__) + "/icons/repair_geom.svg")
+        others_icon = QIcon(os.path.dirname(__file__) + "/icons/others.svg")
+        updating_boundaries_icon = QIcon(os.path.dirname(__file__) + "/icons/updating_boundaries.svg")
+        check_and_update_icon = QIcon(os.path.dirname(__file__) + "/icons/check_and_update.svg")
 
         # 1. Updating of Boundaries Submenu
         self.updating_boundaries_menu = QMenu(u'Updating of Boundaries')
-        self.gema_add_submenu(self.updating_boundaries_menu, packager_icon)
+        self.gema_add_submenu(self.updating_boundaries_menu, updating_boundaries_icon)
 
-        self.check_and_update_action = QAction(packager_icon, "Check and Update", self.iface.mainWindow())
+        self.check_and_update_action = QAction(check_and_update_icon, "Check and Update", self.iface.mainWindow())
         self.check_and_update_action.triggered.connect(self.show_check_and_update_dialog)
         self.updating_boundaries_menu.addAction(self.check_and_update_action)
 
@@ -145,9 +149,9 @@ class GMDPipeline(object):
 
         # 3. Others Submenu
         self.others_menu = QMenu(u'Others')
-        self.gema_add_submenu(self.others_menu, reports_icon)
+        self.gema_add_submenu(self.others_menu, others_icon)
 
-        self.sync_report = QAction(reports_icon, "Sync MBI Layer", self.iface.mainWindow())
+        self.sync_report = QAction(sync_mbi_icon, "Sync MBI Layer", self.iface.mainWindow())
         self.sync_report.triggered.connect(self.sync_report_act)
         self.others_menu.addAction(self.sync_report)
 
@@ -156,7 +160,7 @@ class GMDPipeline(object):
         self.package_qfield_action.setShortcut("Ctrl+Alt+Q")
         self.others_menu.addAction(self.package_qfield_action)
 
-        self.geometry_toolkit_action = QAction(reports_icon, "Geometry Repair Toolkit", self.iface.mainWindow())
+        self.geometry_toolkit_action = QAction(geom_toolkit_icon, "Geometry Repair Toolkit", self.iface.mainWindow())
         self.geometry_toolkit_action.triggered.connect(self.show_geometry_toolkit)
         self.others_menu.addAction(self.geometry_toolkit_action)
 
