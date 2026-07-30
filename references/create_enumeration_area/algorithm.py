@@ -1668,12 +1668,17 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
 
         merged_sink = None
         merged_dest_id = None
+        merged_out_fields = QgsFields(out_fields)
+        s_idx = merged_out_fields.indexOf("split_by")
+        if s_idx != -1:
+            merged_out_fields.remove(s_idx)
+
         if self.MERGED_OUTPUT in parameters and parameters[self.MERGED_OUTPUT] is not None:
             (merged_sink, merged_dest_id) = self.parameterAsSink(
                 parameters,
                 self.MERGED_OUTPUT,
                 context,
-                out_fields,
+                merged_out_fields,
                 out_wkb_type,
                 target_crs,
             )
@@ -3913,10 +3918,10 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         
                     ea = bar_eas[idx]
                     
-                    if ea['hh_count'] == 0:
-                        # Force merge with any touching neighbor inside the same barangay to eliminate 0 hh_count
+                    if ea['hh_count'] == 0 or ea.get('bldg_count', 0) == 0:
+                        # Force merge with any touching neighbor inside the same barangay, prioritizing neighbors with >0 households/buildings
                         best_neighbor_idx = -1
-                        best_neighbor_score = float('inf')
+                        best_neighbor_score = -1.0
                         
                         for j in range(len(bar_eas)):
                             if idx == j or j in merged_indices:
@@ -3932,8 +3937,9 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                                 continue
                             if ea['geom'].touches(neighbor['geom']) or ea['geom'].intersects(neighbor['geom']):
                                 combined_hh = ea['hh_count'] + neighbor['hh_count']
-                                score = combined_hh
-                                if score < best_neighbor_score:
+                                combined_bldg = ea.get('bldg_count', 0) + neighbor.get('bldg_count', 0)
+                                score = (combined_hh * 1000.0) + combined_bldg
+                                if score > best_neighbor_score:
                                     best_neighbor_score = score
                                     best_neighbor_idx = j
                                     
@@ -5184,11 +5190,23 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         if not delineated_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
                             feedback.reportError(f"Failed to add EA {i} to delineated sink.")
                 
-                # Add to merged sink if it was merged, not split, and not a Special EA
+                # Add to merged sink if it was merged, not split, not Special EA, and has >0 hh_count and >0 bldg_count
                 if ea.get('from_merge', False) and not ea.get('from_split', False) and not ea.get('is_special_ea', False):
                     if merged_sink is not None:
-                        if not merged_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
-                            feedback.reportError(f"Failed to add EA {i} to merged sink.")
+                        _m_hh = ea.get('hh_count', 0.0)
+                        _m_bldg = ea.get('bldg_count', 0)
+                        if _m_hh > 0 and _m_bldg > 0:
+                            m_feat = QgsFeature(merged_out_fields)
+                            m_feat.setGeometry(out_feat.geometry())
+                            m_attrs = [out_feat.attribute(f.name()) for f in merged_out_fields]
+                            m_feat.setAttributes(m_attrs)
+                            if not merged_sink.addFeature(m_feat, QgsFeatureSink.Flag.FastInsert):
+                                feedback.reportError(f"Failed to add EA {i} to merged sink.")
+                        else:
+                            feedback.pushWarning(
+                                f"[Merged Output] Skipped writing zero-count merged EA (code={ea.get('original_code', '?')}, "
+                                f"hh_count={_m_hh}, bldg_count={_m_bldg}) to merged sink."
+                            )
 
             # Add matched buildings to extracted buildings sink
             if extracted_buildings_sink is not None:
