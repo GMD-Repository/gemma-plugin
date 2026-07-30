@@ -2,7 +2,6 @@
 
 The **Package for QField** tool packages your QGIS project and its spatial data for field data collection using **QField** — a mobile GIS application. It creates self-contained project packages trimmed physically to selected administrative or enumeration boundaries (EA or Barangay Level) that can be deployed on Android and iOS devices for offline fieldwork.
 
----
 
 ## Access
 
@@ -10,7 +9,6 @@ The **Package for QField** tool packages your QGIS project and its spatial data 
 - **Toolbar:** Gemma Toolbar → Package for QField icon
 - **Shortcut:** `Ctrl+Alt+Q`
 
----
 
 ## When to Use
 
@@ -36,7 +34,6 @@ Follow this step-by-step guide to package your QGIS project for QField.
    - **Keyboard Shortcut:** Press `Ctrl+Alt+Q`.
 3. **Help Button:** Notice the **Help** button located at the top-right header of the dialog. Clicking it immediately opens this online documentation page in your web browser for quick reference.
 
----
 
 ### Step 2: Configure Global Settings (`⚙ Configuration`)
 
@@ -74,7 +71,6 @@ Customize editing actions, visibility behavior, and output file formats per laye
 #### D. Restore Defaults
 Click **Restore Defaults** if you want to reset all configuration settings back to factory default values. Click **Close** when finished.
 
----
 
 ### Step 3: Prepare Project Layers, Hierarchy & Styles
 
@@ -113,7 +109,6 @@ Use the **Layer Groups & Styles** tree panel to organize layers into folders:
 #### E. Apply to QGIS Project
 Click **▶ Create Groups and Apply Style** to restructure your active QGIS project's Layers panel and apply QML symbology styles directly.
 
----
 
 ### Step 4: Select Target Administrative Areas (Process Settings)
 
@@ -121,7 +116,6 @@ Click **▶ Create Groups and Apply Style** to restructure your active QGIS proj
 2. **Select All / Deselect All**: Use the **Select All** or **Deselect All** buttons to quickly check or uncheck administrative units in bulk.
 3. **Select BGYs/EAs to Process**: Review the list of target areas generated for export.
 
----
 
 ### Step 5: Package and Export
 
