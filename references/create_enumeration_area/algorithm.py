@@ -4480,19 +4480,27 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         for bar in sorted(barangay_to_final_eas.keys(), key=lambda k: str(k) if k is not None else ""):
             bar_eas = barangay_to_final_eas[bar]
             
+            # Separate regular EAs and Special EAs so Special EAs receive codes after all child EAs in the barangay
+            regular_eas = [e for e in bar_eas if not e.get('is_special_ea', False)]
+            special_eas = [e for e in bar_eas if e.get('is_special_ea', False)]
+            
             # Centroid-based geographic ordering shall only be performed for barangays that contain identified Candidates for Delineation.
             has_delin = any(ea.get('original_id') in delineation_candidate_ids for ea in barangay_groups.get(bar, []))
             if has_delin:
-                bar_eas.sort(key=get_sort_key)
+                regular_eas.sort(key=get_sort_key)
+                special_eas.sort(key=get_sort_key)
             else:
                 def get_original_order_key(ea_item):
                     orig_id = ea_item.get('original_id', 99999999)
                     centroid = ea_item['geom'].centroid().asPoint()
                     return (orig_id, centroid.x())
-                bar_eas.sort(key=get_original_order_key)
+                regular_eas.sort(key=get_original_order_key)
+                special_eas.sort(key=get_original_order_key)
+
+            ordered_eas = regular_eas + special_eas
 
             new_ea_counter = 0
-            for i, ea in enumerate(bar_eas):
+            for i, ea in enumerate(ordered_eas):
                 # Derive original EA suffix (XXX) from the "name" field if present, or fallback to the geocode
                 orig_last3 = "000"
                 name_idx = out_fields.indexOf("name")
@@ -4531,7 +4539,17 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         orig_last3 = "000"
                         
                 # Determine the new EA code.
-                if ea.get('from_merge', False):
+                if ea.get('is_special_ea', False):
+                    # Special EAs (Gap/Overlap) receive sequential codes after all child EAs in the barangay.
+                    seq_num = max_ea_number.get(bar, 0) + 1 + new_ea_counter
+                    seq_str = f"{seq_num:03d}"
+                    new_ea_counter += 1
+                    
+                    if orig_last3 == "000":
+                        ea['new_ea_code'] = seq_str + "000"
+                    else:
+                        ea['new_ea_code'] = orig_last3 + seq_str
+                elif ea.get('from_merge', False):
                     # Merged EAs retain the original code of the EA with the highest
                     # household count before merging.  That code is already stored in
                     # ea['original_code'] (selected at merge time from the dominant EA).
