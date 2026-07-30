@@ -514,12 +514,12 @@ class EALauncherDialog(QDialog):
         console_controls.addWidget(QLabel("Execution Logs:"))
         console_controls.addStretch()
         
-        self.copy_logs_btn = QPushButton("📋 Copy Logs")
+        self.copy_logs_btn = QPushButton("Copy Logs")
         self.copy_logs_btn.setToolTip("Copy entire log console history to clipboard.")
         self.copy_logs_btn.clicked.connect(self.copy_logs_to_clipboard)
         console_controls.addWidget(self.copy_logs_btn)
         
-        self.clear_logs_btn = QPushButton("🗑 Clear Console")
+        self.clear_logs_btn = QPushButton("Clear Console")
         self.clear_logs_btn.setToolTip("Clear all text from the console.")
         self.clear_logs_btn.clicked.connect(self.log_console_clear)
         console_controls.addWidget(self.clear_logs_btn)
