@@ -148,7 +148,7 @@ class CustomProcessingFeedback(QgsProcessingFeedback):
 class EALauncherDialog(QDialog):
     """Comprehensive Processing UI for Create Enumeration Areas."""
 
-    ALGORITHM_ID = "eadelineation:createea"
+    ALGORITHM_ID = "gmd_pipeline:createea"
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -423,6 +423,11 @@ class EALauncherDialog(QDialog):
         self.merged_path, self.merged_edit = self._file_picker_row()
         outputs_layout.addLayout(self.merged_path)
 
+        # Special EAs Layer (Gap/Overlap)
+        outputs_layout.addWidget(QLabel("Special EAs Layer (Gap/Overlap)"))
+        self.special_ea_path, self.special_ea_edit = self._file_picker_row()
+        outputs_layout.addLayout(self.special_ea_path)
+
         # Candidate for Delineation Layer
         outputs_layout.addWidget(QLabel("Delineation Candidate Layer"))
         self.delin_cand_path, self.delin_cand_edit = self._file_picker_row()
@@ -514,12 +519,12 @@ class EALauncherDialog(QDialog):
         console_controls.addWidget(QLabel("Execution Logs:"))
         console_controls.addStretch()
         
-        self.copy_logs_btn = QPushButton("📋 Copy Logs")
+        self.copy_logs_btn = QPushButton("Copy Logs")
         self.copy_logs_btn.setToolTip("Copy entire log console history to clipboard.")
         self.copy_logs_btn.clicked.connect(self.copy_logs_to_clipboard)
         console_controls.addWidget(self.copy_logs_btn)
         
-        self.clear_logs_btn = QPushButton("🗑 Clear Console")
+        self.clear_logs_btn = QPushButton("Clear Console")
         self.clear_logs_btn.setToolTip("Clear all text from the console.")
         self.clear_logs_btn.clicked.connect(self.log_console_clear)
         console_controls.addWidget(self.clear_logs_btn)
@@ -689,9 +694,32 @@ class EALauncherDialog(QDialog):
         
         return layout, edit
 
+    def _extract_5digit_geocode(self):
+        """Extract 5-digit geocode prefix from selected Barangay or EA layer."""
+        layers = [self.bar_combo.currentLayer(), self.prev_ea_combo.currentLayer()]
+        for lyr in layers:
+            if not lyr:
+                continue
+            name = lyr.name()
+            digits = "".join([c for c in name if c.isdigit()])
+            if len(digits) >= 5:
+                return digits[:5]
+            fields = [f.name().lower() for f in lyr.fields()]
+            if "geocode" in fields:
+                feat = next(lyr.getFeatures(), None)
+                if feat:
+                    gval = str(feat.attribute("geocode")).strip()
+                    gdigits = "".join([c for c in gval if c.isdigit()])
+                    if len(gdigits) >= 5:
+                        return gdigits[:5]
+        return None
+
     def _browse_file(self, line_edit):
+        default_name = line_edit.placeholderText()
+        if not default_name or default_name.startswith("["):
+            default_name = ""
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save Output Layer", "", "GeoPackage (*.gpkg);;Shapefile (*.shp);;GeoJSON (*.geojson)"
+            self, "Save Output Layer", default_name, "GeoPackage (*.gpkg);;Shapefile (*.shp);;GeoJSON (*.geojson)"
         )
         if path:
             line_edit.setText(path)
@@ -1014,6 +1042,23 @@ class EALauncherDialog(QDialog):
             self.overlap_status_lbl.setText(f"🟢 Active: {overlap_layer.featureCount()} polygon features loaded.")
             self.overlap_status_lbl.setStyleSheet("color: #1a7f37;")
             
+        # Update output layer placeholders using 5-digit geocode prefix
+        geo5 = self._extract_5digit_geocode()
+        if geo5:
+            self.delineated_edit.setPlaceholderText(f"{geo5}_delineated_ea2026")
+            self.merged_edit.setPlaceholderText(f"{geo5}_merged_ea2026")
+            self.special_ea_edit.setPlaceholderText(f"{geo5}_special_ea")
+            self.delin_cand_edit.setPlaceholderText(f"{geo5}_delineation_candidates")
+            self.merge_cand_edit.setPlaceholderText(f"{geo5}_merge_candidates")
+            self.extracted_bldg_edit.setPlaceholderText(f"{geo5}_extracted_bldgpts")
+        else:
+            self.delineated_edit.setPlaceholderText("[Temporary Scratch Layer]")
+            self.merged_edit.setPlaceholderText("[Temporary Scratch Layer]")
+            self.special_ea_edit.setPlaceholderText("[Temporary Scratch Layer]")
+            self.delin_cand_edit.setPlaceholderText("[Temporary Scratch Layer]")
+            self.merge_cand_edit.setPlaceholderText("[Temporary Scratch Layer]")
+            self.extracted_bldg_edit.setPlaceholderText("[Temporary Scratch Layer]")
+
         self.trigger_auto_refresh()
 
     def generate_preview(self):
@@ -1550,6 +1595,7 @@ class EALauncherDialog(QDialog):
             # Outputs
             'DELINEATED_OUTPUT': self.delineated_edit.text() or 'TEMPORARY_OUTPUT',
             'MERGED_OUTPUT': self.merged_edit.text() or 'TEMPORARY_OUTPUT',
+            'SPECIAL_EA_OUTPUT': self.special_ea_edit.text() or 'TEMPORARY_OUTPUT',
             'DELINEATION_CANDIDATE_OUTPUT': self.delin_cand_edit.text() or 'TEMPORARY_OUTPUT',
             'MERGE_CANDIDATE_OUTPUT': self.merge_cand_edit.text() or 'TEMPORARY_OUTPUT',
             'EXTRACTED_BUILDINGS_OUTPUT': self.extracted_bldg_edit.text() or 'TEMPORARY_OUTPUT',
@@ -1572,10 +1618,13 @@ class EALauncherDialog(QDialog):
 
         # Execute using QGIS Processing framework
         from qgis import processing
+        from qgis.core import QgsApplication
+        
+        alg_to_run = QgsApplication.processingRegistry().algorithmById(self.ALGORITHM_ID) or self.algo
         
         try:
             results = processing.runAndLoadResults(
-                self.ALGORITHM_ID,
+                alg_to_run,
                 parameters,
                 context=context,
                 feedback=self.feedback
@@ -1584,6 +1633,32 @@ class EALauncherDialog(QDialog):
             if self.feedback.isCanceled():
                 self.log_console.append("<span style='color:#d17a00; font-weight:bold;'>[CANCEL] Pipeline execution cancelled by user.</span>")
             else:
+                # Rename loaded layers in QGIS Layers Panel using 5-digit geocode prefix
+                geo5 = self._extract_5digit_geocode() or "00000"
+                from qgis.core import QgsProject, QgsMapLayer
+
+                output_names = {
+                    'DELINEATED_OUTPUT': f"{geo5}_delineated_ea2026",
+                    'MERGED_OUTPUT': f"{geo5}_merged_ea2026",
+                    'SPECIAL_EA_OUTPUT': f"{geo5}_special_ea",
+                    'DELINEATION_CANDIDATE_OUTPUT': f"{geo5}_delineation_candidates",
+                    'MERGE_CANDIDATE_OUTPUT': f"{geo5}_merge_candidates",
+                    'EXTRACTED_BUILDINGS_OUTPUT': f"{geo5}_extracted_bldgpts",
+                }
+
+                if isinstance(results, dict):
+                    for out_key, target_name in output_names.items():
+                        if out_key in results:
+                            layer_ref = results[out_key]
+                            layer = None
+                            if isinstance(layer_ref, str):
+                                layer = QgsProject.instance().mapLayer(layer_ref)
+                            elif isinstance(layer_ref, QgsMapLayer):
+                                layer = layer_ref
+                            
+                            if layer:
+                                layer.setName(target_name)
+
                 self.progress_bar.setValue(100)
                 self.log_console.append("<span style='color:#1a7f37; font-weight:bold;'>[COMPLETE] Pipeline execution complete! Results loaded to map.</span>")
 

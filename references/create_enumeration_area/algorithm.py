@@ -569,6 +569,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
     MERGED_OUTPUT = "MERGED_OUTPUT"
     DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
     MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
+    SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
     EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
     SLIVER_THRESHOLD = "SLIVER_THRESHOLD"
     PREVIEW_ONLY = "PREVIEW_ONLY"
@@ -677,6 +678,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             "Contains all sub-polygons generated from delineation, fully covering the split candidate EAs (including parts internally merged to satisfy min_household).</li>"
             "<li><b>Merged EAs Layer</b> (optional polygon, named <i>&lt;5-digit geocode&gt;_merged_ea2026</i>) — "
             "Contains only EAs created by merging distinct starting EAs.</li>"
+            "<li><b>Special EAs Layer</b> (optional polygon, named <i>&lt;5-digit geocode&gt;_special_ea</i>, e.g. <i>01701_special_ea</i>) — "
+            "Contains Special EAs generated from Gap and Overlap layers.</li>"
             "</ul>"
         )
 
@@ -901,6 +904,15 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterFeatureSink(
                 self.MERGED_OUTPUT,
                 "Merged EAs Layer",
+                optional=True,
+            )
+        )
+
+        # Special EAs output layer
+        self.addParameter(
+            QgsProcessingParameterFeatureSink(
+                self.SPECIAL_EA_OUTPUT,
+                "Special EAs Layer (Gap/Overlap)",
                 optional=True,
             )
         )
@@ -1658,10 +1670,27 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
 
         merged_sink = None
         merged_dest_id = None
+        merged_out_fields = QgsFields(out_fields)
+        s_idx = merged_out_fields.indexOf("split_by")
+        if s_idx != -1:
+            merged_out_fields.remove(s_idx)
+
         if self.MERGED_OUTPUT in parameters and parameters[self.MERGED_OUTPUT] is not None:
             (merged_sink, merged_dest_id) = self.parameterAsSink(
                 parameters,
                 self.MERGED_OUTPUT,
+                context,
+                merged_out_fields,
+                out_wkb_type,
+                target_crs,
+            )
+
+        special_ea_sink = None
+        special_ea_dest_id = None
+        if self.SPECIAL_EA_OUTPUT in parameters and parameters[self.SPECIAL_EA_OUTPUT] is not None:
+            (special_ea_sink, special_ea_dest_id) = self.parameterAsSink(
+                parameters,
+                self.SPECIAL_EA_OUTPUT,
                 context,
                 out_fields,
                 out_wkb_type,
@@ -1752,6 +1781,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             outputs[self.DELINEATED_OUTPUT] = delineated_dest_id
         if merged_dest_id is not None:
             outputs[self.MERGED_OUTPUT] = merged_dest_id
+        if special_ea_dest_id is not None:
+            outputs[self.SPECIAL_EA_OUTPUT] = special_ea_dest_id
         if delin_candidate_dest_id is not None:
             outputs[self.DELINEATION_CANDIDATE_OUTPUT] = delin_candidate_dest_id
         if merge_candidate_dest_id is not None:
@@ -3504,12 +3535,45 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         for feat in all_ea_features:
             temp_index.insertFeature(feat)
             ea_by_id[feat.id()] = feat
-            
+
+        # Helper: resolve a clean 6-digit EAN string from a feature.
+        # Uses the ean field as primary; falls back to the last 6 digits of the
+        # geocode field when ean is blank, 'NULL', 'None', or non-numeric.
+        _ea_fields_ref = previous_ea_source.fields()
+        _geo_field_idx = next(
+            (ii for ii in range(_ea_fields_ref.count())
+             if _ea_fields_ref.at(ii).name().lower() == "geocode"),
+            -1
+        )
+
+        def _resolve_ean_str(feat):
+            _v = feat.attribute(ea_id_field)
+            # Guard: null QVariant serialises to 'NULL' or 'None' in PyQt5
+            if _v is None or (isinstance(_v, QVariant) and _v.isNull()):
+                _s = ""
+            else:
+                _s = str(_v).strip()
+                if _s.endswith(".0"):
+                    _s = _s[:-2]
+                # Reject placeholder strings that are not purely numeric
+                if not _s.lstrip("-").isdigit():
+                    _s = ""
+            if not _s and _geo_field_idx != -1:
+                # Fall back: last 6 digits of the geocode field
+                _gv = feat.attribute(_geo_field_idx)
+                if _gv is not None and not (isinstance(_gv, QVariant) and _gv.isNull()):
+                    _gs = str(_gv).strip()
+                    if _gs.endswith(".0"):
+                        _gs = _gs[:-2]
+                    _digits = "".join(c for c in _gs if c.isdigit())
+                    if len(_digits) >= 6:
+                        _s = _digits[-6:]
+                    elif _digits:
+                        _s = _digits.zfill(6)
+            return _s
+
         for feat in all_ea_features:
-            _ean = feat.attribute(ea_id_field)
-            _ean_str = str(_ean).strip() if _ean is not None else ""
-            if _ean_str.endswith(".0"):
-                _ean_str = _ean_str[:-2]
+            _ean_str = _resolve_ean_str(feat)
             
             _orig_hhcount = 0.0
             if prev_ea_pop_idx != -1:
@@ -3585,10 +3649,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 _orig_hhcount = 0.0
 
             # Bypassing building matches for non-candidates EAs
-            _ean = feat.attribute(ea_id_field)
-            _ean_str = str(_ean).strip() if _ean is not None else ""
-            if _ean_str.endswith(".0"):
-                _ean_str = _ean_str[:-2]
+            _ean_str = _resolve_ean_str(feat)
             is_candidate = (feat.id() in delineation_candidate_ids or feat.id() in merge_candidate_ids)
 
             if not is_candidate:
@@ -3859,10 +3920,10 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         
                     ea = bar_eas[idx]
                     
-                    if ea['hh_count'] == 0:
-                        # Force merge with any touching neighbor inside the same barangay to eliminate 0 hh_count
+                    if ea['hh_count'] == 0 or ea.get('bldg_count', 0) == 0:
+                        # Force merge with any touching neighbor inside the same barangay, prioritizing neighbors with >0 households/buildings
                         best_neighbor_idx = -1
-                        best_neighbor_score = float('inf')
+                        best_neighbor_score = -1.0
                         
                         for j in range(len(bar_eas)):
                             if idx == j or j in merged_indices:
@@ -3878,8 +3939,9 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                                 continue
                             if ea['geom'].touches(neighbor['geom']) or ea['geom'].intersects(neighbor['geom']):
                                 combined_hh = ea['hh_count'] + neighbor['hh_count']
-                                score = combined_hh
-                                if score < best_neighbor_score:
+                                combined_bldg = ea.get('bldg_count', 0) + neighbor.get('bldg_count', 0)
+                                score = (combined_hh * 1000.0) + combined_bldg
+                                if score > best_neighbor_score:
                                     best_neighbor_score = score
                                     best_neighbor_idx = j
                                     
@@ -4247,12 +4309,10 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         # A global last-resort pass that enforces [min_household, max_household] on every EA
         # in the output list. Runs after per-barangay processing; handles any remaining
         # violations that the iterative loop could not resolve within its 25-iteration budget.
-        feedback.pushInfo("Running compliance sweep...")
-        # Temporary bypass to disable Phase 8
-        compliance_changed = False
+        feedback.pushInfo("Running Phase 7 Final Compliance Sweep to enforce min/max household thresholds...")
+        compliance_changed = True
         compliance_pass = 0
         max_compliance_passes = 10
-        feedback.pushInfo("TEMPORARY BYPASS: Skipping Phase 8 Final Compliance Sweep as requested.")
 
         while compliance_changed and compliance_pass < max_compliance_passes:
             if multi_feedback.isCanceled():
@@ -4311,7 +4371,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 bar = ea['parent_barangay']
 
                 # Pass 1: touching neighbour in same barangay whose combined count is strictly
-                # within (min_household, max_household) — i.e. > 100 and < 300
+                # within (min_household, max_household] — i.e. > 100 and <= 300
                 best_j = -1
                 best_score = float('inf')
                 for j, nb in enumerate(eas):
@@ -4319,56 +4379,36 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         continue
                     if nb['parent_barangay'] != bar:
                         continue
-                    if is_delineation_candidate(nb):
+                    if is_delineation_candidate(nb) or nb.get('original_id') in delineation_candidate_ids:
                         continue
                     if nb.get('is_special_ea', False) and not is_merge_candidate(nb):
                         continue
                     if ea['geom'].touches(nb['geom']) or ea['geom'].intersects(nb['geom']):
                         combined = ea['hh_count'] + nb['hh_count']
-                        if min_household < combined < max_household:  # strictly > 100 and < 300
+                        if min_household < combined <= max_household:  # strictly > 100 and <= 300
                             score = abs(combined - (max_household - 1))
                             if score < best_score:
                                 best_score = score
                                 best_j = j
 
-                # Pass 2: any touching neighbour in same barangay (must be under max)
+                # Pass 2: any touching contiguous neighbour in same barangay (must be <= max_household)
                 if best_j == -1:
                     for j, nb in enumerate(eas):
                         if j == i or j in removed:
                             continue
                         if nb['parent_barangay'] != bar:
                             continue
-                        if is_delineation_candidate(nb):
+                        if is_delineation_candidate(nb) or nb.get('original_id') in delineation_candidate_ids:
                             continue
                         if nb.get('is_special_ea', False) and not is_merge_candidate(nb):
                             continue
                         if ea['geom'].touches(nb['geom']) or ea['geom'].intersects(nb['geom']):
                             combined = ea['hh_count'] + nb['hh_count']
-                            if combined < max_household:
+                            if combined <= max_household:
                                 score = abs(combined - (max_household - 1))
                                 if score < best_score:
                                     best_score = score
                                     best_j = j
-
-                # Pass 3: nearest centroid in same barangay (must be under max)
-                if best_j == -1:
-                    up_centroid = ea['geom'].centroid().asPoint()
-                    best_dist = float('inf')
-                    for j, nb in enumerate(eas):
-                        if j == i or j in removed:
-                            continue
-                        if nb['parent_barangay'] != bar:
-                            continue
-                        if is_delineation_candidate(nb):
-                            continue
-                        if nb.get('is_special_ea', False) and not is_merge_candidate(nb):
-                            continue
-                        combined = ea['hh_count'] + nb['hh_count']
-                        if combined < max_household:
-                            dist = up_centroid.distance(nb['geom'].centroid().asPoint())
-                            if dist < best_dist:
-                                best_dist = dist
-                                best_j = j
 
                 if best_j != -1:
                     nb = eas[best_j]
@@ -4448,19 +4488,27 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         for bar in sorted(barangay_to_final_eas.keys(), key=lambda k: str(k) if k is not None else ""):
             bar_eas = barangay_to_final_eas[bar]
             
+            # Separate regular EAs and Special EAs so Special EAs receive codes after all child EAs in the barangay
+            regular_eas = [e for e in bar_eas if not e.get('is_special_ea', False)]
+            special_eas = [e for e in bar_eas if e.get('is_special_ea', False)]
+            
             # Centroid-based geographic ordering shall only be performed for barangays that contain identified Candidates for Delineation.
             has_delin = any(ea.get('original_id') in delineation_candidate_ids for ea in barangay_groups.get(bar, []))
             if has_delin:
-                bar_eas.sort(key=get_sort_key)
+                regular_eas.sort(key=get_sort_key)
+                special_eas.sort(key=get_sort_key)
             else:
                 def get_original_order_key(ea_item):
                     orig_id = ea_item.get('original_id', 99999999)
                     centroid = ea_item['geom'].centroid().asPoint()
                     return (orig_id, centroid.x())
-                bar_eas.sort(key=get_original_order_key)
+                regular_eas.sort(key=get_original_order_key)
+                special_eas.sort(key=get_original_order_key)
+
+            ordered_eas = regular_eas + special_eas
 
             new_ea_counter = 0
-            for i, ea in enumerate(bar_eas):
+            for i, ea in enumerate(ordered_eas):
                 # Derive original EA suffix (XXX) from the "name" field if present, or fallback to the geocode
                 orig_last3 = "000"
                 name_idx = out_fields.indexOf("name")
@@ -4487,16 +4535,52 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                     else:
                         suffix = orig_code_str
                         
-                    # Clean suffix and pad with zeros from the left to ensure exactly 3 digits
-                    orig_last3 = suffix.zfill(3)
-                    if len(orig_last3) > 3:
-                        orig_last3 = orig_last3[:3] # FIX: take first 3 digits of mother EA suffix
+                    # Extract only digit characters from the suffix so non-numeric placeholders
+                    # (e.g. "NUL001") never bleed into the EA code.  Pad to 3 digits; if no
+                    # digits are present at all, fall back to "000".
+                    suffix_digits = "".join(c for c in suffix if c.isdigit())
+                    if len(suffix_digits) >= 3:
+                        orig_last3 = suffix_digits[:3]
+                    elif len(suffix_digits) > 0:
+                        orig_last3 = suffix_digits.zfill(3)
+                    else:
+                        orig_last3 = "000"
                         
-                # Determine sequence number suffix YYY
-                # If it is a newly generated/modified EA, number starting from max_ea_number + 1.
-                # Exception: merged EAs always inherit the dominant EA's original code unchanged —
-                # no new sequential suffix is generated for merges.
-                if ea.get('is_new', False) and not ea.get('from_merge', False):
+                # Determine the new EA code.
+                if ea.get('is_special_ea', False):
+                    # Special EAs (Gap/Overlap) receive sequential codes after all child EAs in the barangay.
+                    seq_num = max_ea_number.get(bar, 0) + 1 + new_ea_counter
+                    seq_str = f"{seq_num:03d}"
+                    new_ea_counter += 1
+                    
+                    if orig_last3 == "000":
+                        ea['new_ea_code'] = seq_str + "000"
+                    else:
+                        ea['new_ea_code'] = orig_last3 + seq_str
+                elif ea.get('from_merge', False):
+                    # Merged EAs retain the original code of the EA with the highest
+                    # household count before merging.  That code is already stored in
+                    # ea['original_code'] (selected at merge time from the dominant EA).
+                    orig_code_str = str(ea['original_code']).strip() if ea['original_code'] is not None else ""
+                    if orig_code_str.endswith(".0"):
+                        orig_code_str = orig_code_str[:-2]
+                    # If original_code is blank or non-numeric (e.g. was a NULL placeholder),
+                    # fall back to the last 6 digits of the geocode stored in attributes.
+                    if not orig_code_str or not orig_code_str.lstrip("-").isdigit():
+                        _attrs = ea.get('attributes', [])
+                        _gv = _attrs[_geo_field_idx] if _geo_field_idx != -1 and _geo_field_idx < len(_attrs) else None
+                        if _gv is not None and not (isinstance(_gv, QVariant) and _gv.isNull()):
+                            _gs = str(_gv).strip()
+                            if _gs.endswith(".0"):
+                                _gs = _gs[:-2]
+                            _digits = "".join(c for c in _gs if c.isdigit())
+                            if len(_digits) >= 6:
+                                orig_code_str = _digits[-6:]
+                            elif _digits:
+                                orig_code_str = _digits.zfill(6)
+                    ea['new_ea_code'] = orig_code_str
+                elif ea.get('is_new', False):
+                    # Newly delineated (split) EAs use the XXXYYY sequence number.
                     seq_num = max_ea_number.get(bar, 0) + 1 + new_ea_counter
                     seq_str = f"{seq_num:03d}"
                     new_ea_counter += 1
@@ -4508,8 +4592,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         # XXXYYY mother-child concept (first 3 digits of mother EA + last 3 digits next sequence suffix)
                         ea['new_ea_code'] = orig_last3 + seq_str
                 else:
-                    # Unchanged EAs retain their original code.
-                    # Merged EAs retain the dominant (highest-hhcount) EA's original code.
+                    # Unchanged EAs retain their original EA code.
                     orig_code_str = str(ea['original_code']).strip() if ea['original_code'] is not None else ""
                     if orig_code_str.endswith(".0"):
                         orig_code_str = orig_code_str[:-2]
@@ -4797,6 +4880,47 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
 
         final_geom_by_candidate = {}
 
+        # Build a per-barangay attribute cache from the first non-NULL EA in each group.
+        # Used to fill geographic fields (region, province, city_mun, barangay, name, etc.)
+        # that may be NULL on merged EA output features because the dominant EA's source
+        # attributes were blank, or because a case-mismatch prevented correct field resolution.
+        _src_fields_cache = previous_ea_source.fields()
+        barangay_attrs_cache = {}
+        for _ea in eas:
+            _bar = str(_ea.get('parent_barangay', ''))
+            if _bar in barangay_attrs_cache:
+                continue
+            _src_attrs = _ea.get('attributes', [])
+            _cache = {}
+            for _f in out_fields:
+                _fname_lower = _f.name().lower()
+                _si = next(
+                    (ii for ii in range(_src_fields_cache.count())
+                     if _src_fields_cache.at(ii).name().lower() == _fname_lower),
+                    -1
+                )
+                if _si != -1 and _si < len(_src_attrs):
+                    _val = _src_attrs[_si]
+                    if _val is not None and not (isinstance(_val, QVariant) and _val.isNull()) and str(_val).strip() != '':
+                        _cache[_fname_lower] = _val
+            if _cache:
+                barangay_attrs_cache[_bar] = _cache
+
+        # Build per-barangay highest-hhcount EA attribute cache for merged EA field fill-back.
+        # When a merged EA still has blank geographic fields (region, province, city_mun,
+        # barangay, name, etc.) after the primary barangay_attrs_cache fill, attributes from
+        # the EA in the same barangay with the highest household count are used.
+        # This applies ONLY to the Merged EAs output layer. The highest hhcount always prevails.
+        barangay_max_hh_attrs_cache = {}
+        for _ea in eas:
+            _bar = str(_ea.get('parent_barangay', ''))
+            _hh = _ea.get('hh_count', 0)
+            if _bar not in barangay_max_hh_attrs_cache or _hh > barangay_max_hh_attrs_cache[_bar]['hh']:
+                barangay_max_hh_attrs_cache[_bar] = {
+                    'hh': _hh,
+                    'attributes': _ea.get('attributes', [])
+                }
+
         bldg_out_fields = QgsFields()
         if extracted_buildings_sink is not None:
             bldg_out_fields = QgsFields(building_source.fields())
@@ -4854,36 +4978,116 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 if _ea_id not in delineation_candidate_ids and _ea_id not in merge_candidate_ids:
                     is_unchanged_retain = True
             
-            # Clean slivers from all EAs, and remove holes from newly created EAs
+            # Clean slivers from all EAs, and remove holes from newly created EAs.
+            # Keep a pre-clean copy so we can fall back if the cleaner eliminates the polygon.
+            geom_pre_clean = QgsGeometry(geom)
             geom = clean_and_remove_holes(geom, remove_holes=(not is_unchanged_retain))
-            
+
+            # Guard: clean_and_remove_holes() returns QgsGeometry() when the polygon area is
+            # below the sliver threshold.  For merged EAs this would produce a feature with a
+            # null extent ("Cannot zoom to selected feature(s): No extent could be determined")
+            # and blank attribute fields.  Fall back to the pre-clean geometry so the merged
+            # EA is still written with a valid extent.  For other EA types, skip with a warning.
+            if geom.isEmpty():
+                if ea.get('from_merge', False):
+                    feedback.pushWarning(
+                        f"[Output] Merged EA (code={ea.get('original_code', '?')}, "
+                        f"pop={ea.get('hh_count', '?')}) was eliminated as a sliver during "
+                        f"hole/sliver cleanup — using pre-clean geometry as fallback."
+                    )
+                    geom = geom_pre_clean
+                else:
+                    feedback.pushWarning(
+                        f"[Output] EA (code={ea.get('original_code', '?')}, "
+                        f"pop={ea.get('hh_count', '?')}) has empty geometry after "
+                        f"hole/sliver cleanup — skipping feature."
+                    )
+                    continue
+
             # Simplify geometry with a tiny tolerance to remove redundant/collinear vertices
             simp_tolerance = 1e-7 if target_crs.isGeographic() else 0.01
             geom = geom.simplify(simp_tolerance)
             geom = geom.makeValid()
-            
+
+            # Final empty-geometry guard: simplify or makeValid may still produce an empty result
+            if geom.isEmpty():
+                feedback.pushWarning(
+                    f"[Output] EA (code={ea.get('original_code', '?')}, "
+                    f"pop={ea.get('hh_count', '?')}) has empty geometry after simplify/makeValid "
+                    f"— skipping feature."
+                )
+                continue
+
             _ea_id = ea.get('original_id')
             if _ea_id in delineation_candidate_ids:
                 final_geom_by_candidate.setdefault(_ea_id, []).append((QgsGeometry(geom), ea))
-            
+
             out_feat = QgsFeature(out_fields)
             out_feat.setGeometry(geom)
             
             # Use name-based field mapping to correctly copy all EA input layer field values.
-            # This is robust to field-order differences between ea['attributes'] (which was
-            # captured from previous_ea_source.fields() positionally) and out_fields.
+            # Case-insensitive lookup is used so that source fields named e.g. "Region" are
+            # correctly matched to out_fields entry "region" (QgsFields.indexOf is case-sensitive).
             src_fields = previous_ea_source.fields()
             src_attrs = ea['attributes']
             mapped_attrs = []
             for f in out_fields:
-                src_idx = src_fields.indexOf(f.name())
+                src_idx = next(
+                    (ii for ii in range(src_fields.count())
+                     if src_fields.at(ii).name().lower() == f.name().lower()),
+                    -1
+                )
                 if src_idx != -1 and src_idx < len(src_attrs):
                     mapped_attrs.append(src_attrs[src_idx])
                 else:
                     mapped_attrs.append(None)
             out_feat.setAttributes(mapped_attrs)
-            
+
+            # For merged EAs, fill any geographic fields that are still NULL/blank
+            # from the per-barangay attribute cache.  All EAs in the same barangay share
+            # the same region, province, city_mun, barangay and name values, so this is safe.
+            # Fields that are intentionally overwritten later (hhcount, bldg_count, etc.)
+            # will be set correctly by the setAttribute calls below.
+            if ea.get('from_merge', False):
+                _bar_key = str(ea.get('parent_barangay', ''))
+                _bar_cache = barangay_attrs_cache.get(_bar_key, {})
+                for _fidx, _f in enumerate(out_fields):
+                    _cur = out_feat.attribute(_fidx)
+                    _is_null = (
+                        _cur is None
+                        or (isinstance(_cur, QVariant) and _cur.isNull())
+                        or str(_cur).strip() == ''
+                    )
+                    if _is_null and _f.name().lower() in _bar_cache:
+                        out_feat.setAttribute(_fidx, _bar_cache[_f.name().lower()])
+
+                # Secondary fallback (Merged EAs output layer only): fill any still-blank
+                # geographic fields from the EA in the same barangay with the highest
+                # household count. The highest hhcount always prevails.
+                _max_hh_entry = barangay_max_hh_attrs_cache.get(_bar_key, {})
+                if _max_hh_entry:
+                    _max_hh_attrs = _max_hh_entry.get('attributes', [])
+                    for _fidx, _f in enumerate(out_fields):
+                        _cur = out_feat.attribute(_fidx)
+                        _is_null = (
+                            _cur is None
+                            or (isinstance(_cur, QVariant) and _cur.isNull())
+                            or str(_cur).strip() == ''
+                        )
+                        if _is_null:
+                            _si = next(
+                                (ii for ii in range(_src_fields_cache.count())
+                                 if _src_fields_cache.at(ii).name().lower() == _f.name().lower()),
+                                -1
+                            )
+                            if _si != -1 and _si < len(_max_hh_attrs):
+                                _max_val = _max_hh_attrs[_si]
+                                if _max_val is not None and not (isinstance(_max_val, QVariant) and _max_val.isNull()) and str(_max_val).strip() != '':
+                                    out_feat.setAttribute(_fidx, _max_val)
+
             final_pop = ea['original_hhcount'] if is_unchanged_retain else ea['hh_count']
+            hh_count_bldg = ea.get('hh_count', 0.0)
+            hhcount_orig = ea.get('original_hhcount', hh_count_bldg)
 
             pop_idx = out_fields.indexOf(output_hh_field)
             if pop_idx != -1:
@@ -4903,11 +5107,11 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
 
             hh_count_idx = out_fields.indexOf("hh_count")
             if hh_count_idx != -1:
-                out_feat.setAttribute(hh_count_idx, final_pop)
+                out_feat.setAttribute(hh_count_idx, hh_count_bldg)
 
             hhcount_idx = out_fields.indexOf("hhcount")
             if hhcount_idx != -1:
-                out_feat.setAttribute(hhcount_idx, final_pop)
+                out_feat.setAttribute(hhcount_idx, hhcount_orig)
 
             bldgpts_val_idx = out_fields.indexOf("bldgpoints_value")
             if bldgpts_val_idx != -1:
@@ -4966,17 +5170,45 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
 #            if not sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
 #                feedback.reportError(f"Failed to add EA {i} to sink.")
 
-            # Add to delineated sink if it was split, or if it is a Special EA (Gap/Overlap)
-            if ea.get('from_split', False) or ea.get('is_special_ea', False):
-                if delineated_sink is not None:
-                    if not delineated_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
-                        feedback.reportError(f"Failed to add EA {i} to delineated sink.")
-            
-            # Add to merged sink if it was merged and not split
-            if ea.get('from_merge', False) and not ea.get('from_split', False):
-                if merged_sink is not None:
-                    if not merged_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
-                        feedback.reportError(f"Failed to add EA {i} to merged sink.")
+            # Check if EA feature is blank (empty geometry or missing geocode/ean identifiers)
+            _gc_val = out_feat.attribute(out_fields.indexOf("geocode")) if out_fields.indexOf("geocode") != -1 else None
+            _ean_val = out_feat.attribute(out_fields.indexOf(ea_id_field)) if out_fields.indexOf(ea_id_field) != -1 else None
+            _is_blank_feat = out_feat.geometry().isEmpty() or (
+                (_gc_val is None or (isinstance(_gc_val, QVariant) and _gc_val.isNull()) or str(_gc_val).strip() in ('', 'NULL', 'None'))
+                and (_ean_val is None or (isinstance(_ean_val, QVariant) and _ean_val.isNull()) or str(_ean_val).strip() in ('', 'NULL', 'None'))
+            )
+
+            if _is_blank_feat:
+                feedback.pushWarning(f"[Output] Skipped writing blank EA feature to output layer (code={ea.get('original_code', '?')}).")
+            else:
+                # Add to Special EAs sink if it is a Special EA (Gap/Overlap)
+                if ea.get('is_special_ea', False):
+                    if special_ea_sink is not None:
+                        if not special_ea_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
+                            feedback.reportError(f"Failed to add Special EA {i} to special EA sink.")
+                # Add to delineated sink if it was split and not a Special EA
+                elif ea.get('from_split', False):
+                    if delineated_sink is not None:
+                        if not delineated_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
+                            feedback.reportError(f"Failed to add EA {i} to delineated sink.")
+                
+                # Add to merged sink if it was merged, not split, not Special EA, and has >0 hh_count and >0 bldg_count
+                if ea.get('from_merge', False) and not ea.get('from_split', False) and not ea.get('is_special_ea', False):
+                    if merged_sink is not None:
+                        _m_hh = ea.get('hh_count', 0.0)
+                        _m_bldg = ea.get('bldg_count', 0)
+                        if _m_hh > 0 and _m_bldg > 0:
+                            m_feat = QgsFeature(merged_out_fields)
+                            m_feat.setGeometry(out_feat.geometry())
+                            m_attrs = [out_feat.attribute(f.name()) for f in merged_out_fields]
+                            m_feat.setAttributes(m_attrs)
+                            if not merged_sink.addFeature(m_feat, QgsFeatureSink.Flag.FastInsert):
+                                feedback.reportError(f"Failed to add EA {i} to merged sink.")
+                        else:
+                            feedback.pushWarning(
+                                f"[Merged Output] Skipped writing zero-count merged EA (code={ea.get('original_code', '?')}, "
+                                f"hh_count={_m_hh}, bldg_count={_m_bldg}) to merged sink."
+                            )
 
             # Add matched buildings to extracted buildings sink
             if extracted_buildings_sink is not None:
