@@ -36,10 +36,15 @@ class GMDPipeline(object):
     def __init__(self, iface):
         self.iface = iface
         self.gema_menu = None
+        self.updating_boundaries_menu = None
+        self.ea_delineation_menu = None
+        self.others_menu = None
         self.provider = None
         self.toolbar = None
         self.geometry_toolkit_dlg = None
+        self.check_update_dlg = None
         self.push_dlg = None
+        self.check_and_update_action = None
         self.create_ea_action = None
         self.ea_dlg = None
         self.offline_editing = None
@@ -118,42 +123,44 @@ class GMDPipeline(object):
         self.gema_menu = QMenu("Gemma")
         self.iface.mainWindow().menuBar().insertMenu(self.iface.firstRightStandardMenu().menuAction(), self.gema_menu)
 
-        self.reports_menu = QMenu(u'Reports')
-        icon = QIcon(os.path.dirname(__file__) + "/icons/reports.png")
-        self.gema_add_submenu(self.reports_menu, icon)
-
-        icon = QIcon(os.path.dirname(__file__) + "/icons/reports.png")
-        self.sync_report = QAction(icon, "Sync MBI Layer", self.iface.mainWindow())
-        self.sync_report.triggered.connect(self.sync_report_act)
-        self.reports_menu.addAction(self.sync_report)
-
-        # Tools submenu
-        self.tools_menu = QMenu(u'Tools')
-        icon = QIcon(os.path.dirname(__file__) + "/icons/reports.png")
-        self.gema_add_submenu(self.tools_menu, icon)
-
-        self.geometry_toolkit_action = QAction("Geometry Repair Toolkit", self.iface.mainWindow())
-        self.geometry_toolkit_action.triggered.connect(self.show_geometry_toolkit)
-        self.tools_menu.addAction(self.geometry_toolkit_action)
-
-        # QField submenu
-        self.qfield_menu = QMenu(u'QField')
-        icon = QIcon(os.path.dirname(__file__) + "/icons/packager.svg")
-        self.gema_add_submenu(self.qfield_menu, icon)
-
-        # Package for QField menu action
         packager_icon = QIcon(os.path.dirname(__file__) + "/icons/packager.svg")
+        create_ea_icon = QIcon(os.path.dirname(__file__) + "/icons/create_ea.png")
+        reports_icon = QIcon(os.path.dirname(__file__) + "/icons/reports.png")
+
+        # 1. Updating of Boundaries Submenu
+        self.updating_boundaries_menu = QMenu(u'Updating of Boundaries')
+        self.gema_add_submenu(self.updating_boundaries_menu, packager_icon)
+
+        self.check_and_update_action = QAction(packager_icon, "Check and Update", self.iface.mainWindow())
+        self.check_and_update_action.triggered.connect(self.show_check_and_update_dialog)
+        self.updating_boundaries_menu.addAction(self.check_and_update_action)
+
+        # 2. EA Delineation Submenu
+        self.ea_delineation_menu = QMenu(u'EA Delineation')
+        self.gema_add_submenu(self.ea_delineation_menu, create_ea_icon)
+
+        self.create_ea_action = QAction(create_ea_icon, "Create Enumeration Areas", self.iface.mainWindow())
+        self.create_ea_action.triggered.connect(self.show_create_ea_dialog)
+        self.ea_delineation_menu.addAction(self.create_ea_action)
+
+        # 3. Others Submenu
+        self.others_menu = QMenu(u'Others')
+        self.gema_add_submenu(self.others_menu, reports_icon)
+
+        self.sync_report = QAction(reports_icon, "Sync MBI Layer", self.iface.mainWindow())
+        self.sync_report.triggered.connect(self.sync_report_act)
+        self.others_menu.addAction(self.sync_report)
+
         self.package_qfield_action = QAction(packager_icon, "Package for QField", self.iface.mainWindow())
         self.package_qfield_action.triggered.connect(self.show_package_dialog)
         self.package_qfield_action.setShortcut("Ctrl+Alt+Q")
-        self.qfield_menu.addAction(self.package_qfield_action)
+        self.others_menu.addAction(self.package_qfield_action)
 
-        create_ea_icon = QIcon(os.path.dirname(__file__) + "/icons/create_ea.png")
-        self.create_ea_action = QAction(create_ea_icon, "Create Enumeration Areas", self.iface.mainWindow())
-        self.create_ea_action.triggered.connect(self.show_create_ea_dialog)
-        self.qfield_menu.addAction(self.create_ea_action)
+        self.geometry_toolkit_action = QAction(reports_icon, "Geometry Repair Toolkit", self.iface.mainWindow())
+        self.geometry_toolkit_action.triggered.connect(self.show_geometry_toolkit)
+        self.others_menu.addAction(self.geometry_toolkit_action)
 
-        # QField toolbar icon
+        # Gemma Toolbar
         self.toolbar = self.iface.addToolBar("Gemma Toolbar")
         self.toolbar.setObjectName("Gemma Toolbar")
         self.package_qfield_toolbar_action = QAction(
@@ -241,6 +248,18 @@ class GMDPipeline(object):
             self.offline_editing, 
             self.push_dialog_finished
         )
+
+    def show_check_and_update_dialog(self):
+        """Open the Check and Update boundary management dialog."""
+        from .gmd_scripts.check_and_update_dialog import CheckAndUpdateDialog
+
+        if self.check_update_dlg is None:
+            self.check_update_dlg = CheckAndUpdateDialog(self.iface)
+
+        self.check_update_dlg.show()
+        self.check_update_dlg.raise_()
+        self.check_update_dlg.activateWindow()
+
     def show_create_ea_dialog(self):
         """Open the Create Enumeration Areas dialog."""
         from .gmd_scripts.create_enumeration_area import show_create_ea_dialog
