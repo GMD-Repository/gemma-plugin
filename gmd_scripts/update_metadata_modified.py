@@ -1041,7 +1041,7 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
             "7. Dynamically renames the loaded output layer in QGIS using the 5-digit code derived from the matched geocode followed by '_bgy' (e.g. '14000_bgy').\n"
             "8. Automatically saves a permanent copy of the updated LGU layer in the specified output directory as a GeoPackage with the same custom name (e.g., '14000_bgy.gpkg').\n"
             "Support Email: <b>gmd.support@psa.gov.ph</b>\n"
-            "Author: CPA\n"
+            "Author: GMD Staff\n"
         )
 
     def initAlgorithm(self, config: Optional[dict[str, Any]] = None):
@@ -1950,4 +1950,4 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
         return {self.OUTPUT: self.dest_id, self.OUTPUT_CONTESTED: self.dest_id_contested}
 
     def createInstance(self):
-        return self.__class__()
+        return self.__class__()
