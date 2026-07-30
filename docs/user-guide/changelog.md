@@ -15,7 +15,7 @@ Changelogs of all GEMMA Plugin stable releases, which are also available [on Git
 ### 📚 Documentation
 - Added documentation skill protocols to enhance user guidance ([@kentemman-gmd](https://github.com/kentemman-gmd))
 
-<Contributors :contributors="['velascojasper0', 'kentemman-gmd', 'Jasper Velasco', 'psacjperez']" />
+<Contributors :contributors="['kentemman-gmd']" />
 
 ## 1.0.14
 <time>Jul 28, 2026</time>
@@ -28,7 +28,7 @@ Changelogs of all GEMMA Plugin stable releases, which are also available [on Git
 - Enhanced metadata algorithm for better data handling in LGU layers ([@psacjperez](https://github.com/psacjperez))
 - Improved QML style management utility for seamless integration with QField ([@velascojasper0](https://github.com/velascojasper0))
 
-<Contributors :contributors="['kentemman-gmd', 'velascojasper0', 'Jasper Velasco', 'psacjperez']" />
+<Contributors :contributors="['psacjperez', 'velascojasper0']" />
 
 ## 1.0.13
 <time>Jul 28, 2026</time>

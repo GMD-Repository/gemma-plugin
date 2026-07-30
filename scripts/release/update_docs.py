@@ -24,6 +24,7 @@ from scripts.utils.changelog import (
     format_vitepress_changelog,
     format_date_display,
     insert_changelog_section,
+    extract_contributors_from_changes,
 )
 from scripts.utils.files import read_text, write_text, ensure_dir
 from scripts.utils.github import get_contributors
@@ -79,6 +80,8 @@ def update_changelogs(
         contributors: List of GitHub usernames. Uses git log if None.
     """
     if contributors is None:
+        contributors = extract_contributors_from_changes(changes)
+    if not contributors:
         contributors = get_contributors()
 
     date_display = format_date_display(date)
@@ -229,6 +232,8 @@ def update_releases_json(
         repo: GitHub repository name.
     """
     if contributors is None:
+        contributors = extract_contributors_from_changes(changes)
+    if not contributors:
         contributors = get_contributors()
 
     zip_name = f"gemma-plugin-{tag}.zip"
