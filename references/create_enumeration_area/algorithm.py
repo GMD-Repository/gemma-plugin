@@ -1,6 +1,7 @@
 
 
 from typing import Any, Optional
+import os
 
 from qgis.core import (
     QgsFeatureSink,
@@ -38,7 +39,7 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QTabWidget,
 )
-from PyQt5.QtGui import QFont, QColor
+from PyQt5.QtGui import QFont, QColor, QIcon
 from processing.gui.wrappers import WidgetWrapper
 
 
@@ -588,6 +589,23 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
     def displayName(self) -> str:
         """Returns the translated algorithm name for display."""
         return "Create Enumeration Areas"
+
+    def group(self) -> str:
+        """Returns the name of the algorithm group."""
+        return "1Map"
+
+    def groupId(self) -> str:
+        """Returns the unique ID of the group."""
+        return "1map"
+
+    def icon(self):
+        """Returns the algorithm icon."""
+        icon_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "icons", "create_ea.png")
+        )
+        if os.path.exists(icon_path):
+            return QIcon(icon_path)
+        return super().icon()
 
     def shortHelpString(self) -> str:
         """Returns a short description of the algorithm."""
