@@ -114,8 +114,17 @@ def auto_detect_qml_for_layer(layer_name, available_display_names=None):
 
 def get_qml_file_path(display_name):
     """Return the full file path for a QML given its display name."""
+    if not display_name or display_name == "(None)":
+        return ""
     qml_dir = get_qml_styles_dir()
-    return os.path.join(qml_dir, display_name + ".qml")
+    name = display_name if display_name.lower().endswith(".qml") else display_name + ".qml"
+    path = os.path.join(qml_dir, name)
+    if os.path.isfile(path):
+        return path
+    for root_dir, _, files in os.walk(qml_dir):
+        if name in files:
+            return os.path.join(root_dir, name)
+    return path
 
 
 def apply_qml_to_layer(layer, display_name):
@@ -123,14 +132,74 @@ def apply_qml_to_layer(layer, display_name):
 
     Returns True on success, False on failure.
     """
-    if not display_name:
+    if not layer or not display_name or display_name == "(None)":
         return False
+
     qml_path = get_qml_file_path(display_name)
     if not os.path.isfile(qml_path):
+        print(f"[QML ERROR] File does not exist: {qml_path}")
         return False
-    msg, success = layer.loadNamedStyle(qml_path)
-    if success:
+
+    normalized_path = qml_path.replace("\\", "/")
+    print(f"[QML ATTEMPT] Layer='{layer.name()}' QML='{display_name}' path='{normalized_path}'")
+
+    from qgis.core import QgsMapLayer
+    # Specify categories: Symbology + Labeling (prevents overriding layer flags / readOnly / scale limits)
+    categories = QgsMapLayer.Symbology | QgsMapLayer.Labeling
+
+    success = False
+    err_log = ""
+
+    # Method 1: PyQGIS importNamedStyle with Symbology + Labeling categories
+    try:
+        from qgis.PyQt.QtXml import QDomDocument
+        doc = QDomDocument()
+        with open(qml_path, "r", encoding="utf-8") as f:
+            xml_content = f.read()
+        if doc.setContent(xml_content):
+            res = layer.importNamedStyle(doc, categories)
+            if isinstance(res, tuple):
+                err_log = res[0]
+                success = bool(res[1])
+            elif isinstance(res, bool):
+                success = res
+            print(f"[QML IMPORT RESULT] Layer='{layer.name()}' ok={success} err_msg='{err_log}'")
+    except Exception as e:
+        print(f"[QML IMPORT EXCEPTION] {e}")
+
+    # Method 2: Standard loadNamedStyle fallback with Symbology + Labeling categories
+    if not success:
+        res = layer.loadNamedStyle(normalized_path, categories)
+        if isinstance(res, tuple):
+            err_log = res[0]
+            success = bool(res[1])
+        elif isinstance(res, bool):
+            success = res
+        print(f"[QML LOAD RESULT] Layer='{layer.name()}' ok={success} msg='{err_log}'")
+
+    # Ensure layer readOnly flag is disabled so layer stays visible/editable
+    if hasattr(layer, "setReadOnly"):
+        layer.setReadOnly(False)
+
+    if success or layer.isValid():
+        layer.emitStyleChanged()
         layer.triggerRepaint()
+
+        try:
+            from qgis.core import QgsProject
+            from qgis.utils import iface
+            
+            node = QgsProject.instance().layerTreeRoot().findLayer(layer.id())
+            if iface:
+                if node and iface.layerTreeView() and iface.layerTreeView().layerTreeModel():
+                    iface.layerTreeView().layerTreeModel().refreshLayerLegend(node)
+                elif iface.layerTreeView():
+                    iface.layerTreeView().refreshLayerSymbology(layer.id())
+                if iface.mapCanvas():
+                    iface.mapCanvas().refresh()
+        except Exception as e:
+            print(f"[QML ERROR] Refresh failed: {e}")
+
     return success
 
 
@@ -153,3 +222,4 @@ def apply_embedded_qml_styles(project=None):
         results[lname] = match
 
     return results
+

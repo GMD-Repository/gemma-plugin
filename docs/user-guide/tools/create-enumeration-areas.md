@@ -4,8 +4,9 @@ The **Create Enumeration Areas** tool provides a dialog for delineating enumerat
 
 ## Access
 
-- **Menu:** GeMa → QField → Create Enumeration Areas
-- **Toolbar:** GeMa Toolbar → Create Enumeration Areas icon
+- **Processing Toolbox:** GMD Pipeline → 1Map → Create Enumeration Areas
+- **Menu:** Gemma → QField → Create Enumeration Areas
+- **Toolbar:** Gemma Toolbar → Create Enumeration Areas icon
 
 ## When to Use
 
@@ -30,7 +31,7 @@ The tool also registers an **EA Delineation** processing provider in QGIS, which
 ## How to Use
 
 1. Load your barangay boundary layers in QGIS
-2. Launch the tool via **GeMa → QField → Create Enumeration Areas** or the toolbar icon
+2. Launch the tool via **Gemma → QField → Create Enumeration Areas** or the toolbar icon
 3. In the EA Launcher Dialog:
    - Select the barangay layer to delineate
    - Use the interactive tools to create EA boundaries

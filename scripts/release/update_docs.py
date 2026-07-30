@@ -7,6 +7,7 @@ Handles:
 - docs/user-guide/public/releases.json (full release history)
 - docs/user-guide/public/latest.json (stable release pointer)
 - docs/user-guide/public/latest-beta.json (preview release pointer)
+- docs/user-guide/index.md (homepage download link)
 
 Extracted from gemma-plugin.yml lines 348–617.
 """
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 from scripts.utils.changelog import (
@@ -22,19 +24,45 @@ from scripts.utils.changelog import (
     format_vitepress_changelog,
     format_date_display,
     insert_changelog_section,
+    extract_contributors_from_changes,
 )
 from scripts.utils.files import read_text, write_text, ensure_dir
 from scripts.utils.github import get_contributors
 
 logger = logging.getLogger(__name__)
 
-# Base paths (relative to repo root)
+# Output paths (relative to repo root)
+PUBLIC_DIR = "docs/user-guide/public"
+ICONS_DIR = "icons"
+PUBLIC_ICONS_DIR = f"{PUBLIC_DIR}/icons"
 CHANGELOG_PATH = "CHANGELOG.md"
 DOCS_CHANGELOG_PATH = "docs/user-guide/changelog.md"
-PUBLIC_DIR = "docs/user-guide/public"
-RELEASES_JSON_PATH = f"{PUBLIC_DIR}/releases.json"
+INDEX_MD_PATH = "docs/user-guide/index.md"
 LATEST_JSON_PATH = f"{PUBLIC_DIR}/latest.json"
 LATEST_BETA_JSON_PATH = f"{PUBLIC_DIR}/latest-beta.json"
+RELEASES_JSON_PATH = f"{PUBLIC_DIR}/releases.json"
+
+
+def sync_docs_icons() -> None:
+    """Synchronize icons from root icons/ folder to docs public folders."""
+    import shutil
+    icons_src = Path(ICONS_DIR)
+    public_icons_dst = Path(PUBLIC_ICONS_DIR)
+    public_root_dst = Path(PUBLIC_DIR)
+
+    if not icons_src.exists():
+        return
+
+    public_icons_dst.mkdir(parents=True, exist_ok=True)
+    public_root_dst.mkdir(parents=True, exist_ok=True)
+
+    for item in icons_src.iterdir():
+        if item.is_file():
+            shutil.copy2(item, public_icons_dst / item.name)
+            if item.name in ["gemma.svg", "icon.png", "gemma.png"]:
+                shutil.copy2(item, public_root_dst / item.name)
+
+    logger.info("✅ Synced all web icons to %s", public_icons_dst)
 
 
 def update_changelogs(
@@ -52,6 +80,8 @@ def update_changelogs(
         contributors: List of GitHub usernames. Uses git log if None.
     """
     if contributors is None:
+        contributors = extract_contributors_from_changes(changes)
+    if not contributors:
         contributors = get_contributors()
 
     date_display = format_date_display(date)
@@ -63,6 +93,46 @@ def update_changelogs(
     # Update docs changelog
     docs_section = format_vitepress_changelog(version, date_display, changes, contributors)
     insert_changelog_section(DOCS_CHANGELOG_PATH, docs_section)
+
+
+def update_index_md_download_link(
+    version: str,
+    tag: str,
+    owner: str = "GMD-Repository",
+    repo: str = "gemma-plugin",
+) -> None:
+    """Update the homepage download link in index.md to point to the latest version.
+
+    Args:
+        version: Version string (e.g. "1.5.0").
+        tag: Git tag (e.g. "v1.5.0").
+        owner: GitHub org/user.
+        repo: GitHub repository name.
+    """
+    zip_name = f"gemma-plugin-{tag}.zip"
+    download_url = f"https://github.com/{owner}/{repo}/releases/download/{tag}/{zip_name}"
+    
+    # Read current index.md
+    content = read_text(INDEX_MD_PATH)
+    if not content:
+        logger.warning("⚠️  Could not read index.md")
+        return
+    
+    # Replace the download link in the hero actions section
+    # Pattern matches: link: https://github.com/.../releases/download/...
+    pattern = r"(- theme: alt\s+text: Download\s+link: )https://github\.com/[^/]+/[^/]+/releases/download/[^\s]+"
+    updated_content = re.sub(
+        pattern,
+        rf"\1{download_url}",
+        content,
+        flags=re.MULTILINE
+    )
+    
+    if updated_content != content:
+        write_text(INDEX_MD_PATH, updated_content)
+        logger.info("✅ index.md download link updated to %s", tag)
+    else:
+        logger.warning("⚠️  Could not find download link pattern in index.md")
 
 
 def update_latest_json(
@@ -84,7 +154,7 @@ def update_latest_json(
         owner: GitHub org/user.
         repo: GitHub repository name.
     """
-    base_url = "https://gmd-repository.github.io/gemma-plugin"
+    base_url = "https://gemma-plugin.vercel.app"
     zip_name = f"gemma-plugin-{tag}.zip"
 
     data = {
@@ -118,7 +188,7 @@ def update_latest_beta_json(
         preview_owner: GitHub org/user for preview repo.
         preview_repo: GitHub repository name for previews.
     """
-    base_url = "https://gmd-repository.github.io/gemma-plugin"
+    base_url = "https://gemma-plugin.vercel.app"
     zip_name = f"gemma-plugin-{revision}.zip"
 
     data = {
@@ -162,6 +232,8 @@ def update_releases_json(
         repo: GitHub repository name.
     """
     if contributors is None:
+        contributors = extract_contributors_from_changes(changes)
+    if not contributors:
         contributors = get_contributors()
 
     zip_name = f"gemma-plugin-{tag}.zip"

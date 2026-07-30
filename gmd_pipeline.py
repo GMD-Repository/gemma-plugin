@@ -6,6 +6,9 @@ __copyright__ = '(C) 2025, Geospatial Management Division'
 import os
 import sys
 import inspect
+import pathlib
+import shutil
+import datetime
 import processing
 
 from qgis.core import QgsApplication, QgsMessageLog, QgsProcessingProvider, QgsOfflineEditing, QgsProject
@@ -18,6 +21,14 @@ from PyQt5.QtWidgets import QMessageBox
 from qgis.PyQt.QtWidgets import QAction, QMenu, QToolButton
 from qgis.utils import iface
 from .gmd_pipeline_provider import GmdPipelineProvider
+
+# Legacy plugin folder names whose functionality has been merged into GEMMA.
+# If these folders are found in the plugins directory they will be automatically
+# moved to a quarantine folder so they no longer conflict with GEMMA.
+_LEGACY_PLUGINS = {
+    'gmd_pipeline': 'GMD Pipeline',
+    'qfieldmod':    'QFieldMod',
+}
 
 
 class GMDPipeline(object):
@@ -39,22 +50,72 @@ class GMDPipeline(object):
             submenu.setIcon(QIcon(icon))
             self.gema_menu.addMenu(submenu)
         else:
-            self.iface.addPluginToMenu("&GeMa", submenu.menuAction())
+            self.iface.addPluginToMenu("&Gemma", submenu.menuAction())
 
 
     def initProcessing(self):
         self.provider = GmdPipelineProvider()
         QgsApplication.processingRegistry().addProvider(self.provider)
 
-        from .references.create_enumeration_area.provider import EADelineationProvider
-        self.ea_provider = EADelineationProvider()
-        QgsApplication.processingRegistry().addProvider(self.ea_provider)
 
+    def _quarantine_legacy_plugins(self):
+        """
+        Detect old plugin folders that conflict with GEMMA and move them into
+        <gemma-plugin>/_legacy_trash/<timestamp>/<folder>/ so QGIS no longer
+        loads them after the next restart.
+
+        Returns a list of display names that were moved, or an empty list if
+        nothing needed to be done.
+        """
+        plugins_dir  = pathlib.Path(__file__).parent.parent   # .../plugins/
+        gemma_dir    = pathlib.Path(__file__).parent           # .../gemma-plugin/
+        trash_root   = gemma_dir / '_legacy_trash'
+        timestamp    = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        trash_target = trash_root / timestamp
+
+        moved = []
+        for folder_name, display_name in _LEGACY_PLUGINS.items():
+            src = plugins_dir / folder_name
+            if src.is_dir():
+                trash_target.mkdir(parents=True, exist_ok=True)
+                dst = trash_target / folder_name
+                try:
+                    shutil.move(str(src), str(dst))
+                    moved.append(display_name)
+                    QgsMessageLog.logMessage(
+                        f'GEMMA: moved legacy plugin "{folder_name}" '
+                        f'to {dst}',
+                        'GEMMA',
+                        level=1,  # Qgis.Warning
+                    )
+                except Exception as exc:
+                    QgsMessageLog.logMessage(
+                        f'GEMMA: could not move legacy plugin "{folder_name}": {exc}',
+                        'GEMMA',
+                        level=2,  # Qgis.Critical
+                    )
+        return moved
 
     def initGui(self):
+        # ── Quarantine legacy plugins ────────────────────────────────────────
+        moved = self._quarantine_legacy_plugins()
+        if moved:
+            names = ', '.join(moved)
+            QMessageBox.information(
+                self.iface.mainWindow(),
+                'GEMMA — Legacy Plugins Removed',
+                f'The following old plugin(s) have been automatically moved '
+                f'to the trash folder inside GEMMA and will no longer load:\n\n'
+                f'  • {chr(10).join(moved)}\n\n'
+                f'Their functionality is already built into GEMMA.\n'
+                f'Please restart QGIS to complete the cleanup.',
+            )
+            return  # Let user restart; avoid loading alongside half-unloaded providers
+        # ────────────────────────────────────────────────────────────────────
+
         self.initProcessing()
 
-        self.gema_menu = QMenu("GeMa")
+        self.gema_menu = QMenu("Gemma")
         self.iface.mainWindow().menuBar().insertMenu(self.iface.firstRightStandardMenu().menuAction(), self.gema_menu)
 
         self.reports_menu = QMenu(u'Reports')
@@ -93,8 +154,8 @@ class GMDPipeline(object):
         self.qfield_menu.addAction(self.create_ea_action)
 
         # QField toolbar icon
-        self.toolbar = self.iface.addToolBar("GeMa Toolbar")
-        self.toolbar.setObjectName("GeMa Toolbar")
+        self.toolbar = self.iface.addToolBar("Gemma Toolbar")
+        self.toolbar.setObjectName("Gemma Toolbar")
         self.package_qfield_toolbar_action = QAction(
             packager_icon, "Package for QField", self.iface.mainWindow()
         )
@@ -128,17 +189,6 @@ class GMDPipeline(object):
             finally:
                 del self.provider
                 self.provider = None
-
-        if self.ea_provider:
-            try:
-                QgsApplication.processingRegistry().removeProvider(self.ea_provider)
-            except Exception as e:
-                QgsApplication.instance().messageLog().logMessage(
-                    f"Error removing EA Delineation provider: {e}",
-                    'GMD')
-            finally:
-                del self.ea_provider
-                self.ea_provider = None
 
     def sync_report_act(self):
         from .gmd_scripts import gsheet

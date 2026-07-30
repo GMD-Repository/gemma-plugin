@@ -4,7 +4,7 @@ The **Geometry Repair Toolkit** is a standalone dialog-based tool for validating
 
 ## Access
 
-- **Menu:** GeMa → Tools → Geometry Repair Toolkit
+- **Menu:** Gemma → Tools → Geometry Repair Toolkit
 - This tool opens as a **separate dialog window** (not through the Processing Toolbox).
 
 ## When to Use
@@ -63,7 +63,7 @@ The toolkit uses a tabbed interface:
 
 ## How to Use
 
-1. Open the Geometry Repair Toolkit from **GeMa → Tools → Geometry Repair Toolkit**
+1. Open the Geometry Repair Toolkit from **Gemma → Tools → Geometry Repair Toolkit**
 2. Select the polygon layers you want to check from the layer list
 3. Click **Run** to start the geometry scan
 4. Review the detected issues in the results table
