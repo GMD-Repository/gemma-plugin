@@ -1,9 +1,9 @@
 {
-  "version": "1.0.15-r365",
-  "tag": "r365",
+  "version": "1.0.15-r368",
+  "tag": "r368",
   "releaseDate": "2026-07-30",
   "repositoryUrl": "https://gemma-plugin.vercel.app/gemma-beta.xml",
-  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r365/gemma-plugin-r365.zip",
-  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r365",
-  "changelogUrl": "https://gemma-plugin.vercel.app/changelog/r365"
+  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r368/gemma-plugin-r368.zip",
+  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r368",
+  "changelogUrl": "https://gemma-plugin.vercel.app/changelog/r368"
 }
