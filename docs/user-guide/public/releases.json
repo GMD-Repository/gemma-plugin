@@ -7,10 +7,7 @@
       "tag": "v1.0.15",
       "prerelease": false,
       "contributors": [
-        "velascojasper0",
-        "kentemman-gmd",
-        "Jasper Velasco",
-        "psacjperez"
+        "kentemman-gmd"
       ],
       "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.15/gemma-plugin-v1.0.15.zip",
       "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.15",
@@ -40,10 +37,8 @@
       "tag": "v1.0.14",
       "prerelease": false,
       "contributors": [
-        "kentemman-gmd",
-        "velascojasper0",
-        "Jasper Velasco",
-        "psacjperez"
+        "psacjperez",
+        "velascojasper0"
       ],
       "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.14/gemma-plugin-v1.0.14.zip",
       "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.14",
