@@ -12,17 +12,34 @@ This skill documents the mandatory end-to-end workflow for authoring, structurin
 ## Mandatory Code Change Trigger Policy
 
 Documentation MUST always be generated, updated, or verified whenever changes occur in:
-1. `gmd_scripts/` (PyQGIS processing algorithms, scripts, tool logic)
+1. `gmd_scripts/` (PyQGIS processing algorithms, scripts, tool logic, dialogs)
 2. `references/` (Technical references, data schemas, guidelines)
 3. `qml styles/` (Layer style definitions, symbology QML templates)
 
-Whenever any code or asset in these target directories is created, modified, or deleted, automatically execute this skill to maintain synchronized VitePress documentation pages, index card grids, and navigation entries in `docs/user-guide/`.
+Whenever any code or asset in these target directories is created, modified, or deleted:
+1. Create or update the markdown guide in `docs/user-guide/tools/<tool-slug>.md`.
+2. Register the tool in `docs/.vitepress/config.mts` (under both `nav` dropdown items and `sidebar` categories).
+3. Register the feature card in `docs/user-guide/index.md` (with SVG/PNG icon path).
+4. Register the tool in `docs/user-guide/getting-started.md` under the appropriate category table.
+5. Ensure tool icons are copied to `docs/user-guide/public/icons/`.
 
 ---
 
 ## Strict No-Emoji Standard
 
 Do NOT use emojis or pictogram characters in tool documentation markdown files (`docs/`), section headers, card details, tables, callout blocks, or UI text labels (with the exception of standard release section category emojis in `docs/user-guide/changelog.md`). Maintain clean, professional, plain-text typography throughout all tool documentation pages.
+
+---
+
+## Strict No Redundant Horizontal Dividers Standard
+
+Do NOT place explicit `---` horizontal rule dividers before `##` section headings in tool documentation markdown files (`docs/user-guide/tools/`). VitePress H2 headings automatically include built-in section spacing and borders. Placing `---` lines directly above `##` headings causes unsightly double horizontal lines to render on documentation pages.
+
+---
+
+## Mandatory Algorithm ID Standard
+
+Every processing tool documentation markdown page (`docs/user-guide/tools/<tool-slug>.md`) MUST always explicitly include the **Algorithm ID:** (`gmd_pipeline:<algorithm_id>`) under the `## Access` section. For standalone GUI dialog tools, list the underlying processing algorithm IDs (`- **Component Algorithm IDs:** gmd_pipeline:<id1>, gmd_pipeline:<id2>`).
 
 ---
 

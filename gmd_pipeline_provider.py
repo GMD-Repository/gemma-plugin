@@ -19,6 +19,7 @@ from .gmd_scripts.lgu_fix_processing import FixLGUCRSAlgorithm
 from .gmd_scripts.join_barangay_attributes import JoinBarangayAttributes
 from .gmd_scripts.scan_geometry_errors import ScanGeometryErrorsAlgorithm
 from .gmd_scripts.repair_geometry_errors import RepairGeometryErrorsAlgorithm
+from .gmd_scripts.clip_project_layers import ClipProjectLayersAlgorithm
 from .references.create_enumeration_area.algorithm import CreateEAAlgorithm
 #from .gmd_scripts.gsheet_csv import
 
@@ -50,6 +51,7 @@ class GmdPipelineProvider(QgsProcessingProvider):
         self.addAlgorithm(CreateEAAlgorithm())
         self.addAlgorithm(ScanGeometryErrorsAlgorithm())
         self.addAlgorithm(RepairGeometryErrorsAlgorithm())
+        self.addAlgorithm(ClipProjectLayersAlgorithm())
 
     def id(self):
         return 'gmd_pipeline'

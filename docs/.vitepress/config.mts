@@ -34,12 +34,15 @@ export default defineConfig({
               { text: 'Update LGU PSGC Metadata', link: '/tools/update-metadata' },
               { text: 'Fix LGU CRS / Geometry', link: '/tools/fix-lgu-crs' },
               { text: 'Join Barangay Attributes', link: '/tools/join-barangay-attributes' },
+              { text: 'Check and Update', link: '/tools/check-and-update' },
             ]
           },
           {
             text: 'Geometry & Repair',
             items: [
               { text: 'Geometry Repair Toolkit', link: '/tools/geometry-repair-toolkit' },
+              { text: 'Scan Geometry Errors', link: '/tools/scan-geometry-errors' },
+              { text: 'Repair Polygon Geometries', link: '/tools/repair-polygon-geometries' },
             ]
           },
           {
@@ -79,6 +82,7 @@ export default defineConfig({
           { text: 'Update LGU PSGC Metadata', link: '/tools/update-metadata' },
           { text: 'Fix LGU CRS / Geometry', link: '/tools/fix-lgu-crs' },
           { text: 'Join Barangay Attributes', link: '/tools/join-barangay-attributes' },
+          { text: 'Check and Update', link: '/tools/check-and-update' },
         ]
       },
       {
@@ -86,6 +90,8 @@ export default defineConfig({
         collapsed: false,
         items: [
           { text: 'Geometry Repair Toolkit', link: '/tools/geometry-repair-toolkit' },
+          { text: 'Scan Geometry Errors', link: '/tools/scan-geometry-errors' },
+          { text: 'Repair Polygon Geometries', link: '/tools/repair-polygon-geometries' },
         ]
       },
       {

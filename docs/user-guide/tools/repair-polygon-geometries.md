@@ -1,14 +1,13 @@
-# Repair Polygon Geometries
+# <img src="/icons/repair_geom.svg" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Repair Polygon Geometries
 
 The **Repair Polygon Geometries** algorithm reconstructs invalid, self-intersecting, or wrong-type polygon geometries and recovers null/empty polygon shapes into a clean vector output layer.
 
----
 
 ## Access
 
 - **Processing Toolbox:** GMD Pipeline → GMD Toolkits → Repair Polygon Geometries
+- **Algorithm ID:** `gmd_pipeline:repairpolygongeometries`
 
----
 
 ## When to Use
 
@@ -18,7 +17,6 @@ Use this algorithm when:
 - Recovering missing/null polygon shapes using surrounding boundary context.
 - Running automated repairs on specific features identified during [Scan Geometry Errors](/tools/scan-geometry-errors).
 
----
 
 ## Parameters
 
@@ -28,7 +26,6 @@ Use this algorithm when:
 | **Repair Mode** | Enum | • **Auto-Detect & Repair All Issues**<br>• **Reconstruct Invalid / Self-Intersecting / Wrong-Type Geometries Only**<br>• **Recover Null / Empty Geometries Only** |
 | **Repaired Polygon Layer** | Vector Sink (Polygon) | Output vector polygon layer containing clean repaired geometries. |
 
----
 
 ## Selected Features Execution
 
@@ -37,7 +34,6 @@ This algorithm natively supports QGIS's **Selected features only** checkbox:
 2. Select target features on the input polygon layer (using feature selection or matching `source_fid` from the error layer).
 3. Open **Repair Polygon Geometries**, tick **Selected features only**, and execute the algorithm to repair only those selected features.
 
----
 
 ## Non-Destructive Memory Layers
 
