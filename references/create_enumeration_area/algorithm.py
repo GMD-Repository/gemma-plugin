@@ -568,6 +568,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
     MERGED_OUTPUT = "MERGED_OUTPUT"
     DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
     MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
+    SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
     EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
     SLIVER_THRESHOLD = "SLIVER_THRESHOLD"
     PREVIEW_ONLY = "PREVIEW_ONLY"
@@ -891,6 +892,15 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterFeatureSink(
                 self.MERGED_OUTPUT,
                 "Merged EAs Layer",
+                optional=True,
+            )
+        )
+
+        # Special EAs output layer
+        self.addParameter(
+            QgsProcessingParameterFeatureSink(
+                self.SPECIAL_EA_OUTPUT,
+                "Special EAs Layer (Gap/Overlap)",
                 optional=True,
             )
         )
@@ -1658,6 +1668,18 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 target_crs,
             )
 
+        special_ea_sink = None
+        special_ea_dest_id = None
+        if self.SPECIAL_EA_OUTPUT in parameters and parameters[self.SPECIAL_EA_OUTPUT] is not None:
+            (special_ea_sink, special_ea_dest_id) = self.parameterAsSink(
+                parameters,
+                self.SPECIAL_EA_OUTPUT,
+                context,
+                out_fields,
+                out_wkb_type,
+                target_crs,
+            )
+
         extracted_buildings_sink = None
         extracted_buildings_dest_id = None
         if self.EXTRACTED_BUILDINGS_OUTPUT in parameters and parameters[self.EXTRACTED_BUILDINGS_OUTPUT] is not None:
@@ -1742,6 +1764,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             outputs[self.DELINEATED_OUTPUT] = delineated_dest_id
         if merged_dest_id is not None:
             outputs[self.MERGED_OUTPUT] = merged_dest_id
+        if special_ea_dest_id is not None:
+            outputs[self.SPECIAL_EA_OUTPUT] = special_ea_dest_id
         if delin_candidate_dest_id is not None:
             outputs[self.DELINEATION_CANDIDATE_OUTPUT] = delin_candidate_dest_id
         if merge_candidate_dest_id is not None:
@@ -4257,12 +4281,10 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         # A global last-resort pass that enforces [min_household, max_household] on every EA
         # in the output list. Runs after per-barangay processing; handles any remaining
         # violations that the iterative loop could not resolve within its 25-iteration budget.
-        feedback.pushInfo("Running compliance sweep...")
-        # Temporary bypass to disable Phase 8
-        compliance_changed = False
+        feedback.pushInfo("Running Phase 7 Final Compliance Sweep to enforce min/max household thresholds...")
+        compliance_changed = True
         compliance_pass = 0
         max_compliance_passes = 10
-        feedback.pushInfo("TEMPORARY BYPASS: Skipping Phase 8 Final Compliance Sweep as requested.")
 
         while compliance_changed and compliance_pass < max_compliance_passes:
             if multi_feedback.isCanceled():
@@ -5018,6 +5040,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                                     out_feat.setAttribute(_fidx, _max_val)
 
             final_pop = ea['original_hhcount'] if is_unchanged_retain else ea['hh_count']
+            hh_count_bldg = ea.get('hh_count', 0.0)
+            hhcount_orig = ea.get('original_hhcount', hh_count_bldg)
 
             pop_idx = out_fields.indexOf(output_hh_field)
             if pop_idx != -1:
@@ -5037,11 +5061,11 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
 
             hh_count_idx = out_fields.indexOf("hh_count")
             if hh_count_idx != -1:
-                out_feat.setAttribute(hh_count_idx, final_pop)
+                out_feat.setAttribute(hh_count_idx, hh_count_bldg)
 
             hhcount_idx = out_fields.indexOf("hhcount")
             if hhcount_idx != -1:
-                out_feat.setAttribute(hhcount_idx, final_pop)
+                out_feat.setAttribute(hhcount_idx, hhcount_orig)
 
             bldgpts_val_idx = out_fields.indexOf("bldgpoints_value")
             if bldgpts_val_idx != -1:
@@ -5111,14 +5135,19 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             if _is_blank_feat:
                 feedback.pushWarning(f"[Output] Skipped writing blank EA feature to output layer (code={ea.get('original_code', '?')}).")
             else:
-                # Add to delineated sink if it was split, or if it is a Special EA (Gap/Overlap)
-                if ea.get('from_split', False) or ea.get('is_special_ea', False):
+                # Add to Special EAs sink if it is a Special EA (Gap/Overlap)
+                if ea.get('is_special_ea', False):
+                    if special_ea_sink is not None:
+                        if not special_ea_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
+                            feedback.reportError(f"Failed to add Special EA {i} to special EA sink.")
+                # Add to delineated sink if it was split and not a Special EA
+                elif ea.get('from_split', False):
                     if delineated_sink is not None:
                         if not delineated_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
                             feedback.reportError(f"Failed to add EA {i} to delineated sink.")
                 
-                # Add to merged sink if it was merged and not split
-                if ea.get('from_merge', False) and not ea.get('from_split', False):
+                # Add to merged sink if it was merged, not split, and not a Special EA
+                if ea.get('from_merge', False) and not ea.get('from_split', False) and not ea.get('is_special_ea', False):
                     if merged_sink is not None:
                         if not merged_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
                             feedback.reportError(f"Failed to add EA {i} to merged sink.")
