@@ -2,21 +2,21 @@ import { defineConfig } from 'vitepress'
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
-  base: '/gemma-plugin/',
+  base: '/',
   srcDir: "user-guide",
 
   title: "GEMMA Plugin",
   description: "GIS Extension for Map Management and Analysis — A QGIS processing plugin by the Geospatial Management Division (GMD) of the Philippine Statistics Authority.",
 
   head: [
-    ['link', { rel: 'icon', type: 'image/png', href: '/icons/gemma.png' }],
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/icons/gemma.svg' }],
     ['meta', { name: 'author', content: 'Geospatial Management Division — Philippine Statistics Authority' }],
     ['meta', { name: 'keywords', content: 'QGIS, GIS, plugin, GEMMA, GMD, PSA, 1Map, QField, geometry, overlaps, gaps' }],
   ],
 
   themeConfig: {
     // https://vitepress.dev/reference/default-theme-config
-    logo: '/icons/gemma.png',
+    logo: '/icons/gemma.svg',
     siteTitle: 'GEMMA Plugin',
 
     nav: [
@@ -33,6 +33,7 @@ export default defineConfig({
               { text: 'Export Preliminary Polygons', link: '/tools/export-preliminary-polygons' },
               { text: 'Update LGU PSGC Metadata', link: '/tools/update-metadata' },
               { text: 'Fix LGU CRS / Geometry', link: '/tools/fix-lgu-crs' },
+              { text: 'Join Barangay Attributes', link: '/tools/join-barangay-attributes' },
             ]
           },
           {
@@ -51,7 +52,7 @@ export default defineConfig({
         ]
       },
       {
-        text: 'v1.0.1',
+        text: 'v1.0.15',
         items: [
           { text: 'Changelog', link: '/changelog' },
           { text: 'Download Latest', link: 'https://github.com/GMD-Repository/gemma-plugin/releases/latest' },
@@ -77,6 +78,7 @@ export default defineConfig({
           { text: 'Export Preliminary Polygons', link: '/tools/export-preliminary-polygons' },
           { text: 'Update LGU PSGC Metadata', link: '/tools/update-metadata' },
           { text: 'Fix LGU CRS / Geometry', link: '/tools/fix-lgu-crs' },
+          { text: 'Join Barangay Attributes', link: '/tools/join-barangay-attributes' },
         ]
       },
       {

@@ -75,6 +75,34 @@ def format_keep_a_changelog(
     return "\n".join(lines) + "\n"
 
 
+def extract_contributors_from_changes(changes: dict[str, list[str]]) -> list[str]:
+    """Extract unique GitHub username logins mentioned in changelog items.
+
+    Preserves insertion order while deduplicating.
+    """
+    seen: set[str] = set()
+    extracted: list[str] = []
+    ignored = {"GMD-Repository", "gemma-plugin", "github-actions", "bot"}
+
+    for items_list in changes.values():
+        if not isinstance(items_list, list):
+            continue
+        for item in items_list:
+            matches_url = re.findall(r"https://github\.com/([\w-]+)", item)
+            matches_at = re.findall(r"@([\w-]+)", item)
+
+            for username in matches_url + matches_at:
+                u_clean = username.strip()
+                if not u_clean:
+                    continue
+                if u_clean in ignored or "[bot]" in u_clean or "github-actions" in u_clean:
+                    continue
+                if u_clean not in seen:
+                    seen.add(u_clean)
+                    extracted.append(u_clean)
+    return extracted
+
+
 def format_vitepress_changelog(
     version: str,
     date_display: str,
@@ -93,6 +121,8 @@ def format_vitepress_changelog(
         Formatted markdown section for docs/user-guide/changelog.md.
     """
     if contributors is None:
+        contributors = extract_contributors_from_changes(changes)
+    if not contributors:
         contributors = DEFAULT_CONTRIBUTORS
 
     lines = [f"## {version}", f"<time>{date_display}</time>", ""]
@@ -212,3 +242,57 @@ def highlights_to_changes(highlights: list[str]) -> dict[str, list[str]]:
         "improvements": improvements,
         "fixes": fixes,
     }
+
+
+def markdown_to_html(text: str) -> str:
+    """Convert simple inline markdown (links, bold, code) to HTML for email notifications.
+
+    Args:
+        text: Markdown string with potential [text](url), **bold**, or `code` tags.
+
+    Returns:
+        HTML formatted string.
+    """
+    if not text:
+        return ""
+    # Convert markdown links: [text](url) -> <a href="url" style="...">text</a>
+    html = re.sub(
+        r"\[([^\]]+)\]\(([^)]+)\)",
+        r'<a href="\2" style="color: #2563a8; text-decoration: none;">\1</a>',
+        text,
+    )
+    # Convert **bold** -> <strong>bold</strong>
+    html = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", html)
+    # Convert `code` -> <code>code</code>
+    html = re.sub(
+        r"`([^`]+)`",
+        r'<code style="background-color: #f1f5f9; padding: 2px 5px; border-radius: 4px; font-family: monospace; font-size: 13px;">\1</code>',
+        html,
+    )
+    return html
+
+
+def format_highlights_html(highlights: list[str]) -> str:
+    """Format highlights list as HTML <ul> list for email notifications.
+
+    Args:
+        highlights: Flat list of changelog highlights.
+
+    Returns:
+        HTML <ul> list representation with formatted links and items.
+    """
+    if not highlights:
+        return "<p style='color: #64748b; margin: 0;'>No highlights provided.</p>"
+
+    items_html = []
+    for item in highlights:
+        cleaned_item = item.lstrip("-* ").strip()
+        formatted_item = markdown_to_html(cleaned_item)
+        items_html.append(f"  <li style='margin-bottom: 6px; line-height: 1.5;'>{formatted_item}</li>")
+
+    return (
+        "<ul style='margin: 8px 0; padding-left: 20px; font-size: 14px; color: #334155;'>\n"
+        + "\n".join(items_html)
+        + "\n</ul>"
+    )
+

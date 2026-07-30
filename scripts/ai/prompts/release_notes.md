@@ -28,6 +28,7 @@ Respond with a **JSON object only** — no markdown, no code fences, no preamble
 - Write for GIS technicians — keep it clear but use GIS terms (layer, CRS, shapefile, QField).
 - NEVER return empty for ALL arrays. If changes seem internal, reframe as user-facing improvements.
 - Do NOT include emojis or version numbers.
+- ALWAYS preserve and include human author/contributor attribution markdown links (e.g. ([@username](https://github.com/username))) AND PR/issue links or numbers (e.g. ([#91](https://github.com/owner/repo/pull/91)) or (#91)) at the end of summarized items, EXCEPT for bot accounts (e.g. github-actions[bot] or any user containing [bot]).
 - Put each item in the correct category.
 
 ## Good Examples
@@ -35,9 +36,9 @@ Respond with a **JSON object only** — no markdown, no code fences, no preamble
 ```json
 {
   "summary": "This release adds geometry repair tools and improves boundary checking performance.",
-  "features": ["Added new Geometry Repair Toolkit for fixing invalid polygon geometries"],
-  "improvements": ["Improved gap and overlap detection speed for large municipality datasets"],
-  "fixes": ["Fixed CRS assignment issue when processing LGU boundary layers"],
+  "features": ["Added new Geometry Repair Toolkit for fixing invalid polygon geometries ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#88](https://github.com/GMD-Repository/gemma-plugin/pull/88))"],
+  "improvements": ["Improved gap and overlap detection speed for large municipality datasets ([@velascojasper0](https://github.com/velascojasper0)) ([#89](https://github.com/GMD-Repository/gemma-plugin/pull/89))"],
+  "fixes": ["Fixed CRS assignment issue when processing LGU boundary layers ([@psacjperez](https://github.com/psacjperez)) (#90)"],
   "documentation": [],
   "breaking_changes": []
 }

@@ -47,16 +47,20 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.utils.files import set_github_output, append_step_summary
 from scripts.utils.github import tag_exists
+from scripts.utils.changelog import format_highlights_html
 from scripts.release.update_metadata import resolve_version, update_metadata_changelog
 from scripts.release.collect_changes import collect_changes
 from scripts.release.generate_changelog import generate_changelog
 from scripts.release.update_docs import (
+    sync_docs_icons,
     update_changelogs,
     update_latest_json,
     update_latest_beta_json,
     update_releases_json,
 )
 from scripts.release.update_repository_xml import update_stable_xml, update_beta_xml
+from scripts.release.update_vitepress_config import update_vitepress_version
+from scripts.release.update_index_md import update_index_download_link
 from scripts.release.build_plugin import build_plugin_zip
 from scripts.release.create_release import create_github_release, prune_old_releases
 
@@ -88,9 +92,11 @@ def commit_and_push_stable_release(
             "metadata.txt",
             "CHANGELOG.md",
             "docs/user-guide/changelog.md",
+            "docs/user-guide/index.md",
             "docs/user-guide/public/gemma.xml",
             "docs/user-guide/public/latest.json",
             "docs/user-guide/public/releases.json",
+            "docs/.vitepress/config.mts",
         ]
 
         for file_path in files_to_commit:
@@ -125,9 +131,11 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
     5. Update metadata.txt changelog
     6. Update CHANGELOG.md + docs changelog + release JSON files
     7. Update gemma.xml
-    8. Build plugin ZIP
-    9. Create GitHub Release + upload asset
-    10. Write job summary
+    8. Update VitePress navbar version
+    9. Update index.md download link
+    10. Build plugin ZIP
+    11. Create GitHub Release + upload asset
+    12. Write job summary
     """
     github_token = os.environ.get("GITHUB_TOKEN", "")
     ai_token = os.environ.get("AI_TOKEN", github_token)
@@ -194,8 +202,9 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
     logger.info("═══ Step 5: Update metadata.txt ═══")
     update_metadata_changelog(METADATA_PATH, version, changelog.highlights)
 
-    # ── Step 6: Update docs + release JSON ────────────────────────────────
-    logger.info("═══ Step 6: Update docs and release JSON ═══")
+    # ── Step 6: Update docs + release JSON + sync icons ───────────────────
+    logger.info("═══ Step 6: Update docs, release JSON, and sync web icons ═══")
+    sync_docs_icons()
     update_changelogs(version, today, changelog.changes)
     update_latest_json(version, tag, today, owner, repo)
     update_releases_json(version, tag, today, changelog.changes, owner=owner, repo=repo)
@@ -204,17 +213,35 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
     logger.info("═══ Step 7: Update gemma.xml ═══")
     update_stable_xml(METADATA_PATH, version, tag, owner, repo)
 
-    # ── Step 7b: Commit & Push release metadata directly to main ─────────
+    # ── Step 8: Update VitePress navbar version ───────────────────────────
+    logger.info("═══ Step 8: Update VitePress navbar version ═══")
+    try:
+        update_vitepress_version(version)
+    except Exception as err:
+        logger.warning("Failed to update VitePress config: %s", err)
+        if not args.dry_run:
+            raise
+
+    # ── Step 9: Update index.md download link ────────────────────────────
+    logger.info("═══ Step 9: Update index.md download link ═══")
+    try:
+        update_index_download_link(version, owner, repo)
+    except Exception as err:
+        logger.warning("Failed to update index.md download link: %s", err)
+        if not args.dry_run:
+            raise
+
+    # ── Step 9b: Commit & Push release metadata directly to main ─────────
     commit_and_push_stable_release(version, github_token, repo_full, dry_run=args.dry_run)
 
-    # ── Step 8: Build plugin ZIP ──────────────────────────────────────────
-    logger.info("═══ Step 8: Build plugin ZIP ═══")
+    # ── Step 10: Build plugin ZIP ──────────────────────────────────────────
+    logger.info("═══ Step 10: Build plugin ZIP ═══")
     zip_name = f"gemma-plugin-v{version}.zip"
     zip_path = build_plugin_zip(version=version, output_name=zip_name)
     set_github_output("zip_name", zip_name)
 
-    # ── Step 9: Create GitHub Release ─────────────────────────────────────
-    logger.info("═══ Step 9: Create GitHub Release ═══")
+    # ── Step 11: Create GitHub Release ─────────────────────────────────────
+    logger.info("═══ Step 11: Create GitHub Release ═══")
     if args.dry_run:
         logger.info("[DRY RUN] Skipping GitHub Release creation")
         release_url = "https://github.com/dry-run"
@@ -234,9 +261,10 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
     # Export release body for email notification step
     bullet_list = "\n".join(f"- {h}" for h in changelog.highlights)
     set_github_output("release_body", bullet_list)
+    set_github_output("release_body_html", format_highlights_html(changelog.highlights))
 
-    # ── Step 10: Job summary ──────────────────────────────────────────────
-    logger.info("═══ Step 10: Write job summary ═══")
+    # ── Step 12: Job summary ──────────────────────────────────────────────
+    logger.info("═══ Step 12: Write job summary ═══")
     date_display = datetime.now().strftime("%B %d, %Y")
     summary = "\n".join([
         "# GEMMA Plugin — Stable Release",
@@ -375,7 +403,7 @@ def run_preview_pipeline(args: argparse.Namespace) -> None:
     logger.info("✅ Preview release pipeline completed: %s (%s)", revision, preview_version)
 
 
-# ── CLI entry point ──────────────────────────────────────────────────────────
+# ── CLI entry point ────────────────────────────────────────────────────────
 
 
 def parse_args() -> argparse.Namespace:
