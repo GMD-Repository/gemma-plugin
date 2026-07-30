@@ -49,7 +49,7 @@ Installing via custom repository allows QGIS to automatically detect and notify 
 
 After installation, verify that everything is working:
 
-1. Check the **Gemma** menu in the menu bar — you should see submenus for **Tools** and **QField**.
+1. Check the **Gemma** menu in the menu bar — you should see submenus for **Updating of Boundaries**, **EA Delineation**, and **Others**.
 2. Open the **Processing Toolbox** (`Ctrl+Alt+T`) and look for the **GMD Pipeline** group — you should see all the tools listed there.
 3. The **Gemma Toolbar** should display icons for **Package for QField** and **Create Enumeration Areas**.
 
@@ -69,19 +69,28 @@ These tools are accessible from the **QGIS Processing Toolbox** under the **GMD 
 | [Update LGU PSGC Metadata](/tools/update-metadata) | Auto-populate PSGC metadata fields |
 | [Fix LGU CRS](/tools/fix-lgu-crs) | Batch-correct local grid coordinates (~0 to ~100,000) to EPSG:4326 |
 | [Join Barangay Attributes](/tools/join-barangay-attributes) | Match vector attributes with official PSGC tables via fuzzy matching and Roman numeral normalization |
+| [Scan Geometry Errors](/tools/scan-geometry-errors) | Scan polygon layers for specific geometry and topology defects and generate a Point Error Layer |
+| [Repair Polygon Geometries](/tools/repair-polygon-geometries) | Reconstruct invalid polygon geometries and recover missing shapes into a clean vector output layer |
 
-### Gemma Menu — Tools
+### Gemma Menu — Updating of Boundaries
 
 | Tool | Access |
 |------|--------|
-| [Geometry Repair Toolkit](/tools/geometry-repair-toolkit) | Gemma → Tools → Geometry Repair Toolkit |
+| [Check and Update](/tools/check-and-update) | Gemma → Updating of Boundaries → Check and Update |
 
-### Gemma Menu — QField
+### Gemma Menu — EA Delineation
+
+| Tool | Access |
+|------|--------|
+| [Create Enumeration Areas](/tools/create-enumeration-areas) | Gemma → EA Delineation → Create Enumeration Areas |
+
+### Gemma Menu — Others
 
 | Tool | Access | Shortcut |
 |------|--------|----------|
-| [Package for QField](/tools/package-qfield) | Gemma → QField → Package for QField | `Ctrl+Alt+Q` |
-| [Create Enumeration Areas](/tools/create-enumeration-areas) | Gemma → QField → Create Enumeration Areas | — |
+| Sync MBI Layer | Gemma → Others → Sync MBI Layer | — |
+| [Package for QField](/tools/package-qfield) | Gemma → Others → Package for QField | `Ctrl+Alt+Q` |
+| [Geometry Repair Toolkit](/tools/geometry-repair-toolkit) | Gemma → Others → Geometry Repair Toolkit | — |
 
 ## Updating the Plugin
 
