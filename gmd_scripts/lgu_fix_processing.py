@@ -10,6 +10,7 @@ from qgis.core import (
     QgsProcessingAlgorithm,
     QgsProcessingParameterFeatureSource,
     QgsProcessingParameterFeatureSink,
+    QgsProcessingParameterField,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsFeature,
@@ -75,6 +76,12 @@ class FixLGUCRSAlgorithm(QgsProcessingAlgorithm):
     # Constants used to refer to parameters and outputs.
     INPUT = 'INPUT'
     REFERENCE_LAYER = 'REFERENCE_LAYER'
+    LOCAL_X_FIELD = 'LOCAL_X_FIELD'
+    LOCAL_Y_FIELD = 'LOCAL_Y_FIELD'
+    LON_FIELD = 'LON_FIELD'
+    LAT_FIELD = 'LAT_FIELD'
+    SOURCE_MATCH_FIELD = 'SOURCE_MATCH_FIELD'
+    REF_MATCH_FIELD = 'REF_MATCH_FIELD'
     OUTPUT = 'OUTPUT'
 
     def tr(self, string):
@@ -156,6 +163,66 @@ class FixLGUCRSAlgorithm(QgsProcessingAlgorithm):
         )
 
         self.addParameter(
+            QgsProcessingParameterField(
+                self.LOCAL_X_FIELD,
+                self.tr('Local X Field [Optional]'),
+                parentLayerParameterName=self.INPUT,
+                type=QgsProcessingParameterField.Numeric,
+                optional=True
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterField(
+                self.LOCAL_Y_FIELD,
+                self.tr('Local Y Field [Optional]'),
+                parentLayerParameterName=self.INPUT,
+                type=QgsProcessingParameterField.Numeric,
+                optional=True
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterField(
+                self.LON_FIELD,
+                self.tr('WGS84 Longitude Field [Optional]'),
+                parentLayerParameterName=self.INPUT,
+                type=QgsProcessingParameterField.Numeric,
+                optional=True
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterField(
+                self.LAT_FIELD,
+                self.tr('WGS84 Latitude Field [Optional]'),
+                parentLayerParameterName=self.INPUT,
+                type=QgsProcessingParameterField.Numeric,
+                optional=True
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterField(
+                self.SOURCE_MATCH_FIELD,
+                self.tr('Input Match Field [Optional]'),
+                parentLayerParameterName=self.INPUT,
+                type=QgsProcessingParameterField.Any,
+                optional=True
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterField(
+                self.REF_MATCH_FIELD,
+                self.tr('Reference Match Field [Optional]'),
+                parentLayerParameterName=self.REFERENCE_LAYER,
+                type=QgsProcessingParameterField.Any,
+                optional=True
+            )
+        )
+
+        self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
                 self.tr('Corrected Layer (EPSG:4326)')
@@ -204,26 +271,34 @@ class FixLGUCRSAlgorithm(QgsProcessingAlgorithm):
 
         fields = source.fields()
 
-        # Auto-detect field names
-        xi_field_name = self._auto_find_field(fields, ['XI', 'X_I', 'X_LOCAL', 'LOCAL_X'])
-        yi_field_name = self._auto_find_field(fields, ['YI', 'Y_I', 'Y_LOCAL', 'LOCAL_Y'])
-        loni_field_name = self._auto_find_field(fields, ['LongitudeI', 'Longitude', 'LongI', 'Long', 'LonI', 'Lon', 'X_WGS84'])
-        lati_field_name = self._auto_find_field(fields, ['LatitudeI', 'Latitude', 'LatI', 'Lat', 'Y_WGS84'])
+        # Get optional parameters
+        sel_xi_field = self.parameterAsString(parameters, self.LOCAL_X_FIELD, context)
+        sel_yi_field = self.parameterAsString(parameters, self.LOCAL_Y_FIELD, context)
+        sel_lon_field = self.parameterAsString(parameters, self.LON_FIELD, context)
+        sel_lat_field = self.parameterAsString(parameters, self.LAT_FIELD, context)
+        sel_source_match = self.parameterAsString(parameters, self.SOURCE_MATCH_FIELD, context)
+        sel_ref_match = self.parameterAsString(parameters, self.REF_MATCH_FIELD, context)
+
+        # Set fields based on user selection or auto-detect fallback
+        xi_field_name = sel_xi_field if sel_xi_field else self._auto_find_field(fields, ['XI', 'X_I', 'X_LOCAL', 'LOCAL_X'])
+        yi_field_name = sel_yi_field if sel_yi_field else self._auto_find_field(fields, ['YI', 'Y_I', 'Y_LOCAL', 'LOCAL_Y'])
+        loni_field_name = sel_lon_field if sel_lon_field else self._auto_find_field(fields, ['LongitudeI', 'Longitude', 'LongI', 'Long', 'LonI', 'Lon', 'X_WGS84'])
+        lati_field_name = sel_lat_field if sel_lat_field else self._auto_find_field(fields, ['LatitudeI', 'Latitude', 'LatI', 'Lat', 'Y_WGS84'])
 
         if xi_field_name:
-            feedback.pushInfo(self.tr(f"Detected Local X Field: '{xi_field_name}'"))
+            feedback.pushInfo(self.tr(f"Using Local X Field: '{xi_field_name}'"))
         else:
             feedback.pushInfo(self.tr("Local X Field not found; using feature geometry centroids for Local X."))
 
         if yi_field_name:
-            feedback.pushInfo(self.tr(f"Detected Local Y Field: '{yi_field_name}'"))
+            feedback.pushInfo(self.tr(f"Using Local Y Field: '{yi_field_name}'"))
         else:
             feedback.pushInfo(self.tr("Local Y Field not found; using feature geometry centroids for Local Y."))
 
         if loni_field_name:
-            feedback.pushInfo(self.tr(f"Detected WGS84 Longitude Field: '{loni_field_name}'"))
+            feedback.pushInfo(self.tr(f"Using WGS84 Longitude Field: '{loni_field_name}'"))
         if lati_field_name:
-            feedback.pushInfo(self.tr(f"Detected WGS84 Latitude Field: '{lati_field_name}'"))
+            feedback.pushInfo(self.tr(f"Using WGS84 Latitude Field: '{lati_field_name}'"))
 
         # Process reference layer features if provided
         ref_records = []  # list of (feature_id, QgsPoint in 4326, dict_attr_values)
@@ -245,19 +320,11 @@ class FixLGUCRSAlgorithm(QgsProcessingAlgorithm):
 
         # Check for common attribute key to match source & reference features
         match_key_pair = None
-        if reference_source and ref_records:
-            for candidate in ['bgy_code', 'psgc_bgy', 'code', 'id', 'name', 'barangay', 'bgy_name', 'bgy_id', 'adm4_en']:
-                s_cand = self._auto_find_field(fields, [candidate])
-                r_cand = self._auto_find_field(reference_source.fields(), [candidate])
-                if s_cand and r_cand:
-                    match_key_pair = (s_cand, r_cand)
-                    feedback.pushInfo(self.tr(f"Matching input & reference features via common attribute: '{s_cand}' <-> '{r_cand}'"))
-                    break
-
-        # Spatial Centroid Relative Position Lookup if no common attribute key
         spatial_ref_map = {}
-        if reference_source and ref_records and not match_key_pair:
-            feedback.pushInfo(self.tr("Matching input & reference features by relative spatial proximity..."))
+
+        if reference_source and ref_records:
+            # 1. Pre-calculate relative spatial proximity mapping as fallback
+            feedback.pushInfo(self.tr("Calculating relative spatial proximity mapping..."))
             s_pts = []
             s_ids = []
             for feat in source.getFeatures():
@@ -291,6 +358,54 @@ class FixLGUCRSAlgorithm(QgsProcessingAlgorithm):
                     dist_sq = (r_norm_x - s_norm_x[i])**2 + (r_norm_y - s_norm_y[i])**2
                     best_idx = int(np.argmin(dist_sq))
                     spatial_ref_map[fid] = ref_records[best_idx][1]
+
+            # 2. Determine match key pair
+            if sel_source_match and sel_ref_match:
+                # Use user-selected matching fields
+                match_key_pair = (sel_source_match, sel_ref_match)
+                feedback.pushInfo(self.tr(f"Using user-selected matching fields: '{sel_source_match}' <-> '{sel_ref_match}'"))
+            else:
+                # Auto-detect match fields based on unique valid matches
+                candidates = ['bgy_code', 'psgc_bgy', 'code', 'name', 'barangay', 'bgy_name', 'bgy_id', 'adm4_en', 'id']
+                best_match_count = 0
+                best_pair = None
+
+                for candidate in candidates:
+                    s_cand = self._auto_find_field(fields, [candidate])
+                    r_cand = self._auto_find_field(reference_source.fields(), [candidate]) if reference_source else None
+                    if s_cand and r_cand:
+                        r_cand_key = r_cand.lower()
+                        
+                        # Build lookup map
+                        ref_lookup = {}
+                        for rec in ref_records:
+                            r_val = str(rec[2].get(r_cand_key, '')).strip().lower()
+                            if r_val and r_val not in ('null', 'none', 'nan', '0', '0.0'):
+                                ref_lookup[r_val] = rec[1]
+                        
+                        # Count unique valid matches
+                        matched_pts = set()
+                        for feat in source.getFeatures():
+                            s_val = str(feat[s_cand]).strip().lower()
+                            if s_val and s_val not in ('null', 'none', 'nan', '0', '0.0') and s_val in ref_lookup:
+                                matched_pts.add(ref_lookup[s_val])
+                        
+                        match_count = len(matched_pts)
+                        if match_count >= 3 and match_count > best_match_count:
+                            best_match_count = match_count
+                            best_pair = (s_cand, r_cand)
+
+                if best_pair:
+                    match_key_pair = best_pair
+                    feedback.pushInfo(self.tr(
+                        f"Matching input & reference features via auto-detected common attribute: '{match_key_pair[0]}' <-> '{match_key_pair[1]}' "
+                        f"({best_match_count} unique control points matched)"
+                    ))
+                else:
+                    feedback.pushInfo(self.tr(
+                        "No common attribute with at least 3 valid control points found. "
+                        "Falling back entirely to relative spatial proximity matching."
+                    ))
 
         # Extract control points
         x_list, y_list, lon_list, lat_list = [], [], [], []
@@ -330,14 +445,19 @@ class FixLGUCRSAlgorithm(QgsProcessingAlgorithm):
                 if match_key_pair:
                     s_val = str(feature[match_key_pair[0]]).strip().lower()
                     r_cand_key = match_key_pair[1].lower()
-                    for rec in ref_records:
-                        r_attr_val = str(rec[2].get(r_cand_key, '')).strip().lower()
-                        if r_attr_val and r_attr_val == s_val:
-                            ref_pt = rec[1]
-                            break
-                elif feature.id() in spatial_ref_map:
+                    if s_val and s_val not in ('null', 'none', 'nan', '0', '0.0'):
+                        for rec in ref_records:
+                            r_attr_val = str(rec[2].get(r_cand_key, '')).strip().lower()
+                            if r_attr_val and r_attr_val not in ('null', 'none', 'nan', '0', '0.0') and r_attr_val == s_val:
+                                ref_pt = rec[1]
+                                break
+
+                # Fallback 1: Spatial relative proximity mapping
+                if ref_pt is None and feature.id() in spatial_ref_map:
                     ref_pt = spatial_ref_map[feature.id()]
-                elif idx < len(ref_records):
+
+                # Fallback 2: Index-based matching
+                if ref_pt is None and idx < len(ref_records):
                     ref_pt = ref_records[idx][1]
 
                 if ref_pt:
