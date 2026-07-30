@@ -1633,6 +1633,32 @@ class EALauncherDialog(QDialog):
             if self.feedback.isCanceled():
                 self.log_console.append("<span style='color:#d17a00; font-weight:bold;'>[CANCEL] Pipeline execution cancelled by user.</span>")
             else:
+                # Rename loaded layers in QGIS Layers Panel using 5-digit geocode prefix
+                geo5 = self._extract_5digit_geocode() or "00000"
+                from qgis.core import QgsProject, QgsMapLayer
+
+                output_names = {
+                    'DELINEATED_OUTPUT': f"{geo5}_delineated_ea2026",
+                    'MERGED_OUTPUT': f"{geo5}_merged_ea2026",
+                    'SPECIAL_EA_OUTPUT': f"{geo5}_special_ea",
+                    'DELINEATION_CANDIDATE_OUTPUT': f"{geo5}_delineation_candidates",
+                    'MERGE_CANDIDATE_OUTPUT': f"{geo5}_merge_candidates",
+                    'EXTRACTED_BUILDINGS_OUTPUT': f"{geo5}_extracted_bldgpts",
+                }
+
+                if isinstance(results, dict):
+                    for out_key, target_name in output_names.items():
+                        if out_key in results:
+                            layer_ref = results[out_key]
+                            layer = None
+                            if isinstance(layer_ref, str):
+                                layer = QgsProject.instance().mapLayer(layer_ref)
+                            elif isinstance(layer_ref, QgsMapLayer):
+                                layer = layer_ref
+                            
+                            if layer:
+                                layer.setName(target_name)
+
                 self.progress_bar.setValue(100)
                 self.log_console.append("<span style='color:#1a7f37; font-weight:bold;'>[COMPLETE] Pipeline execution complete! Results loaded to map.</span>")
 
