@@ -694,9 +694,32 @@ class EALauncherDialog(QDialog):
         
         return layout, edit
 
+    def _extract_5digit_geocode(self):
+        """Extract 5-digit geocode prefix from selected Barangay or EA layer."""
+        layers = [self.bar_combo.currentLayer(), self.prev_ea_combo.currentLayer()]
+        for lyr in layers:
+            if not lyr:
+                continue
+            name = lyr.name()
+            digits = "".join([c for c in name if c.isdigit()])
+            if len(digits) >= 5:
+                return digits[:5]
+            fields = [f.name().lower() for f in lyr.fields()]
+            if "geocode" in fields:
+                feat = next(lyr.getFeatures(), None)
+                if feat:
+                    gval = str(feat.attribute("geocode")).strip()
+                    gdigits = "".join([c for c in gval if c.isdigit()])
+                    if len(gdigits) >= 5:
+                        return gdigits[:5]
+        return None
+
     def _browse_file(self, line_edit):
+        default_name = line_edit.placeholderText()
+        if not default_name or default_name.startswith("["):
+            default_name = ""
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save Output Layer", "", "GeoPackage (*.gpkg);;Shapefile (*.shp);;GeoJSON (*.geojson)"
+            self, "Save Output Layer", default_name, "GeoPackage (*.gpkg);;Shapefile (*.shp);;GeoJSON (*.geojson)"
         )
         if path:
             line_edit.setText(path)
@@ -1019,6 +1042,23 @@ class EALauncherDialog(QDialog):
             self.overlap_status_lbl.setText(f"🟢 Active: {overlap_layer.featureCount()} polygon features loaded.")
             self.overlap_status_lbl.setStyleSheet("color: #1a7f37;")
             
+        # Update output layer placeholders using 5-digit geocode prefix
+        geo5 = self._extract_5digit_geocode()
+        if geo5:
+            self.delineated_edit.setPlaceholderText(f"{geo5}_delineated_ea2026")
+            self.merged_edit.setPlaceholderText(f"{geo5}_merged_ea2026")
+            self.special_ea_edit.setPlaceholderText(f"{geo5}_special_ea")
+            self.delin_cand_edit.setPlaceholderText(f"{geo5}_delineation_candidates")
+            self.merge_cand_edit.setPlaceholderText(f"{geo5}_merge_candidates")
+            self.extracted_bldg_edit.setPlaceholderText(f"{geo5}_extracted_bldgpts")
+        else:
+            self.delineated_edit.setPlaceholderText("[Temporary Scratch Layer]")
+            self.merged_edit.setPlaceholderText("[Temporary Scratch Layer]")
+            self.special_ea_edit.setPlaceholderText("[Temporary Scratch Layer]")
+            self.delin_cand_edit.setPlaceholderText("[Temporary Scratch Layer]")
+            self.merge_cand_edit.setPlaceholderText("[Temporary Scratch Layer]")
+            self.extracted_bldg_edit.setPlaceholderText("[Temporary Scratch Layer]")
+
         self.trigger_auto_refresh()
 
     def generate_preview(self):

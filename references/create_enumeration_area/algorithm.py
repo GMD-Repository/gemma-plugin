@@ -678,6 +678,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             "Contains all sub-polygons generated from delineation, fully covering the split candidate EAs (including parts internally merged to satisfy min_household).</li>"
             "<li><b>Merged EAs Layer</b> (optional polygon, named <i>&lt;5-digit geocode&gt;_merged_ea2026</i>) — "
             "Contains only EAs created by merging distinct starting EAs.</li>"
+            "<li><b>Special EAs Layer</b> (optional polygon, named <i>&lt;5-digit geocode&gt;_special_ea</i>, e.g. <i>01701_special_ea</i>) — "
+            "Contains Special EAs generated from Gap and Overlap layers.</li>"
             "</ul>"
         )
 
