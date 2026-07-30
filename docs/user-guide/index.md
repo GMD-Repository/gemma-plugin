@@ -54,10 +54,28 @@ features:
     link: /tools/join-barangay-attributes
     linkText: View Guide
   - icon:
-      src: /icons/reports.png
+      src: /icons/repair_geom.svg
     title: Geometry Repair Toolkit
     details: Validate and repair polygon geometries — detect duplicates, null geometries, invalid shapes, and wrong-type features with auto-fix capabilities.
     link: /tools/geometry-repair-toolkit
+    linkText: View Guide
+  - icon:
+      src: /icons/scan_errors.svg
+    title: Scan Geometry Errors
+    details: Scan vector polygon layers for specific geometry and topology defects and generate a Point Vector Sink with audit metadata.
+    link: /tools/scan-geometry-errors
+    linkText: View Guide
+  - icon:
+      src: /icons/repair_geom.svg
+    title: Repair Polygon Geometries
+    details: Reconstruct invalid polygon geometries and recover missing shapes into a clean vector output layer with selection support.
+    link: /tools/repair-polygon-geometries
+    linkText: View Guide
+  - icon:
+      src: /icons/check_and_update.svg
+    title: Check and Update
+    details: Interactive 3-Phase dialog workflow for georeferencing, targeted geometry error scanning/repair, and metadata updating.
+    link: /tools/check-and-update
     linkText: View Guide
   - icon:
       src: /icons/packager.svg

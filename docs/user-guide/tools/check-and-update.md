@@ -1,14 +1,13 @@
-# Check and Update
+# <img src="/icons/check_and_update.svg" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Check and Update
 
 The **Check and Update** tool provides a 3-Phase structured workflow for boundary management activities: **Georeferencing**, **Geometry Checking & Repair**, and **Updating Metadata**.
 
----
 
 ## Access
 
 - **Menu:** Gemma → Updating of Boundaries → Check and Update
+- **Component Algorithm IDs:** `gmd_pipeline:scangeometryerrors`, `gmd_pipeline:repairpolygongeometries`
 
----
 
 ## Workflow Sections
 
