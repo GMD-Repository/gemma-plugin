@@ -24,6 +24,12 @@ Use this tool when:
 |-----------|------|-------------|
 | **Input Local Grid Layer** | Feature Source (Any Geometry) | The local grid layer to be corrected |
 | **Reference WGS84 Layer** | Feature Source (Any Geometry) [Optional] | Optional reference layer in EPSG:4326 used for target coordinates if attributes are absent |
+| **Local X Field** | Field (Numeric) [Optional] | Optional manual selection for Local X field (overrides auto-detection) |
+| **Local Y Field** | Field (Numeric) [Optional] | Optional manual selection for Local Y field (overrides auto-detection) |
+| **WGS84 Longitude Field** | Field (Numeric) [Optional] | Optional manual selection for WGS84 Longitude field (overrides auto-detection) |
+| **WGS84 Latitude Field** | Field (Numeric) [Optional] | Optional manual selection for WGS84 Latitude field (overrides auto-detection) |
+| **Input Match Field** | Field (Any) [Optional] | Optional manual attribute field from the input layer used to match reference features |
+| **Reference Match Field** | Field (Any) [Optional] | Optional manual attribute field from the reference layer used to match input features |
 
 ### Outputs
 
@@ -33,10 +39,12 @@ Use this tool when:
 
 ## How It Works
 
-1. **Smart Zero-Config Feature Auto-Detection**:
-   - Automatically detects `XI`, `YI`, `LongitudeI`, `LatitudeI` attribute fields if present in the input layer.
-   - Automatically falls back to feature geometry centroids for local $(X, Y)$ if `XI`/`YI` attributes are absent.
-   - Uses the `Reference WGS84 Layer` point centroids for target $(Longitude, Latitude)$ if target attribute fields are missing.
+1. **Smart Feature Field & Matching Auto-Detection**:
+   - Supports optional manual field selections for coordinate columns (`Local X`, `Local Y`, `WGS84 Longitude`, `WGS84 Latitude`) and feature matching keys (`Input Match Field`, `Reference Match Field`).
+   - If fields are not explicitly selected, automatically auto-detects `XI`, `YI`, `LongitudeI`, `LatitudeI` attribute fields if present in the input layer.
+   - Automatically falls back to feature geometry centroids for local $(X, Y)$ if local coordinate fields are absent.
+   - Evaluates common attribute candidate pairs (e.g. `bgy_code`, `psgc_bgy`, `name`, `barangay`, `code`), filtering out dummy/null values (like `'0'`, `'0.0'`, `'null'`), and selects the pair yielding the maximum number of unique matched control points (minimum 3).
+   - Pre-computes relative spatial centroid proximity mapping as a robust fallback if attribute matching is unavailable or incomplete.
 
 2. **2D Affine OLS Matrix Computation**:
    - Fits a 2D affine transformation matrix via Ordinary Least Squares:
