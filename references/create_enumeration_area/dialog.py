@@ -423,6 +423,11 @@ class EALauncherDialog(QDialog):
         self.merged_path, self.merged_edit = self._file_picker_row()
         outputs_layout.addLayout(self.merged_path)
 
+        # Special EAs Layer (Gap/Overlap)
+        outputs_layout.addWidget(QLabel("Special EAs Layer (Gap/Overlap)"))
+        self.special_ea_path, self.special_ea_edit = self._file_picker_row()
+        outputs_layout.addLayout(self.special_ea_path)
+
         # Candidate for Delineation Layer
         outputs_layout.addWidget(QLabel("Delineation Candidate Layer"))
         self.delin_cand_path, self.delin_cand_edit = self._file_picker_row()
@@ -1550,6 +1555,7 @@ class EALauncherDialog(QDialog):
             # Outputs
             'DELINEATED_OUTPUT': self.delineated_edit.text() or 'TEMPORARY_OUTPUT',
             'MERGED_OUTPUT': self.merged_edit.text() or 'TEMPORARY_OUTPUT',
+            'SPECIAL_EA_OUTPUT': self.special_ea_edit.text() or 'TEMPORARY_OUTPUT',
             'DELINEATION_CANDIDATE_OUTPUT': self.delin_cand_edit.text() or 'TEMPORARY_OUTPUT',
             'MERGE_CANDIDATE_OUTPUT': self.merge_cand_edit.text() or 'TEMPORARY_OUTPUT',
             'EXTRACTED_BUILDINGS_OUTPUT': self.extracted_bldg_edit.text() or 'TEMPORARY_OUTPUT',
