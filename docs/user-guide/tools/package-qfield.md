@@ -6,7 +6,7 @@ The **Package for QField** tool packages your QGIS project and its spatial data 
 
 ## Access
 
-- **Menu:** Gemma → QField → Package for QField
+- **Menu:** Gemma → Others → Package for QField
 - **Toolbar:** Gemma Toolbar → Package for QField icon
 - **Shortcut:** `Ctrl+Alt+Q`
 
