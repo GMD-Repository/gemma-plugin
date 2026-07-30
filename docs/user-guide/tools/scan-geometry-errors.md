@@ -1,14 +1,13 @@
-# Scan Geometry Errors
+# <img src="/icons/scan_errors.svg" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Scan Geometry Errors
 
 The **Scan Geometry Errors** algorithm scans an input vector polygon layer for specific geometry and topology defects and outputs a Point vector sink layer representing exact error locations and audit metadata.
 
----
 
 ## Access
 
 - **Processing Toolbox:** GMD Pipeline → GMD Toolkits → Scan Geometry Errors
+- **Algorithm ID:** `gmd_pipeline:scangeometryerrors`
 
----
 
 ## When to Use
 
@@ -18,7 +17,6 @@ Use this algorithm when:
 - Generating a standalone spatial Error Layer (Point geometry) for styling, visual inspection, or GIS report generation.
 - Performing automated batch validation of polygon layers across project folders or scripts.
 
----
 
 ## Parameters
 
@@ -33,7 +31,6 @@ Use this algorithm when:
 | **Check Duplicate Geometries** | Boolean | Detect features sharing exact duplicate geometries (`True`/`False`). |
 | **Error Locations (Point Layer)** | Vector Sink (Point) | Output point layer containing precise error locations and metadata. |
 
----
 
 ## Output Error Layer Schema
 
@@ -47,7 +44,6 @@ The resulting **Error Locations** point layer includes the following fields:
 | `description` | String | Detailed explanation of the detected issue. |
 | `is_autofixable` | Boolean | Indicates whether the issue can be automatically resolved by the Repair algorithm. |
 
----
 
 ## Next Steps
 
