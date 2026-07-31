@@ -7,14 +7,12 @@ The **Fix LGU CRS** tool batch-corrects or repositions vector layers digitized i
 - **Processing Toolbox:** GMD Pipeline → 1Map → Fix LGU CRS
 - **Algorithm ID:** `gmd_pipeline:fixlgucrs`
 
-## When to Use
+## Layer Roles & Setup
 
-Use this tool when:
-
-- An LGU layer was digitized in a local, arbitrary, or unknown coordinate system (~0 to ~100,000)
-- Boundaries appear out of position or offset from geographic coordinates
-- You need to transform local grid geometries to standardized WGS 84 (EPSG:4326)
-- Control point attributes (`XI`, `YI`, `LongitudeI`, `LatitudeI`) exist in the layer or target coordinates are provided via a reference layer
+| Role | Layer Parameter | Description |
+|------|-----------------|-------------|
+| **Input Local Grid Layer** | `Input Local Grid Layer (LGU Layer)` | Local arbitrary grid layer (LGU layer) digitized in ~0 to ~100,000 coordinates to be repositioned |
+| **Reference Layer** | `Reference WGS84 Layer (_bgy / Control Points)` | Standard WGS84 reference layer (e.g. `02934_bgy` in EPSG:4326) providing target control point coordinates |
 
 ## Parameters
 
@@ -22,14 +20,14 @@ Use this tool when:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| **Input Local Grid Layer** | Feature Source (Any Geometry) | The local grid layer to be corrected |
-| **Reference WGS84 Layer** | Feature Source (Any Geometry) [Optional] | Optional reference layer in EPSG:4326 used for target coordinates if attributes are absent |
-| **Local X Field** | Field (Numeric) [Optional] | Optional manual selection for Local X field (overrides auto-detection) |
-| **Local Y Field** | Field (Numeric) [Optional] | Optional manual selection for Local Y field (overrides auto-detection) |
-| **WGS84 Longitude Field** | Field (Numeric) [Optional] | Optional manual selection for WGS84 Longitude field (overrides auto-detection) |
-| **WGS84 Latitude Field** | Field (Numeric) [Optional] | Optional manual selection for WGS84 Latitude field (overrides auto-detection) |
-| **Input Match Field** | Field (Any) [Optional] | Optional manual attribute field from the input layer used to match reference features |
-| **Reference Match Field** | Field (Any) [Optional] | Optional manual attribute field from the reference layer used to match input features |
+| **Input Local Grid Layer (LGU Layer)** | Feature Source (Any Geometry) | Local grid layer to be corrected |
+| **Reference WGS84 Layer (_bgy / Control Points)** | Feature Source (Any Geometry) | Reference layer in EPSG:4326 used for target coordinates (e.g. `02934_bgy`) |
+| **Local X Field** | Field (Numeric) | Optional manual selection for Local X field (overrides auto-detection) |
+| **Local Y Field** | Field (Numeric) | Optional manual selection for Local Y field (overrides auto-detection) |
+| **WGS84 Longitude Field** | Field (Numeric) | Optional manual selection for WGS84 Longitude field (overrides auto-detection) |
+| **WGS84 Latitude Field** | Field (Numeric) | Optional manual selection for WGS84 Latitude field (overrides auto-detection) |
+| **Input Match Field** | Field (Any) | Optional manual attribute field from the input layer used to match reference features |
+| **Reference Match Field** | Field (Any) | Optional manual attribute field from the reference layer used to match input features |
 
 ### Outputs
 
@@ -39,24 +37,27 @@ Use this tool when:
 
 ## How It Works
 
-1. **Smart Feature Field & Matching Auto-Detection**:
-   - Supports optional manual field selections for coordinate columns (`Local X`, `Local Y`, `WGS84 Longitude`, `WGS84 Latitude`) and feature matching keys (`Input Match Field`, `Reference Match Field`).
-   - If fields are not explicitly selected, automatically auto-detects `XI`, `YI`, `LongitudeI`, `LatitudeI` attribute fields if present in the input layer.
-   - Automatically falls back to feature geometry centroids for local $(X, Y)$ if local coordinate fields are absent.
-   - Evaluates common attribute candidate pairs (e.g. `bgy_code`, `psgc_bgy`, `name`, `barangay`, `code`), filtering out dummy/null values (like `'0'`, `'0.0'`, `'null'`), and selects the pair yielding the maximum number of unique matched control points (minimum 3).
-   - Pre-computes relative spatial centroid proximity mapping as a robust fallback if attribute matching is unavailable or incomplete.
+1. **Smart Cross-Column Attribute & Feature Matching**:
+   - Evaluates cross-column candidate pairs across layers, supporting common LGU and PSA/DENR reference headers (`geocode`, `bgy_geocode`, `psgc_bgy`, `psgc`, `bgy_code`, `brgy_code`, `code`, `barangay_n`, `barangay_name`, `bgy_name`, `brgy_name`, `name`, `barangay`, `bgy`, `bgy_id`, `adm4_en`, `id`, `fid`).
+   - Normalizes digit-based PSGC geocodes automatically (e.g. matching 9-digit local codes like `02934001` with 14-digit PSGC geocodes like `02934001000000`).
+   - Automatically selects the candidate attribute pair yielding the maximum number of unique matched control points (minimum 3).
+   - Pre-computes relative spatial centroid proximity mapping as a fallback if attribute matching is partial or unavailable.
 
-2. **2D Affine OLS Matrix Computation**:
+2. **Coordinate Extraction**:
+   - Automatically auto-detects `XI`, `YI`, `LongitudeI`, `LatitudeI` fields if present in input feature attributes.
+   - Falls back to feature geometry centroids for local $(X, Y)$ if local coordinate columns are absent.
+   - Maps WGS84 target coordinates from matched features in the `_bgy` reference layer.
+
+3. **2D Affine OLS Matrix Computation**:
    - Fits a 2D affine transformation matrix via Ordinary Least Squares:
      $$\text{Longitude} = a \cdot X + b \cdot Y + c$$
      $$\text{Latitude} = d \cdot X + e \cdot Y + f$$
+   - Auto-corrects swapped axis orientation (X/Y diagonal inversion) if necessary.
 
-3. **Residual Reporting**:
-   - Calculates per-point Euclidean distance error across control points and reports the fit matrix and maximum residual to the QGIS Processing Log window.
-
-4. **Geometry Transformation & Output**:
-   - Transforms all geometry vertices using the fitted 2D affine matrix.
-   - Sets output layer CRS to **EPSG:4326** (WGS 84).
+4. **Residual Reporting & Transformation**:
+   - Filters outlier control points if sample size $N > 4$.
+   - Reports fitted transformation matrix and maximum Euclidean residual errors in the QGIS Processing Log.
+   - Transforms all vertices to **EPSG:4326** (WGS 84).
 
 ## Supported Geometry Types
 
@@ -65,6 +66,6 @@ The tool handles all vector geometry types:
 - **LineString** and **MultiLineString**
 - **Polygon** and **MultiPolygon**
 
-::: tip
-If your layer already contains `XI`, `YI`, `LongitudeI`, and `LatitudeI` attributes, you can run the tool in 1 click without selecting an extra reference layer!
+::: tip Quick Setup Tip
+Select your LGU layer as **Input Local Grid Layer (LGU Layer)** and your `_bgy` layer as **Reference WGS84 Layer (_bgy / Control Points)**. The tool automatically cross-matches fields like `geocode` or `barangay_n` across both layers!
 :::
