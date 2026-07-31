@@ -1,4 +1,4 @@
-# <img src="/icons/create_ea.png" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Create Enumeration Areas
+# <img src="/icons/create_ea.svg" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Create Enumeration Areas
 
 The **Create Enumeration Areas** tool automates the spatial aggregation and delineation (splitting) of census Enumeration Areas (EAs) based on building household load, spatial contiguity, administrative barangay boundaries, and optional linear feature alignment (roads and rivers).
 

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <polygon points="3,4 12,3 11,20 3,18" fill="#0288D1" fill-opacity="0.2" stroke="#0288D1" stroke-width="1.8" stroke-linejoin="round"/>
+  <polygon points="13,4 21,5 20,18 12,20" fill="#0288D1" fill-opacity="0.2" stroke="#0288D1" stroke-width="1.8" stroke-linejoin="round"/>
+  <!-- Gap Patch in Middle -->
+  <polygon points="12,3 13,4 12,20 11,20" fill="#10B981" fill-opacity="0.6" stroke="#10B981" stroke-width="1.8" stroke-linejoin="round"/>
+  <!-- Plus / Fill symbol -->
+  <path d="M12 9v6M9 12h6" stroke="#10B981" stroke-width="2" stroke-linecap="round"/>
+</svg>

@@ -124,7 +124,7 @@ class GMDPipeline(object):
         self.iface.mainWindow().menuBar().insertMenu(self.iface.firstRightStandardMenu().menuAction(), self.gema_menu)
 
         packager_icon = QIcon(os.path.dirname(__file__) + "/icons/packager.svg")
-        create_ea_icon = QIcon(os.path.dirname(__file__) + "/icons/create_ea.png")
+        create_ea_icon = QIcon(os.path.dirname(__file__) + "/icons/create_ea.svg")
         sync_mbi_icon = QIcon(os.path.dirname(__file__) + "/icons/sync_mbi.svg")
         geom_toolkit_icon = QIcon(os.path.dirname(__file__) + "/icons/repair_geom.svg")
         others_icon = QIcon(os.path.dirname(__file__) + "/icons/others.svg")

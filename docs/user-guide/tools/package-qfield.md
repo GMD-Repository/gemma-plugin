@@ -1,4 +1,4 @@
-# Package for QField
+# <img src="/icons/packager.svg" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Package for QField
 
 The **Package for QField** tool packages your QGIS project and its spatial data for field data collection using **QField** — a mobile GIS application. It creates self-contained project packages trimmed physically to selected administrative or enumeration boundaries (EA or Barangay Level) that can be deployed on Android and iOS devices for offline fieldwork.
 
@@ -17,9 +17,6 @@ Use this tool when:
 - Preparing QGIS projects for census enumeration, survey data collection, or field verification using QField.
 - You need lightweight, offline-capable project packages physically trimmed to specific **EA** or **Barangay** boundaries.
 - Configuring layer roles, QField editing permissions (writable vs read-only), raster basemaps, and custom export file formats (`.geojson`, `.gpkg`, `.shp`, `data.gpkg`).
-
----
-
 
 ## How to Use
 
