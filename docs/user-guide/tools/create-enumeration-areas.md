@@ -25,8 +25,6 @@ The dedicated **EA Launcher** dialog provides an interactive workflow prior to e
 - **Auto-Detect Layers:** Automatically scans open layers in the QGIS project and selects matching inputs based on standard layer naming conventions (`_bgy`, `_ea`, `_bldgpts`, `road`, `river`).
 - **Fill Missing Household Counts:** Includes a built-in pre-processing utility to compute missing household counts (`hhcount`) directly from building points within each EA polygon before running the algorithm.
 - **KPI Cards & Live Candidate Preview:** Renders dynamic statistics and color-coded candidate tables for Delineation (>300 HH) and Merging (<100 HH) candidates before execution.
-- **Centered Dialog Header:** Features a clean, horizontally centered header panel displaying the tool SVG icon and title styled natively for QGIS.
-- **Stylized Execution Console:** Displays live execution progress across 8 distinct algorithm phases with stage badges and responsive cancellation support.
 
 ## Parameters
 
