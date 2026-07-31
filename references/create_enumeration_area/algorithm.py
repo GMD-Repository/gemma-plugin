@@ -602,7 +602,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
     def icon(self):
         """Returns the algorithm icon."""
         icon_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "icons", "create_ea.png")
+            os.path.join(os.path.dirname(__file__), "..", "..", "icons", "create_ea.svg")
         )
         if os.path.exists(icon_path):
             return QIcon(icon_path)

@@ -196,7 +196,9 @@ class EALauncherDialog(QDialog):
 
         # Icon
         icon_label = QLabel()
-        icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
+        icon_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "icons", "create_ea.svg")
+        )
         if os.path.exists(icon_path):
             pix = QPixmap(icon_path).scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             icon_label.setPixmap(pix)

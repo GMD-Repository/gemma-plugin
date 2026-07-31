@@ -36,7 +36,9 @@ class EADelineationProvider(QgsProcessingProvider):
         Returns the provider icon.
         Falls back to the default Processing icon if no custom icon is found.
         """
-        icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
+        icon_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "icons", "create_ea.svg")
+        )
         if os.path.exists(icon_path):
             from qgis.PyQt.QtGui import QIcon
             return QIcon(icon_path)
