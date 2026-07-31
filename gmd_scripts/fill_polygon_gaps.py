@@ -365,9 +365,7 @@ class FillPolygonGapsAlgorithm(QgsProcessingAlgorithm):
         )
 
     def icon(self):
-        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', 'fill.png')
-        if not os.path.exists(icon_path):
-            icon_path = os.path.join(os.path.dirname(__file__), 'icons', 'fill.png')
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', 'fill.svg')
         if os.path.exists(icon_path):
             return QIcon(icon_path)
         return super().icon()

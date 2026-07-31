@@ -18,19 +18,19 @@ hero:
 
 features:
   - icon:
-      src: /icons/overlap.png
+      src: /icons/overlap.svg
     title: MBI Checker
     details: Detect overlaps and gaps between barangay polygon boundaries with building point validation. Supports exporting styled MBI layers as GPKG.
     link: /tools/mbi-checker
     linkText: View Guide
   - icon:
-      src: /icons/fill.png
+      src: /icons/fill.svg
     title: Fill Polygon Gaps
     details: Automatically fill gaps between polygons by assigning them to the correct neighboring barangay with a preview-before-apply workflow.
     link: /tools/fill-polygon-gaps
     linkText: View Guide
   - icon:
-      src: /icons/export.png
+      src: /icons/export.svg
     title: Export Preliminary Polygons
     details: Merge and export resolved barangay boundary layers into a consolidated preliminary output for 1Map submission.
     link: /tools/export-preliminary-polygons
@@ -84,7 +84,7 @@ features:
     link: /tools/package-qfield
     linkText: View Guide
   - icon:
-      src: /icons/create_ea.png
+      src: /icons/create_ea.svg
     title: Create Enumeration Areas
     details: Delineate enumeration areas from barangay boundaries for census and survey field operations.
     link: /tools/create-enumeration-areas

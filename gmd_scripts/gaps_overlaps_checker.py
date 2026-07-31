@@ -47,7 +47,10 @@ class GapsOverlaps(QgsProcessingAlgorithm):
         return GapsOverlaps()
 
     def icon(self):
-        return QIcon(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons/overlap.png'))
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', 'overlap.svg')
+        if os.path.exists(icon_path):
+            return QIcon(icon_path)
+        return QIcon(":/images/themes/default/mActionFilter.svg")
 
     # Selection ng bgy bdry bldg point at mode
     # Added layer multiple select for PSO's convenience

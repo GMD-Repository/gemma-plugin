@@ -47,7 +47,10 @@ class ExportPreliminaryPolygons(QgsProcessingAlgorithm):
         return ExportPreliminaryPolygons()
 
     def icon(self):
-        return QIcon(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons/export.png'))
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', 'export.svg')
+        if os.path.exists(icon_path):
+            return QIcon(icon_path)
+        return QIcon(":/images/themes/default/mActionFilter.svg")
 
     INPUT1 = 'INPUT1'
 
