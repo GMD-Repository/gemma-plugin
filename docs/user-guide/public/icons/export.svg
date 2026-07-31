@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!-- Polygon background -->
+  <polygon points="3,6 14,3 12,16 3,18" fill="#0288D1" fill-opacity="0.2" stroke="#0288D1" stroke-width="1.8" stroke-linejoin="round"/>
+  <!-- Export Arrow Out -->
+  <path d="M12 14l7-7M19 7h-5M19 7v5" stroke="#10B981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="13" y="13" width="8" height="8" rx="1.5" fill="#10B981" fill-opacity="0.15" stroke="#10B981" stroke-width="1.6"/>
+</svg>

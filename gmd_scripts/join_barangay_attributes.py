@@ -929,10 +929,6 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
 
     def icon(self):
         icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', 'upload.svg')
-        if not os.path.exists(icon_path):
-            icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', 'upload.png')
-        if not os.path.exists(icon_path):
-            icon_path = os.path.join(os.path.dirname(__file__), 'icons', 'upload.png')
         if os.path.exists(icon_path):
             return QIcon(icon_path)
         return QIcon(":/images/themes/default/mActionFilter.svg")
