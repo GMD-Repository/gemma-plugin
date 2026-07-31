@@ -40,24 +40,40 @@ graph TD
 
 ---
 
-### Step 3: Update `icon(self)` Method in PyQGIS Script Algorithm
-* **Target File:** `gmd_scripts/<script_name>.py`
-* **Implementation Standard:** Prioritize `.svg`, fallback to legacy `.png`, then fallback to standard QGIS theme icon:
+### Step 3: Update `icon(self)` Method in PyQGIS Scripts & Algorithms
+* **Target Locations:** 
+  * `gmd_scripts/<script_name>.py` (Scripts in `gmd_scripts/`)
+  * `references/<tool_name>/algorithm.py`, `provider.py`, `plugin.py`, `dialog.py` (Subdirectory algorithms)
+  * `gmd_pipeline.py` (Central toolbar/menu icon registry)
+* **Implementation Standards:**
+  * **Direct Scripts (`gmd_scripts/`):** Use `os.path.dirname(os.path.dirname(__file__))` to reach the root `icons/` folder:
+    ```python
+    import os
+    from qgis.PyQt.QtGui import QIcon
 
-```python
-import os
-from qgis.PyQt.QtGui import QIcon
+    def icon(self):
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', '<icon_name>.svg')
+        if os.path.exists(icon_path):
+            return QIcon(icon_path)
+        return QIcon(":/images/themes/default/mActionFilter.svg")
+    ```
+  * **Nested Subdirectory Modules (`references/<tool>/`):** Navigate up two levels (`"..", ".."`):
+    ```python
+    import os
+    from qgis.PyQt.QtGui import QIcon
 
-def icon(self):
-    icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', '<icon_name>.svg')
-    if not os.path.exists(icon_path):
-        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', '<icon_name>.png')
-    if not os.path.exists(icon_path):
-        icon_path = os.path.join(os.path.dirname(__file__), 'icons', '<icon_name>.png')
-    if os.path.exists(icon_path):
-        return QIcon(icon_path)
-    return QIcon(":/images/themes/default/mActionFilter.svg")
-```
+    def icon(self):
+        icon_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "icons", "<icon_name>.svg")
+        )
+        if os.path.exists(icon_path):
+            return QIcon(icon_path)
+        return super().icon()
+    ```
+  * **Central Menu Registry (`gmd_pipeline.py`):** Update QIcon paths to point to `.svg` assets:
+    ```python
+    tool_icon = QIcon(os.path.dirname(__file__) + "/icons/<icon_name>.svg")
+    ```
 
 ---
 
