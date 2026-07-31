@@ -23,7 +23,7 @@ from qgis.PyQt.QtWidgets import (
     QTextBrowser, QMessageBox, QGroupBox
 )
 from qgis.PyQt.QtGui import QFont, QPixmap, QColor, QIcon, QTextCursor
-from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication, QThread, QObject, pyqtSignal, QVariant
+from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication, QThread, QObject, pyqtSignal, QVariant, QTimer
 
 
 
@@ -1088,10 +1088,11 @@ class EALauncherDialog(QDialog):
         self.log_console.clear()
 
     def copy_logs_to_clipboard(self):
-        """Copy all console texts to Clipboard."""
+        """Copy all console texts to Clipboard without polluting console logs."""
         clipboard = QCoreApplication.instance().clipboard()
         clipboard.setText(self.log_console.toPlainText())
-        self.log_console.append("<span style='color: #3498db; font-style: italic;'>[SYSTEM] Logs copied to clipboard.</span>")
+        self.copy_logs_btn.setText("Copied!")
+        QTimer.singleShot(1500, lambda: self.copy_logs_btn.setText("Copy Logs"))
 
 
 
