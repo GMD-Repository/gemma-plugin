@@ -43,6 +43,7 @@ export default defineConfig({
               { text: 'Geometry Repair Toolkit', link: '/tools/geometry-repair-toolkit' },
               { text: 'Scan Geometry Errors', link: '/tools/scan-geometry-errors' },
               { text: 'Repair Polygon Geometries', link: '/tools/repair-polygon-geometries' },
+              { text: 'Clip Project Layers by Extent', link: '/tools/clip-project-layers' },
             ]
           },
           {
@@ -92,6 +93,7 @@ export default defineConfig({
           { text: 'Geometry Repair Toolkit', link: '/tools/geometry-repair-toolkit' },
           { text: 'Scan Geometry Errors', link: '/tools/scan-geometry-errors' },
           { text: 'Repair Polygon Geometries', link: '/tools/repair-polygon-geometries' },
+          { text: 'Clip Project Layers by Extent', link: '/tools/clip-project-layers' },
         ]
       },
       {

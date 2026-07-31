@@ -5,7 +5,7 @@ The **Update LGU PSGC Metadata** tool automatically populates PSGC (Philippine S
 ## Access
 
 - **Processing Toolbox:** GMD Pipeline → 1Map → Update LGU PSGC Metadata
-- **Algorithm ID:** `gmd_pipeline:update_lgu_psgc_metadata`
+- **Algorithm ID:** `gmd_pipeline:update_lgu_with_psgc`
 
 ## When to Use
 

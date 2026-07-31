@@ -45,7 +45,9 @@ class EADelineationPlugin:
           1. icon.png shipped alongside this file
           2. QGIS built-in Processing algorithm icon (always available)
         """
-        icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
+        icon_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "icons", "create_ea.svg")
+        )
         if os.path.exists(icon_path):
             return QIcon(icon_path)
         return QgsApplication.getThemeIcon("/processingAlgorithm.svg")
