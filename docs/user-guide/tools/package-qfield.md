@@ -18,9 +18,6 @@ Use this tool when:
 - You need lightweight, offline-capable project packages physically trimmed to specific **EA** or **Barangay** boundaries.
 - Configuring layer roles, QField editing permissions (writable vs read-only), raster basemaps, and custom export file formats (`.geojson`, `.gpkg`, `.shp`, `data.gpkg`).
 
----
-
-
 ## How to Use
 
 Follow this step-by-step guide to package your QGIS project for QField.

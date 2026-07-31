@@ -89,5 +89,11 @@ features:
     details: Delineate enumeration areas from barangay boundaries for census and survey field operations.
     link: /tools/create-enumeration-areas
     linkText: View Guide
+  - icon:
+      src: /icons/clip_layers.svg
+    title: Clip Project Layers by Extent
+    details: Batch clip multiple vector layers to administrative boundary polygons with optional buffer margins.
+    link: /tools/clip-project-layers
+    linkText: View Guide
 ---
 
