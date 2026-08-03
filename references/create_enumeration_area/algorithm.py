@@ -3907,12 +3907,14 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                                 score = (combined_hh * 1000.0) + combined_bldg
                                 if score > best_neighbor_score:
                                     best_neighbor_score = score
-                                    best_neighbor_idx = j
-                                    
                         if best_neighbor_idx != -1:
                             neighbor = bar_eas[best_neighbor_idx]
-                            merged_geom = ea['geom'].combine(neighbor['geom'])
-                            merged_geom = merged_geom.buffer(0.0, 3)
+                            merged_geom = ea['geom'].combine(neighbor['geom']).buffer(0.0, 3)
+                            bar_feat = barangay_by_id.get(bar_code)
+                            if bar_feat and bar_feat.geometry() and not bar_feat.geometry().isEmpty():
+                                clipped_g = merged_geom.intersection(bar_feat.geometry()).buffer(0.0, 3)
+                                if not clipped_g.isEmpty():
+                                    merged_geom = clipped_g
 
                             # Inherit EA code and attributes from the EA with the highest hhcount.
                             # On a tie the merge candidate (ea) wins as it was the initiator.
@@ -4020,8 +4022,12 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         # --- Shared merge block (used by whichever Pass found the best neighbour) ---
                         if best_neighbor_idx != -1:
                             neighbor = bar_eas[best_neighbor_idx]
-                            merged_geom = ea['geom'].combine(neighbor['geom'])
-                            merged_geom = merged_geom.buffer(0.0, 3)
+                            merged_geom = ea['geom'].combine(neighbor['geom']).buffer(0.0, 3)
+                            bar_feat = barangay_by_id.get(bar_code)
+                            if bar_feat and bar_feat.geometry() and not bar_feat.geometry().isEmpty():
+                                clipped_g = merged_geom.intersection(bar_feat.geometry()).buffer(0.0, 3)
+                                if not clipped_g.isEmpty():
+                                    merged_geom = clipped_g
 
                             # Inherit EA code and attributes from the EA with the highest hhcount.
                             # On a tie the merge candidate (ea) wins as it was the initiator.
@@ -4377,8 +4383,14 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 if best_j != -1:
                     nb = eas[best_j]
                     dominant = nb if nb['hh_count'] >= ea['hh_count'] else ea
+                    merged_geom = ea['geom'].combine(nb['geom']).buffer(0.0, 3)
+                    bar_feat = barangay_by_id.get(bar)
+                    if bar_feat and bar_feat.geometry() and not bar_feat.geometry().isEmpty():
+                        clipped_g = merged_geom.intersection(bar_feat.geometry()).buffer(0.0, 3)
+                        if not clipped_g.isEmpty():
+                            merged_geom = clipped_g
                     merged_ea = {
-                        'geom': ea['geom'].combine(nb['geom']).buffer(0.0, 3),
+                        'geom': merged_geom,
                         'buildings': ea.get('buildings', []) + nb.get('buildings', []),
                         'hh_count': ea['hh_count'] + nb['hh_count'],
                         'original_hhcount': dominant.get('original_hhcount', 0),
@@ -5049,13 +5061,12 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                                 if _max_val is not None and not (isinstance(_max_val, QVariant) and _max_val.isNull()) and str(_max_val).strip() != '':
                                     out_feat.setAttribute(_fidx, _max_val)
 
-            final_pop = ea['original_hhcount'] if is_unchanged_retain else ea['hh_count']
             hh_count_bldg = ea.get('hh_count', 0.0)
-            hhcount_val = ea['original_hhcount'] if is_unchanged_retain else hh_count_bldg
+            hhcount_orig = ea.get('original_hhcount', 0.0)
 
             pop_idx = out_fields.indexOf(output_hh_field)
             if pop_idx != -1:
-                out_feat.setAttribute(pop_idx, final_pop)
+                out_feat.setAttribute(pop_idx, hhcount_orig if output_hh_field.lower() == "hhcount" else hh_count_bldg)
                 
             fid_idx = out_fields.indexOf("fid")
             if fid_idx != -1:
@@ -5075,7 +5086,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
 
             hhcount_idx = out_fields.indexOf("hhcount")
             if hhcount_idx != -1:
-                out_feat.setAttribute(hhcount_idx, hhcount_val)
+                out_feat.setAttribute(hhcount_idx, hhcount_orig)
 
             bldgpts_val_idx = out_fields.indexOf("bldgpoints_value")
             if bldgpts_val_idx != -1:
