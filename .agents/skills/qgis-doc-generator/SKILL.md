@@ -43,6 +43,12 @@ Every processing tool documentation markdown page (`docs/user-guide/tools/<tool-
 
 ---
 
+## Strict No Generic UI Elements Standard
+
+Do NOT list standard or boilerplate user interface components (such as headers, footers, theme switchers, dialog titles, execution log consoles, or default buttons) as standalone feature bullet points in tool documentation files (`docs/user-guide/tools/`). Tool documentation must focus strictly on core GIS spatial processing capabilities, layer requirements, dataset pre-processing tools, and algorithm parameters.
+
+---
+
 ## Full Documentation Generation Protocol
 
 ```mermaid
