@@ -129,12 +129,34 @@ class EALauncherDialog(QDialog):
         # Candidate lists storage for live search/filter
         self.all_delineation_candidates = []
         self.all_merge_candidates = []
-        
+
+        # Guard: auto-detect runs once when the dialog is first shown, not during construction
+        self._initial_detect_done = False
+
+        # Detect QGIS theme (light or dark) based on application palette brightness
+        palette = self.palette()
+        bg_color = palette.color(palette.Window)
+        self.current_theme = "dark" if bg_color.lightness() < 128 else "light"
+
         self._build_ui()
-        
+
         # Connect signals for live candidate previews and validators
         self._setup_preview_connections()
-        self.auto_detect_layers()
+
+    # ── Lifecycle Overrides ──────────────────────────────────────────────────
+
+    def showEvent(self, event):
+        """Auto-detect project layers exactly once when the dialog is first shown.
+
+        Using showEvent (rather than __init__) ensures detection fires when the
+        dialog is actually visible — i.e. the moment the user opens the tool —
+        and not during invisible construction or in response to subsequent
+        project layer additions.
+        """
+        super().showEvent(event)
+        if not self._initial_detect_done:
+            self._initial_detect_done = True
+            self.auto_detect_layers()
 
     # ── UI Construction ─────────────────────────────────────────────────────
 
@@ -780,59 +802,77 @@ class EALauncherDialog(QDialog):
             )
 
     def auto_detect_layers(self):
-        """Scan all loaded layers in QGIS project and automatically match inputs by name keywords."""
-        layers = QgsProject.instance().mapLayers().values()
-        
+        """Scan all loaded layers in QGIS project and automatically match inputs by name keywords.
+
+        Uses QgsMapLayerComboBox.setLayer() (the correct PyQGIS API) instead of
+        findText()/setCurrentIndex(), which is unreliable on proxy-model-backed combo boxes.
+        Priority ordering within each geometry type ensures the most specific keyword match
+        wins (e.g. gap/overlap before generic barangay/EA keywords for polygons).
+        """
+        layers = list(QgsProject.instance().mapLayers().values())
+
         barangay_keywords = ["barangay", "bgy", "brgy", "boundary", "admin"]
         building_keywords = ["building", "bldg", "point", "household", "hh", "structure"]
-        pravea_keywords = ["previous", "prev", "ea", "enumeration"]
-        road_keywords = ["road", "highway", "street", "way", "route"]
-        river_keywords = ["river", "stream", "water", "drainage", "creek"]
-        gap_keywords = ["gap", "gaps"]
-        overlap_keywords = ["overlap", "overlaps"]
-        
+        pravea_keywords   = ["previous", "prev", "ea", "enumeration"]
+        road_keywords     = ["road", "highway", "street", "way", "route"]
+        river_keywords    = ["river", "stream", "water", "drainage", "creek"]
+        gap_keywords      = ["gap", "gaps"]
+        overlap_keywords  = ["overlap", "overlaps"]
+
+        # Candidates: first match per slot wins (order of iteration = layer panel order)
+        candidates = {
+            "bar":      None,
+            "bldg":     None,
+            "prev_ea":  None,
+            "road":     None,
+            "river":    None,
+            "gap":      None,
+            "overlap":  None,
+        }
+
         for layer in layers:
             if not isinstance(layer, QgsVectorLayer):
                 continue
             name_lower = layer.name().lower()
-            
-            # Barangay Layer (Polygon)
-            if layer.geometryType() == 2:  # Polygon
-                if any(k in name_lower for k in gap_keywords):
-                    idx = self.gap_combo.findText(layer.name())
-                    if idx != -1:
-                        self.gap_combo.setCurrentIndex(idx)
-                elif any(k in name_lower for k in overlap_keywords):
-                    idx = self.overlap_combo.findText(layer.name())
-                    if idx != -1:
-                        self.overlap_combo.setCurrentIndex(idx)
-                elif any(k in name_lower for k in barangay_keywords) and not any(k in name_lower for k in pravea_keywords):
-                    idx = self.bar_combo.findText(layer.name())
-                    if idx != -1:
-                        self.bar_combo.setCurrentIndex(idx)
-                elif any(k in name_lower for k in pravea_keywords):
-                    idx = self.prev_ea_combo.findText(layer.name())
-                    if idx != -1:
-                        self.prev_ea_combo.setCurrentIndex(idx)
-                        
-            # Building Points (Point)
-            elif layer.geometryType() == 0:  # Point
-                if any(k in name_lower for k in building_keywords):
-                    idx = self.bldg_combo.findText(layer.name())
-                    if idx != -1:
-                        self.bldg_combo.setCurrentIndex(idx)
-                        
-            # Road/River (Line)
-            elif layer.geometryType() == 1:  # Line
-                if any(k in name_lower for k in river_keywords):
-                    idx = self.river_combo.findText(layer.name())
-                    if idx != -1:
-                        self.river_combo.setCurrentIndex(idx)
-                elif any(k in name_lower for k in road_keywords):
-                    idx = self.road_combo.findText(layer.name())
-                    if idx != -1:
-                        self.road_combo.setCurrentIndex(idx)
-                        
+            geom = layer.geometryType()
+
+            if geom == 2:  # Polygon
+                if candidates["gap"] is None and any(k in name_lower for k in gap_keywords):
+                    candidates["gap"] = layer
+                elif candidates["overlap"] is None and any(k in name_lower for k in overlap_keywords):
+                    candidates["overlap"] = layer
+                elif candidates["bar"] is None and any(k in name_lower for k in barangay_keywords) \
+                        and not any(k in name_lower for k in pravea_keywords):
+                    candidates["bar"] = layer
+                elif candidates["prev_ea"] is None and any(k in name_lower for k in pravea_keywords):
+                    candidates["prev_ea"] = layer
+
+            elif geom == 0:  # Point
+                if candidates["bldg"] is None and any(k in name_lower for k in building_keywords):
+                    candidates["bldg"] = layer
+
+            elif geom == 1:  # Line
+                if candidates["river"] is None and any(k in name_lower for k in river_keywords):
+                    candidates["river"] = layer
+                elif candidates["road"] is None and any(k in name_lower for k in road_keywords):
+                    candidates["road"] = layer
+
+        # Apply detected layers using the correct QgsMapLayerComboBox API
+        if candidates["bar"]:
+            self.bar_combo.setLayer(candidates["bar"])
+        if candidates["bldg"]:
+            self.bldg_combo.setLayer(candidates["bldg"])
+        if candidates["prev_ea"]:
+            self.prev_ea_combo.setLayer(candidates["prev_ea"])
+        if candidates["road"]:
+            self.road_combo.setLayer(candidates["road"])
+        if candidates["river"]:
+            self.river_combo.setLayer(candidates["river"])
+        if candidates["gap"]:
+            self.gap_combo.setLayer(candidates["gap"])
+        if candidates["overlap"]:
+            self.overlap_combo.setLayer(candidates["overlap"])
+
         self.validate_layer_inputs()
 
     def validate_layer_inputs(self):
