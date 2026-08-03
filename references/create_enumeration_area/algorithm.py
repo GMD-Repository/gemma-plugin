@@ -684,40 +684,12 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         )
 
     def initAlgorithm(self, config: Optional[dict[str, Any]] = None):
-        """Defines the inputs and outputs of the algorithm."""
-        from qgis.core import QgsProject
-        
-        # Auto-detect layers in the current QGIS project
-        default_bgy = None
-        default_ea = None
-        default_bldgpts = None
-        default_road = None
-        default_river = None
-        
-        from qgis.core import QgsMessageLog, Qgis
-        try:
-            layers = QgsProject.instance().mapLayers().values()
-            QgsMessageLog.logMessage(f"Auto-detecting layers. Project has {len(layers)} layers.", "EA Creation", Qgis.Info)
-            for layer in layers:
-                name_lower = layer.name().lower()
-                QgsMessageLog.logMessage(f"Checking layer: {layer.name()}", "EA Creation", Qgis.Info)
-                if "_bgy" in name_lower and default_bgy is None:
-                    default_bgy = layer
-                    QgsMessageLog.logMessage(f"Selected {layer.name()} as Barangay default.", "EA Creation", Qgis.Info)
-                elif "_ea" in name_lower and default_ea is None:
-                    default_ea = layer
-                    QgsMessageLog.logMessage(f"Selected {layer.name()} as EA default.", "EA Creation", Qgis.Info)
-                elif ("_bldgpts" in name_lower or "_bldg_point" in name_lower or "_bldg_points" in name_lower) and default_bldgpts is None:
-                    default_bldgpts = layer
-                    QgsMessageLog.logMessage(f"Selected {layer.name()} as Building Points default.", "EA Creation", Qgis.Info)
-                elif "road" in name_lower and default_road is None:
-                    default_road = layer
-                    QgsMessageLog.logMessage(f"Selected {layer.name()} as Road default.", "EA Creation", Qgis.Info)
-                elif "river" in name_lower and default_river is None:
-                    default_river = layer
-                    QgsMessageLog.logMessage(f"Selected {layer.name()} as River default.", "EA Creation", Qgis.Info)
-        except Exception as e:
-            QgsMessageLog.logMessage(f"Error auto-detecting layers: {str(e)}", "EA Creation", Qgis.Critical)
+        """Defines the inputs and outputs of the algorithm.
+
+        Layer defaults are intentionally left as None here. Auto-detection of
+        project layers is handled by the dialog (EALauncherDialog.showEvent),
+        not during algorithm registration, which runs at plugin load time.
+        """
 
         # Barangay polygon input
         self.addParameter(
@@ -725,7 +697,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 self.BARANGAY_INPUT,
                 "Barangay Layer",
                 [QgsProcessing.SourceType.TypeVectorPolygon],
-                defaultValue=default_bgy,
+                defaultValue=None,
             )
         )
        
@@ -735,7 +707,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 self.BUILDING_INPUT,
                 "Building Point Layer",
                 [QgsProcessing.SourceType.TypeVectorPoint],
-                defaultValue=default_bldgpts,
+                defaultValue=None,
             )
         )
 
@@ -745,7 +717,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 self.PREVIOUS_EA_INPUT,
                 "Previous EA Layer",
                 [QgsProcessing.SourceType.TypeVectorPolygon],
-                defaultValue=default_ea,
+                defaultValue=None,
             )
         )
         
@@ -755,7 +727,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 self.ROAD_INPUT,
                 "Road Layer (optional)",
                 [QgsProcessing.SourceType.TypeVectorLine],
-                defaultValue=default_road,
+                defaultValue=None,
                 optional=True,
             )
         )
@@ -765,7 +737,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 self.RIVER_INPUT,
                 "River Layer (optional)",
                 [QgsProcessing.SourceType.TypeVectorLine],
-                defaultValue=default_river,
+                defaultValue=None,
                 optional=True,
             )
         )
