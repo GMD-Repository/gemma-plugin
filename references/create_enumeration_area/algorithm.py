@@ -1988,16 +1988,20 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             for special_fid in special_ea_info.keys():
                 merge_candidate_ids.add(special_fid)
 
-        # Write to delineation candidate sink — only strict for_delineation candidates
-        # (EAs flagged by household threshold). Excludes context/reference EAs and
-        # Gap/Overlap Special EAs which are separately output to delineated_ea2026.
+        # Write to delineation candidate sink — includes both for_delineation candidates
+        # and ea_reference EAs within barangays that contain delineation candidates.
         if delin_candidate_sink is not None:
             for feat in previous_ea_source.getFeatures():
                 if multi_feedback.isCanceled():
                     raise QgsProcessingException("Algorithm cancelled by user.")
-                # Only include this EA if it is a confirmed delineation candidate
-                if feat.id() not in delineation_candidate_ids:
+                
+                is_cand = feat.id() in delineation_candidate_ids
+                parent_bar = resolve_ea_parent_barangay(feat)
+                is_ref_in_bar = (not is_cand) and (parent_bar in delineation_candidate_bar_geocodes)
+                
+                if not (is_cand or is_ref_in_bar):
                     continue
+
                 out_feat = QgsFeature(delin_cand_fields)
                 _dc_geom = feat.geometry()
                 if ea_to_target:
@@ -2030,7 +2034,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 
                 eadel_indi_idx = delin_cand_fields.indexOf("eadel_indi")
                 if eadel_indi_idx != -1:
-                    out_feat.setAttribute(eadel_indi_idx, "for_delineation")
+                    out_feat.setAttribute(eadel_indi_idx, "for_delineation" if is_cand else "ea_reference")
                 
                 # Clear fid attribute to let OGR generate sequential IDs
                 fid_idx = delin_cand_fields.indexOf("fid")
