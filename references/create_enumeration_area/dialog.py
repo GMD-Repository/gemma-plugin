@@ -20,58 +20,11 @@ from qgis.PyQt.QtWidgets import (
     QSizePolicy, QSpacerItem, QWidget, QSpinBox, QDoubleSpinBox, QCheckBox,
     QComboBox, QLineEdit, QFileDialog, QTabWidget, QTableWidget, QTableWidgetItem,
     QHeaderView, QProgressBar, QTextEdit, QScrollArea, QSplitter, QGridLayout,
-    QTextBrowser, QMessageBox
+    QTextBrowser, QMessageBox, QGroupBox
 )
 from qgis.PyQt.QtGui import QFont, QPixmap, QColor, QIcon, QTextCursor
-from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication, QThread, QObject, pyqtSignal, QVariant
+from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication, QThread, QObject, pyqtSignal, QVariant, QTimer
 
-# ── Theme Palettes (Defaulting to White/Light Theme) ──────────────────────
-THEME_PALETTES = {
-    "light": {
-        "bg": "#f8f9fa",            # Soft off-white
-        "header": "#ffffff",        # Pure white header
-        "accent": "#0969da",        # GitHub/Vercel style blue accent
-        "accent2": "#1a7f37",       # Success green
-        "text": "#24292f",          # Charcoal dark text
-        "subtext": "#57606a",       # Slate gray subtext
-        "divider": "#d0d7de",       # Light gray divider borders
-        "card": "#ffffff",          # Card white background
-        "run_hover": "#1f883d",     # Darker green hover
-        "input_bg": "#ffffff",      # White background for inputs
-        "table_bg": "#ffffff",
-        "table_header_bg": "#f6f8fa",
-        "console_bg": "#0f1419",    # Keep logs console dark for contrast/readability
-        "console_text": "#3bf1a1",
-        "kpi_delin_bg": "#ffebe9",  # Pastel red
-        "kpi_delin_border": "#ffc1c0",
-        "kpi_merge_bg": "#dafbe1",  # Pastel green
-        "kpi_merge_border": "#a6e9b9",
-        "kpi_stats_bg": "#ddf4ff",  # Pastel blue
-        "kpi_stats_border": "#b2e3ff"
-    },
-    "dark": {
-        "bg": "#0d1b2a",            # Navy background
-        "header": "#1a3a5c",        # Dark blue header
-        "accent": "#2980b9",        # Accent blue
-        "accent2": "#1abc9c",       # Teal accent
-        "text": "#ecf0f1",          # Off-white text
-        "subtext": "#95a5a6",       # Muted gray text
-        "divider": "#2c3e50",       # Dark slate border divider
-        "card": "#152638",          # Card dark blue background
-        "run_hover": "#16a085",
-        "input_bg": "#1f354d",
-        "table_bg": "#070e17",
-        "table_header_bg": "#152638",
-        "console_bg": "#050b14",
-        "console_text": "#00ff00",
-        "kpi_delin_bg": "#3d2121",  # Dark red
-        "kpi_delin_border": "#5c1e1e",
-        "kpi_merge_bg": "#1e3f28",  # Dark green
-        "kpi_merge_border": "#135422",
-        "kpi_stats_bg": "#102c46",  # Dark blue
-        "kpi_stats_border": "#0d3b66"
-    }
-}
 
 
 class ThreadSafeFeedbackHelper(QObject):
@@ -153,6 +106,12 @@ class EALauncherDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Create Enumeration Areas")
+        icon_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "icons", "create_ea.svg")
+        )
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+            
         self.setMinimumSize(1150, 650)
         self.setWindowFlags(
             Qt.Dialog |
@@ -162,7 +121,6 @@ class EALauncherDialog(QDialog):
         )
         
         self.feedback = None
-        self.current_theme = "light"
         
         # Initialize algorithm instance for help text metadata
         from .algorithm import CreateEAAlgorithm
@@ -173,7 +131,6 @@ class EALauncherDialog(QDialog):
         self.all_merge_candidates = []
         
         self._build_ui()
-        self._apply_theme()
         
         # Connect signals for live candidate previews and validators
         self._setup_preview_connections()
@@ -183,16 +140,17 @@ class EALauncherDialog(QDialog):
 
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(10)
 
         # ── Header Panel ──────────────────────────────────────────────────
         header = QWidget()
         header.setObjectName("header")
-        header.setFixedHeight(85)
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(20, 10, 20, 10)
-        header_layout.setSpacing(15)
+        header_layout.setContentsMargins(4, 4, 4, 4)
+        header_layout.setSpacing(10)
+
+        header_layout.addStretch()
 
         # Icon
         icon_label = QLabel()
@@ -200,46 +158,23 @@ class EALauncherDialog(QDialog):
             os.path.join(os.path.dirname(__file__), "..", "..", "icons", "create_ea.svg")
         )
         if os.path.exists(icon_path):
-            pix = QPixmap(icon_path).scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            pix = QIcon(icon_path).pixmap(36, 36)
             icon_label.setPixmap(pix)
         else:
             icon_label.setText("🗺")
-            icon_label.setFont(QFont("Segoe UI Emoji", 24))
-        icon_label.setFixedSize(50, 50)
+            icon_label.setFont(QFont("Segoe UI Emoji", 20))
+        icon_label.setFixedSize(36, 36)
         icon_label.setAlignment(Qt.AlignCenter)
-        header_layout.addWidget(icon_label)
+        header_layout.addWidget(icon_label, 0, Qt.AlignVCenter)
 
-        # Title/Subtitle info
-        title_col = QVBoxLayout()
-        title_col.setSpacing(2)
-
+        # Title
         title = QLabel("Create Enumeration Areas")
         title.setObjectName("title")
-        title.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        title_col.addWidget(title)
+        title.setFont(QFont("Segoe UI", 13, QFont.Bold))
+        header_layout.addWidget(title, 0, Qt.AlignVCenter)
 
-        tagline = QLabel("GMD Pipeline  ·  1MAP Group  ·  v1.0.0")
-        tagline.setObjectName("tagline")
-        tagline.setFont(QFont("Segoe UI", 8))
-        title_col.addWidget(tagline)
-        header_layout.addLayout(title_col)
-        
         header_layout.addStretch()
-
-        # Theme selection
-        theme_lbl = QLabel("Theme:")
-        theme_lbl.setFont(QFont("Segoe UI", 9))
-        header_layout.addWidget(theme_lbl)
-        
-        self.theme_combo = QComboBox()
-        self.theme_combo.addItems(["Light Mode", "Dark Mode", "Sync QGIS"])
-        self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
-        header_layout.addWidget(self.theme_combo)
-
         root.addWidget(header)
-
-        # ── Divider ───────────────────────────────────────────────────────
-        root.addWidget(self._divider())
 
         # ── Main Pane Splitter ────────────────────────────────────────────
         main_splitter = QSplitter(Qt.Horizontal)
@@ -248,42 +183,34 @@ class EALauncherDialog(QDialog):
         # Left Panel (Parameters Scroll Area)
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
-        left_layout.setContentsMargins(15, 15, 10, 15)
-        left_layout.setSpacing(12)
+        left_layout.setContentsMargins(5, 5, 5, 5)
+        left_layout.setSpacing(8)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setContentsMargins(0, 0, 10, 0)
-        scroll_layout.setSpacing(12)
+        scroll_layout.setContentsMargins(0, 0, 5, 0)
+        scroll_layout.setSpacing(10)
 
-        # 1. Inputs Section
-        inputs_header_layout = QHBoxLayout()
-        inputs_header_layout.addWidget(self._section_label("Input Layers"))
-        inputs_header_layout.addStretch()
-        
-        # Auto-detect layers button
-        self.detect_btn = QPushButton("🔍 Auto-detect Layers")
-        self.detect_btn.setObjectName("detectBtn")
+        # 1. Inputs Section (QGroupBox)
+        inputs_group = QGroupBox("Input Layers")
+        inputs_layout = QVBoxLayout(inputs_group)
+        inputs_layout.setSpacing(8)
+
+        # Action Buttons row inside Inputs group
+        inputs_btn_layout = QHBoxLayout()
+        self.detect_btn = QPushButton("Auto-detect Layers")
         self.detect_btn.setToolTip("Scan current QGIS project layers and auto-select matching layers.")
         self.detect_btn.clicked.connect(self.auto_detect_layers)
-        inputs_header_layout.addWidget(self.detect_btn)
+        inputs_btn_layout.addWidget(self.detect_btn)
 
-        # Fill missing hhcount from building points
         self.fill_missing_btn = QPushButton("Fill missing hhcount")
-        self.fill_missing_btn.setObjectName("fillMissingBtn")
         self.fill_missing_btn.setToolTip("Compute and populate missing EA hhcount values from building points within each EA polygon.")
         self.fill_missing_btn.clicked.connect(self.fill_missing_hhcount)
-        inputs_header_layout.addWidget(self.fill_missing_btn)
-        
-        scroll_layout.addLayout(inputs_header_layout)
-        
-        inputs_card = QFrame()
-        inputs_card.setObjectName("formCard")
-        inputs_layout = QVBoxLayout(inputs_card)
-        inputs_layout.setSpacing(8)
+        inputs_btn_layout.addWidget(self.fill_missing_btn)
+        inputs_layout.addLayout(inputs_btn_layout)
 
         # Barangay Layer
         inputs_layout.addWidget(QLabel("Barangay Layer (Polygon)*"))
@@ -291,7 +218,6 @@ class EALauncherDialog(QDialog):
         self.bar_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
         inputs_layout.addWidget(self.bar_combo)
         self.bar_status_lbl = QLabel("No layer selected.")
-        self.bar_status_lbl.setObjectName("statusLbl")
         inputs_layout.addWidget(self.bar_status_lbl)
 
         # Building Points
@@ -300,7 +226,6 @@ class EALauncherDialog(QDialog):
         self.bldg_combo.setFilters(QgsMapLayerProxyModel.PointLayer)
         inputs_layout.addWidget(self.bldg_combo)
         self.bldg_status_lbl = QLabel("No layer selected.")
-        self.bldg_status_lbl.setObjectName("statusLbl")
         inputs_layout.addWidget(self.bldg_status_lbl)
 
         # Previous EAs
@@ -309,7 +234,6 @@ class EALauncherDialog(QDialog):
         self.prev_ea_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
         inputs_layout.addWidget(self.prev_ea_combo)
         self.prev_ea_status_lbl = QLabel("No layer selected.")
-        self.prev_ea_status_lbl.setObjectName("statusLbl")
         inputs_layout.addWidget(self.prev_ea_status_lbl)
 
         # Road (Optional)
@@ -319,7 +243,6 @@ class EALauncherDialog(QDialog):
         self.road_combo.setAllowEmptyLayer(True)
         inputs_layout.addWidget(self.road_combo)
         self.road_status_lbl = QLabel("Optional.")
-        self.road_status_lbl.setObjectName("statusLbl")
         inputs_layout.addWidget(self.road_status_lbl)
 
         # River (Optional)
@@ -329,7 +252,6 @@ class EALauncherDialog(QDialog):
         self.river_combo.setAllowEmptyLayer(True)
         inputs_layout.addWidget(self.river_combo)
         self.river_status_lbl = QLabel("Optional.")
-        self.river_status_lbl.setObjectName("statusLbl")
         inputs_layout.addWidget(self.river_status_lbl)
 
         # Gap (Optional)
@@ -339,7 +261,6 @@ class EALauncherDialog(QDialog):
         self.gap_combo.setAllowEmptyLayer(True)
         inputs_layout.addWidget(self.gap_combo)
         self.gap_status_lbl = QLabel("Optional.")
-        self.gap_status_lbl.setObjectName("statusLbl")
         inputs_layout.addWidget(self.gap_status_lbl)
 
         # Overlap (Optional)
@@ -349,16 +270,14 @@ class EALauncherDialog(QDialog):
         self.overlap_combo.setAllowEmptyLayer(True)
         inputs_layout.addWidget(self.overlap_combo)
         self.overlap_status_lbl = QLabel("Optional.")
-        self.overlap_status_lbl.setObjectName("statusLbl")
         inputs_layout.addWidget(self.overlap_status_lbl)
 
-        scroll_layout.addWidget(inputs_card)
+        scroll_layout.addWidget(inputs_group)
 
-        # 2. Parameters Section
-        params_card = QFrame()
-        params_card.setObjectName("formCard")
-        params_layout = QVBoxLayout(params_card)
-        params_layout.setSpacing(10)
+        # 2. Parameters Section (QGroupBox)
+        params_group = QGroupBox("Delineation Thresholds Settings")
+        params_layout = QVBoxLayout(params_group)
+        params_layout.setSpacing(8)
 
         # Min Household
         params_layout.addWidget(QLabel("Minimum Household count per EA"))
@@ -407,13 +326,12 @@ class EALauncherDialog(QDialog):
         self.crs_widget.setCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
         params_layout.addWidget(self.crs_widget)
 
-        scroll_layout.addWidget(self._create_collapsible_section("Delineation Thresholds Settings", params_card))
+        scroll_layout.addWidget(params_group)
 
-        # 3. Outputs Section
-        outputs_card = QFrame()
-        outputs_card.setObjectName("formCard")
-        outputs_layout = QVBoxLayout(outputs_card)
-        outputs_layout.setSpacing(10)
+        # 3. Outputs Section (QGroupBox)
+        outputs_group = QGroupBox("Output Layers")
+        outputs_layout = QVBoxLayout(outputs_group)
+        outputs_layout.setSpacing(8)
 
         # Delineated EAs Layer
         outputs_layout.addWidget(QLabel("Delineated EAs Layer"))
@@ -445,7 +363,7 @@ class EALauncherDialog(QDialog):
         self.extracted_bldg_path, self.extracted_bldg_edit = self._file_picker_row()
         outputs_layout.addLayout(self.extracted_bldg_path)
 
-        scroll_layout.addWidget(self._create_collapsible_section("Output Layers", outputs_card))
+        scroll_layout.addWidget(outputs_group)
         scroll.setWidget(scroll_content)
         left_layout.addWidget(scroll)
         
@@ -455,17 +373,19 @@ class EALauncherDialog(QDialog):
         # Right Panel (Tabs for Live Preview and Execution Logs)
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
-        right_layout.setContentsMargins(10, 15, 15, 15)
-        right_layout.setSpacing(12)
+        right_layout.setContentsMargins(5, 5, 5, 5)
+        right_layout.setSpacing(8)
 
         self.tab_widget = QTabWidget()
         self.tab_widget.setObjectName("rightTabs")
+        self.tab_widget.tabBar().setElideMode(Qt.ElideNone)
+        self.tab_widget.tabBar().setUsesScrollButtons(True)
 
         # ── Live Preview Tab ──────────────────────────────────────────────
         preview_tab = QWidget()
         preview_tab_layout = QVBoxLayout(preview_tab)
-        preview_tab_layout.setContentsMargins(10, 10, 10, 10)
-        preview_tab_layout.setSpacing(10)
+        preview_tab_layout.setContentsMargins(8, 8, 8, 8)
+        preview_tab_layout.setSpacing(8)
 
         # Dashboard KPI Cards
         self.kpi_layout = QHBoxLayout()
@@ -478,18 +398,19 @@ class EALauncherDialog(QDialog):
         self.kpi_merge_card = self._create_kpi_card("For Merging", "0", "merge")
         self.kpi_layout.addWidget(self.kpi_merge_card)
         
-        
         preview_tab_layout.addLayout(self.kpi_layout)
 
         # Search Bar Filter
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("🔍 Filter previews by Barangay name, Geocode or EA name...")
+        self.search_edit.setPlaceholderText("Filter previews by Barangay name, Geocode or EA name...")
         self.search_edit.textChanged.connect(self.filter_previews)
         preview_tab_layout.addWidget(self.search_edit)
 
         # Sub Tabs for candidates tables
         self.preview_sub_tabs = QTabWidget()
         self.preview_sub_tabs.setObjectName("previewSubTabs")
+        self.preview_sub_tabs.tabBar().setElideMode(Qt.ElideNone)
+        self.preview_sub_tabs.tabBar().setUsesScrollButtons(True)
 
         # Table 1: Delineation Table
         self.delineation_table = self._create_preview_table()
@@ -503,7 +424,6 @@ class EALauncherDialog(QDialog):
         
         # Refresh preview button
         self.refresh_btn = QPushButton("Refresh Live Candidates Preview")
-        self.refresh_btn.setObjectName("refreshBtn")
         self.refresh_btn.setFixedHeight(30)
         self.refresh_btn.clicked.connect(self.generate_preview)
         preview_tab_layout.addWidget(self.refresh_btn)
@@ -513,8 +433,8 @@ class EALauncherDialog(QDialog):
         # ── Execution Logs Tab ────────────────────────────────────────────
         logs_tab = QWidget()
         logs_layout = QVBoxLayout(logs_tab)
-        logs_layout.setContentsMargins(10, 10, 10, 10)
-        logs_layout.setSpacing(10)
+        logs_layout.setContentsMargins(8, 8, 8, 8)
+        logs_layout.setSpacing(8)
 
         # Console controls layout
         console_controls = QHBoxLayout()
@@ -538,49 +458,46 @@ class EALauncherDialog(QDialog):
         self.log_console.setReadOnly(True)
         logs_layout.addWidget(self.log_console)
 
-        self.tab_widget.addTab(logs_tab, "Processing Progress & Logs")
+        self.tab_widget.addTab(logs_tab, "Processing Progress && Logs")
 
         right_layout.addWidget(self.tab_widget)
         
-        right_widget.setMinimumWidth(500)
+        right_widget.setMinimumWidth(480)
         main_splitter.addWidget(right_widget)
 
         # ── Help / Description Panel ──────────────────────────────────────
         self.help_panel = QWidget()
-        self.help_panel.setObjectName("helpPanel")
         help_layout = QVBoxLayout(self.help_panel)
-        help_layout.setContentsMargins(10, 15, 15, 15)
-        help_layout.setSpacing(10)
+        help_layout.setContentsMargins(5, 5, 5, 5)
+        help_layout.setSpacing(8)
 
         help_title = QLabel("Description")
-        help_title.setObjectName("sectionLabel")
+        help_title.setFont(QFont("Segoe UI", 9, QFont.Bold))
         help_layout.addWidget(help_title)
 
         self.help_text = QTextBrowser()
-        self.help_text.setObjectName("helpText")
         self.help_text.setOpenExternalLinks(True)
         self.help_text.setHtml(self.algo.shortHelpString())
         help_layout.addWidget(self.help_text)
 
-        self.help_panel.setMinimumWidth(280)
+        self.help_panel.setMinimumWidth(260)
         main_splitter.addWidget(self.help_panel)
         
         # Set proportional initial widths for the panels
-        main_splitter.setSizes([390, 500, 300])
+        main_splitter.setSizes([390, 500, 260])
 
         root.addWidget(main_splitter)
 
         # ── Bottom Bar (Progress, Run, Cancel) ────────────────────────────
         bottom_bar = QWidget()
-        bottom_bar.setObjectName("bottomBar")
         bottom_layout = QHBoxLayout(bottom_bar)
-        bottom_layout.setContentsMargins(20, 0, 20, 0)
-        bottom_layout.setSpacing(15)
+        bottom_layout.setContentsMargins(10, 6, 10, 6)
+        bottom_layout.setSpacing(8)
 
         # Help Toggle Button
-        self.help_btn = QPushButton("ℹ Hide Description")
-        self.help_btn.setObjectName("helpBtn")
-        self.help_btn.setFixedSize(160, 36)
+        self.help_btn = QPushButton("Hide Description")
+        self.help_btn.setMinimumWidth(120)
+        self.help_btn.setFixedHeight(26)
         self.help_btn.clicked.connect(self.toggle_help)
         bottom_layout.addWidget(self.help_btn)
 
@@ -588,23 +505,22 @@ class EALauncherDialog(QDialog):
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
-        self.progress_bar.setFixedHeight(22)  # Limit height to make it sleek and compact
+        self.progress_bar.setFixedHeight(26)
         bottom_layout.addWidget(self.progress_bar)
 
         # Actions
         self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.setObjectName("cancelBtn")
-        self.cancel_btn.setFixedSize(100, 36)
+        self.cancel_btn.setMinimumWidth(80)
+        self.cancel_btn.setFixedHeight(26)
         self.cancel_btn.setEnabled(False)
         bottom_layout.addWidget(self.cancel_btn)
 
-        self.run_btn = QPushButton("Run ▶")
-        self.run_btn.setObjectName("runBtn")
-        self.run_btn.setFixedSize(160, 36)
+        self.run_btn = QPushButton("Run")
+        self.run_btn.setMinimumWidth(120)
+        self.run_btn.setFixedHeight(26)
         self.run_btn.clicked.connect(self.run_pipeline)
         bottom_layout.addWidget(self.run_btn)
 
-        root.addWidget(self._divider())
         root.addWidget(bottom_bar)
 
     def toggle_help(self):
@@ -612,64 +528,21 @@ class EALauncherDialog(QDialog):
         visible = self.help_panel.isVisible()
         self.help_panel.setVisible(not visible)
         if not visible:
-            self.help_btn.setText("ℹ Hide Description")
+            self.help_btn.setText("Hide Description")
         else:
-            self.help_btn.setText("ℹ Show Description")
-
-    def _divider(self):
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setObjectName("divider")
-        line.setFixedHeight(1)
-        return line
-
-    def _section_label(self, text):
-        lbl = QLabel(text.upper())
-        lbl.setObjectName("sectionLabel")
-        lbl.setFont(QFont("Segoe UI", 8, QFont.Bold))
-        return lbl
-
-    def _create_collapsible_section(self, title, card_widget):
-        container = QWidget()
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
-        container_layout.setSpacing(4)
-
-        btn = QPushButton(f"▼  {title.upper()}")
-        btn.setObjectName("sectionToggle")
-        btn.setCursor(Qt.PointingHandCursor)
-        
-        def toggle():
-            visible = card_widget.isVisible()
-            card_widget.setVisible(not visible)
-            if visible:
-                btn.setText(f"▶  {title.upper()}")
-            else:
-                btn.setText(f"▼  {title.upper()}")
-
-        btn.clicked.connect(toggle)
-        
-        container_layout.addWidget(btn)
-        container_layout.addWidget(card_widget)
-        return container
+            self.help_btn.setText("Show Description")
 
     def _create_kpi_card(self, title, value, variant="stats"):
-        card = QFrame()
-        card.setObjectName("kpiCard")
+        card = QGroupBox(title)
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(10, 8, 10, 8)
+        card_layout.setContentsMargins(8, 6, 8, 6)
         card_layout.setSpacing(4)
         
-        lbl_title = QLabel(title)
-        lbl_title.setObjectName("kpiTitle")
-        card_layout.addWidget(lbl_title)
-        
         lbl_val = QLabel(value)
-        lbl_val.setObjectName("kpiVal")
-        lbl_val.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        lbl_val.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        lbl_val.setAlignment(Qt.AlignCenter)
         card_layout.addWidget(lbl_val)
         
-        # Store widgets reference for dynamic updates
         if variant == "delin":
             self.kpi_delin_val = lbl_val
         elif variant == "merge":
@@ -967,82 +840,66 @@ class EALauncherDialog(QDialog):
         # 1. Barangay Layer
         bar_layer = self.bar_combo.currentLayer()
         if not bar_layer:
-            self.bar_status_lbl.setText("🔴 Barangay Layer is required.")
-            self.bar_status_lbl.setStyleSheet("color: #cf222e; font-style: italic;")
+            self.bar_status_lbl.setText("Barangay Layer is required.")
         else:
-            self.bar_status_lbl.setText(f"🟢 Active: {bar_layer.featureCount()} polygons loaded ({bar_layer.crs().authid()}).")
-            self.bar_status_lbl.setStyleSheet("color: #1a7f37;")
+            self.bar_status_lbl.setText(f"Active: {bar_layer.featureCount()} polygons loaded ({bar_layer.crs().authid()}).")
 
         # 2. Building Layer
         bldg_layer = self.bldg_combo.currentLayer()
         if not bldg_layer:
-            self.bldg_status_lbl.setText("🔴 Building Point Layer is required.")
-            self.bldg_status_lbl.setStyleSheet("color: #cf222e; font-style: italic;")
+            self.bldg_status_lbl.setText("Building Point Layer is required.")
         else:
             fields = [f.name().lower() for f in bldg_layer.fields()]
             hh_found = any(f in fields for f in ["hhcount", "hh_count", "household", "household_count"])
             hh_msg = " (found hhcount)" if hh_found else " (no hhcount field)"
-            self.bldg_status_lbl.setText(f"🟢 Active: {bldg_layer.featureCount()} points loaded{hh_msg}.")
-            self.bldg_status_lbl.setStyleSheet("color: #1a7f37;")
+            self.bldg_status_lbl.setText(f"Active: {bldg_layer.featureCount()} points loaded{hh_msg}.")
 
         # 3. Previous EA Layer
         prev_ea_layer = self.prev_ea_combo.currentLayer()
         hh_found = False
         ean_found = False
         if not prev_ea_layer:
-            self.prev_ea_status_lbl.setText("🔴 Previous EA Layer is required.")
-            self.prev_ea_status_lbl.setStyleSheet("color: #cf222e; font-style: italic;")
+            self.prev_ea_status_lbl.setText("Previous EA Layer is required.")
         else:
             fields = [f.name().lower() for f in prev_ea_layer.fields()]
             hh_found = any(f in fields for f in ["hhcount", "hh_count", "household", "household_count"])
             ean_found = any(f in fields for f in ["ean", "ea_number", "ea_code", "id", "geocode"])
 
             if not hh_found:
-                self.prev_ea_status_lbl.setText("🔴 Error: Missing 'hhcount' or 'household' field.")
-                self.prev_ea_status_lbl.setStyleSheet("color: #cf222e; font-weight: bold;")
+                self.prev_ea_status_lbl.setText("Error: Missing 'hhcount' or 'household' field.")
             elif not ean_found:
-                self.prev_ea_status_lbl.setText("🔴 Error: Missing 'ean' or 'ea_number' geocode field.")
-                self.prev_ea_status_lbl.setStyleSheet("color: #cf222e; font-weight: bold;")
+                self.prev_ea_status_lbl.setText("Error: Missing 'ean' or 'ea_number' geocode field.")
             else:
-                self.prev_ea_status_lbl.setText(f"🟢 Active: {prev_ea_layer.featureCount()} EAs loaded successfully.")
-                self.prev_ea_status_lbl.setStyleSheet("color: #1a7f37;")
+                self.prev_ea_status_lbl.setText(f"Active: {prev_ea_layer.featureCount()} EAs loaded successfully.")
 
         # Enable fill-missing button only when required layers are present
         self.fill_missing_btn.setEnabled(bool(prev_ea_layer and bldg_layer and hh_found))
         road_layer = self.road_combo.currentLayer()
         if not road_layer:
-            self.road_status_lbl.setText("🟡 Optional: Road boundary snapping will be skipped.")
-            self.road_status_lbl.setStyleSheet("color: #d17a00; font-style: italic;")
+            self.road_status_lbl.setText("Optional: Road boundary snapping will be skipped.")
         else:
-            self.road_status_lbl.setText(f"🟢 Active: {road_layer.featureCount()} line features loaded.")
-            self.road_status_lbl.setStyleSheet("color: #1a7f37;")
+            self.road_status_lbl.setText(f"Active: {road_layer.featureCount()} line features loaded.")
 
         # 5. River Layer (Optional)
         river_layer = self.river_combo.currentLayer()
         if not river_layer:
-            self.river_status_lbl.setText("🟡 Optional: River boundary snapping will be skipped.")
-            self.river_status_lbl.setStyleSheet("color: #d17a00; font-style: italic;")
+            self.river_status_lbl.setText("Optional: River boundary snapping will be skipped.")
         else:
-            self.river_status_lbl.setText(f"🟢 Active: {river_layer.featureCount()} line features loaded.")
-            self.river_status_lbl.setStyleSheet("color: #1a7f37;")
+            self.river_status_lbl.setText(f"Active: {river_layer.featureCount()} line features loaded.")
 
         # 6. Gap Layer (Optional)
         gap_layer = self.gap_combo.currentLayer()
         if not gap_layer:
-            self.gap_status_lbl.setText("🟡 Optional: Gap workflow will be skipped.")
-            self.gap_status_lbl.setStyleSheet("color: #d17a00; font-style: italic;")
+            self.gap_status_lbl.setText("Optional: Gap workflow will be skipped.")
         else:
-            self.gap_status_lbl.setText(f"🟢 Active: {gap_layer.featureCount()} polygon features loaded.")
-            self.gap_status_lbl.setStyleSheet("color: #1a7f37;")
+            self.gap_status_lbl.setText(f"Active: {gap_layer.featureCount()} polygon features loaded.")
 
         # 7. Overlap Layer (Optional)
         overlap_layer = self.overlap_combo.currentLayer()
         if not overlap_layer:
-            self.overlap_status_lbl.setText("🟡 Optional: Overlap workflow will be skipped.")
-            self.overlap_status_lbl.setStyleSheet("color: #d17a00; font-style: italic;")
+            self.overlap_status_lbl.setText("Optional: Overlap workflow will be skipped.")
         else:
-            self.overlap_status_lbl.setText(f"🟢 Active: {overlap_layer.featureCount()} polygon features loaded.")
-            self.overlap_status_lbl.setStyleSheet("color: #1a7f37;")
+            self.overlap_status_lbl.setText(f"Active: {overlap_layer.featureCount()} polygon features loaded.")
             
         # Update output layer placeholders using 5-digit geocode prefix
         geo5 = self._extract_5digit_geocode()
@@ -1231,331 +1088,15 @@ class EALauncherDialog(QDialog):
         self.log_console.clear()
 
     def copy_logs_to_clipboard(self):
-        """Copy all console texts to Clipboard."""
+        """Copy all console texts to Clipboard without polluting console logs."""
         clipboard = QCoreApplication.instance().clipboard()
         clipboard.setText(self.log_console.toPlainText())
-        self.log_console.append("<span style='color: #3498db; font-style: italic;'>[SYSTEM] Logs copied to clipboard.</span>")
+        self.copy_logs_btn.setText("Copied!")
+        QTimer.singleShot(1500, lambda: self.copy_logs_btn.setText("Copy Logs"))
 
-    # ── Theme System ───────────────────────────────────────────────────────
 
-    def _on_theme_changed(self, index):
-        """Slot for Theme combo selection changes."""
-        selection = self.theme_combo.currentText()
-        if "Light" in selection:
-            self.current_theme = "light"
-        elif "Dark" in selection:
-            self.current_theme = "dark"
-        else:
-            # Sync with QGIS system theme
-            is_dark = self._is_qgis_dark_mode()
-            self.current_theme = "dark" if is_dark else "light"
-            
-        self._apply_theme()
-        
-        # Trigger validation updates to refresh table highlights
-        self.validate_layer_inputs()
 
-    def _is_qgis_dark_mode(self):
-        try:
-            # Check the lightness of the main window's background color
-            bg_color = self.parent().palette().window().color()
-            return bg_color.lightness() < 128
-        except Exception:
-            return False
 
-    def _apply_theme(self):
-        """Inject customized QSS stylesheet based on selected theme variables."""
-        p = THEME_PALETTES[self.current_theme]
-        
-        # Style KPI card widgets manually first to override stylesheet inheritance conflicts
-        for lbl in [self.kpi_delin_card, self.kpi_merge_card]:
-            lbl.setStyleSheet(f"""
-                QFrame#kpiCard {{
-                    border: 1px solid {p['divider']};
-                    border-radius: 6px;
-                }}
-            """)
-        
-        # Custom backgrounds for KPI Cards
-        self.kpi_delin_card.setStyleSheet(f"QFrame#kpiCard {{ background-color: {p['kpi_delin_bg']}; border: 1px solid {p['kpi_delin_border']}; }}")
-        self.kpi_merge_card.setStyleSheet(f"QFrame#kpiCard {{ background-color: {p['kpi_merge_bg']}; border: 1px solid {p['kpi_merge_border']}; }}")
-        
-        # Style values inside KPI cards
-        self.kpi_delin_val.setStyleSheet(f"color: {p['text']}; font-size: 16pt; font-weight: bold;")
-        self.kpi_merge_val.setStyleSheet(f"color: {p['text']}; font-size: 16pt; font-weight: bold;")
-
-        stylesheet_content = f"""
-            QDialog {{
-                background-color: {p['bg']};
-                color: {p['text']};
-                font-family: "Segoe UI", -apple-system, sans-serif;
-            }}
-
-            /* Header */
-            QWidget#header {{
-                background-color: {p['header']};
-                border-bottom: 1px solid {p['divider']};
-            }}
-            QLabel#title   {{ color: {p['text']}; }}
-            QLabel#tagline {{ color: {p['subtext']}; }}
-
-            /* Splitter */
-            QSplitter::handle {{
-                background-color: {p['divider']};
-            }}
-
-            /* Labels */
-            QLabel {{
-                color: {p['text']};
-                font-size: 9pt;
-            }}
-            QLabel#sectionLabel {{
-                color: {p['accent']};
-                letter-spacing: 0.5px;
-                margin-top: 6px;
-                margin-bottom: 2px;
-            }}
-            QLabel#statusLbl {{
-                font-size: 8pt;
-                font-style: italic;
-            }}
-
-            /* Group Cards */
-            QFrame#formCard {{
-                background-color: {p['card']};
-                border: 1px solid {p['divider']};
-                border-radius: 6px;
-                padding: 10px;
-            }}
-
-            /* KPI Cards Info */
-            QLabel#kpiTitle {{
-                font-size: 8pt;
-                font-weight: bold;
-                text-transform: uppercase;
-                color: {p['subtext']};
-            }}
-
-            /* Scrollbars */
-            QScrollBar:vertical {{
-                background-color: {p['bg']};
-                width: 10px;
-                margin: 0px;
-            }}
-            QScrollBar::handle:vertical {{
-                background-color: {p['divider']};
-                min-height: 20px;
-                border-radius: 5px;
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0px;
-            }}
-
-            /* Console Output */
-            QTextEdit#logConsole {{
-                background-color: {p['console_bg']};
-                color: {p['console_text']};
-                font-family: "Consolas", "Courier New", monospace;
-                font-size: 9pt;
-                border: 1px solid {p['divider']};
-                border-radius: 4px;
-            }}
-
-            /* Inputs */
-            QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {{
-                background-color: {p['input_bg']};
-                color: {p['text']};
-                border: 1px solid {p['divider']};
-                border-radius: 4px;
-                padding: 5px 7px;
-                font-size: 9pt;
-            }}
-            QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover, QLineEdit:hover {{
-                border-color: {p['accent']};
-            }}
-            QComboBox::drop-down {{
-                border: none;
-                background: transparent;
-            }}
-            QComboBox QAbstractItemView {{
-                background-color: {p['card']};
-                color: {p['text']};
-                selection-background-color: {p['accent']};
-            }}
-
-            /* Buttons */
-            QPushButton {{
-                background-color: {p['card']};
-                color: {p['text']};
-                border: 1px solid {p['divider']};
-                border-radius: 4px;
-                padding: 5px 12px;
-                font-size: 9pt;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: {p['header']};
-                border-color: {p['accent']};
-            }}
-            
-            QPushButton#sectionToggle {{
-                background-color: transparent;
-                color: {p['accent']};
-                border: none;
-                border-radius: 0px;
-                padding: 6px 0px 2px 0px;
-                font-size: 8pt;
-                font-weight: bold;
-                letter-spacing: 0.5px;
-                text-align: left;
-            }}
-            QPushButton#sectionToggle:hover {{
-                background-color: transparent;
-                border: none;
-                color: {p['run_hover']};
-            }}
-
-            QPushButton#browseBtn {{
-                background-color: {p['header']};
-                padding: 2px 8px;
-            }}
-
-            QPushButton#refreshBtn, QPushButton#detectBtn {{
-                color: {p['accent']};
-                border: 1px solid {p['accent']};
-            }}
-            QPushButton#refreshBtn:hover, QPushButton#detectBtn:hover {{
-                background-color: {p['accent']};
-                color: #ffffff;
-            }}
-
-            QPushButton#cancelBtn {{
-                border-color: {p['divider']};
-            }}
-            QPushButton#cancelBtn:hover:enabled {{
-                background-color: #cf222e;
-                color: #ffffff;
-                border-color: #cf222e;
-            }}
-
-            QPushButton#runBtn {{
-                background-color: {p['accent']};
-                color: #ffffff;
-                border: none;
-                border-radius: 6px;
-                font-size: 10pt;
-            }}
-            QPushButton#runBtn:hover:enabled {{
-                background-color: {p['run_hover']};
-            }}
-            QPushButton#runBtn:disabled {{
-                background-color: {p['divider']};
-                color: {p['subtext']};
-            }}
-
-            /* Tabs */
-            QTabWidget::pane {{
-                border: 1px solid {p['divider']};
-                background-color: {p['bg']};
-                border-radius: 6px;
-            }}
-            QTabBar::tab {{
-                background-color: {p['header']};
-                border: 1px solid {p['divider']};
-                border-bottom: none;
-                padding: 6px 15px;
-                color: {p['subtext']};
-                font-weight: bold;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
-            }}
-            QTabBar::tab:selected, QTabBar::tab:hover {{
-                background-color: {p['bg']};
-                color: {p['accent']};
-                border-color: {p['divider']};
-            }}
-
-            /* Help / Description Panel */
-            QWidget#helpPanel {{
-                background-color: {p['bg']};
-            }}
-            QTextBrowser#helpText {{
-                background-color: {p['card']};
-                color: {p['text']};
-                border: 1px solid {p['divider']};
-                border-radius: 6px;
-                padding: 10px;
-                font-size: 9pt;
-            }}
-
-            /* Tables */
-            QTableWidget {{
-                background-color: {p['table_bg']};
-                border: 1px solid {p['divider']};
-                gridline-color: {p['divider']};
-                border-radius: 4px;
-            }}
-            QHeaderView::section {{
-                background-color: {p['table_header_bg']};
-                color: {p['text']};
-                padding: 6px;
-                border: 1px solid {p['divider']};
-                font-weight: bold;
-            }}
-
-            /* Progress Bar */
-            QProgressBar {{
-                border: 1px solid {p['divider']};
-                border-radius: 4px;
-                text-align: center;
-                color: {p['text']};
-                font-weight: bold;
-                background-color: {p['card']};
-                height: 22px;
-            }}
-            QProgressBar::chunk {{
-                background-color: {p['accent']};
-                border-radius: 2px;
-            }}
-        """
-        self.setStyleSheet(stylesheet_content)
-
-        # Apply stylesheet to HTML content of the description panel
-        help_doc_css = f"""
-            h3 {{
-                color: {p['accent']};
-                font-size: 12pt;
-                margin-top: 0px;
-                margin-bottom: 8px;
-                font-weight: bold;
-            }}
-            h4 {{
-                color: {p['text']};
-                font-size: 10pt;
-                margin-top: 14px;
-                margin-bottom: 4px;
-                font-weight: bold;
-                border-bottom: 1px solid {p['divider']};
-                padding-bottom: 2px;
-            }}
-            p, li {{
-                color: {p['text']};
-                font-size: 9pt;
-                line-height: 1.4;
-            }}
-            ul, ol {{
-                margin-left: 18px;
-                padding-left: 0px;
-            }}
-            li {{
-                margin-bottom: 4px;
-            }}
-            b {{
-                color: {p['text']};
-            }}
-        """
-        self.help_text.document().setDefaultStyleSheet(help_doc_css)
-        self.help_text.setHtml(self.algo.shortHelpString())
 
     # ── Pipeline Execution ──────────────────────────────────────────────────
 
