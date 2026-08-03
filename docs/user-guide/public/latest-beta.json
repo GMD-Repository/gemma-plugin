@@ -1,9 +1,9 @@
 {
-  "version": "1.0.15-r405",
-  "tag": "r405",
+  "version": "1.0.15-r408",
+  "tag": "r408",
   "releaseDate": "2026-08-03",
   "repositoryUrl": "https://gemma-plugin.vercel.app/gemma-beta.xml",
-  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r405/gemma-plugin-r405.zip",
-  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r405",
-  "changelogUrl": "https://gemma-plugin.vercel.app/changelog/r405"
+  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r408/gemma-plugin-r408.zip",
+  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r408",
+  "changelogUrl": "https://gemma-plugin.vercel.app/changelog/r408"
 }
