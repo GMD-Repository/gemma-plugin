@@ -49,6 +49,21 @@ Do NOT list standard or boilerplate user interface components (such as headers, 
 
 ---
 
+## Math / LaTeX Formulas Standard
+
+VitePress math rendering is enabled via `markdown: { math: true }` in `docs/.vitepress/config.mts` and requires the `markdown-it-mathjax3@^4` dev dependency (already installed in `package.json`).
+
+When documenting tools that involve mathematical formulas, transformations, or equations:
+
+- **Inline math:** Use single dollar signs `$...$` for inline expressions (e.g., `$N > 4$`).
+- **Block math:** Use double dollar signs `$$...$$` on their own lines for display equations:
+  ```markdown
+  $$\text{Longitude} = a \cdot X + b \cdot Y + c$$
+  ```
+- Use LaTeX math only when formulas add genuine clarity to the algorithm explanation (affine transforms, statistical thresholds, distance calculations, etc.). Do not use math notation for simple comparisons that are clearer in plain text (e.g., prefer "> 300 HH" over `$\text{HH} > 300$`).
+
+---
+
 ## Full Documentation Generation Protocol
 
 ```mermaid

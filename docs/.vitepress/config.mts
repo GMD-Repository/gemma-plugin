@@ -14,6 +14,10 @@ export default defineConfig({
     ['meta', { name: 'keywords', content: 'QGIS, GIS, plugin, GEMMA, GMD, PSA, 1Map, QField, geometry, overlaps, gaps' }],
   ],
 
+  markdown: {
+    math: true
+  },
+
   themeConfig: {
     // https://vitepress.dev/reference/default-theme-config
     logo: '/icons/gemma.svg',
