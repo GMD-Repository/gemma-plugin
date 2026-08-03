@@ -1946,15 +1946,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                                 intersects_gap_or_overlap = True
                                 break
                             
-            if intersects_gap_or_overlap:
-                is_delin = True
-            elif eadel_indi_col_idx != -1:
-                val = _dc_feat.attribute(eadel_indi_col_idx)
-                is_delin = (val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"))
-            
-            # Fallback: if not explicitly flagged, still split if it exceeds max_household
-            if not is_delin:
-                is_delin = (_dc_hh >= max_household)
+            # Delineation candidates strictly require hhcount >= max_household
+            is_delin = (_dc_hh >= max_household)
 
             # 2. Determine if it is a merge candidate
             is_merge = False
@@ -1962,7 +1955,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 val = _dc_feat.attribute(merge_indi_col_idx)
                 is_merge = (val is not None and str(val).strip().lower() in ("for merging", "for_merging"))
             else:
-                is_merge = (_dc_hh <= min_household)
+                is_merge = (_dc_hh <= min_household) if not is_delin else False
 
             if is_delin:
                 total_delin_candidates += 1
@@ -2784,10 +2777,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 return [ea_item]
                 
             hh_cnt = sum(b['pop'] for b in bldgs)
-            # Use max_household as the per-part target to produce the fewest equally-divided
-            # parts that each stay within the 100–299 HH band. Recursive re-splitting handles
-            # any parts that remain over max_household after the initial split.
-            k_val = max(2, int(round(hh_cnt / float(max_household))))
+            # Use max_household as the per-part target to produce parts that each stay below max_household
+            k_val = max(2, math.ceil(hh_cnt / float(max_household)))
             k_val = min(k_val, len(unique_pts))
             if k_val < 2:
                 ea_item['split_by'] = split_by
@@ -3703,14 +3694,11 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             return ea_item['hh_count']
 
         def is_delineation_candidate(ea_item):
+            # If the EA is already a split part or from a merge, it has already been delineated/processed -> pass
             if ea_item.get('from_split', False) or ea_item.get('from_merge', False):
                 return False
             orig_id = ea_item.get('original_id')
-            is_explicit = False
-            if eadel_indi_col_idx != -1 and orig_id in full_ea_by_id:
-                val = full_ea_by_id[orig_id].attribute(eadel_indi_col_idx)
-                is_explicit = (val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"))
-            return is_explicit or (orig_id in delineation_candidate_ids) or (ea_item['hh_count'] >= max_household)
+            return (orig_id in delineation_candidate_ids)
 
         def is_merge_candidate(ea_item):
             if ea_item.get('from_split', False):
@@ -4321,8 +4309,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 if i in removed:
                     continue
                 ea = eas[i]
-                # Rule: EAs produced by a merge must never be delineated
-                if ea.get('from_merge', False):
+                # Rule: EAs produced by a merge or already delineated (from_split) must never be delineated further in compliance sweep
+                if ea.get('from_merge', False) or ea.get('from_split', False):
                     continue
                 parts = force_geometric_split(ea, max_household, feedback)
                 if len(parts) > 1:
@@ -5063,7 +5051,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
 
             final_pop = ea['original_hhcount'] if is_unchanged_retain else ea['hh_count']
             hh_count_bldg = ea.get('hh_count', 0.0)
-            hhcount_orig = ea.get('original_hhcount', hh_count_bldg)
+            hhcount_val = ea['original_hhcount'] if is_unchanged_retain else hh_count_bldg
 
             pop_idx = out_fields.indexOf(output_hh_field)
             if pop_idx != -1:
@@ -5087,7 +5075,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
 
             hhcount_idx = out_fields.indexOf("hhcount")
             if hhcount_idx != -1:
-                out_feat.setAttribute(hhcount_idx, hhcount_orig)
+                out_feat.setAttribute(hhcount_idx, hhcount_val)
 
             bldgpts_val_idx = out_fields.indexOf("bldgpoints_value")
             if bldgpts_val_idx != -1:
@@ -5101,6 +5089,12 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             ean_field_idx = out_fields.indexOf(ea_id_field)
             if ean_field_idx != -1 and ea_id_field.lower() != "geocode":
                 out_feat.setAttribute(ean_field_idx, ea['new_ea_code'])
+
+            # Explicitly set eadel_indi indicator field
+            eadel_indi_out_idx = out_fields.indexOf("eadel_indi")
+            if eadel_indi_out_idx != -1:
+                is_delin_feat = (ea.get('original_id') in delineation_candidate_ids) or ea.get('from_split', False)
+                out_feat.setAttribute(eadel_indi_out_idx, "for_delineation" if is_delin_feat else "ea_reference")
 
             ea_type_idx = out_fields.indexOf("ea_type")
             if ea_type_idx != -1:

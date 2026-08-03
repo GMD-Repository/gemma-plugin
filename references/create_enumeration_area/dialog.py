@@ -1013,6 +1013,16 @@ class EALauncherDialog(QDialog):
                 bgy_name_idx = i
                 break
         
+        # Resolve eadel_indi and merge_indi field indices
+        eadel_indi_idx = -1
+        merge_indi_idx = -1
+        for i in range(fields.count()):
+            name_lower = fields.at(i).name().lower()
+            if name_lower == "eadel_indi":
+                eadel_indi_idx = i
+            elif name_lower == "merge_indi":
+                merge_indi_idx = i
+        
         if hh_idx == -1 or ean_idx == -1:
             self.kpi_delin_val.setText("0")
             self.kpi_merge_val.setText("0")
@@ -1053,10 +1063,20 @@ class EALauncherDialog(QDialog):
             total_hh += hh
             ea_count += 1
 
-            # Classify purely by hhcount thresholds
-            if hh > max_hh:
+            # Classify candidates: delineation candidates strictly require hh >= max_hh
+            is_delin = (hh >= max_hh)
+
+            is_merge = False
+            if merge_indi_idx != -1:
+                val = feat.attribute(merge_indi_idx)
+                if val is not None and str(val).strip().lower() in ("for merging", "for_merging"):
+                    is_merge = True
+            if not is_merge and not is_delin:
+                is_merge = (hh <= min_hh)
+
+            if is_delin:
                 self.all_delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh))
-            elif hh < min_hh:
+            elif is_merge:
                 self.all_merge_candidates.append((ean_str, ea_name_str, bgy_name_str, hh))
 
         # Update KPI Dashboard Stats
