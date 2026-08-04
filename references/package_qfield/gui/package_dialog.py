@@ -77,6 +77,18 @@ DialogUi, _ = loadUiType(
 )
 
 BUILTIN_PRESETS = {
+    "Form 8 Layout": [
+        {
+            "path": ["For Verification"],
+            "is_group": True,
+            "checked": True
+        },
+        {
+            "path": ["Base Layers"],
+            "is_group": True,
+            "checked": True
+        }
+    ],
     "Form 2 Layout": [
         {
             "path": ["Geotagged Building Point"],
@@ -93,23 +105,6 @@ BUILTIN_PRESETS = {
             "is_group": True,
             "checked": True
         }
-    ],
-    "Form 8 Layout": [
-        {
-            "path": ["Verification Layers"],
-            "is_group": True,
-            "checked": True
-        },
-        {
-            "path": ["Base Layers"],
-            "is_group": True,
-            "checked": True
-        },
-        {
-            "path": ["Verification Layers2"],
-            "is_group": True,
-            "checked": True
-        },
     ]
 }
 
