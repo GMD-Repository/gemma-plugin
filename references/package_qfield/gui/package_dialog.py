@@ -77,7 +77,7 @@ DialogUi, _ = loadUiType(
 )
 
 BUILTIN_PRESETS = {
-    "Form 8 Layout": [
+    "EA Delineation": [
         {
             "path": ["For Verification"],
             "is_group": True,
