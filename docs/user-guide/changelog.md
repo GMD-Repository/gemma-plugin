@@ -2,6 +2,21 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.16
+<time>Aug 04, 2026</time>
+
+### ✨ New Features
+- add legacy plugin quarantine, documentation redirection, clear filter button rename, and user guide overhaul ([@velascojasper0](https://github.com/velascojasper0)) ([#92](https://github.com/GMD-Repository/gemma-plugin/pull/92))
+- extract release-specific contributors for VitePress changelogs ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#93](https://github.com/GMD-Repository/gemma-plugin/pull/93))
+- reorganize algorithm groups for Create EA and Update Metadata ([@velascojasper0](https://github.com/velascojasper0)) ([#96](https://github.com/GMD-Repository/gemma-plugin/pull/96))
+- update display name, add icon, and update author for Update Metadata algorithm ([@psacjperez](https://github.com/psacjperez)) ([#99](https://github.com/GMD-Repository/gemma-plugin/pull/99))
+- add Check and Update dialog, geometry Processing tools, and submenu reorganization ([@velascojasper0](https://github.com/velascojasper0)) ([#100](https://github.com/GMD-Repository/gemma-plugin/pull/100))
+- update tool icons, navigation sidebar, and documentation skill rules ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#101](https://github.com/GMD-Repository/gemma-plugin/pull/101))
+- add Check and Update workflow, batch Clip Project Layers tool, and submenu redesign ([@velascojasper0](https://github.com/velascojasper0)) ([#102](https://github.com/GMD-Repository/gemma-plugin/pull/102))
+- implement Create Enumeration Areas algorithm, custom UI launcher, and user guide ([@pacoleslaw](https://github.com/pacoleslaw)) ([#103](https://github.com/GMD-Repository/gemma-plugin/pull/103))
+
+<Contributors :contributors="['velascojasper0', 'kentemman-gmd', 'psacjperez', 'pacoleslaw']" />
+
 ## 1.0.15
 <time>Jul 29, 2026</time>
 
