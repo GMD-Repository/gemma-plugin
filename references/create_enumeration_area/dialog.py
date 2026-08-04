@@ -143,6 +143,7 @@ class EALauncherDialog(QDialog):
         # Connect signals for live candidate previews and validators
         self._setup_preview_connections()
 
+
     # ── Lifecycle Overrides ──────────────────────────────────────────────────
 
     def showEvent(self, event):
@@ -1117,7 +1118,7 @@ class EALauncherDialog(QDialog):
         # Decide pastel colors based on theme
         bg_col = "#ffebe9" if is_delineation else "#dafbe1"
         fg_col = "#cf222e" if is_delineation else "#1a7f37"
-        if self.current_theme == "dark":
+        if getattr(self, "current_theme", "light") == "dark":
             bg_col = "#3d2121" if is_delineation else "#1e3f28"
             fg_col = "#ff6b6b" if is_delineation else "#2ecc71"
 
