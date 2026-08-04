@@ -1,1 +1,55 @@
-<svg xmlns="http://www.w3.org/2000/svg" height="48px" viewBox="0 -960 960 960" width="48px" fill="#009999"><path d="M450-85v-378L120-654v344q0 16 8 30t22 22L450-85Zm60 0 300-173q14-8 22-22t8-30v-345L510-463v378Zm164-542 133-77-297-171q-14-8-30-8t-30 8l-104 60 328 188ZM480-514l133-78-328-188-132 77 327 189Z"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="qfieldGreenPkg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#5E9628" />
+      <stop offset="100%" stop-color="#3D681B" />
+    </linearGradient>
+    <linearGradient id="qfieldTealPkg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00A896" />
+      <stop offset="100%" stop-color="#028090" />
+    </linearGradient>
+    <linearGradient id="boxTopPkg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#76BD39" />
+      <stop offset="100%" stop-color="#589632" />
+    </linearGradient>
+    <linearGradient id="boxLeftPkg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#4B8026" />
+      <stop offset="100%" stop-color="#335919" />
+    </linearGradient>
+    <linearGradient id="boxRightPkg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#3C681E" />
+      <stop offset="100%" stop-color="#254212" />
+    </linearGradient>
+    <linearGradient id="tapeGradPkg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00C9A7" />
+      <stop offset="100%" stop-color="#00897B" />
+    </linearGradient>
+  </defs>
+
+  <!-- Shadow beneath package -->
+  <ellipse cx="32" cy="56" rx="25" ry="5.5" fill="#000000" opacity="0.18" />
+
+  <!-- 3D Package Box -->
+  <!-- Top Face -->
+  <polygon points="32,13 56,23 32,33 8,23" fill="url(#boxTopPkg)" stroke="#264412" stroke-width="0.8" />
+  <!-- Left Face -->
+  <polygon points="8,23 32,33 32,54 8,44" fill="url(#boxLeftPkg)" stroke="#264412" stroke-width="0.8" />
+  <!-- Right Face -->
+  <polygon points="32,33 56,23 56,44 32,54" fill="url(#boxRightPkg)" stroke="#264412" stroke-width="0.8" />
+
+  <!-- Package Tape / Ribbon -->
+  <polygon points="26,15.5 38,20.5 38,48.5 26,43.5" fill="url(#tapeGradPkg)" opacity="0.95" />
+  <polygon points="20,18 44,28 40,29.7 16,19.7" fill="#52E0AA" opacity="0.45" />
+
+  <!-- GIS Location Pin Badge -->
+  <g transform="translate(32, 21)">
+    <!-- Pin Shadow -->
+    <ellipse cx="0" cy="14" rx="7" ry="2.5" fill="#000000" opacity="0.25" />
+    <!-- Pin Body -->
+    <path d="M0, -16 C-8,-16 -12,-10 -12,-3 C-12,5 0,14 0,14 C0,14 12,5 12,-3 C12,-10 8,-16 0,-16 Z" fill="url(#qfieldTealPkg)" stroke="#FFFFFF" stroke-width="1.6" />
+    <!-- Inner White Ring -->
+    <circle cx="0" cy="-4" r="4" fill="#FFFFFF" />
+    <!-- Inner Green Core -->
+    <circle cx="0" cy="-4" r="2" fill="#5E9628" />
+  </g>
+</svg>
