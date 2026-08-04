@@ -51,7 +51,7 @@ After installation, verify that everything is working:
 
 1. Check the **Gemma** menu in the menu bar — you should see submenus for **Updating of Boundaries**, **EA Delineation**, and **Others**.
 2. Open the **Processing Toolbox** (`Ctrl+Alt+T`) and look for the **GMD Pipeline** group — you should see all the tools listed there.
-3. The **Gemma Toolbar** should display icons for **Package for QField** and **Create Enumeration Areas**.
+3. The **Gemma Toolbar** should display icons for **Check and Update**, **Create Enumeration Areas**, and **Package for QField**.
 
 ## Plugin Structure
 
@@ -89,8 +89,7 @@ These tools are accessible from the **QGIS Processing Toolbox** under the **GMD 
 
 | Tool | Access | Shortcut |
 |------|--------|----------|
-| Sync MBI Layer | Gemma → Others → Sync MBI Layer | — |
-| [Package for QField](/tools/package-qfield) | Gemma → Others → Package for QField | `Ctrl+Alt+Q` |
+| [Package for QField](/tools/package-qfield) | Gemma → EA Delineation → Package for QField | `Ctrl+Alt+Q` |
 | [Geometry Repair Toolkit](/tools/geometry-repair-toolkit) | Gemma → Others → Geometry Repair Toolkit | — |
 
 ## Updating the Plugin
