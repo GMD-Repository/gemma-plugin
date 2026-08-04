@@ -1,0 +1,50 @@
+[
+  {
+    "group": "Geotagged Building Point",
+    "checked": true,
+    "layers": [
+      {
+        "name": "pppmmbbbeeeeee",
+        "role": "Geotagging Layer (*_geocode / ppp...)",
+        "qml": "Form2_2026_v5",
+        "checked": true
+      }
+    ]
+  },
+  {
+    "group": "Base Layer",
+    "checked": true,
+    "layers": [
+      {
+        "name": "04920_bgy",
+        "role": "Barangay layer (*_bgy)",
+        "qml": "5. Base Layer Barangay",
+        "checked": true
+      },
+      {
+        "name": "04920_bldg_point",
+        "role": "Building points (*_bldg_point)",
+        "qml": "1. Base Layer Building Points",
+        "checked": true
+      },
+      {
+        "name": "04920_ea",
+        "role": "EA layer (*_ea)",
+        "qml": "4. Base Layer EA",
+        "checked": true
+      },
+      {
+        "name": "04920_landmark",
+        "role": "Landmark layer (*_landmark)",
+        "qml": "2. Base Layer Landmark",
+        "checked": true
+      },
+      {
+        "name": "04920_road",
+        "role": "Road layer (*_road)",
+        "qml": "6. Base Layer Road",
+        "checked": true
+      }
+    ]
+  }
+]
