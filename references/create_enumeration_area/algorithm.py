@@ -684,40 +684,12 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
         )
 
     def initAlgorithm(self, config: Optional[dict[str, Any]] = None):
-        """Defines the inputs and outputs of the algorithm."""
-        from qgis.core import QgsProject
-        
-        # Auto-detect layers in the current QGIS project
-        default_bgy = None
-        default_ea = None
-        default_bldgpts = None
-        default_road = None
-        default_river = None
-        
-        from qgis.core import QgsMessageLog, Qgis
-        try:
-            layers = QgsProject.instance().mapLayers().values()
-            QgsMessageLog.logMessage(f"Auto-detecting layers. Project has {len(layers)} layers.", "EA Creation", Qgis.Info)
-            for layer in layers:
-                name_lower = layer.name().lower()
-                QgsMessageLog.logMessage(f"Checking layer: {layer.name()}", "EA Creation", Qgis.Info)
-                if "_bgy" in name_lower and default_bgy is None:
-                    default_bgy = layer
-                    QgsMessageLog.logMessage(f"Selected {layer.name()} as Barangay default.", "EA Creation", Qgis.Info)
-                elif "_ea" in name_lower and default_ea is None:
-                    default_ea = layer
-                    QgsMessageLog.logMessage(f"Selected {layer.name()} as EA default.", "EA Creation", Qgis.Info)
-                elif ("_bldgpts" in name_lower or "_bldg_point" in name_lower or "_bldg_points" in name_lower) and default_bldgpts is None:
-                    default_bldgpts = layer
-                    QgsMessageLog.logMessage(f"Selected {layer.name()} as Building Points default.", "EA Creation", Qgis.Info)
-                elif "road" in name_lower and default_road is None:
-                    default_road = layer
-                    QgsMessageLog.logMessage(f"Selected {layer.name()} as Road default.", "EA Creation", Qgis.Info)
-                elif "river" in name_lower and default_river is None:
-                    default_river = layer
-                    QgsMessageLog.logMessage(f"Selected {layer.name()} as River default.", "EA Creation", Qgis.Info)
-        except Exception as e:
-            QgsMessageLog.logMessage(f"Error auto-detecting layers: {str(e)}", "EA Creation", Qgis.Critical)
+        """Defines the inputs and outputs of the algorithm.
+
+        Layer defaults are intentionally left as None here. Auto-detection of
+        project layers is handled by the dialog (EALauncherDialog.showEvent),
+        not during algorithm registration, which runs at plugin load time.
+        """
 
         # Barangay polygon input
         self.addParameter(
@@ -725,7 +697,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 self.BARANGAY_INPUT,
                 "Barangay Layer",
                 [QgsProcessing.SourceType.TypeVectorPolygon],
-                defaultValue=default_bgy,
+                defaultValue=None,
             )
         )
        
@@ -735,7 +707,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 self.BUILDING_INPUT,
                 "Building Point Layer",
                 [QgsProcessing.SourceType.TypeVectorPoint],
-                defaultValue=default_bldgpts,
+                defaultValue=None,
             )
         )
 
@@ -745,7 +717,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 self.PREVIOUS_EA_INPUT,
                 "Previous EA Layer",
                 [QgsProcessing.SourceType.TypeVectorPolygon],
-                defaultValue=default_ea,
+                defaultValue=None,
             )
         )
         
@@ -755,7 +727,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 self.ROAD_INPUT,
                 "Road Layer (optional)",
                 [QgsProcessing.SourceType.TypeVectorLine],
-                defaultValue=default_road,
+                defaultValue=None,
                 optional=True,
             )
         )
@@ -765,7 +737,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 self.RIVER_INPUT,
                 "River Layer (optional)",
                 [QgsProcessing.SourceType.TypeVectorLine],
-                defaultValue=default_river,
+                defaultValue=None,
                 optional=True,
             )
         )
@@ -1974,15 +1946,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                                 intersects_gap_or_overlap = True
                                 break
                             
-            if intersects_gap_or_overlap:
-                is_delin = True
-            elif eadel_indi_col_idx != -1:
-                val = _dc_feat.attribute(eadel_indi_col_idx)
-                is_delin = (val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"))
-            
-            # Fallback: if not explicitly flagged, still split if it exceeds max_household
-            if not is_delin:
-                is_delin = (_dc_hh >= max_household)
+            # Delineation candidates strictly require hhcount >= max_household
+            is_delin = (_dc_hh >= max_household)
 
             # 2. Determine if it is a merge candidate
             is_merge = False
@@ -1990,7 +1955,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 val = _dc_feat.attribute(merge_indi_col_idx)
                 is_merge = (val is not None and str(val).strip().lower() in ("for merging", "for_merging"))
             else:
-                is_merge = (_dc_hh <= min_household)
+                is_merge = (_dc_hh <= min_household) if not is_delin else False
 
             if is_delin:
                 total_delin_candidates += 1
@@ -2016,16 +1981,20 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             for special_fid in special_ea_info.keys():
                 merge_candidate_ids.add(special_fid)
 
-        # Write to delineation candidate sink — only strict for_delineation candidates
-        # (EAs flagged by household threshold). Excludes context/reference EAs and
-        # Gap/Overlap Special EAs which are separately output to delineated_ea2026.
+        # Write to delineation candidate sink — includes both for_delineation candidates
+        # and ea_reference EAs within barangays that contain delineation candidates.
         if delin_candidate_sink is not None:
             for feat in previous_ea_source.getFeatures():
                 if multi_feedback.isCanceled():
                     raise QgsProcessingException("Algorithm cancelled by user.")
-                # Only include this EA if it is a confirmed delineation candidate
-                if feat.id() not in delineation_candidate_ids:
+                
+                is_cand = feat.id() in delineation_candidate_ids
+                parent_bar = resolve_ea_parent_barangay(feat)
+                is_ref_in_bar = (not is_cand) and (parent_bar in delineation_candidate_bar_geocodes)
+                
+                if not (is_cand or is_ref_in_bar):
                     continue
+
                 out_feat = QgsFeature(delin_cand_fields)
                 _dc_geom = feat.geometry()
                 if ea_to_target:
@@ -2058,7 +2027,7 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 
                 eadel_indi_idx = delin_cand_fields.indexOf("eadel_indi")
                 if eadel_indi_idx != -1:
-                    out_feat.setAttribute(eadel_indi_idx, "for_delineation")
+                    out_feat.setAttribute(eadel_indi_idx, "for_delineation" if is_cand else "ea_reference")
                 
                 # Clear fid attribute to let OGR generate sequential IDs
                 fid_idx = delin_cand_fields.indexOf("fid")
@@ -2808,10 +2777,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 return [ea_item]
                 
             hh_cnt = sum(b['pop'] for b in bldgs)
-            # Use max_household as the per-part target to produce the fewest equally-divided
-            # parts that each stay within the 100–299 HH band. Recursive re-splitting handles
-            # any parts that remain over max_household after the initial split.
-            k_val = max(2, int(round(hh_cnt / float(max_household))))
+            # Use max_household as the per-part target to produce parts that each stay below max_household
+            k_val = max(2, math.ceil(hh_cnt / float(max_household)))
             k_val = min(k_val, len(unique_pts))
             if k_val < 2:
                 ea_item['split_by'] = split_by
@@ -3727,14 +3694,11 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             return ea_item['hh_count']
 
         def is_delineation_candidate(ea_item):
+            # If the EA is already a split part or from a merge, it has already been delineated/processed -> pass
             if ea_item.get('from_split', False) or ea_item.get('from_merge', False):
                 return False
             orig_id = ea_item.get('original_id')
-            is_explicit = False
-            if eadel_indi_col_idx != -1 and orig_id in full_ea_by_id:
-                val = full_ea_by_id[orig_id].attribute(eadel_indi_col_idx)
-                is_explicit = (val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"))
-            return is_explicit or (orig_id in delineation_candidate_ids) or (ea_item['hh_count'] >= max_household)
+            return (orig_id in delineation_candidate_ids)
 
         def is_merge_candidate(ea_item):
             if ea_item.get('from_split', False):
@@ -3943,12 +3907,14 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                                 score = (combined_hh * 1000.0) + combined_bldg
                                 if score > best_neighbor_score:
                                     best_neighbor_score = score
-                                    best_neighbor_idx = j
-                                    
                         if best_neighbor_idx != -1:
                             neighbor = bar_eas[best_neighbor_idx]
-                            merged_geom = ea['geom'].combine(neighbor['geom'])
-                            merged_geom = merged_geom.buffer(0.0, 3)
+                            merged_geom = ea['geom'].combine(neighbor['geom']).buffer(0.0, 3)
+                            bar_feat = barangay_by_id.get(bar_code)
+                            if bar_feat and bar_feat.geometry() and not bar_feat.geometry().isEmpty():
+                                clipped_g = merged_geom.intersection(bar_feat.geometry()).buffer(0.0, 3)
+                                if not clipped_g.isEmpty():
+                                    merged_geom = clipped_g
 
                             # Inherit EA code and attributes from the EA with the highest hhcount.
                             # On a tie the merge candidate (ea) wins as it was the initiator.
@@ -4056,8 +4022,12 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                         # --- Shared merge block (used by whichever Pass found the best neighbour) ---
                         if best_neighbor_idx != -1:
                             neighbor = bar_eas[best_neighbor_idx]
-                            merged_geom = ea['geom'].combine(neighbor['geom'])
-                            merged_geom = merged_geom.buffer(0.0, 3)
+                            merged_geom = ea['geom'].combine(neighbor['geom']).buffer(0.0, 3)
+                            bar_feat = barangay_by_id.get(bar_code)
+                            if bar_feat and bar_feat.geometry() and not bar_feat.geometry().isEmpty():
+                                clipped_g = merged_geom.intersection(bar_feat.geometry()).buffer(0.0, 3)
+                                if not clipped_g.isEmpty():
+                                    merged_geom = clipped_g
 
                             # Inherit EA code and attributes from the EA with the highest hhcount.
                             # On a tie the merge candidate (ea) wins as it was the initiator.
@@ -4345,8 +4315,8 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 if i in removed:
                     continue
                 ea = eas[i]
-                # Rule: EAs produced by a merge must never be delineated
-                if ea.get('from_merge', False):
+                # Rule: EAs produced by a merge or already delineated (from_split) must never be delineated further in compliance sweep
+                if ea.get('from_merge', False) or ea.get('from_split', False):
                     continue
                 parts = force_geometric_split(ea, max_household, feedback)
                 if len(parts) > 1:
@@ -4413,8 +4383,14 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                 if best_j != -1:
                     nb = eas[best_j]
                     dominant = nb if nb['hh_count'] >= ea['hh_count'] else ea
+                    merged_geom = ea['geom'].combine(nb['geom']).buffer(0.0, 3)
+                    bar_feat = barangay_by_id.get(bar)
+                    if bar_feat and bar_feat.geometry() and not bar_feat.geometry().isEmpty():
+                        clipped_g = merged_geom.intersection(bar_feat.geometry()).buffer(0.0, 3)
+                        if not clipped_g.isEmpty():
+                            merged_geom = clipped_g
                     merged_ea = {
-                        'geom': ea['geom'].combine(nb['geom']).buffer(0.0, 3),
+                        'geom': merged_geom,
                         'buildings': ea.get('buildings', []) + nb.get('buildings', []),
                         'hh_count': ea['hh_count'] + nb['hh_count'],
                         'original_hhcount': dominant.get('original_hhcount', 0),
@@ -5085,13 +5061,12 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
                                 if _max_val is not None and not (isinstance(_max_val, QVariant) and _max_val.isNull()) and str(_max_val).strip() != '':
                                     out_feat.setAttribute(_fidx, _max_val)
 
-            final_pop = ea['original_hhcount'] if is_unchanged_retain else ea['hh_count']
             hh_count_bldg = ea.get('hh_count', 0.0)
-            hhcount_orig = ea.get('original_hhcount', hh_count_bldg)
+            hhcount_orig = ea.get('original_hhcount', 0.0)
 
             pop_idx = out_fields.indexOf(output_hh_field)
             if pop_idx != -1:
-                out_feat.setAttribute(pop_idx, final_pop)
+                out_feat.setAttribute(pop_idx, hhcount_orig if output_hh_field.lower() == "hhcount" else hh_count_bldg)
                 
             fid_idx = out_fields.indexOf("fid")
             if fid_idx != -1:
@@ -5125,6 +5100,12 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             ean_field_idx = out_fields.indexOf(ea_id_field)
             if ean_field_idx != -1 and ea_id_field.lower() != "geocode":
                 out_feat.setAttribute(ean_field_idx, ea['new_ea_code'])
+
+            # Explicitly set eadel_indi indicator field
+            eadel_indi_out_idx = out_fields.indexOf("eadel_indi")
+            if eadel_indi_out_idx != -1:
+                is_delin_feat = (ea.get('original_id') in delineation_candidate_ids) or ea.get('from_split', False)
+                out_feat.setAttribute(eadel_indi_out_idx, "for_delineation" if is_delin_feat else "ea_reference")
 
             ea_type_idx = out_fields.indexOf("ea_type")
             if ea_type_idx != -1:
