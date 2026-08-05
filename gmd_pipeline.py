@@ -260,6 +260,7 @@ class GMDPipeline(object):
         if self.check_update_dlg is None:
             self.check_update_dlg = CheckAndUpdateDialog(self.iface)
 
+        self.check_update_dlg.showNormal()
         self.check_update_dlg.show()
         self.check_update_dlg.raise_()
         self.check_update_dlg.activateWindow()
