@@ -2,6 +2,17 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.1
+<time>Aug 05, 2026</time>
+
+### ✨ New Features
+- implement automated stable release pipeline ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#117](https://github.com/GMD-Repository/gemma-plugin/pull/117))
+- ed Pipeline override ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#118](https://github.com/GMD-Repository/gemma-plugin/pull/118))
+- implement automated stable release pipeline with email notifications and version management scripts ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- add stable release workflow and VitePress configuration utility script ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+<Contributors :contributors="['kentemman-gmd']" />
+
 ## 1.0.0
 <time>Jul 21, 2026</time>
 
