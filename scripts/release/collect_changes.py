@@ -130,6 +130,7 @@ def collect_changes(
     tag: str,
     token: str,
     max_lines: int = 25,
+    force_full_history: bool = False,
 ) -> CollectedChanges:
     """Collect raw change lines from GitHub for a release.
 
@@ -142,14 +143,20 @@ def collect_changes(
         tag: The tag being released (e.g. "v1.5.0").
         token: GitHub API token.
         max_lines: Maximum number of lines to return.
+        force_full_history: If True, collect ALL changes from the beginning
+            of the repo (ignores previous tags). Used for version resets.
 
     Returns:
         CollectedChanges with deduplicated, cleaned change lines.
     """
     result = CollectedChanges()
 
-    # Find previous tag
-    result.previous_tag = find_previous_tag(owner, repo, token, tag)
+    # Find previous tag (skip if forcing full history for version reset)
+    if force_full_history:
+        result.previous_tag = None
+        logger.info("Force full history: collecting ALL changes from the beginning")
+    else:
+        result.previous_tag = find_previous_tag(owner, repo, token, tag)
     logger.info("Previous tag: %s", result.previous_tag or "(none — first release)")
 
     pr_lines: list[str] = []
@@ -169,9 +176,22 @@ def collect_changes(
         logger.warning("generateReleaseNotes failed: %s", e)
 
     # Source B: Direct commit messages
-    if result.previous_tag:
+    base_ref = result.previous_tag
+    if not base_ref:
+        # No previous tag — compare from the first commit in the repo
         try:
-            commits = compare_commits(owner, repo, result.previous_tag, "HEAD", token)
+            import subprocess
+            first_commit_result = subprocess.run(
+                ["git", "rev-list", "--max-parents=0", "HEAD"],
+                capture_output=True, text=True, check=True,
+            )
+            base_ref = first_commit_result.stdout.strip().split("\n")[0]
+            logger.info("No previous tag — using first commit: %s", base_ref[:12])
+        except Exception as e:
+            logger.warning("Could not find first commit: %s", e)
+    if base_ref:
+        try:
+            commits = compare_commits(owner, repo, base_ref, "HEAD", token)
             for c in commits:
                 msg = c["commit"]["message"].split("\n")[0].strip()
                 author_login = (c.get("author") or {}).get("login") or ""
