@@ -16,6 +16,7 @@ on:
       custom_version:
         description: 'Custom Version (optional manual override e.g. 3.1.0)'
         required: false
+        default: '1.0.0'
         type: string
 
 permissions:

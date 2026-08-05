@@ -156,10 +156,19 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
 
     # ── Step 2: Check for existing tag ────────────────────────────────────
     logger.info("═══ Step 2: Check existing tag ═══")
+    is_override = bool(args.custom_version and args.custom_version.strip())
     if tag_exists(tag):
-        logger.info("Tag %s already exists — skipping release.", tag)
-        set_github_output("released", "false")
-        return
+        if is_override:
+            logger.info("Tag %s exists but custom override provided — deleting old tag for re-release.", tag)
+            try:
+                subprocess.run(["git", "tag", "-d", tag], check=True, capture_output=True)
+                logger.info("Deleted local tag %s", tag)
+            except subprocess.CalledProcessError:
+                logger.warning("Could not delete local tag %s (may not exist locally)", tag)
+        else:
+            logger.info("Tag %s already exists — skipping release.", tag)
+            set_github_output("released", "false")
+            return
 
     set_github_output("released", "true")
 
@@ -172,7 +181,10 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
         pr_count = 0
         commit_count = 0
     else:
-        changes_result = collect_changes(owner, repo, tag, github_token)
+        changes_result = collect_changes(
+            owner, repo, tag, github_token,
+            force_full_history=is_override,
+        )
         raw_lines = changes_result.raw_lines
         previous_tag = changes_result.previous_tag
         pr_count = changes_result.pr_count
