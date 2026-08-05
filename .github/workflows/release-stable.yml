@@ -166,57 +166,67 @@ jobs:
             <body>
               <div class="email-container">
                 <div class="content">
-                  <div class="title">Stable Release Ready</div>
+                  <div class="title">Release Announcement: GEMMA Plugin v${{ steps.release.outputs.version }}</div>
                   <div class="text">
-                    Version <strong>v${{ steps.release.outputs.version }}</strong> of <strong>GEMMA Plugin</strong> has been successfully built and is ready.
+                    We are pleased to formally announce the production release of the <strong>GEMMA Plugin</strong> (Version
+                    <strong>${{ steps.release.outputs.version }}</strong>).
                   </div>
 
-                  <!-- What's New -->
+                  <!-- Release Summary -->
                   <div class="box">
-                    <div class="box-title">What's New</div>
-                    <div style="font-size: 14px; margin-top: 10px;">${{ steps.release.outputs.release_body_html || steps.release.outputs.release_body }}</div>
-                  </div>
-
-                  <!-- Release Details -->
-                  <div class="box">
-                    <div class="box-title">Release Details</div>
-                    <div class="text"><strong>Version:</strong> v${{ steps.release.outputs.version }}</div>
+                    <div class="box-title">Release Summary</div>
+                    <div class="text"><strong>Product:</strong> GEMMA QGIS Plugin</div>
+                    <div class="text"><strong>Version:</strong> ${{ steps.release.outputs.version }}</div>
                     <div class="text"><strong>Platform:</strong> QGIS Plugin (.zip)</div>
-                    <div class="text"><strong>Triggered by:</strong> ${{ github.actor }}</div>
-                    <div class="text"><strong>Status:</strong> Stable Release</div>
+                    <div class="text"><strong>Status:</strong> Official Production / General Availability</div>
                   </div>
 
-                  <!-- How to Get Updates & Installation -->
+                  <!-- Changelog & Highlights -->
                   <div class="box">
-                    <div class="box-title">Plugin Updates &amp; Installation</div>
-                    
+                    <div class="box-title">Changelog &amp; Highlights</div>
+                    <div class="text">
+                      ${{ steps.release.outputs.release_body_html || steps.release.outputs.release_body }}
+                    </div>
+                  </div>
+
+                  <!-- Installation & Deployment -->
+                  <div class="box">
+                    <div class="box-title">Installation &amp; Deployment</div>
+
                     <div class="text" style="margin-bottom: 10px;">
-                      <strong>Existing QGIS Setup:</strong> If you already added the GEMMA repository in QGIS, QGIS will automatically notify you of this new release. Open QGIS and go to <em>Plugins → Manage and Install Plugins → GEMMA → Upgrade Plugin</em>.
+                      <strong>QGIS Repository Installation:</strong> If your QGIS client is connected to the official GEMMA
+                      repository, QGIS will automatically prompt you for update. Open QGIS and navigate to <em>Plugins →
+                      Manage and Install Plugins → GEMMA → Upgrade / Install Plugin</em>.
                     </div>
 
                     <div class="text" style="margin-bottom: 12px;">
-                      <strong>Official Website &amp; Setup:</strong> Visit our website for installation guides, documentation, and repository settings:
+                      <strong>Manual Download &amp; Documentation:</strong> You may also download the official release package
+                      directly or review technical documentation:
                     </div>
 
                     <div style="margin-bottom: 10px;">
                       <a href="https://gemma-plugin.vercel.app/getting-started.html"
                          class="button"
-                         style="color: #ffffff !important; text-decoration: none; margin-right: 8px;">
-                        Visit Website
+                         style="color: #ffffff !important; text-decoration: none; margin-right: 8px;"
+                         target="_blank">
+                        View Documentation
                       </a>
 
                       <a href="https://github.com/${{ github.repository }}/releases/download/v${{ steps.release.outputs.version }}/${{ steps.release.outputs.zip_name }}"
                          class="button"
-                         style="background-color: #475569; color: #ffffff !important; text-decoration: none;">
-                        Download Plugin ZIP
+                         style="background-color: #475569; color: #ffffff !important; text-decoration: none;"
+                         target="_blank">
+                        Download Release Package
                       </a>
                     </div>
 
-                    <div style="margin-top:8px;font-size:12px;color:#777;line-height:1.4;">
-                      If the ZIP link returns a <strong>404</strong>, assets may still be processing.
-                      You can also check the
-                      <a href="https://github.com/${{ github.repository }}/releases" style="color:#2563a8;text-decoration:none;">
-                        Releases page
+                    <div style="margin-top: 8px; font-size: 12px; color: #777; line-height: 1.4;">
+                      If the direct package link is unavailable, assets may still be propagating.
+                      You can access the
+                      <a href="https://github.com/${{ github.repository }}/releases"
+                         style="color: #2563a8; text-decoration: none;"
+                         target="_blank">
+                        Official Releases Directory
                       </a>.
                     </div>
                   </div>
