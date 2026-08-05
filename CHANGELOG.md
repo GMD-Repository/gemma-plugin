@@ -5,6 +5,18 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-08-05
+
+### Added
+- Add LGU CRS and Geometry Alignment Algorithm to Processing Provider ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#1](https://github.com/GMD-Repository/gemma-plugin/pull/1))
+- Removed Unnecessary Subfolder; Added Readme ([@velascojasper0](https://github.com/velascojasper0)) ([#2](https://github.com/GMD-Repository/gemma-plugin/pull/2))
+- Addition of QP Generation ([@velascojasper0](https://github.com/velascojasper0)) ([#3](https://github.com/GMD-Repository/gemma-plugin/pull/3))
+- Automated release workflow for QGIS plugin ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#4](https://github.com/GMD-Repository/gemma-plugin/pull/4))
+- /auto release ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#5](https://github.com/GMD-Repository/gemma-plugin/pull/5))
+- make github release a pre-release and add email notifications ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#6](https://github.com/GMD-Repository/gemma-plugin/pull/6))
+- /auto release ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#7](https://github.com/GMD-Repository/gemma-plugin/pull/7))
+- /auto release ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#8](https://github.com/GMD-Repository/gemma-plugin/pull/8))
+
 ## [1.0.16] - 2026-08-04
 
 ### Added
