@@ -5,6 +5,14 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-08-05
+
+### Added
+- implement automated stable release pipeline ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#117](https://github.com/GMD-Repository/gemma-plugin/pull/117))
+- ed Pipeline override ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#118](https://github.com/GMD-Repository/gemma-plugin/pull/118))
+- implement automated stable release pipeline with email notifications and version management scripts ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- add stable release workflow and VitePress configuration utility script ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
 ## [1.0.0] - 2026-07-22
 
 ### Added
