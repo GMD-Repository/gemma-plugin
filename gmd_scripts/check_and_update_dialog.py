@@ -1,14 +1,15 @@
 import os
-from qgis.PyQt.QtCore import Qt, QVariant
+from qgis.PyQt.QtCore import Qt, QVariant, QTimer, QSettings
 from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QGroupBox, QCheckBox, QTextEdit, QTabWidget, QWidget,
     QFrame, QMessageBox, QProgressBar, QAction, QTableWidget,
-    QTableWidgetItem, QHeaderView, QAbstractItemView, QSplitter
+    QTableWidgetItem, QHeaderView, QAbstractItemView, QSplitter,
+    QApplication, QSpinBox, QComboBox, QDockWidget, QToolButton
 )
 from qgis.PyQt.QtGui import QIcon, QColor
 from qgis.core import (
-    QgsProject, QgsMapLayerProxyModel, QgsVectorLayer,
+    QgsProject, QgsMapLayerProxyModel, QgsVectorLayer, QgsMapLayer,
     QgsProcessingContext, QgsProcessingFeedback, QgsProcessingUtils,
     QgsRectangle, QgsPointXY, QgsFeatureRequest, QgsProcessingFeatureSourceDefinition,
     QgsFeature, QgsWkbTypes
@@ -38,6 +39,9 @@ class CheckAndUpdateDialog(QDialog):
         self.iface = iface
         self.setWindowTitle("Check and Update — Boundary Management")
         self.resize(920, 740)
+        self.setWindowFlags(
+            self.windowFlags() | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint
+        )
         self.last_error_layer = None
         self.last_repaired_layer = None
         self._build_ui()
@@ -96,7 +100,7 @@ class CheckAndUpdateDialog(QDialog):
         self._build_geometry_tab()
         self._build_metadata_tab()
 
-        self.tabs.addTab(self.tab1, "Georeferencing")
+        self.tabs.addTab(self.tab1, "Pre-Processing")
         self.tabs.addTab(self.tab2, "Geometry Check & Repair")
         self.tabs.addTab(self.tab3, "Updating Metadata")
 
@@ -111,24 +115,41 @@ class CheckAndUpdateDialog(QDialog):
         btn_layout.addWidget(close_btn)
         main_layout.addLayout(btn_layout)
 
-    # ── Tab 1: Georeferencing UI ───────────────────────────────────────────────
+    # ── Tab 1: Georeferencing & Boundary Setup UI ───────────────────────────────
     def _build_georeferencing_tab(self):
         layout = QVBoxLayout(self.tab1)
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(12)
 
-        group = QGroupBox("Raster Basemap Georeferencing")
-        group.setStyleSheet("QGroupBox { font-weight: bold; font-size: 12px; }")
-        grp_layout = QVBoxLayout(group)
-        grp_layout.setSpacing(12)
+        # Step Progression Header Banner
+        header_banner = QLabel("Georeferencing  ➔  Digitize  ➔  Update and Verify")
+        header_banner.setAlignment(Qt.AlignCenter)
+        header_banner.setStyleSheet("""
+            QLabel {
+                background-color: #EBF5FB;
+                color: #1F618D;
+                font-weight: bold;
+                font-size: 12px;
+                padding: 8px 12px;
+                border: 1px solid #AED6F1;
+                border-radius: 4px;
+            }
+        """)
+        layout.addWidget(header_banner)
 
-        desc = QLabel(
+        # ── Georeferencing Section ───────────────────────────────────────────
+        step1_group = QGroupBox("Georeferencing")
+        step1_group.setStyleSheet("QGroupBox { font-weight: bold; font-size: 12px; }")
+        step1_layout = QVBoxLayout(step1_group)
+        step1_layout.setSpacing(8)
+
+        step1_desc = QLabel(
             "Georeference scanned maps, barangay sketches, or raster basemaps to true spatial coordinates.\n"
-            "Clicking the button below directly opens QGIS's built-in Georeferencer tool."
+            "Clicking the button below opens QGIS's built-in Georeferencer tool pre-routed to C:\\PSA-GIS."
         )
-        desc.setWordWrap(True)
-        desc.setStyleSheet("font-size: 11px; color: #34495E;")
-        grp_layout.addWidget(desc)
+        step1_desc.setWordWrap(True)
+        step1_desc.setStyleSheet("font-size: 11px; color: #34495E;")
+        step1_layout.addWidget(step1_desc)
 
         georef_btn = QPushButton("Open QGIS Georeferencer")
         georef_btn.setIcon(QIcon(":/images/themes/default/mActionGeoref.svg"))
@@ -138,7 +159,7 @@ class CheckAndUpdateDialog(QDialog):
                 color: white;
                 font-weight: bold;
                 font-size: 12px;
-                padding: 10px 20px;
+                padding: 8px 16px;
                 border-radius: 4px;
             }
             QPushButton:hover {
@@ -146,42 +167,882 @@ class CheckAndUpdateDialog(QDialog):
             }
         """)
         georef_btn.clicked.connect(self._run_georeferencer)
-        grp_layout.addWidget(georef_btn, alignment=Qt.AlignLeft)
+        step1_layout.addWidget(georef_btn, alignment=Qt.AlignLeft)
+        layout.addWidget(step1_group)
 
-        grp_layout.addStretch()
-        layout.addWidget(group)
+        # ── Digitize Section ─────────────────────────────────────────────────
+        step2_group = QGroupBox("Digitize")
+        step2_group.setStyleSheet("QGroupBox { font-weight: bold; font-size: 12px; }")
+        step2_layout = QVBoxLayout(step2_group)
+        step2_layout.setSpacing(8)
+
+        step2_desc = QLabel(
+            "Configure reference layer opacity and cycle through target editable layers for vertex digitizing."
+        )
+        step2_desc.setWordWrap(True)
+        step2_desc.setStyleSheet("font-size: 11px; color: #34495E;")
+        step2_layout.addWidget(step2_desc)
+
+        # Row 1: PSA Reference Layer & Opacity
+        ctrls_layout = QHBoxLayout()
+        ctrls_layout.setSpacing(10)
+
+        psa_label = QLabel("PSA Reference Layer:")
+        psa_label.setStyleSheet("font-size: 11px; font-weight: bold;")
+        self.psa_layer_combo = QgsMapLayerComboBox()
+
+        opacity_label = QLabel("Opacity:")
+        opacity_label.setStyleSheet("font-size: 11px; font-weight: bold;")
+        self.opacity_spin = QSpinBox()
+        self.opacity_spin.setRange(0, 100)
+        self.opacity_spin.setValue(25)
+        self.opacity_spin.setSuffix("%")
+        self.opacity_spin.setMinimumWidth(75)
+
+        apply_btn = QPushButton("Apply")
+        apply_btn.setIcon(QIcon(":/images/themes/default/mActionApply.svg"))
+        apply_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #27AE60;
+                color: white;
+                font-weight: bold;
+                font-size: 11px;
+                padding: 6px 16px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #219A52;
+            }
+        """)
+        apply_btn.clicked.connect(self._apply_layer_opacity)
+
+        ctrls_layout.addWidget(psa_label)
+        ctrls_layout.addWidget(self.psa_layer_combo, stretch=1)
+        ctrls_layout.addWidget(opacity_label)
+        ctrls_layout.addWidget(self.opacity_spin)
+        ctrls_layout.addWidget(apply_btn)
+        step2_layout.addLayout(ctrls_layout)
+
+        # Row 2: Adjust Feature Selection & Edit/Previous/Next/Done Actions
+        adjust_layout = QHBoxLayout()
+        adjust_layout.setSpacing(10)
+
+        adjust_label = QLabel("Adjust Feature:")
+        adjust_label.setStyleSheet("font-size: 11px; font-weight: bold;")
+        self.adjust_feature_combo = QComboBox()
+
+        edit_btn = QPushButton("Edit")
+        edit_btn.setIcon(QIcon(":/images/themes/default/mActionToggleEditing.svg"))
+        edit_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #E67E22;
+                color: white;
+                font-weight: bold;
+                font-size: 11px;
+                padding: 6px 14px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #D35400;
+            }
+        """)
+        edit_btn.clicked.connect(self._run_edit_layer)
+
+        prev_btn = QPushButton("Previous")
+        prev_btn.setIcon(QIcon(":/images/themes/default/mActionBack.svg"))
+        prev_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #7F8C8D;
+                color: white;
+                font-weight: bold;
+                font-size: 11px;
+                padding: 6px 14px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #616D6E;
+            }
+        """)
+        prev_btn.clicked.connect(self._run_prev_layer)
+
+        next_btn = QPushButton("Next")
+        next_btn.setIcon(QIcon(":/images/themes/default/mActionForward.svg"))
+        next_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2980B9;
+                color: white;
+                font-weight: bold;
+                font-size: 11px;
+                padding: 6px 14px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #1F618D;
+            }
+        """)
+        next_btn.clicked.connect(self._run_next_layer)
+
+        done_btn = QPushButton("Done")
+        done_btn.setIcon(QIcon(":/images/themes/default/mActionFileSave.svg"))
+        done_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #27AE60;
+                color: white;
+                font-weight: bold;
+                font-size: 11px;
+                padding: 6px 14px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #219A52;
+            }
+        """)
+        done_btn.clicked.connect(self._run_done_editing)
+
+        adjust_layout.addWidget(adjust_label)
+        adjust_layout.addWidget(self.adjust_feature_combo, stretch=1)
+        adjust_layout.addWidget(edit_btn)
+        adjust_layout.addWidget(prev_btn)
+        adjust_layout.addWidget(next_btn)
+        adjust_layout.addWidget(done_btn)
+        step2_layout.addLayout(adjust_layout)
+
+        # Connect layer selection changes to populate features
+        self.psa_layer_combo.layerChanged.connect(self._populate_adjust_features)
+
+        # Auto-suggest layer ending with *_psa
+        self._auto_suggest_psa_layer()
+
+        # Populate Adjust Feature dropdown from selected PSA Reference Layer
+        self._populate_adjust_features()
+
+        layout.addWidget(step2_group)
+
+        # ── Update and Verify Section ─────────────────────────────────────────
+        step3_group = QGroupBox("Update and Verify")
+        step3_group.setStyleSheet("QGroupBox { font-weight: bold; font-size: 12px; }")
+        step3_layout = QVBoxLayout(step3_group)
+        step3_layout.setSpacing(8)
+
+        step3_desc = QLabel(
+            "Join tabular census/administrative datasets (Excel or CSV) using fuzzy name matching,\n"
+            "and auto-populate LGU PSGC metadata, standard attribute schemas, and administrative codes."
+        )
+        step3_desc.setWordWrap(True)
+        step3_desc.setStyleSheet("font-size: 11px; color: #34495E;")
+        step3_layout.addWidget(step3_desc)
+
+        step3_btns_layout = QHBoxLayout()
+        step3_btns_layout.setSpacing(10)
+
+        join_btn = QPushButton("Run Join Barangay Attributes")
+        join_btn.setIcon(QIcon(":/images/themes/default/mActionAddTable.svg"))
+        join_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #27AE60;
+                color: white;
+                font-weight: bold;
+                font-size: 11px;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #219A52;
+            }
+        """)
+        join_btn.clicked.connect(self._run_join_attributes)
+
+        metadata_btn = QPushButton("Run Update Metadata")
+        metadata_btn.setIcon(QIcon(":/images/themes/default/mActionEditMetadata.svg"))
+        metadata_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #8E44AD;
+                color: white;
+                font-weight: bold;
+                font-size: 11px;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #71368A;
+            }
+        """)
+        metadata_btn.clicked.connect(self._run_update_metadata)
+
+        step3_btns_layout.addWidget(join_btn)
+        step3_btns_layout.addWidget(metadata_btn)
+        step3_btns_layout.addStretch()
+
+        step3_layout.addLayout(step3_btns_layout)
+        layout.addWidget(step3_group)
+
         layout.addStretch()
 
-    def _run_georeferencer(self):
-        """Invoke built-in QGIS Georeferencer action directly."""
+    def _auto_suggest_psa_layer(self):
+        """Auto-suggest and pre-select layer ending with '*_psa' in the PSA reference layer combo box."""
         try:
-            if hasattr(self.iface, 'actionGeoreferencer') and self.iface.actionGeoreferencer():
-                self.iface.actionGeoreferencer().trigger()
-                return
+            for i in range(self.psa_layer_combo.count()):
+                lyr = self.psa_layer_combo.layer(i)
+                if lyr and lyr.isValid():
+                    name_lower = lyr.name().strip().lower()
+                    base_name, _ = os.path.splitext(name_lower)
+                    if base_name.endswith('_psa') or name_lower.endswith('_psa'):
+                        self.psa_layer_combo.setLayer(lyr)
+                        break
+        except Exception:
+            pass
 
-            main_win = self.iface.mainWindow()
-            for obj_name in ['mActionGeoreferencer', 'mActionShowGeoreferencer', 'actionGeoreferencer']:
-                action = main_win.findChild(QAction, obj_name)
-                if action:
-                    action.trigger()
-                    return
+    def _populate_adjust_features(self):
+        """Populate the Adjust Feature dropdown with barangay features from the selected PSA Reference Layer."""
+        self.adjust_feature_combo.clear()
+        self.adjust_features_map = {}
+        layer = self.psa_layer_combo.currentLayer()
+        if not layer or not layer.isValid() or not isinstance(layer, QgsVectorLayer):
+            return
 
-            for action in main_win.findChildren(QAction):
-                txt = action.text().replace('&', '').strip()
-                if 'Georeferencer' in txt:
-                    action.trigger()
-                    return
+        # Search fields for barangay name column (case-insensitive)
+        fields = layer.fields()
+        target_field = None
+        candidate_names = ['barangay', 'brgy_name', 'brgy', 'bgy_name', 'bgy', 'name', 'adm4_en', 'adm3_en']
+        for name in candidate_names:
+            idx = fields.indexOf(name)
+            if idx != -1:
+                target_field = fields.at(idx).name()
+                break
 
+        if not target_field:
+            for f in fields:
+                if f.type() == QVariant.String:
+                    target_field = f.name()
+                    break
+
+        for feat in layer.getFeatures():
+            fid = feat.id()
+            brgy_val = str(feat[target_field]).strip() if target_field and feat[target_field] is not None else ""
+            display_name = brgy_val if brgy_val else f"Feature {fid}"
+            self.adjust_feature_combo.addItem(display_name, fid)
+            self.adjust_features_map[fid] = feat
+
+        if self.adjust_feature_combo.count() > 0:
+            self.adjust_feature_combo.setCurrentIndex(0)
+
+    def _apply_layer_opacity(self):
+        """Set opacity (0-100%) for the selected layer in the PSA reference dropdown."""
+        layer = self.psa_layer_combo.currentLayer()
+        if not layer or not layer.isValid():
+            return QMessageBox.warning(self, "No Layer Selected", "Please select a valid PSA reference layer.")
+
+        val = self.opacity_spin.value()
+        val = max(0, min(100, val))
+        opacity_float = val / 100.0
+
+        try:
+            if hasattr(layer, 'setOpacity'):
+                layer.setOpacity(opacity_float)
+            elif hasattr(layer, 'renderer') and layer.renderer() and hasattr(layer.renderer(), 'setOpacity'):
+                layer.renderer().setOpacity(opacity_float)
+
+            layer.triggerRepaint()
+            if hasattr(self.iface, 'mapCanvas') and self.iface.mapCanvas():
+                self.iface.mapCanvas().refresh()
+        except Exception as e:
+            QMessageBox.critical(self, "Apply Opacity Error", f"Failed to set opacity for layer '{layer.name()}': {e}")
+
+    def _run_edit_layer(self):
+        """Select feature on layer, zoom canvas to bounding box, activate Vertex Tool, and minimize dialog."""
+        layer = self.psa_layer_combo.currentLayer()
+        if not layer or not layer.isValid() or not isinstance(layer, QgsVectorLayer):
+            return QMessageBox.warning(self, "Edit Feature", "Please select a valid PSA Reference Layer.")
+
+        fid = self.adjust_feature_combo.currentData()
+        if fid is None:
+            return QMessageBox.warning(self, "Edit Feature", "Please select a feature to edit.")
+
+        feat = layer.getFeature(fid)
+        if not feat.isValid():
+            return QMessageBox.warning(self, "Edit Feature", f"Feature ID {fid} could not be retrieved.")
+
+        feature_name = self.adjust_feature_combo.currentText()
+
+        try:
+            # 1. Set Active Layer in QGIS
+            if hasattr(self.iface, 'setActiveLayer'):
+                self.iface.setActiveLayer(layer)
+
+            # 2. Force Read-Only flags off if set on Layer Properties
             try:
-                import qgis.utils
-                if 'georeferencer-gdal' in qgis.utils.plugins:
-                    qgis.utils.plugins['georeferencer-gdal'].run()
-                    return
-                elif 'georeferencer' in qgis.utils.plugins:
-                    qgis.utils.plugins['georeferencer'].run()
-                    return
+                if hasattr(layer, 'setReadOnly'):
+                    layer.setReadOnly(False)
             except Exception:
                 pass
+
+            try:
+                if hasattr(QgsMapLayer, 'FlagReadOnly'):
+                    flags = layer.flags()
+                    if flags & QgsMapLayer.FlagReadOnly:
+                        layer.setFlags(flags & ~QgsMapLayer.FlagReadOnly)
+            except Exception:
+                pass
+
+            try:
+                layer.setCustomProperty("flags/readOnly", False)
+                layer.setCustomProperty("readOnly", False)
+            except Exception:
+                pass
+
+            # 3. Enable Editing Mode
+            if not layer.isEditable():
+                started = layer.startEditing()
+                if not started:
+                    # Fallback to main window toggle editing action
+                    if hasattr(self.iface, 'actionToggleEditing') and self.iface.actionToggleEditing():
+                        self.iface.actionToggleEditing().trigger()
+
+            if not layer.isEditable():
+                return QMessageBox.warning(
+                    self,
+                    "Editing Disabled",
+                    f"Could not enable editing mode on layer '{layer.name()}'.\n"
+                    f"Please check if the file format or provider is read-only."
+                )
+
+            # 4. Select Feature & Zoom to Bounding Box
+            layer.selectByIds([fid])
+            geom = feat.geometry()
+            if hasattr(self.iface, 'mapCanvas') and self.iface.mapCanvas() and geom and not geom.isEmpty():
+                canvas = self.iface.mapCanvas()
+                bbox = geom.boundingBox()
+                # Grow bounding box by 15% for optimal visual framing
+                padding = max(bbox.width(), bbox.height()) * 0.15
+                if padding > 0:
+                    bbox.grow(padding)
+                canvas.setExtent(bbox)
+                canvas.refresh()
+
+            # 5. Activate QGIS Vertex Tool
+            def do_activate_vertex():
+                if hasattr(self.iface, 'setActiveLayer'):
+                    self.iface.setActiveLayer(layer)
+
+                main_win = self.iface.mainWindow()
+                action = None
+                if hasattr(self.iface, 'actionVertexToolCurrentLayer') and self.iface.actionVertexToolCurrentLayer():
+                    action = self.iface.actionVertexToolCurrentLayer()
+                elif hasattr(self.iface, 'actionVertexTool') and self.iface.actionVertexTool():
+                    action = self.iface.actionVertexTool()
+                elif main_win:
+                    action = (main_win.findChild(QAction, 'mActionVertexToolCurrentLayer') or
+                              main_win.findChild(QAction, 'mActionVertexTool') or
+                              main_win.findChild(QAction, 'mActionVertexToolAllLayers'))
+
+                if action:
+                    action.trigger()
+
+            do_activate_vertex()
+            QTimer.singleShot(150, do_activate_vertex)
+
+            # 6. Launch & Configure QGIS Core Topology Checker ('must not have gaps' rule & Validate All)
+            self._setup_and_run_topology_checker(layer)
+
+            # 7. Minimize Check and Update Dialog
+            self.showMinimized()
+
+            # 8. Show QGIS MessageBar Item with Previous, Re-Edit, Next, Save & Done, and Return buttons
+            if hasattr(self.iface, 'messageBar') and self.iface.messageBar():
+                bar = self.iface.messageBar()
+                bar.clearWidgets()
+
+                msg_item = bar.createMessage("Gemma Digitize", f"Editing: {feature_name}")
+                msg_layout = msg_item.layout()
+
+                prev_btn = QPushButton("Previous")
+                prev_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #7F8C8D;
+                        color: white;
+                        font-weight: bold;
+                        padding: 3px 8px;
+                        border-radius: 3px;
+                    }
+                    QPushButton:hover {
+                        background-color: #616D6E;
+                    }
+                """)
+                prev_btn.clicked.connect(lambda: (bar.clearWidgets(), self._run_prev_layer()))
+
+                edit_btn = QPushButton("Re-Edit")
+                edit_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #E67E22;
+                        color: white;
+                        font-weight: bold;
+                        padding: 3px 8px;
+                        border-radius: 3px;
+                    }
+                    QPushButton:hover {
+                        background-color: #D35400;
+                    }
+                """)
+                edit_btn.clicked.connect(lambda: (bar.clearWidgets(), self._run_edit_layer()))
+
+                next_btn = QPushButton("Next")
+                next_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #2980B9;
+                        color: white;
+                        font-weight: bold;
+                        padding: 3px 8px;
+                        border-radius: 3px;
+                    }
+                    QPushButton:hover {
+                        background-color: #1F618D;
+                    }
+                """)
+                next_btn.clicked.connect(lambda: (bar.clearWidgets(), self._run_next_layer()))
+
+                save_done_btn = QPushButton("Save & Done")
+                save_done_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #27AE60;
+                        color: white;
+                        font-weight: bold;
+                        padding: 3px 10px;
+                        border-radius: 3px;
+                    }
+                    QPushButton:hover {
+                        background-color: #219A52;
+                    }
+                """)
+                save_done_btn.clicked.connect(lambda: self._run_done_editing())
+
+                return_btn = QPushButton("Return")
+                return_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #16A085;
+                        color: white;
+                        font-weight: bold;
+                        padding: 3px 10px;
+                        border-radius: 3px;
+                    }
+                    QPushButton:hover {
+                        background-color: #117A65;
+                    }
+                """)
+                return_btn.clicked.connect(lambda: (self.showNormal(), self.raise_(), self.activateWindow(), bar.clearWidgets()))
+
+                msg_layout.addWidget(prev_btn)
+                msg_layout.addWidget(edit_btn)
+                msg_layout.addWidget(next_btn)
+                msg_layout.addWidget(save_done_btn)
+                msg_layout.addWidget(return_btn)
+
+                bar.pushWidget(msg_item, 0)
+        except Exception as e:
+            QMessageBox.critical(self, "Edit Feature Error", f"Failed to activate editing on feature '{feature_name}': {e}")
+
+    def _setup_and_run_topology_checker(self, layer):
+        """Ensure QGIS Topology Checker plugin/dock is loaded and visible, set 'must not have gaps' rule, and validate."""
+        if not layer or not layer.isValid() or not isinstance(layer, QgsVectorLayer):
+            return
+
+        import qgis.utils
+
+        try:
+            main_win = self.iface.mainWindow()
+            topol_action = None
+            topol_dock = None
+
+            # 1. Search for Topology Checker Action in QGIS main window
+            if main_win:
+                for act in main_win.findChildren(QAction):
+                    name = act.objectName().lower()
+                    text = act.text().lower()
+                    if 'topol' in name or 'topology' in name or 'topology' in text or 'topol' in text:
+                        topol_action = act
+                        break
+
+            # 2. Attempt to load/enable Python or C++ plugin via QSettings and qgis.utils if action not found
+            topol_plugin = qgis.utils.plugins.get('topol') or qgis.utils.plugins.get('topolplugin')
+            if not topol_plugin:
+                for plugin_name in ['topol', 'topolplugin', 'topologychecker']:
+                    try:
+                        QSettings().setValue(f"Qgis/plugins/{plugin_name}/enabled", "true")
+                        qgis.utils.loadPlugin(plugin_name)
+                        qgis.utils.startPlugin(plugin_name)
+                        topol_plugin = qgis.utils.plugins.get(plugin_name)
+                        if topol_plugin:
+                            break
+                    except Exception:
+                        pass
+
+            if not topol_action and topol_plugin and hasattr(topol_plugin, 'action'):
+                topol_action = topol_plugin.action
+
+            if not topol_action and main_win:
+                for act in main_win.findChildren(QAction):
+                    name = act.objectName().lower()
+                    text = act.text().lower()
+                    if 'topol' in name or 'topology' in name or 'topology' in text or 'topol' in text:
+                        topol_action = act
+                        break
+
+            # 3. Trigger Action to open Topology Panel
+            if topol_action:
+                if hasattr(topol_action, 'isChecked') and not topol_action.isChecked():
+                    topol_action.trigger()
+                elif hasattr(topol_action, 'trigger'):
+                    topol_action.trigger()
+
+            # 4. Find and show QDockWidget
+            if main_win:
+                for d in main_win.findChildren(QDockWidget):
+                    name = d.objectName().lower()
+                    title = d.windowTitle().lower()
+                    if 'topol' in name or 'topology' in title or 'topol' in title:
+                        topol_dock = d
+                        topol_dock.setVisible(True)
+                        topol_dock.show()
+                        topol_dock.raise_()
+                        break
+
+            # 5. Configure 'must not have gaps' rule for layer
+            self._configure_topol_gap_rule(topol_plugin, layer)
+
+            # 6. Trigger Validate All via delayed singleShot to ensure panel is fully rendered
+            QTimer.singleShot(400, lambda: self._trigger_topol_validate(topol_plugin))
+        except Exception:
+            pass
+
+    def _configure_topol_gap_rule(self, topol_plugin, layer):
+        """Configure 'must not have gaps' topology rule for the given vector layer."""
+        if not layer or not layer.isValid():
+            return
+
+        try:
+            layer_id = layer.id()
+            layer_name = layer.name()
+
+            rule_entries = [
+                f"{layer_id};must not have gaps;",
+                f"{layer_id};must not have gaps;none",
+                f"{layer_id};must not have gaps",
+                f"{layer_name};must not have gaps;",
+                f"{layer_name};must not have gaps"
+            ]
+
+            for key_path in [("Topol", "rules"), ("Topol", "rulesList"), ("TopolPlugin", "rules"), ("TopolPlugin", "rulesList")]:
+                existing_rules, ok = QgsProject.instance().readListEntry(key_path[0], key_path[1])
+                if not ok or existing_rules is None:
+                    existing_rules = []
+
+                has_rule = any("gaps" in str(r).lower() and (layer_id in str(r) or layer_name in str(r)) for r in existing_rules)
+                if not has_rule:
+                    existing_rules.append(rule_entries[0])
+                    QgsProject.instance().writeEntry(key_path[0], key_path[1], existing_rules)
+
+            # Find topol dock widget from main window
+            main_win = self.iface.mainWindow()
+            topol_dock = None
+            if main_win:
+                for d in main_win.findChildren(QDockWidget):
+                    name = d.objectName().lower()
+                    title = d.windowTitle().lower()
+                    if 'topol' in name or 'topology' in title or 'topol' in title:
+                        topol_dock = d
+                        break
+
+            if topol_dock:
+                for method_name in ['readRulesFromProject', 'updateRules', 'reloadRules', 'loadRules', 'initRules']:
+                    if hasattr(topol_dock, method_name):
+                        try:
+                            getattr(topol_dock, method_name)()
+                        except Exception:
+                            pass
+
+                if topol_plugin:
+                    for method_name in ['readRulesFromProject', 'updateRules', 'reloadRules', 'loadRules']:
+                        if hasattr(topol_plugin, method_name):
+                            try:
+                                getattr(topol_plugin, method_name)()
+                            except Exception:
+                                pass
+        except Exception:
+            pass
+
+    def _trigger_topol_validate(self, topol_plugin=None):
+        """Trigger 'Validate All' on Topology Checker dock panel."""
+        try:
+            import qgis.utils
+            main_win = self.iface.mainWindow()
+            topol_dock = None
+            if main_win:
+                for d in main_win.findChildren(QDockWidget):
+                    name = d.objectName().lower()
+                    title = d.windowTitle().lower()
+                    if 'topol' in name or 'topology' in title or 'topol' in title:
+                        topol_dock = d
+                        break
+
+            if topol_dock:
+                buttons = topol_dock.findChildren(QToolButton) + topol_dock.findChildren(QPushButton)
+                for btn in buttons:
+                    txt = btn.text().lower()
+                    obj = btn.objectName().lower()
+                    tooltip = btn.toolTip().lower()
+                    if ('validate all' in txt or 'validateall' in obj or 'validate all' in tooltip or
+                        'validate' in txt or 'validate' in tooltip or 'validate' in obj or
+                        ('all' in txt and 'validate' in tooltip) or 'validateext' in obj):
+                        btn.click()
+                        return
+
+                for btn in buttons:
+                    if btn.actions():
+                        btn.click()
+                        return
+
+            if not topol_plugin:
+                topol_plugin = qgis.utils.plugins.get('topol') or qgis.utils.plugins.get('topolplugin')
+
+            if topol_plugin:
+                dock = getattr(topol_plugin, 'dockWidget', None) or getattr(topol_plugin, 'dock', None)
+                if dock:
+                    val_all_btn = getattr(dock, 'mValidateAllButton', None) or getattr(dock, 'btnValidateAll', None)
+                    if not val_all_btn:
+                        val_all_btn = dock.findChild(QPushButton, 'mValidateAllButton') or dock.findChild(QToolButton, 'mValidateAllButton')
+
+                    if val_all_btn and hasattr(val_all_btn, 'click'):
+                        val_all_btn.click()
+                    elif hasattr(dock, 'validateAll'):
+                        dock.validateAll()
+                    elif hasattr(topol_plugin, 'validateAll'):
+                        topol_plugin.validateAll()
+        except Exception:
+            pass
+
+    def _run_done_editing(self):
+        """Save changes (commitChanges) and stop editing on the PSA Reference Layer, clear selections, then restore dialog."""
+        layer = self.psa_layer_combo.currentLayer()
+        committed = False
+        if layer and layer.isValid() and isinstance(layer, QgsVectorLayer):
+            if layer.isEditable():
+                committed = layer.commitChanges()
+            layer.removeSelection()
+
+        # Clear canvas MessageBar
+        if hasattr(self.iface, 'messageBar') and self.iface.messageBar():
+            self.iface.messageBar().clearWidgets()
+
+        # Restore Check & Update dialog window
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+        if committed:
+            QMessageBox.information(self, "Editing Complete", f"Successfully saved changes and closed editing mode for '{layer.name()}'.")
+        else:
+            QMessageBox.information(self, "Editing Complete", "No active layer edits needed saving.")
+
+    def _run_prev_layer(self):
+        """Move to the previous feature in the Adjust Feature list, trigger Edit action, and re-validate topology."""
+        count = self.adjust_feature_combo.count()
+        if count == 0:
+            return QMessageBox.warning(self, "Previous Feature", "No features found in the selected PSA Reference Layer.")
+
+        curr_idx = self.adjust_feature_combo.currentIndex()
+        prev_idx = (curr_idx - 1) % count
+        self.adjust_feature_combo.setCurrentIndex(prev_idx)
+        self._run_edit_layer()
+        QTimer.singleShot(350, lambda: self._trigger_topol_validate())
+
+    def _run_next_layer(self):
+        """Advance to the next feature in the Adjust Feature list, trigger Edit action, and re-validate topology."""
+        count = self.adjust_feature_combo.count()
+        if count == 0:
+            return QMessageBox.warning(self, "Next Feature", "No features found in the selected PSA Reference Layer.")
+
+        curr_idx = self.adjust_feature_combo.currentIndex()
+        next_idx = (curr_idx + 1) % count
+        self.adjust_feature_combo.setCurrentIndex(next_idx)
+        self._run_edit_layer()
+        QTimer.singleShot(350, lambda: self._trigger_topol_validate())
+
+    def _run_georeferencer(self):
+        """Invoke built-in QGIS Georeferencer action directly and auto-trigger Open Raster at C:\\PSA-GIS."""
+        try:
+            settings = QSettings()
+            default_dir = r"C:\PSA-GIS"
+
+            # Create default directory C:\PSA-GIS if it does not exist on disk
+            if not os.path.exists(default_dir):
+                try:
+                    os.makedirs(default_dir, exist_ok=True)
+                except Exception:
+                    pass
+
+            # Retrieve remembered directory or fall back to C:\PSA-GIS
+            last_dir = settings.value("gmd_pipeline/last_georef_dir", default_dir)
+            if not last_dir or not os.path.exists(str(last_dir)):
+                last_dir = default_dir
+
+            # Route QGIS native raster file chooser dialog to default/remembered folder
+            settings.setValue("/UI/lastRasterFileFilterDir", str(last_dir))
+            settings.setValue("/UI/lastRasterFileDir", str(last_dir))
+
+            # Preset Transformation Settings for Georeferencer across all QGIS configuration keys
+            proj_crs = QgsProject.instance().crs()
+            target_crs = proj_crs.authid() if (proj_crs and proj_crs.isValid() and proj_crs.authid()) else "EPSG:4326"
+
+            prefixes = [
+                "/Plugin-Georeferencer/",
+                "/georeferencer/",
+                "/Plugin-Georeferencer-GDAL/",
+                "/QGIS/georeferencer/",
+                "Plugin-Georeferencer/",
+                "georeferencer/"
+            ]
+
+            for p in prefixes:
+                # 2 = Polynomial 1 in QGIS Georeferencer (0=Linear, 1=Helmert, 2=Polynomial 1)
+                settings.setValue(p + "transformType", 2)
+                settings.setValue(p + "transformationType", 2)
+                settings.setValue(p + "transform_type", 2)
+
+                # 0 = Nearest Neighbour
+                settings.setValue(p + "resamplingMethod", 0)
+                settings.setValue(p + "resampling", 0)
+
+                # Target CRS
+                settings.setValue(p + "targetSRS", str(target_crs))
+                settings.setValue(p + "targetCRS", str(target_crs))
+                settings.setValue(p + "targetCrs", str(target_crs))
+                settings.setValue(p + "projection", str(target_crs))
+
+                # Compression: "LZW" / index 1
+                settings.setValue(p + "compression", "LZW")
+                settings.setValue(p + "compressionMethod", "LZW")
+
+                # Load in QGIS when done
+                settings.setValue(p + "loadInQGIS", True)
+                settings.setValue(p + "loadInProject", True)
+
+            triggered = False
+            if hasattr(self.iface, 'actionGeoreferencer') and self.iface.actionGeoreferencer():
+                self.iface.actionGeoreferencer().trigger()
+                triggered = True
+            else:
+                main_win = self.iface.mainWindow()
+                for obj_name in ['mActionGeoreferencer', 'mActionShowGeoreferencer', 'actionGeoreferencer']:
+                    action = main_win.findChild(QAction, obj_name)
+                    if action:
+                        action.trigger()
+                        triggered = True
+                        break
+
+                if not triggered:
+                    for action in main_win.findChildren(QAction):
+                        txt = action.text().replace('&', '').strip()
+                        if 'Georeferencer' in txt:
+                            action.trigger()
+                            triggered = True
+                            break
+
+                if not triggered:
+                    try:
+                        import qgis.utils
+                        if 'georeferencer-gdal' in qgis.utils.plugins:
+                            qgis.utils.plugins['georeferencer-gdal'].run()
+                            triggered = True
+                        elif 'georeferencer' in qgis.utils.plugins:
+                            qgis.utils.plugins['georeferencer'].run()
+                            triggered = True
+                    except Exception:
+                        pass
+
+            if triggered:
+                # Auto-trigger "Open Raster", minimize Check & Update dialog, auto-populate Transformation Settings, and auto-restore when done
+                def _trigger_open_raster():
+                    current_dir = settings.value("/UI/lastRasterFileFilterDir", last_dir)
+                    if current_dir and os.path.exists(str(current_dir)):
+                        settings.setValue("gmd_pipeline/last_georef_dir", str(current_dir))
+
+                    georef_win = None
+                    for widget in QApplication.topLevelWidgets():
+                        if "Georeferencer" in widget.windowTitle():
+                            georef_win = widget
+                            # Find Open Raster action in Georeferencer window
+                            for action in widget.findChildren(QAction):
+                                txt = action.text().replace('&', '').strip().lower()
+                                name = action.objectName().lower()
+                                tooltip = action.toolTip().lower()
+                                if 'open raster' in txt or 'openraster' in name or 'open raster' in tooltip or 'add raster' in txt:
+                                    action.trigger()
+                                    break
+                            else:
+                                # Fallback: search for Open Raster buttons
+                                for btn in widget.findChildren(QPushButton):
+                                    txt = btn.text().replace('&', '').strip().lower()
+                                    tooltip = btn.toolTip().lower()
+                                    if 'open raster' in txt or 'open raster' in tooltip:
+                                        btn.click()
+                                        break
+                            break
+
+                    # Automatically minimize Check & Update dialog to keep screen clear
+                    self.showMinimized()
+
+                    # Auto-fill Transformation Settings dialog and normalize output file path to Windows backslashes
+                    def _auto_fill_transformation_dialog():
+                        from qgis.PyQt.QtWidgets import QComboBox, QCheckBox, QLineEdit
+                        for widget in QApplication.topLevelWidgets():
+                            title = widget.windowTitle().lower()
+                            if "transformation" in title or "setting" in title:
+                                # Normalize path in file line edits (convert C:/... to C:\...)
+                                for line_edit in widget.findChildren(QLineEdit):
+                                    txt = line_edit.text()
+                                    if txt and ("/" in txt or ".tif" in txt or "_modified" in txt):
+                                        normalized = os.path.normpath(txt).replace('/', '\\')
+                                        if normalized != txt:
+                                            line_edit.setText(normalized)
+
+                                for combo in widget.findChildren(QComboBox):
+                                    items = [combo.itemText(i) for i in range(combo.count())]
+                                    for i, item in enumerate(items):
+                                        if "polynomial 1" in item.lower():
+                                            combo.setCurrentIndex(i)
+                                            break
+                                        elif "nearest" in item.lower():
+                                            combo.setCurrentIndex(i)
+                                            break
+                                        elif "lzw" in item.lower():
+                                            combo.setCurrentIndex(i)
+                                            break
+                                for chk in widget.findChildren(QCheckBox):
+                                    txt = chk.text().lower()
+                                    if "load in" in txt or "load in project" in txt or "load in qgis" in txt:
+                                        chk.setChecked(True)
+
+                    for delay in [300, 600, 1000, 1500, 2500, 4000, 6000]:
+                        QTimer.singleShot(delay, _auto_fill_transformation_dialog)
+
+                    # Auto-restore Check & Update dialog when Georeferencer window is closed
+                    if georef_win:
+                        def _check_georef_closed():
+                            try:
+                                if not georef_win.isVisible():
+                                    self.showNormal()
+                                    self.raise_()
+                                    self.activateWindow()
+                                else:
+                                    QTimer.singleShot(600, _check_georef_closed)
+                            except Exception:
+                                self.showNormal()
+                                self.raise_()
+                                self.activateWindow()
+
+                        QTimer.singleShot(1000, _check_georef_closed)
+
+                QTimer.singleShot(350, _trigger_open_raster)
+                return
 
             QMessageBox.warning(
                 self,
@@ -190,6 +1051,20 @@ class CheckAndUpdateDialog(QDialog):
             )
         except Exception as e:
             QMessageBox.warning(self, "Georeferencer", f"Could not launch Georeferencer: {e}")
+
+    def _run_join_attributes(self):
+        """Invoke Join Barangay Attributes processing algorithm dialog."""
+        try:
+            processing.execAlgorithmDialog("gmd_pipeline:join_barangay_attributes")
+        except Exception as e:
+            QMessageBox.critical(self, "Join Attributes Error", f"Could not launch Join Barangay Attributes tool: {e}")
+
+    def _run_update_metadata(self):
+        """Invoke Update Metadata processing algorithm dialog."""
+        try:
+            processing.execAlgorithmDialog("gmd_pipeline:update_lgu_with_psgc")
+        except Exception as e:
+            QMessageBox.critical(self, "Update Metadata Error", f"Could not launch Update Metadata tool: {e}")
 
     # ── Tab 2: Geometry Check & Repair UI ──────────────────────────────────────
     def _build_geometry_tab(self):
