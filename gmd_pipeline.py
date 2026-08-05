@@ -118,6 +118,35 @@ class GMDPipeline(object):
             return  # Let user restart; avoid loading alongside half-unloaded providers
         # ────────────────────────────────────────────────────────────────────
 
+        # ── Ensure plugin dependencies are installed / up-to-date ────────
+        from qgis.core import QgsSettings
+        import pathlib
+        
+        settings = QgsSettings()
+        gemma_dir = pathlib.Path(__file__).parent
+        metadata_path = gemma_dir / 'metadata.txt'
+        
+        current_version = 'unknown'
+        if metadata_path.exists():
+            try:
+                with open(metadata_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.startswith('version='):
+                            current_version = line.strip().split('=', 1)[1]
+                            break
+            except Exception:
+                pass
+                
+        last_checked_version = settings.value("GEMMA/dependencies_checked_version", "")
+        
+        # Only check dependencies if this is a fresh install or a new version of GEMMA
+        if last_checked_version != current_version:
+            from .dependency_checker import ensure_plugin_dependencies
+            ensure_plugin_dependencies()
+            settings.setValue("GEMMA/dependencies_checked_version", current_version)
+            settings.sync()
+        # ────────────────────────────────────────────────────────────────────
+
         self.initProcessing()
 
         self.gema_menu = QMenu("Gemma")

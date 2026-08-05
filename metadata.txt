@@ -45,7 +45,7 @@ deprecated=False
 # Since QGIS 3.8, a comma separated list of plugins to be installed
 # (or upgraded) can be specified.
 # Check the documentation for more information.
-# plugin_dependencies=
+# plugin_dependencies=HCMGIS,SpreadsheetLayers
 
 # If the plugin can run on QGIS Server.
 server=False
