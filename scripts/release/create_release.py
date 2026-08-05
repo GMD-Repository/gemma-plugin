@@ -97,20 +97,52 @@ def create_github_release(
     )
 
     if create_resp.status_code == 422 and "already_exists" in create_resp.text:
-        logger.warning("Release or tag '%s' already exists on %s/%s. Fetching existing release...", tag, owner, repo)
+        logger.warning("Release or tag '%s' already exists on %s/%s. Deleting old release for re-creation...", tag, owner, repo)
+        # Fetch the existing release so we can delete it
         get_resp = requests.get(
             f"{GITHUB_API}/repos/{owner}/{repo}/releases/tags/{tag}",
             headers=headers,
             timeout=30,
         )
         if get_resp.ok:
-            release_data = get_resp.json()
-            release_url = release_data["html_url"]
-            release_id = release_data["id"]
-            logger.info("✅ Found existing release: %s (ID: %s)", release_url, release_id)
+            old_release_id = get_resp.json()["id"]
+            # Delete the old release
+            del_resp = requests.delete(
+                f"{GITHUB_API}/repos/{owner}/{repo}/releases/{old_release_id}",
+                headers=headers,
+                timeout=30,
+            )
+            if del_resp.ok:
+                logger.info("Deleted old release ID %s", old_release_id)
+            else:
+                logger.warning("Failed to delete old release (%d): %s", del_resp.status_code, del_resp.text)
+            # Delete the remote tag so a fresh one is created
+            tag_del_resp = requests.delete(
+                f"{GITHUB_API}/repos/{owner}/{repo}/git/refs/tags/{tag}",
+                headers=headers,
+                timeout=30,
+            )
+            if tag_del_resp.ok or tag_del_resp.status_code == 422:
+                logger.info("Deleted remote tag %s", tag)
+            else:
+                logger.warning("Failed to delete remote tag (%d): %s", tag_del_resp.status_code, tag_del_resp.text)
         else:
-            logger.error("Failed to fetch existing release (%d): %s", get_resp.status_code, get_resp.text)
+            logger.warning("Could not fetch existing release (%d): %s", get_resp.status_code, get_resp.text)
+
+        # Retry creation after cleanup
+        create_resp = requests.post(
+            f"{GITHUB_API}/repos/{owner}/{repo}/releases",
+            headers=headers,
+            json=payload,
+            timeout=30,
+        )
+        if not create_resp.ok:
+            logger.error("Failed to re-create GitHub release (%d): %s", create_resp.status_code, create_resp.text)
             create_resp.raise_for_status()
+        release_data = create_resp.json()
+        release_url = release_data["html_url"]
+        release_id = release_data["id"]
+        logger.info("✅ Release re-created: %s", release_url)
     else:
         if not create_resp.ok:
             logger.error("Failed to create GitHub release (%d): %s", create_resp.status_code, create_resp.text)
