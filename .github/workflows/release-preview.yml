@@ -1,16 +1,16 @@
 name: Publish Preview Release
 
 on:
-  push:
-    branches:
-      - main
-      - beta
-      - dev
-    paths-ignore:
-      - 'docs/**'
-      - 'metadata.txt'
-      - 'CHANGELOG.md'
-      - 'README.md'
+  # push:
+  #   branches:
+  #     - main
+  #     - beta
+  #     - dev
+  #   paths-ignore:
+  #     - 'docs/**'
+  #     - 'metadata.txt'
+  #     - 'CHANGELOG.md'
+  #     - 'README.md'
   workflow_dispatch:
 
 permissions:
