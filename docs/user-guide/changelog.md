@@ -2,6 +2,21 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.0
+<time>Aug 05, 2026</time>
+
+### ✨ New Features
+- Add LGU CRS and Geometry Alignment Algorithm to Processing Provider ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#1](https://github.com/GMD-Repository/gemma-plugin/pull/1))
+- Removed Unnecessary Subfolder; Added Readme ([@velascojasper0](https://github.com/velascojasper0)) ([#2](https://github.com/GMD-Repository/gemma-plugin/pull/2))
+- Addition of QP Generation ([@velascojasper0](https://github.com/velascojasper0)) ([#3](https://github.com/GMD-Repository/gemma-plugin/pull/3))
+- Automated release workflow for QGIS plugin ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#4](https://github.com/GMD-Repository/gemma-plugin/pull/4))
+- /auto release ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#5](https://github.com/GMD-Repository/gemma-plugin/pull/5))
+- make github release a pre-release and add email notifications ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#6](https://github.com/GMD-Repository/gemma-plugin/pull/6))
+- /auto release ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#7](https://github.com/GMD-Repository/gemma-plugin/pull/7))
+- /auto release ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#8](https://github.com/GMD-Repository/gemma-plugin/pull/8))
+
+<Contributors :contributors="['kentemman-gmd', 'velascojasper0']" />
+
 ## 2.0.0
 <time>Aug 05, 2026</time>
 
