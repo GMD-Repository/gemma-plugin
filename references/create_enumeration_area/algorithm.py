@@ -477,7 +477,7 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
                 delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, feat))
                 temp_ea_index.insertFeature(feat)
                 temp_ea_by_id[feat.id()] = (ean_str, ea_name_str, bgy_name_str, hh, feat)
-            elif hh <= min_hh:
+            elif hh < max_hh:
                 merge_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, feat))
                 temp_ea_index.insertFeature(feat)
                 temp_ea_by_id[feat.id()] = (ean_str, ea_name_str, bgy_name_str, hh, feat)
@@ -1949,13 +1949,16 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             # Delineation candidates strictly require hhcount >= max_household
             is_delin = (_dc_hh >= max_household)
 
-            # 2. Determine if it is a merge candidate
+            # 2. Determine if it is a merge candidate.
+            # Business rule: HH < max_household → Merge candidate.
+            # The merge_indi field override is respected only when the EA is NOT already
+            # a Delineation candidate (an EA must never appear in both lists).
             is_merge = False
-            if merge_indi_col_idx != -1:
+            if not is_delin and merge_indi_col_idx != -1:
                 val = _dc_feat.attribute(merge_indi_col_idx)
                 is_merge = (val is not None and str(val).strip().lower() in ("for merging", "for_merging"))
-            else:
-                is_merge = (_dc_hh <= min_household) if not is_delin else False
+            if not is_delin and not is_merge:
+                is_merge = (_dc_hh < max_household)
 
             if is_delin:
                 total_delin_candidates += 1
@@ -3701,15 +3704,26 @@ class CreateEAAlgorithm(QgsProcessingAlgorithm):
             return (orig_id in delineation_candidate_ids)
 
         def is_merge_candidate(ea_item):
+            # Split parts: a freshly-split sub-polygon is a merge candidate only when it
+            # falls below the minimum floor (min_household, default 100). A split part
+            # that lands between min_household and max_household is valid — do not re-merge it.
             if ea_item.get('from_split', False):
                 return ea_item['hh_count'] <= min_household
+            # Already-merged EAs are never re-merged.
             if ea_item.get('from_merge', False):
                 return False
             orig_id = ea_item.get('original_id')
-            if merge_indi_col_idx != -1 and orig_id in full_ea_by_id:
+            # Explicit field-level override (merge_indi) is respected only for EAs
+            # that are not already Delineation candidates.
+            if orig_id not in delineation_candidate_ids and merge_indi_col_idx != -1 and orig_id in full_ea_by_id:
                 val = full_ea_by_id[orig_id].attribute(merge_indi_col_idx)
-                return val is not None and str(val).strip().lower() in ("for merging", "for_merging")
-            return (orig_id in merge_candidate_ids) or (orig_id in delineation_candidate_ids and ea_item['hh_count'] <= min_household)
+                if val is not None and str(val).strip().lower() in ("for merging", "for_merging"):
+                    return True
+            # Default: any EA in the merge candidate set OR any EA below the threshold
+            # (HH < max_household) that was NOT flagged as a Delineation candidate.
+            return (orig_id in merge_candidate_ids) or (
+                orig_id not in delineation_candidate_ids and ea_item['hh_count'] < max_household
+            )
 
         # Resolve field indices for the output line layer case-insensitively
         ea_fields = previous_ea_source.fields()
