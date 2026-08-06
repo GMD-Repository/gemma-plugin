@@ -43,6 +43,8 @@ def create_github_release(
     prerelease: bool = False,
     target_commitish: str | None = None,
     release_name: str | None = None,
+    changes: dict[str, list[str]] | None = None,
+    summary: str = "",
 ) -> ReleaseResult:
     """Create a GitHub Release and upload the plugin ZIP as an asset.
 
@@ -51,12 +53,14 @@ def create_github_release(
         repo: GitHub repository name.
         tag: Git tag (e.g. "v1.5.0" or "r160").
         version: Version string for the release title.
-        highlights: List of changelog items for the release body.
+        highlights: Flat list of changelog items (fallback for release body).
         zip_path: Path to the plugin ZIP file.
         token: GitHub API token.
         prerelease: Whether this is a pre-release.
         target_commitish: Target branch for the release tag. Defaults to None (uses repo default branch).
         release_name: Custom release name. Defaults to "GEMMA Plugin v{version}".
+        changes: Structured changelog dict (features/fixes/improvements/docs/breaking_changes).
+        summary: One-sentence release summary for the release body header.
 
     Returns:
         ReleaseResult with the release URL and ID.
@@ -73,7 +77,7 @@ def create_github_release(
     if prerelease or "Preview" in name:
         body = _build_preview_body(version, highlights, tag)
     else:
-        body = _build_stable_body(version, highlights)
+        body = _build_stable_body(version, highlights, changes=changes, summary=summary)
 
     # Create the release
     logger.info("Creating GitHub Release: %s (prerelease=%s)", name, prerelease)
@@ -168,18 +172,59 @@ def create_github_release(
     )
 
 
-def _build_stable_body(version: str, highlights: list[str]) -> str:
-    """Build the release body for a stable release."""
-    bullet_list = "\n".join(f"- {h}" for h in highlights)
-    return "\n".join([
-        f"## What's New in v{version}",
-        "",
-        bullet_list,
-        "",
+def _build_stable_body(
+    version: str,
+    highlights: list[str],
+    changes: dict[str, list[str]] | None = None,
+    summary: str = "",
+) -> str:
+    """Build the professional release body for a stable release.
+
+    Renders categorized sections when a structured changes dict is available,
+    falling back to a flat bullet list if only highlights are provided.
+    """
+    _SECTION_META: list[tuple[str, str, str]] = [
+        ("breaking_changes", "⚠️ Breaking Changes",  "breaking"),
+        ("features",         "🚀 New Features",       "feat"),
+        ("improvements",     "🔨 Improvements",       "improvement"),
+        ("fixes",            "🐛 Bug Fixes",           "fix"),
+        ("documentation",    "📚 Documentation",      "docs"),
+    ]
+
+    lines: list[str] = []
+
+    # ── Header ───────────────────────────────────────────────────────────────
+    lines += [f"## What's New in v{version}", ""]
+
+    # ── Optional one-sentence summary ────────────────────────────────────────
+    if summary and summary.strip():
+        lines += [f"> {summary.strip()}", ""]
+
+    # ── Categorized sections (when structured data is available) ─────────────
+    if changes and any(changes.get(k) for k, _, __ in _SECTION_META):
+        for key, heading, _ in _SECTION_META:
+            items = changes.get(key, [])
+            if not items:
+                continue
+            lines += [f"### {heading}", ""]
+            for item in items:
+                lines.append(f"- {item}")
+            lines.append("")
+    else:
+        # Fallback: flat list (no structured categories)
+        for h in highlights:
+            lines.append(f"- {h}")
+        lines.append("")
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    lines += [
         "---",
+        "",
         "**Installation:** Download the `.zip` file below and install in QGIS via "
         "*Plugins → Manage and Install Plugins → Install from ZIP*.",
-    ])
+    ]
+
+    return "\n".join(lines)
 
 
 def _build_preview_body(version: str, highlights: list[str], revision: str) -> str:
