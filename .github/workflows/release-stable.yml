@@ -20,7 +20,6 @@ on:
 
 permissions:
   contents: write
-  models: read
 
 jobs:
   release:
@@ -59,8 +58,7 @@ jobs:
       - name: Run release pipeline
         id: release
         env:
-          GITHUB_TOKEN: ${{ steps.generate-token.outputs.token || secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
-          AI_TOKEN: ${{ secrets.AI_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.generate-token.outputs.token || secrets.GITHUB_TOKEN }}
         run: |
           python scripts/release/release_pipeline.py \
             --mode stable \
