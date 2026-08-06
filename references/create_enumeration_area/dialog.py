@@ -1064,16 +1064,24 @@ class EALauncherDialog(QDialog):
             total_hh += hh
             ea_count += 1
 
-            # Classify candidates: delineation candidates strictly require hh >= max_hh
+            # Classify candidates using the single HH threshold (max_hh, default 300).
+            # Business rule:
+            #   HH >= max_hh  → Delineation candidate
+            #   HH <  max_hh  → Merge candidate
+            # An EA must never appear in both lists.
             is_delin = (hh >= max_hh)
 
+            # Explicit field-level override: a field-tagged "for merging" EA is promoted to
+            # Merge only when it is not already a Delineation candidate.
             is_merge = False
-            if merge_indi_idx != -1:
+            if not is_delin and merge_indi_idx != -1:
                 val = feat.attribute(merge_indi_idx)
                 if val is not None and str(val).strip().lower() in ("for merging", "for_merging"):
                     is_merge = True
-            if not is_merge and not is_delin:
-                is_merge = (hh <= min_hh)
+
+            # Default: every non-Delineation EA is a Merge candidate.
+            if not is_delin and not is_merge:
+                is_merge = (hh < max_hh)
 
             if is_delin:
                 self.all_delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh))
@@ -1237,21 +1245,40 @@ class EALauncherDialog(QDialog):
             if self.feedback.isCanceled():
                 self.log_console.append("<span style='color:#d17a00; font-weight:bold;'>[CANCEL] Pipeline execution cancelled by user.</span>")
             else:
-                # Rename loaded layers in QGIS Layers Panel using 5-digit geocode prefix
+                # Rename and organize loaded layers into structured QGIS Layer Sub-Groups
                 geo5 = self._extract_5digit_geocode() or "00000"
                 from qgis.core import QgsProject, QgsMapLayer
 
-                output_names = {
-                    'DELINEATED_OUTPUT': f"{geo5}_delineated_ea2026",
-                    'MERGED_OUTPUT': f"{geo5}_merged_ea2026",
-                    'SPECIAL_EA_OUTPUT': f"{geo5}_special_ea",
-                    'DELINEATION_CANDIDATE_OUTPUT': f"{geo5}_delineation_candidates",
-                    'MERGE_CANDIDATE_OUTPUT': f"{geo5}_merge_candidates",
-                    'EXTRACTED_BUILDINGS_OUTPUT': f"{geo5}_extracted_bldgpts",
+                root = QgsProject.instance().layerTreeRoot()
+                main_group_name = f"{geo5}_EA_Outputs"
+                main_group = root.findGroup(main_group_name)
+                if not main_group:
+                    main_group = root.insertGroup(0, main_group_name)
+
+                # Create structured sub-groups inside main_group
+                final_eas_group = main_group.findGroup("Final EAs")
+                if not final_eas_group:
+                    final_eas_group = main_group.addGroup("Final EAs")
+
+                candidates_group = main_group.findGroup("Candidates")
+                if not candidates_group:
+                    candidates_group = main_group.addGroup("Candidates")
+
+                reference_group = main_group.findGroup("Reference Layers")
+                if not reference_group:
+                    reference_group = main_group.addGroup("Reference Layers")
+
+                output_mapping = {
+                    'DELINEATED_OUTPUT': (f"{geo5}_delineated_ea2026", final_eas_group),
+                    'MERGED_OUTPUT': (f"{geo5}_merged_ea2026", final_eas_group),
+                    'SPECIAL_EA_OUTPUT': (f"{geo5}_special_ea", final_eas_group),
+                    'DELINEATION_CANDIDATE_OUTPUT': (f"{geo5}_delineation_candidates", candidates_group),
+                    'MERGE_CANDIDATE_OUTPUT': (f"{geo5}_merge_candidates", candidates_group),
+                    'EXTRACTED_BUILDINGS_OUTPUT': (f"{geo5}_extracted_bldgpts", reference_group),
                 }
 
                 if isinstance(results, dict):
-                    for out_key, target_name in output_names.items():
+                    for out_key, (target_name, target_group) in output_mapping.items():
                         if out_key in results:
                             layer_ref = results[out_key]
                             layer = None
@@ -1262,6 +1289,20 @@ class EALauncherDialog(QDialog):
                             
                             if layer:
                                 layer.setName(target_name)
+                                lnode = root.findLayer(layer.id())
+                                if lnode and lnode.parent() != target_group:
+                                    clone = lnode.clone()
+                                    target_group.addChildNode(clone)
+                                    lnode.parent().removeChildNode(lnode)
+
+                # Group any generated splitting line layers (ending with _eadel_update) into Reference Layers
+                for layer_id, proj_layer in QgsProject.instance().mapLayers().items():
+                    if proj_layer.name().endswith("_eadel_update"):
+                        lnode = root.findLayer(layer_id)
+                        if lnode and lnode.parent() != reference_group:
+                            clone = lnode.clone()
+                            reference_group.addChildNode(clone)
+                            lnode.parent().removeChildNode(lnode)
 
                 self.progress_bar.setValue(100)
                 self.log_console.append("<span style='color:#1a7f37; font-weight:bold;'>[COMPLETE] Pipeline execution complete! Results loaded to map.</span>")
