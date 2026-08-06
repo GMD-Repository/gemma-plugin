@@ -261,6 +261,8 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
             tag=tag,
             version=version,
             highlights=changelog.highlights,
+            changes=changelog.changes,
+            summary=changelog.summary,
             zip_path=zip_path,
             token=github_token,
         )
