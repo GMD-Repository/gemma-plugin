@@ -1,9 +1,9 @@
 {
-  "version": "1.0.1-r438",
-  "tag": "r438",
-  "releaseDate": "2026-08-05",
+  "version": "1.0.1-r441",
+  "tag": "r441",
+  "releaseDate": "2026-08-06",
   "repositoryUrl": "https://gemma-plugin.vercel.app/gemma-beta.xml",
-  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r438/gemma-plugin-r438.zip",
-  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r438",
-  "changelogUrl": "https://gemma-plugin.vercel.app/changelog/r438"
+  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r441/gemma-plugin-r441.zip",
+  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r441",
+  "changelogUrl": "https://gemma-plugin.vercel.app/changelog/r441"
 }
