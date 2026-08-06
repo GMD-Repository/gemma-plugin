@@ -25,7 +25,6 @@ Usage:
 
 Environment variables:
     GITHUB_TOKEN        GitHub API token (required)
-    AI_TOKEN            Token with models:read permission (stable only)
     GITHUB_REPOSITORY   Owner/repo (e.g. "GMD-Repository/gemma-plugin")
     GITHUB_OUTPUT       Path to output file (set by GitHub Actions)
     GITHUB_STEP_SUMMARY Path to step summary file (set by GitHub Actions)
@@ -138,7 +137,6 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
     12. Write job summary
     """
     github_token = os.environ.get("GITHUB_TOKEN", "")
-    ai_token = os.environ.get("AI_TOKEN", github_token)
     repo_full = os.environ.get("GITHUB_REPOSITORY", "GMD-Repository/gemma-plugin")
     owner, repo = repo_full.split("/")
     today = date.today().isoformat()
@@ -190,10 +188,10 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
         pr_count = changes_result.pr_count
         commit_count = changes_result.commit_count
 
-    # ── Step 4: Generate AI changelog ─────────────────────────────────────
-    logger.info("═══ Step 4: Generate AI changelog ═══")
+    # ── Step 4: Generate changelog (rule-based categorization) ─────────────
+    logger.info("═══ Step 4: Generate changelog ═══")
     if args.dry_run:
-        logger.info("[DRY RUN] Skipping AI changelog generation")
+        logger.info("[DRY RUN] Skipping changelog generation")
         from scripts.release.generate_changelog import ChangelogResult
         changelog = ChangelogResult(
             summary="Dry run release.",
@@ -205,7 +203,6 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
         changelog = generate_changelog(
             version=version,
             raw_lines=raw_lines,
-            ai_token=ai_token,
         )
 
     logger.info("Changelog: %d highlights (AI=%s)", len(changelog.highlights), changelog.ai_generated)
@@ -281,8 +278,7 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
     summary = "\n".join([
         "# GEMMA Plugin — Stable Release",
         "",
-        f"> **Version:** `v{version}`  ·  **Date:** {date_display}  ·  "
-        f"**AI Generated:** {'✅ Yes' if changelog.ai_generated else '⚠️ Fallback'}",
+        f"> **Version:** `v{version}`  ·  **Date:** {date_display}",
         "",
         "---",
         "",
