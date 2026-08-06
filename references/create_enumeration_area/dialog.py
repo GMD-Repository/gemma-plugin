@@ -1256,9 +1256,9 @@ class EALauncherDialog(QDialog):
                     main_group = root.insertGroup(0, main_group_name)
 
                 # Create structured sub-groups inside main_group
-                final_eas_group = main_group.findGroup("Final EAs")
-                if not final_eas_group:
-                    final_eas_group = main_group.addGroup("Final EAs")
+                eas_group = main_group.findGroup("EAs")
+                if not eas_group:
+                    eas_group = main_group.addGroup("EAs")
 
                 candidates_group = main_group.findGroup("Candidates")
                 if not candidates_group:
@@ -1269,9 +1269,9 @@ class EALauncherDialog(QDialog):
                     reference_group = main_group.addGroup("Reference Layers")
 
                 output_mapping = {
-                    'DELINEATED_OUTPUT': (f"{geo5}_delineated_ea2026", final_eas_group),
-                    'MERGED_OUTPUT': (f"{geo5}_merged_ea2026", final_eas_group),
-                    'SPECIAL_EA_OUTPUT': (f"{geo5}_special_ea", final_eas_group),
+                    'DELINEATED_OUTPUT': (f"{geo5}_delineated_ea2026", eas_group),
+                    'MERGED_OUTPUT': (f"{geo5}_merged_ea2026", eas_group),
+                    'SPECIAL_EA_OUTPUT': (f"{geo5}_special_ea", eas_group),
                     'DELINEATION_CANDIDATE_OUTPUT': (f"{geo5}_delineation_candidates", candidates_group),
                     'MERGE_CANDIDATE_OUTPUT': (f"{geo5}_merge_candidates", candidates_group),
                     'EXTRACTED_BUILDINGS_OUTPUT': (f"{geo5}_extracted_bldgpts", reference_group),
