@@ -1,0 +1,52 @@
+from typing import Optional, Dict, Any
+from qgis.core import QgsFeature, QgsGeometry, QgsSpatialIndex
+from PyQt5.QtCore import QVariant
+
+def get_parent_barangay(
+    ea_geom: QgsGeometry,
+    barangay_index: QgsSpatialIndex,
+    barangay_by_id: Dict[int, QgsFeature]
+) -> Optional[QgsFeature]:
+    """Find parent barangay feature by maximum area overlap."""
+    candidates = barangay_index.intersects(ea_geom.boundingBox())
+    max_overlap = -1.0
+    parent_feat = None
+    for cid in candidates:
+        bar = barangay_by_id.get(cid)
+        if not bar:
+            continue
+        bar_geom = bar.geometry()
+        if bar_geom.intersects(ea_geom):
+            overlap_area = bar_geom.intersection(ea_geom).area()
+            if overlap_area > max_overlap:
+                max_overlap = overlap_area
+                parent_feat = bar
+    return parent_feat
+
+
+def resolve_ea_parent_barangay(
+    ea_feat: QgsFeature,
+    dc_geo_idx: int,
+    barangay_id_field: str,
+    barangay_index: QgsSpatialIndex,
+    barangay_by_id: Dict[int, QgsFeature]
+) -> str:
+    """Resolve barangay code for an EA feature via field attribute or spatial fallback."""
+    if dc_geo_idx != -1:
+        val = ea_feat.attribute(dc_geo_idx)
+        if val is not None and not (isinstance(val, QVariant) and val.isNull()):
+            val_str = str(val).strip()
+            if val_str.endswith(".0"):
+                val_str = val_str[:-2]
+            if val_str:
+                return val_str
+    # Fallback to spatial overlay
+    parent_feat = get_parent_barangay(ea_feat.geometry(), barangay_index, barangay_by_id)
+    if parent_feat:
+        val = parent_feat.attribute(barangay_id_field)
+        if val is not None:
+            val_str = str(val).strip()
+            if val_str.endswith(".0"):
+                val_str = val_str[:-2]
+            return val_str
+    return "Unknown"

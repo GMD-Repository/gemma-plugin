@@ -42,6 +42,7 @@ The dedicated **EA Launcher** dialog provides an interactive workflow prior to e
 | **Minimum Household Count per EA** | Integer | Minimum target household threshold per EA (default: 100). EAs below this limit are merged. |
 | **Maximum Household Count per EA** | Integer | Maximum target household threshold per EA (default: 300). EAs above this limit are split. |
 | **Optimize for Compactness** | Boolean | Prefers spatially compact EA shapes over purely household-balanced splits (default: True). |
+| **Allow Merging Between Under-Threshold Candidate EAs** | Boolean | Controls whether under-threshold candidate EAs (<=100 HH) can merge with each other when no reference EAs exist (default: True). |
 | **Sliver Polygon Area Threshold** | Enumeration | Controls area threshold for identifying and dissolving remnant sliver polygons into neighboring EAs. |
 | **Snapping Tolerance (metres)** | Double | Maximum search distance for snapping proposed split lines to road or river centrelines (default: 15.0 m). |
 | **Target CRS** | CRS | Output Coordinate Reference System (default: EPSG:4326). |
@@ -56,7 +57,7 @@ The dedicated **EA Launcher** dialog provides an interactive workflow prior to e
 | **Merged EAs Layer** | Vector (Polygon) | Optional output containing only EAs generated from merging underpopulated EAs (`<geocode>_merged_ea2026`). |
 | **Special EAs Layer** | Vector (Polygon) | Optional output containing Special EAs generated from Gap and Overlap layers (`<geocode>_special_ea`). |
 | **Candidate for Delineation Layer** | Vector (Polygon) | Layer containing EAs identified as candidates for delineation (>300 HH). |
-| **Candidate for Merging Layer** | Vector (Polygon) | Layer containing EAs identified as candidates for merging (<100 HH). |
+| **Candidate for Merging Layer** | Vector (Polygon) | Layer containing under-threshold initiator EAs (<=100 HH) together with their adjacent reference neighbor EAs evaluated for intra-barangay merging (`<geocode>_merge_candidates`). |
 | **Extracted Building Points Layer** | Vector (Point) | Point layer containing building points tagged with assigned EA identifiers. |
 
 ## How It Works
@@ -80,7 +81,8 @@ The dedicated **EA Launcher** dialog provides an interactive workflow prior to e
 
 6. **Iterative EA Merging**:
    - Underpopulated EAs undergo up to 5 iterative passes of spatial adjacency merging.
-   - Merging is strictly restricted to 2 contiguous EAs (`touches()` or `intersects()`) within the same parent barangay, ensuring combined households do not exceed the maximum threshold (300 HH).
+   - Merging is strictly restricted to contiguous EAs (`touches()` or `intersects()`) within the same parent barangay, ensuring combined households do not exceed the maximum threshold (300 HH).
+   - When **Allow Merging Between Under-Threshold Candidate EAs** is enabled (default), candidate EAs can merge with neighboring candidate EAs in barangays lacking standard reference EAs.
 
 7. **Compliance Sweep and Sliver Dissolve**:
    - Identifies remnant sliver polygons smaller than `SLIVER_THRESHOLD` and dissolves them into the largest adjacent neighbor.
