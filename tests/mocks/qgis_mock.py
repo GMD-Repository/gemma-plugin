@@ -448,9 +448,39 @@ def setup_qgis_mock_if_needed():
     """
     Checks for native QGIS installation. If real PyQGIS is available, initializes native
     QgsApplication and Processing framework. Otherwise, installs headless mock proxies.
+    Also provides a transparent PyQt5 -> qgis.PyQt compatibility bridge for Qt6 builds.
     """
     import os
     global _NATIVE_QGS_APP
+
+    # Map PyQt5 imports to qgis.PyQt for Qt6 QGIS environments (e.g. qgis/qgis:3.40)
+    try:
+        import PyQt5
+    except ImportError:
+        try:
+            import qgis.PyQt
+            sys.modules["PyQt5"] = qgis.PyQt
+            if hasattr(qgis.PyQt, "QtCore"):
+                sys.modules["PyQt5.QtCore"] = qgis.PyQt.QtCore
+            if hasattr(qgis.PyQt, "QtWidgets"):
+                sys.modules["PyQt5.QtWidgets"] = qgis.PyQt.QtWidgets
+            if hasattr(qgis.PyQt, "QtGui"):
+                sys.modules["PyQt5.QtGui"] = qgis.PyQt.QtGui
+        except ImportError:
+            pass
+
+    # Polyfill Qt6enum changes (e.g. QFrame.Shape.HLine) for Qt5 code compatibility
+    try:
+        from qgis.PyQt.QtWidgets import QFrame
+        if hasattr(QFrame, "Shape") and not hasattr(QFrame, "HLine"):
+            QFrame.HLine = QFrame.Shape.HLine
+            QFrame.VLine = QFrame.Shape.VLine
+        if hasattr(QFrame, "Shadow") and not hasattr(QFrame, "Sunken"):
+            QFrame.Sunken = QFrame.Shadow.Sunken
+            QFrame.Plain = QFrame.Shadow.Plain
+            QFrame.Raised = QFrame.Shadow.Raised
+    except Exception:
+        pass
 
     try:
         import qgis.core
