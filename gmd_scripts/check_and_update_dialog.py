@@ -5,16 +5,17 @@ from qgis.PyQt.QtWidgets import (
     QGroupBox, QCheckBox, QTextEdit, QTabWidget, QWidget,
     QFrame, QMessageBox, QProgressBar, QAction, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QSplitter,
-    QApplication, QSpinBox, QComboBox, QDockWidget, QToolButton
+    QApplication, QSpinBox, QComboBox, QDockWidget, QToolButton,
+    QLineEdit, QFormLayout
 )
 from qgis.PyQt.QtGui import QIcon, QColor
 from qgis.core import (
     QgsProject, QgsMapLayerProxyModel, QgsVectorLayer, QgsMapLayer,
-    QgsProcessingContext, QgsProcessingFeedback, QgsProcessingUtils,
+    QgsProcessingContext, QgsProcessingFeedback, QgsProcessingUtils, QgsProcessing,
     QgsRectangle, QgsPointXY, QgsFeatureRequest, QgsProcessingFeatureSourceDefinition,
     QgsFeature, QgsWkbTypes, QgsSnappingConfig, QgsTolerance, QgsGeometry, Qgis
 )
-from qgis.gui import QgsMapLayerComboBox
+from qgis.gui import QgsMapLayerComboBox, QgsFileWidget
 import processing
 
 
@@ -113,7 +114,7 @@ class DigitizeDockWidget(QDockWidget):
         """)
         next_btn.clicked.connect(self._on_next)
 
-        save_done_btn = QPushButton("Save & Done")
+        save_done_btn = QPushButton("Save (Done)")
         save_done_btn.setStyleSheet("""
             QPushButton {
                 background-color: #27AE60;
@@ -306,7 +307,7 @@ class CheckAndUpdateDialog(QDialog):
         layout.setSpacing(12)
 
         # Step Progression Header Banner
-        header_banner = QLabel("Georeferencing  ➔  Digitize  ➔  Update and Verify")
+        header_banner = QLabel("Georeferencing  ➔  Digitize  ➔  Update and Export")
         header_banner.setAlignment(Qt.AlignCenter)
         header_banner.setStyleSheet("""
             QLabel {
@@ -491,8 +492,9 @@ class CheckAndUpdateDialog(QDialog):
         adjust_layout.addWidget(done_btn)
         step2_layout.addLayout(adjust_layout)
 
-        # Connect layer selection changes to populate features
+        # Connect layer selection changes to populate features and update field dropdowns
         self.psa_layer_combo.layerChanged.connect(self._populate_adjust_features)
+        self.psa_layer_combo.layerChanged.connect(self._on_update_lgu_layer_changed)
 
         # Auto-suggest layer ending with *_psa
         self._auto_suggest_psa_layer()
@@ -502,62 +504,57 @@ class CheckAndUpdateDialog(QDialog):
 
         layout.addWidget(step2_group)
 
-        # ── Update and Verify Section ─────────────────────────────────────────
-        step3_group = QGroupBox("Update and Verify")
+        # ── Update and Export Section ─────────────────────────────────────────
+        step3_group = QGroupBox("Update and Export")
         step3_group.setStyleSheet("QGroupBox { font-weight: bold; font-size: 12px; }")
         step3_layout = QVBoxLayout(step3_group)
         step3_layout.setSpacing(8)
 
         step3_desc = QLabel(
-            "Join tabular census/administrative datasets (Excel or CSV) using fuzzy name matching,\n"
-            "and auto-populate LGU PSGC metadata, standard attribute schemas, and administrative codes."
+            "Auto-populate PSGC metadata, standard 15-attribute schemas, and administrative codes for the selected boundary layer."
         )
         step3_desc.setWordWrap(True)
         step3_desc.setStyleSheet("font-size: 11px; color: #34495E;")
         step3_layout.addWidget(step3_desc)
 
-        step3_btns_layout = QHBoxLayout()
-        step3_btns_layout.setSpacing(10)
+        form_layout = QFormLayout()
+        form_layout.setSpacing(6)
 
-        join_btn = QPushButton("Run Join Barangay Attributes")
-        join_btn.setIcon(QIcon(":/images/themes/default/mActionAddTable.svg"))
-        join_btn.setStyleSheet("""
+        # 1. LGU Geocode Field combo
+        self.update_geocode_combo = QComboBox()
+        form_layout.addRow("LGU Geocode Field:", self.update_geocode_combo)
+
+        # 2. LGU Barangay Name Field combo
+        self.update_barangay_combo = QComboBox()
+        form_layout.addRow("LGU Barangay Name Field:", self.update_barangay_combo)
+
+        step3_layout.addLayout(form_layout)
+
+        # Populate initial fields from current PSA Reference Layer
+        self._on_update_lgu_layer_changed()
+
+        # Action Button: Save & Export Enriched Layer
+        save_btn_layout = QHBoxLayout()
+        self.save_export_btn = QPushButton("Update && Export (as GPKG)")
+        self.save_export_btn.setIcon(QIcon(":/images/themes/default/mActionFileSave.svg"))
+        self.save_export_btn.setStyleSheet("""
             QPushButton {
                 background-color: #27AE60;
                 color: white;
                 font-weight: bold;
-                font-size: 11px;
-                padding: 8px 16px;
+                font-size: 12px;
+                padding: 8px 18px;
                 border-radius: 4px;
             }
             QPushButton:hover {
                 background-color: #219A52;
             }
         """)
-        join_btn.clicked.connect(self._run_join_attributes)
+        self.save_export_btn.clicked.connect(self._run_save_and_export_layer)
+        save_btn_layout.addWidget(self.save_export_btn)
+        save_btn_layout.addStretch()
 
-        metadata_btn = QPushButton("Run Update Metadata")
-        metadata_btn.setIcon(QIcon(":/images/themes/default/mActionEditMetadata.svg"))
-        metadata_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #8E44AD;
-                color: white;
-                font-weight: bold;
-                font-size: 11px;
-                padding: 8px 16px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #71368A;
-            }
-        """)
-        metadata_btn.clicked.connect(self._run_update_metadata)
-
-        step3_btns_layout.addWidget(join_btn)
-        step3_btns_layout.addWidget(metadata_btn)
-        step3_btns_layout.addStretch()
-
-        step3_layout.addLayout(step3_btns_layout)
+        step3_layout.addLayout(save_btn_layout)
         layout.addWidget(step3_group)
 
         layout.addStretch()
@@ -725,8 +722,8 @@ class CheckAndUpdateDialog(QDialog):
             do_activate_vertex()
             QTimer.singleShot(150, do_activate_vertex)
 
-            # 6. Launch & Configure QGIS Core Topology Checker ('must not have gaps' rule & Validate All)
-            self._setup_and_run_topology_checker(layer)
+            # 6. Cleanly toggle QGIS Topology Checker action once if not already active
+            self._clean_toggle_topology_checker(layer)
 
             # 7. Configure Advanced Snapping for PSA Reference Layer (12px, Topological Editing, Self Snapping, Avoid Overlap)
             self._configure_layer_snapping(layer)
@@ -751,26 +748,18 @@ class CheckAndUpdateDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Edit Feature Error", f"Failed to activate editing on feature '{feature_name}': {e}")
 
-    def _setup_and_run_topology_checker(self, layer):
-        """Ensure QGIS Topology Checker plugin/dock is loaded and visible, set 'must not have gaps' rule, and validate."""
-        if not layer or not layer.isValid() or not isinstance(layer, QgsVectorLayer):
-            return
-
-        import qgis.utils
-
+    def _clean_toggle_topology_checker(self, layer=None):
+        """Cleanly show/toggle the QGIS Topology Checker panel when clicking Edit, ensuring plugin is loaded on first click."""
         try:
-            main_win = self.iface.mainWindow()
-            topol_action = None
-            topol_dock = None
+            import qgis.utils
 
-            # 1. Enable C++ Core Plugin setting in QSettings
-            for plugin_name in ['topolplugin', 'topol', 'topologychecker']:
+            # 1. Force enable and load C++ plugin if not loaded yet in session
+            for p_name in ['topolplugin', 'topol', 'topologychecker']:
                 try:
-                    QSettings().setValue(f"Qgis/plugins/{plugin_name}/enabled", "true")
+                    QSettings().setValue(f"Qgis/plugins/{p_name}/enabled", "true")
                 except Exception:
                     pass
 
-            # 2. Use QGIS Plugin Manager Interface to load/start C++ plugin if not loaded
             if hasattr(self.iface, 'pluginManager') and self.iface.pluginManager():
                 pm = self.iface.pluginManager()
                 for p_name in ['topolplugin', 'topol']:
@@ -785,102 +774,65 @@ class CheckAndUpdateDialog(QDialog):
                     except Exception:
                         pass
 
-            topol_plugin = qgis.utils.plugins.get('topol') or qgis.utils.plugins.get('topolplugin')
+            # Force immediate Qt GUI event processing to initialize plugin UI synchronously
+            QApplication.processEvents()
 
-            # 3. Search for Topology Checker Action in QGIS main window & menus
+            main_win = self.iface.mainWindow()
+            topol_dock = None
+
+            # 2. Check if Topology Checker QDockWidget already exists in main window
             if main_win:
-                for act in main_win.findChildren(QAction):
-                    name = act.objectName().lower()
-                    text = act.text().lower()
-                    if name in ['mactiontoggletopol', 'mactiontopol'] or 'topol' in name or 'topology' in name or 'topology' in text:
-                        topol_action = act
+                for dock in main_win.findChildren(QDockWidget):
+                    name = dock.objectName().lower()
+                    title = dock.windowTitle().lower()
+                    if 'topology' in title or 'topol' in title or 'topology' in name or 'topol' in name:
+                        topol_dock = dock
+                        dock.setVisible(True)
+                        dock.show()
+                        dock.raise_()
                         break
 
-            if not topol_action and hasattr(self.iface, 'vectorMenu') and self.iface.vectorMenu():
-                for act in self.iface.vectorMenu().findChildren(QAction):
-                    name = act.objectName().lower()
-                    text = act.text().lower()
-                    if 'topol' in name or 'topology' in name or 'topology' in text:
-                        topol_action = act
-                        break
-
-            if not topol_action and topol_plugin and hasattr(topol_plugin, 'action'):
-                topol_action = topol_plugin.action
-
-            # 4. Trigger Action to open Topology Panel
-            if topol_action:
-                if hasattr(topol_action, 'isChecked') and not topol_action.isChecked():
-                    topol_action.trigger()
-                elif hasattr(topol_action, 'trigger'):
-                    topol_action.trigger()
-
-            # 5. Find and show QDockWidget
-            if main_win:
-                for d in main_win.findChildren(QDockWidget):
-                    name = d.objectName().lower()
-                    title = d.windowTitle().lower()
-                    if 'topol' in name or 'topology' in title or 'topol' in title:
-                        topol_dock = d
+            # 3. Check if topol plugin instance is in qgis.utils.plugins
+            if not topol_dock:
+                topol_plugin = qgis.utils.plugins.get('topol') or qgis.utils.plugins.get('topolplugin')
+                if topol_plugin:
+                    topol_dock = getattr(topol_plugin, 'dockWidget', None) or getattr(topol_plugin, 'dock', None)
+                    if topol_dock:
                         topol_dock.setVisible(True)
                         topol_dock.show()
                         topol_dock.raise_()
-                        break
+                    elif hasattr(topol_plugin, 'action') and topol_plugin.action:
+                        topol_plugin.action.trigger()
 
-            # 6. Trigger Validate All with progressive retries (300ms & 700ms)
-            QTimer.singleShot(300, lambda: self._trigger_topol_validate(topol_plugin))
-            QTimer.singleShot(700, lambda: self._trigger_topol_validate(topol_plugin))
+            # 4. Search for Topology QAction in main window & vector menu
+            if not topol_dock:
+                topol_action = None
+                if main_win:
+                    for act in main_win.findChildren(QAction):
+                        name = act.objectName().lower()
+                        text = act.text().lower()
+                        if name in ['mactiontoggletopol', 'mactiontopol'] or 'topology' in text or 'topol' in name:
+                            topol_action = act
+                            break
+
+                if not topol_action and hasattr(self.iface, 'vectorMenu') and self.iface.vectorMenu():
+                    for act in self.iface.vectorMenu().findChildren(QAction):
+                        name = act.objectName().lower()
+                        text = act.text().lower()
+                        if 'topology' in text or 'topol' in name:
+                            topol_action = act
+                            break
+
+                if topol_action:
+                    topol_action.trigger()
+
+            QApplication.processEvents()
         except Exception:
             pass
 
-    def _trigger_topol_validate(self, topol_plugin=None):
-        """Trigger 'Validate All' on Topology Checker dock panel."""
-        try:
-            import qgis.utils
-            main_win = self.iface.mainWindow()
-            topol_dock = None
-            if main_win:
-                for d in main_win.findChildren(QDockWidget):
-                    name = d.objectName().lower()
-                    title = d.windowTitle().lower()
-                    if 'topol' in name or 'topology' in title or 'topol' in title:
-                        topol_dock = d
-                        break
 
-            if topol_dock:
-                buttons = topol_dock.findChildren(QToolButton) + topol_dock.findChildren(QPushButton)
-                for btn in buttons:
-                    txt = btn.text().lower()
-                    obj = btn.objectName().lower()
-                    tooltip = btn.toolTip().lower()
-                    if ('validate all' in txt or 'validateall' in obj or 'validate all' in tooltip or
-                        'validate' in txt or 'validate' in tooltip or 'validate' in obj or
-                        ('all' in txt and 'validate' in tooltip) or 'validateext' in obj):
-                        btn.click()
-                        return
 
-                for btn in buttons:
-                    if btn.actions():
-                        btn.click()
-                        return
 
-            if not topol_plugin:
-                topol_plugin = qgis.utils.plugins.get('topol') or qgis.utils.plugins.get('topolplugin')
-
-            if topol_plugin:
-                dock = getattr(topol_plugin, 'dockWidget', None) or getattr(topol_plugin, 'dock', None)
-                if dock:
-                    val_all_btn = getattr(dock, 'mValidateAllButton', None) or getattr(dock, 'btnValidateAll', None)
-                    if not val_all_btn:
-                        val_all_btn = dock.findChild(QPushButton, 'mValidateAllButton') or dock.findChild(QToolButton, 'mValidateAllButton')
-
-                    if val_all_btn and hasattr(val_all_btn, 'click'):
-                        val_all_btn.click()
-                    elif hasattr(dock, 'validateAll'):
-                        dock.validateAll()
-                    elif hasattr(topol_plugin, 'validateAll'):
-                        topol_plugin.validateAll()
-        except Exception:
-            pass
 
     def _configure_layer_snapping(self, layer):
         """Configure advanced snapping options for the PSA Reference Layer (12px tolerance, topological editing ON, self snapping ON, intersection snapping OFF, avoid overlap ON)."""
@@ -1130,8 +1082,57 @@ class CheckAndUpdateDialog(QDialog):
         else:
             QMessageBox.information(self, "Editing Complete", f"Closed editing mode for '{layer.name()}'.")
 
+    def _trigger_topol_validate(self):
+        """Cleanly trigger the 'Validate All' button on the QGIS Topology Checker dock panel."""
+        try:
+            import qgis.utils
+
+            # Force immediate Qt GUI event processing so feature change/geometry updates are processed
+            QApplication.processEvents()
+
+            main_win = self.iface.mainWindow()
+            topol_dock = None
+            if main_win:
+                for d in main_win.findChildren(QDockWidget):
+                    name = d.objectName().lower()
+                    title = d.windowTitle().lower()
+                    if 'topology' in title or 'topol' in title or 'topology' in name or 'topol' in name:
+                        topol_dock = d
+                        break
+
+            topol_plugin = qgis.utils.plugins.get('topol') or qgis.utils.plugins.get('topolplugin')
+            if not topol_dock and topol_plugin:
+                topol_dock = getattr(topol_plugin, 'dockWidget', None) or getattr(topol_plugin, 'dock', None)
+
+            # 1. Search for Validate All button in dock widget and click it
+            if topol_dock:
+                buttons = topol_dock.findChildren(QToolButton) + topol_dock.findChildren(QPushButton)
+                for btn in buttons:
+                    txt = btn.text().lower()
+                    obj = btn.objectName().lower()
+                    tooltip = btn.toolTip().lower()
+                    if ('validate all' in txt or 'validateall' in obj or 'validate all' in tooltip or
+                        'validate' in txt or 'validate' in tooltip or 'validate' in obj or
+                        ('all' in txt and 'validate' in tooltip) or 'validateext' in obj):
+                        if hasattr(btn, 'click'):
+                            btn.click()
+                            return
+
+            # 2. Fall back to calling validateAll methods on dock or plugin object
+            if topol_dock and hasattr(topol_dock, 'validateAll'):
+                topol_dock.validateAll()
+                return
+
+            if topol_plugin:
+                if hasattr(topol_plugin, 'validateAll'):
+                    topol_plugin.validateAll()
+                elif hasattr(topol_plugin, 'validate'):
+                    topol_plugin.validate()
+        except Exception:
+            pass
+
     def _run_prev_layer(self):
-        """Move to the previous feature in the Adjust Feature list, trigger Edit action, and re-validate topology."""
+        """Move to the previous feature in the Adjust Feature list, trigger Edit action, and validate topology."""
         count = self.adjust_feature_combo.count()
         if count == 0:
             return QMessageBox.warning(self, "Previous Feature", "No features found in the selected PSA Reference Layer.")
@@ -1140,11 +1141,10 @@ class CheckAndUpdateDialog(QDialog):
         prev_idx = (curr_idx - 1) % count
         self.adjust_feature_combo.setCurrentIndex(prev_idx)
         self._run_edit_layer()
-        QTimer.singleShot(300, lambda: self._trigger_topol_validate())
-        QTimer.singleShot(700, lambda: self._trigger_topol_validate())
+        self._trigger_topol_validate()
 
     def _run_next_layer(self):
-        """Advance to the next feature in the Adjust Feature list, trigger Edit action, and re-validate topology."""
+        """Advance to the next feature in the Adjust Feature list, trigger Edit action, and validate topology."""
         count = self.adjust_feature_combo.count()
         if count == 0:
             return QMessageBox.warning(self, "Next Feature", "No features found in the selected PSA Reference Layer.")
@@ -1153,8 +1153,7 @@ class CheckAndUpdateDialog(QDialog):
         next_idx = (curr_idx + 1) % count
         self.adjust_feature_combo.setCurrentIndex(next_idx)
         self._run_edit_layer()
-        QTimer.singleShot(300, lambda: self._trigger_topol_validate())
-        QTimer.singleShot(700, lambda: self._trigger_topol_validate())
+        self._trigger_topol_validate()
 
     def _run_georeferencer(self):
         """Invoke built-in QGIS Georeferencer action directly and auto-trigger Open Raster at C:\\PSA-GIS."""
@@ -1342,19 +1341,127 @@ class CheckAndUpdateDialog(QDialog):
         except Exception as e:
             QMessageBox.warning(self, "Georeferencer", f"Could not launch Georeferencer: {e}")
 
-    def _run_join_attributes(self):
-        """Invoke Join Barangay Attributes processing algorithm dialog."""
-        try:
-            processing.execAlgorithmDialog("gmd_pipeline:join_barangay_attributes")
-        except Exception as e:
-            QMessageBox.critical(self, "Join Attributes Error", f"Could not launch Join Barangay Attributes tool: {e}")
+    def _on_update_lgu_layer_changed(self):
+        """Populate geocode and barangay field dropdowns based on currently selected PSA Reference Layer."""
+        if not hasattr(self, "update_geocode_combo") or not hasattr(self, "update_barangay_combo"):
+            return
+        layer = self.psa_layer_combo.currentLayer()
+        self.update_geocode_combo.clear()
+        self.update_barangay_combo.clear()
 
-    def _run_update_metadata(self):
-        """Invoke Update Metadata processing algorithm dialog."""
+        if not layer or not isinstance(layer, QgsVectorLayer) or not layer.isValid():
+            return
+
+        fields = [f.name() for f in layer.fields()]
+        self.update_geocode_combo.addItems(fields)
+        self.update_barangay_combo.addItems(fields)
+
+        # Auto-suggest geocode field
+        geo_idx = -1
+        for candidate in ["geocode", "psgc", "code", "lgu_code", "psgc_code", "geo_code"]:
+            for i, f in enumerate(fields):
+                if candidate in f.lower().replace("_", ""):
+                    geo_idx = i
+                    break
+            if geo_idx != -1:
+                break
+        if geo_idx != -1:
+            self.update_geocode_combo.setCurrentIndex(geo_idx)
+
+        # Auto-suggest barangay field
+        bgy_idx = -1
+        for candidate in ["barangay", "lgu_bgy_name", "bgy_name", "brgy_name", "brgy", "bgy"]:
+            for i, f in enumerate(fields):
+                if candidate in f.lower().replace("_", ""):
+                    bgy_idx = i
+                    break
+            if bgy_idx != -1:
+                break
+        if bgy_idx != -1:
+            self.update_barangay_combo.setCurrentIndex(bgy_idx)
+
+    def _run_save_and_export_layer(self):
+        """Pass parameters from embedded controls directly to Update Metadata (by Geocode) algorithm."""
+        lgu_layer = self.psa_layer_combo.currentLayer()
+        if not lgu_layer or not lgu_layer.isValid():
+            QMessageBox.warning(self, "Invalid Layer", "Please select a valid PSA Reference / LGU Boundary Layer.")
+            return
+
+        geocode_field = self.update_geocode_combo.currentText()
+        barangay_field = self.update_barangay_combo.currentText()
+
+        # Resolve output directory: Layer folder on disk -> QGIS project folder -> User Documents
+        source_path = lgu_layer.source().split("|")[0]
+        out_dir = ""
+        if os.path.isfile(source_path) or os.path.isdir(source_path):
+            out_dir = os.path.dirname(source_path) if os.path.isfile(source_path) else source_path
+
+        if not out_dir or not os.path.isdir(out_dir):
+            proj_file = QgsProject.instance().fileName()
+            if proj_file and os.path.isfile(proj_file):
+                out_dir = os.path.dirname(proj_file)
+            elif QgsProject.instance().homePath() and os.path.isdir(QgsProject.instance().homePath()):
+                out_dir = QgsProject.instance().homePath()
+            else:
+                out_dir = os.path.expanduser("~/Documents")
+
+        params = {
+            "INPUT": lgu_layer,
+            "GEOCODE_FIELD": geocode_field,
+            "BARANGAY_FIELD": barangay_field,
+            "SOURCE": "LGU",
+            "SOURCE_YEAR": "2026",
+            "OUTPUT_DIR": out_dir,
+            "OPEN_OUTPUT": True,
+            "OUTPUT": os.path.join(out_dir, "Updated_LGU.gpkg"),
+        }
+
+        # Provide immediate visual feedback to user
+        orig_text = self.save_export_btn.text()
+        self.save_export_btn.setEnabled(False)
+        self.save_export_btn.setText("Updating & Exporting... Please wait...")
+        self.save_export_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #7F8C8D;
+                color: white;
+                font-weight: bold;
+                font-size: 12px;
+                padding: 8px 18px;
+                border-radius: 4px;
+            }
+        """)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
+
         try:
-            processing.execAlgorithmDialog("gmd_pipeline:update_lgu_with_psgc")
+            result = processing.runAndLoadResults("gmd_pipeline:update_lgu_by_geocode", params)
+            out_path = result.get("OUTPUT", out_dir) if isinstance(result, dict) else out_dir
+            QApplication.restoreOverrideCursor()
+            QMessageBox.information(
+                self,
+                "Save & Export Successful",
+                f"Successfully updated LGU boundary layer attributes and saved output!\n\nDestination: {out_path}"
+            )
         except Exception as e:
-            QMessageBox.critical(self, "Update Metadata Error", f"Could not launch Update Metadata tool: {e}")
+            QApplication.restoreOverrideCursor()
+            QMessageBox.critical(self, "Export Error", f"Could not save and export updated layer: {e}")
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.save_export_btn.setEnabled(True)
+            self.save_export_btn.setText(orig_text)
+            self.save_export_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #27AE60;
+                    color: white;
+                    font-weight: bold;
+                    font-size: 12px;
+                    padding: 8px 18px;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #219A52;
+                }
+            """)
 
     # ── Tab 2: Geometry Check & Repair UI ──────────────────────────────────────
     def _build_geometry_tab(self):
