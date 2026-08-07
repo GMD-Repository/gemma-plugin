@@ -49,7 +49,7 @@ jobs:
             const isSuccess = '${{ needs.test-suite.result }}' === 'success';
             const status = isSuccess ? '✅ All Checks Passed' : '❌ Tests Failed';
             
-            const body = `### 🔍 GEMMA QGIS Plugin — PR Test Results
+            const body = `### GEMMA QGIS Plugin — PR Test Results
 
             | Item | Value |
             | :--- | :--- |
