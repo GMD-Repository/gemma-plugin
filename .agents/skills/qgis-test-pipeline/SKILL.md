@@ -1,0 +1,162 @@
+---
+name: qgis-test-pipeline
+description: Standard operating procedure and protocol for authoring, mocking, scaffolding, generating unit tests for new or updated gmd_scripts, and enforcing GitHub Actions PR test gating with sticky PR comment bot updates.
+---
+
+# QGIS Test Pipeline — Standard Operating Procedure (SOP)
+
+This document defines the standardized test architecture, auto-test generation protocol, PyQGIS execution, and CI gating for the **GEMMA QGIS Plugin**.
+
+---
+
+## 1. Test Suite Architecture
+
+All test assets are centralized in the `tests/` directory:
+
+```text
+gemma-plugin/
+├── tests/
+│   ├── mocks/
+│   │   ├── qgis_mock.py            # Headless QGIS/PyQt5 mock & PyQGIS initializer
+│   │   └── sample_data.py          # Spatial vector layer fixture generators (polygons, lines, points)
+│   ├── unit/
+│   │   ├── test_ea_pipeline.py     # EA delineation & merge unit tests
+│   │   ├── test_gmdhelpers.py      # Core helper function unit tests
+│   │   └── test_*.py               # Unit tests for all gmd_scripts/ modules
+│   ├── integration/                # Full spatial integration tests with GeoPackages
+│   └── run_tests.py                # Unified test runner & reporter
+├── scripts/
+│   └── testing/
+│       └── generate_test_stubs.py  # Auto-scaffolds test files & checks CI coverage
+└── .github/
+    └── workflows/
+        └── test-pr.yml             # QGIS Docker container GitHub Actions PR Gate + Comment Bot
+```
+
+---
+
+## 2. Developer Protocol: Adding or Updating `gmd_scripts/`
+
+Whenever a new script is added or an existing script is modified in `gmd_scripts/`:
+
+### Step 1: Auto-Generate Test Stubs for New/Updated Scripts
+Run `generate_test_stubs.py` to scan `gmd_scripts/` and automatically scaffold corresponding test files in `tests/unit/`:
+
+```bash
+python scripts/testing/generate_test_stubs.py
+```
+
+### Step 2: Write Functional Tests using Spatial Fixtures
+Utilize `sample_data.py` to generate in-memory spatial layers for realistic algorithm verification:
+
+```python
+import unittest
+from tests.mocks.qgis_mock import setup_qgis_mock_if_needed, QgsProcessingFeedback, QgsProcessingContext
+from tests.mocks.sample_data import create_sample_polygon_layer
+
+setup_qgis_mock_if_needed()
+
+class TestMyNewScript(unittest.TestCase):
+    def setUp(self):
+        self.sample_layer = create_sample_polygon_layer("Sample_EA", count=5)
+
+    def test_script_execution(self):
+        # ... execute algorithm or helper function ...
+        self.assertIsNotNone(self.sample_layer)
+```
+
+### Step 3: Run Local Test Suite
+Run the unified test runner to execute the full suite:
+
+```bash
+python tests/run_tests.py
+```
+
+### Step 4: Verify Coverage Gate
+Run with `--check` to confirm 100% test coverage before committing:
+
+```bash
+python scripts/testing/generate_test_stubs.py --check
+```
+
+---
+
+## 3. QGIS CLI vs Standard Python Dual Execution Modes (`qgis_mock.py`)
+
+The test architecture supports **dual execution modes**:
+
+1. **Native QGIS CLI / OSGeo4W Shell / Docker (`qgis/qgis:latest`)**:
+   - Uses real native PyQGIS (`qgis.core`, `processing`, `PyQt5`) C++ bindings.
+   - Automatically initializes `QgsApplication` and `Processing.initialize()` on boot.
+   - Run command in QGIS CLI / OSGeo4W Shell / Docker:
+     ```bash
+     python tests/run_tests.py
+     ```
+
+2. **Standard Python CLI (No QGIS Desktop Installed)**:
+   - Uses the lightweight in-memory `qgis_mock.py` proxy layer.
+   - Allows instant test execution anywhere without needing a full QGIS GUI installation.
+   - Run command in standard Python:
+     ```bash
+     python tests/run_tests.py
+     ```
+
+---
+
+## 4. Test Run Commands & Output Verification
+
+### Command 1: Run Full QGIS Test Suite
+```bash
+python tests/run_tests.py
+```
+**Expected Output Summary**:
+```text
+======================================================================
+ GEMMA QGIS Plugin — Test Suite Runner
+======================================================================
+Discovering tests under: .../tests
+======================================================================
+Tests run: 50
+Errors: 0
+Failures: 0
+Skipped: 0
+======================================================================
+[STATUS] PASSED — All unit & integration tests succeeded.
+```
+
+### Command 2: Run Coverage Check Gate
+```bash
+python scripts/testing/generate_test_stubs.py --check
+```
+**Expected Output**:
+```text
+[CHECK PASSED] All scripts in gmd_scripts/ have corresponding unit test files.
+```
+
+### Command 3: Run Individual Test File
+```bash
+python -m unittest tests/unit/test_repair_geometry_errors.py
+```
+
+---
+
+## 5. GitHub Actions Virtual Environment Testing (`test-pr.yml`)
+
+Every Pull Request submitted to `main`, `master`, `develop`, or `enhance/**` branches automatically triggers the test pipeline inside an official **`qgis/qgis:latest`** Docker container hosted on GitHub Actions Virtual Machines.
+
+### GitHub CI Environment Details:
+- **Image**: `qgis/qgis:latest` (Contains pre-installed official native QGIS C++ binaries & PyQGIS bindings).
+- **Automated Workflow**:
+  1. **Coverage Check**: Runs `python3 scripts/testing/generate_test_stubs.py --check` (Fails if any script in `gmd_scripts/` lacks a unit test).
+  2. **Full QGIS Execution**: Runs `python3 tests/run_tests.py` against the native QGIS engine inside the GitHub runner container.
+  3. **Sticky PR Comment Bot**: Automatically posts or updates a PR comment table with test status, coverage status, and commit hash.
+
+```markdown
+### 🔍 GEMMA QGIS Plugin — PR Test Results
+
+| Item | Value |
+| :--- | :--- |
+| **Test Status** | ✅ All Checks Passed |
+| **Coverage Gate** | ✅ 100% (All gmd_scripts covered) |
+| **Commit** | `e34d240` |
+```

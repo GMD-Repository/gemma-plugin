@@ -5,6 +5,7 @@ __copyright__ = '(C) 2025, Geosptial Management Division'
 import subprocess
 import pip
 import importlib
+import processing
 
 
 def install_package(package_name):
@@ -28,7 +29,7 @@ def uninstall_package(package_name):
     pip.main(["uninstall", package_name])
 
 
-def remove_layer_lengths(layer):
+def remove_layer_lengths(layer, context=None, feedback=None):
     field_mapping = []
     for f in layer.fields():
         field_mapping.append({
