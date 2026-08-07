@@ -165,7 +165,7 @@ Every Pull Request submitted to `main`, `master`, `develop`, or `enhance/**` bra
 - **Automated Workflow**:
   1. **Coverage Check**: Runs `python3 scripts/testing/generate_test_stubs.py --check` (Fails if any script in `gmd_scripts/` lacks a unit test).
   2. **Full QGIS Execution**: Runs `python3 tests/run_tests.py` against the native QGIS engine inside the GitHub runner container.
-  3. **Sticky PR Comment Bot**: Automatically posts or updates a PR comment table with test status, coverage status, and commit hash.
+  3. **Workflow Summary & Sticky PR Comment Bot**: Automatically renders the full executive test suite summary table to both the **GitHub Actions Run Summary page** (`core.summary`) and sticky PR comments.
 
 ```markdown
 ### 🧪 GEMMA QGIS Plugin — Automated Test Suite Results
