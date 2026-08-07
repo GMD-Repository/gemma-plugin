@@ -55,7 +55,12 @@ class TestLguFixProcessing(unittest.TestCase):
             self.alg.INPUT: self.sample_layer,
             self.alg.OUTPUT: 'memory:output_fixed_lgu'
         }
+        from qgis.core import QgsProject
+        QgsProject.instance().addMapLayer(self.sample_layer)
+
         context = QgsProcessingContext()
+        if hasattr(context, "setProject"):
+            context.setProject(QgsProject.instance())
         if hasattr(context, "temporaryLayerStore"):
             context.temporaryLayerStore().addMapLayer(self.sample_layer)
         feedback = QgsProcessingFeedback()

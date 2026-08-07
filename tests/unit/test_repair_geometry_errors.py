@@ -26,7 +26,7 @@ class TestRepairGeometryErrors(unittest.TestCase):
 
     def test_geometry_helper_functions(self):
         """Test clean_geom and is_valid_polygon_geom on sample geometry."""
-        poly_geom = QgsGeometry.fromWkt("POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))")
+        poly_geom = QgsGeometry.fromWkt("POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))")
         self.assertTrue(self.mod.is_valid_polygon_geom(poly_geom))
         cleaned = self.mod.clean_geom(poly_geom)
         self.assertIsNotNone(cleaned)
@@ -44,7 +44,12 @@ class TestRepairGeometryErrors(unittest.TestCase):
             self.alg.REPAIR_MODE: 0,
             self.alg.OUTPUT: "TEMPORARY_OUTPUT"
         }
+        from qgis.core import QgsProject
+        QgsProject.instance().addMapLayer(self.sample_layer)
+
         context = QgsProcessingContext()
+        if hasattr(context, "setProject"):
+            context.setProject(QgsProject.instance())
         if hasattr(context, "temporaryLayerStore"):
             context.temporaryLayerStore().addMapLayer(self.sample_layer)
         feedback = QgsProcessingFeedback()

@@ -43,7 +43,12 @@ class TestScanGeometryErrors(unittest.TestCase):
             self.alg.CHECK_DUPLICATE: False,
             self.alg.OUTPUT_ERRORS: "TEMPORARY_OUTPUT"
         }
+        from qgis.core import QgsProject
+        QgsProject.instance().addMapLayer(self.sample_layer)
+
         context = QgsProcessingContext()
+        if hasattr(context, "setProject"):
+            context.setProject(QgsProject.instance())
         if hasattr(context, "temporaryLayerStore"):
             context.temporaryLayerStore().addMapLayer(self.sample_layer)
         feedback = QgsProcessingFeedback()

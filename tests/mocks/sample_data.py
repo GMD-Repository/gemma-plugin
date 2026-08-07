@@ -151,9 +151,9 @@ def create_sample_line_layer(name="Sample_Road_Lines", count=5):
     var_int = getattr(QVariant, "Int", 2)
 
     fields = QgsFields()
-    fields.append(QgsField("road_id", var_int, "Integer"))
-    fields.append(QgsField("road_name", var_str, "String", 50))
-    fields.append(QgsField("road_type", var_str, "String", 20))
+    fields.append(QgsField("road_id", var_int))
+    fields.append(QgsField("road_name", var_str))
+    fields.append(QgsField("road_type", var_str))
 
     layer = QgsVectorLayer("LineString?crs=EPSG:4326", name, "memory")
 
