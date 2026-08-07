@@ -1,5 +1,5 @@
 import os
-from qgis.PyQt.QtCore import Qt, QVariant, QTimer, QSettings
+from qgis.PyQt.QtCore import Qt, QVariant, QTimer, QSettings, QPoint
 from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QGroupBox, QCheckBox, QTextEdit, QTabWidget, QWidget,
@@ -12,7 +12,7 @@ from qgis.core import (
     QgsProject, QgsMapLayerProxyModel, QgsVectorLayer, QgsMapLayer,
     QgsProcessingContext, QgsProcessingFeedback, QgsProcessingUtils,
     QgsRectangle, QgsPointXY, QgsFeatureRequest, QgsProcessingFeatureSourceDefinition,
-    QgsFeature, QgsWkbTypes
+    QgsFeature, QgsWkbTypes, QgsSnappingConfig, QgsTolerance, QgsGeometry, Qgis
 )
 from qgis.gui import QgsMapLayerComboBox
 import processing
@@ -23,6 +23,185 @@ def resolve_processing_output_layer(output_value, context):
     if isinstance(output_value, QgsVectorLayer):
         return output_value
     return QgsProcessingUtils.mapLayerFromString(output_value, context)
+
+
+class DigitizeDockWidget(QDockWidget):
+    """QGIS DockWidget for Gemma Digitize Navigation (dockable under Layers, Processing Toolbox, etc.)."""
+
+    def __init__(self, parent_dialog, feature_name=""):
+        super().__init__("Gemma Digitize Navigation", parent_dialog.iface.mainWindow())
+        self.setObjectName("GemmaDigitizeNavigationDock")
+        self.parent_dialog = parent_dialog
+        self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea | Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea)
+
+        main_widget = QWidget(self)
+        layout = QVBoxLayout(main_widget)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        # Feature Dropdown Selector
+        dropdown_layout = QHBoxLayout()
+        dropdown_layout.setSpacing(6)
+
+        title_lbl = QLabel("Feature:")
+        title_lbl.setStyleSheet("font-weight: bold; font-size: 12px; color: #2C3E50;")
+        dropdown_layout.addWidget(title_lbl)
+
+        self.feature_combo = QComboBox()
+        self.feature_combo.setStyleSheet("""
+            QComboBox {
+                font-weight: bold;
+                padding: 3px 6px;
+                border: 1px solid #BDC3C7;
+                border-radius: 4px;
+                background-color: white;
+                color: #2C3E50;
+            }
+            QComboBox QAbstractItemView {
+                border: 1px solid #BDC3C7;
+                background-color: white;
+                color: #2C3E50;
+                selection-background-color: #2980B9;
+                selection-color: white;
+            }
+            QComboBox QAbstractItemView::item {
+                min-height: 22px;
+                color: #2C3E50;
+            }
+            QComboBox QAbstractItemView::item:hover {
+                background-color: #2980B9;
+                color: white;
+            }
+            QComboBox QAbstractItemView::item:selected {
+                background-color: #2980B9;
+                color: white;
+            }
+        """)
+        self.populate_feature_combo()
+        self.feature_combo.currentIndexChanged.connect(self._on_feature_selected)
+        dropdown_layout.addWidget(self.feature_combo, 1)
+
+        layout.addLayout(dropdown_layout)
+
+        # Navigation Buttons (Previous, Next, Save & Done, Return)
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(4)
+
+        prev_btn = QPushButton("Previous")
+        prev_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #7F8C8D;
+                color: white;
+                font-weight: bold;
+                padding: 4px 8px;
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #616D6E; }
+        """)
+        prev_btn.clicked.connect(self._on_prev)
+
+        next_btn = QPushButton("Next")
+        next_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2980B9;
+                color: white;
+                font-weight: bold;
+                padding: 4px 8px;
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #1F618D; }
+        """)
+        next_btn.clicked.connect(self._on_next)
+
+        save_done_btn = QPushButton("Save & Done")
+        save_done_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #27AE60;
+                color: white;
+                font-weight: bold;
+                padding: 4px 10px;
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #219A52; }
+        """)
+        save_done_btn.clicked.connect(self._on_save_done)
+
+        return_btn = QPushButton("Return")
+        return_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #16A085;
+                color: white;
+                font-weight: bold;
+                padding: 4px 10px;
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #117A65; }
+        """)
+        return_btn.clicked.connect(self._on_return)
+
+        btn_layout.addWidget(prev_btn)
+        btn_layout.addWidget(next_btn)
+        btn_layout.addWidget(save_done_btn)
+        btn_layout.addWidget(return_btn)
+
+        layout.addLayout(btn_layout)
+        self.setWidget(main_widget)
+
+    def populate_feature_combo(self):
+        """Populate the feature combo box from parent_dialog.adjust_feature_combo."""
+        try:
+            self.feature_combo.blockSignals(True)
+            self.feature_combo.clear()
+            p_combo = self.parent_dialog.adjust_feature_combo
+            for i in range(p_combo.count()):
+                txt = p_combo.itemText(i)
+                data = p_combo.itemData(i)
+                self.feature_combo.addItem(txt, data)
+            if p_combo.currentIndex() >= 0:
+                self.feature_combo.setCurrentIndex(p_combo.currentIndex())
+        except Exception:
+            pass
+        finally:
+            self.feature_combo.blockSignals(False)
+
+    def sync_feature_index(self, index):
+        """Sync current selected index without triggering signals."""
+        try:
+            self.feature_combo.blockSignals(True)
+            if index >= 0 and index < self.feature_combo.count():
+                self.feature_combo.setCurrentIndex(index)
+        except Exception:
+            pass
+        finally:
+            self.feature_combo.blockSignals(False)
+
+    def _on_feature_selected(self, index):
+        """User selected a feature from the dock dropdown -> switch and edit feature."""
+        try:
+            if index >= 0:
+                self.parent_dialog.adjust_feature_combo.blockSignals(True)
+                self.parent_dialog.adjust_feature_combo.setCurrentIndex(index)
+                self.parent_dialog.adjust_feature_combo.blockSignals(False)
+                self.parent_dialog._run_edit_layer()
+        except Exception:
+            pass
+
+    def _on_prev(self):
+        self.parent_dialog._run_prev_layer()
+
+    def _on_next(self):
+        self.parent_dialog._run_next_layer()
+
+    def _on_save_done(self):
+        self.parent_dialog._run_done_editing()
+
+    def _on_return(self):
+        if hasattr(self.parent_dialog.iface, 'removeDockWidget'):
+            self.parent_dialog.iface.removeDockWidget(self)
+        self.close()
+        self.parent_dialog.showNormal()
+        self.parent_dialog.raise_()
+        self.parent_dialog.activateWindow()
 
 
 class CheckAndUpdateDialog(QDialog):
@@ -44,6 +223,11 @@ class CheckAndUpdateDialog(QDialog):
         )
         self.last_error_layer = None
         self.last_repaired_layer = None
+        self.active_edit_layer = None
+        self.active_edit_fid = None
+        self.feature_original_geometries = {}
+        self.guard_guarding = False
+        self.digitize_dock = None
         self._build_ui()
 
     def _build_ui(self):
@@ -544,99 +728,26 @@ class CheckAndUpdateDialog(QDialog):
             # 6. Launch & Configure QGIS Core Topology Checker ('must not have gaps' rule & Validate All)
             self._setup_and_run_topology_checker(layer)
 
-            # 7. Minimize Check and Update Dialog
+            # 7. Configure Advanced Snapping for PSA Reference Layer (12px, Topological Editing, Self Snapping, Avoid Overlap)
+            self._configure_layer_snapping(layer)
+
+            # 8. Enable Feature Edit Guard (restricts editing to active feature ID only)
+            self._setup_feature_edit_guard(layer, fid)
+
+            # 9. Minimize Check and Update Dialog
             self.showMinimized()
 
-            # 8. Show QGIS MessageBar Item with Previous, Re-Edit, Next, Save & Done, and Return buttons
-            if hasattr(self.iface, 'messageBar') and self.iface.messageBar():
-                bar = self.iface.messageBar()
-                bar.clearWidgets()
-
-                msg_item = bar.createMessage("Gemma Digitize", f"Editing: {feature_name}")
-                msg_layout = msg_item.layout()
-
-                prev_btn = QPushButton("Previous")
-                prev_btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #7F8C8D;
-                        color: white;
-                        font-weight: bold;
-                        padding: 3px 8px;
-                        border-radius: 3px;
-                    }
-                    QPushButton:hover {
-                        background-color: #616D6E;
-                    }
-                """)
-                prev_btn.clicked.connect(lambda: (bar.clearWidgets(), self._run_prev_layer()))
-
-                edit_btn = QPushButton("Re-Edit")
-                edit_btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #E67E22;
-                        color: white;
-                        font-weight: bold;
-                        padding: 3px 8px;
-                        border-radius: 3px;
-                    }
-                    QPushButton:hover {
-                        background-color: #D35400;
-                    }
-                """)
-                edit_btn.clicked.connect(lambda: (bar.clearWidgets(), self._run_edit_layer()))
-
-                next_btn = QPushButton("Next")
-                next_btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #2980B9;
-                        color: white;
-                        font-weight: bold;
-                        padding: 3px 8px;
-                        border-radius: 3px;
-                    }
-                    QPushButton:hover {
-                        background-color: #1F618D;
-                    }
-                """)
-                next_btn.clicked.connect(lambda: (bar.clearWidgets(), self._run_next_layer()))
-
-                save_done_btn = QPushButton("Save & Done")
-                save_done_btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #27AE60;
-                        color: white;
-                        font-weight: bold;
-                        padding: 3px 10px;
-                        border-radius: 3px;
-                    }
-                    QPushButton:hover {
-                        background-color: #219A52;
-                    }
-                """)
-                save_done_btn.clicked.connect(lambda: self._run_done_editing())
-
-                return_btn = QPushButton("Return")
-                return_btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #16A085;
-                        color: white;
-                        font-weight: bold;
-                        padding: 3px 10px;
-                        border-radius: 3px;
-                    }
-                    QPushButton:hover {
-                        background-color: #117A65;
-                    }
-                """)
-                return_btn.clicked.connect(lambda: (self.showNormal(), self.raise_(), self.activateWindow(), bar.clearWidgets()))
-
-                msg_layout.addWidget(prev_btn)
-                msg_layout.addWidget(edit_btn)
-                msg_layout.addWidget(next_btn)
-                msg_layout.addWidget(save_done_btn)
-                msg_layout.addWidget(return_btn)
-
-                bar.pushWidget(msg_item, 0)
+            # 10. Show / Dock Gemma Digitize Navigation Dock Widget (Default area: Qt.LeftDockWidgetArea)
+            if self.digitize_dock:
+                self.digitize_dock.populate_feature_combo()
+                self.digitize_dock.sync_feature_index(self.adjust_feature_combo.currentIndex())
+                self.digitize_dock.show()
+                self.digitize_dock.raise_()
+            else:
+                self.digitize_dock = DigitizeDockWidget(self, feature_name)
+                if hasattr(self.iface, 'addDockWidget'):
+                    self.iface.addDockWidget(Qt.LeftDockWidgetArea, self.digitize_dock)
+                self.digitize_dock.show()
         except Exception as e:
             QMessageBox.critical(self, "Edit Feature Error", f"Failed to activate editing on feature '{feature_name}': {e}")
 
@@ -652,48 +763,58 @@ class CheckAndUpdateDialog(QDialog):
             topol_action = None
             topol_dock = None
 
-            # 1. Search for Topology Checker Action in QGIS main window
+            # 1. Enable C++ Core Plugin setting in QSettings
+            for plugin_name in ['topolplugin', 'topol', 'topologychecker']:
+                try:
+                    QSettings().setValue(f"Qgis/plugins/{plugin_name}/enabled", "true")
+                except Exception:
+                    pass
+
+            # 2. Use QGIS Plugin Manager Interface to load/start C++ plugin if not loaded
+            if hasattr(self.iface, 'pluginManager') and self.iface.pluginManager():
+                pm = self.iface.pluginManager()
+                for p_name in ['topolplugin', 'topol']:
+                    try:
+                        if hasattr(pm, 'isPluginEnabled') and not pm.isPluginEnabled(p_name):
+                            if hasattr(pm, 'setPluginEnabled'):
+                                pm.setPluginEnabled(p_name, True)
+                        if hasattr(pm, 'loadPlugin'):
+                            pm.loadPlugin(p_name)
+                        if hasattr(pm, 'startPlugin'):
+                            pm.startPlugin(p_name)
+                    except Exception:
+                        pass
+
+            topol_plugin = qgis.utils.plugins.get('topol') or qgis.utils.plugins.get('topolplugin')
+
+            # 3. Search for Topology Checker Action in QGIS main window & menus
             if main_win:
                 for act in main_win.findChildren(QAction):
                     name = act.objectName().lower()
                     text = act.text().lower()
-                    if 'topol' in name or 'topology' in name or 'topology' in text or 'topol' in text:
+                    if name in ['mactiontoggletopol', 'mactiontopol'] or 'topol' in name or 'topology' in name or 'topology' in text:
                         topol_action = act
                         break
 
-            # 2. Attempt to load/enable Python or C++ plugin via QSettings and qgis.utils if action not found
-            topol_plugin = qgis.utils.plugins.get('topol') or qgis.utils.plugins.get('topolplugin')
-            if not topol_plugin:
-                for plugin_name in ['topol', 'topolplugin', 'topologychecker']:
-                    try:
-                        QSettings().setValue(f"Qgis/plugins/{plugin_name}/enabled", "true")
-                        qgis.utils.loadPlugin(plugin_name)
-                        qgis.utils.startPlugin(plugin_name)
-                        topol_plugin = qgis.utils.plugins.get(plugin_name)
-                        if topol_plugin:
-                            break
-                    except Exception:
-                        pass
+            if not topol_action and hasattr(self.iface, 'vectorMenu') and self.iface.vectorMenu():
+                for act in self.iface.vectorMenu().findChildren(QAction):
+                    name = act.objectName().lower()
+                    text = act.text().lower()
+                    if 'topol' in name or 'topology' in name or 'topology' in text:
+                        topol_action = act
+                        break
 
             if not topol_action and topol_plugin and hasattr(topol_plugin, 'action'):
                 topol_action = topol_plugin.action
 
-            if not topol_action and main_win:
-                for act in main_win.findChildren(QAction):
-                    name = act.objectName().lower()
-                    text = act.text().lower()
-                    if 'topol' in name or 'topology' in name or 'topology' in text or 'topol' in text:
-                        topol_action = act
-                        break
-
-            # 3. Trigger Action to open Topology Panel
+            # 4. Trigger Action to open Topology Panel
             if topol_action:
                 if hasattr(topol_action, 'isChecked') and not topol_action.isChecked():
                     topol_action.trigger()
                 elif hasattr(topol_action, 'trigger'):
                     topol_action.trigger()
 
-            # 4. Find and show QDockWidget
+            # 5. Find and show QDockWidget
             if main_win:
                 for d in main_win.findChildren(QDockWidget):
                     name = d.objectName().lower()
@@ -705,67 +826,9 @@ class CheckAndUpdateDialog(QDialog):
                         topol_dock.raise_()
                         break
 
-            # 5. Configure 'must not have gaps' rule for layer
-            self._configure_topol_gap_rule(topol_plugin, layer)
-
-            # 6. Trigger Validate All via delayed singleShot to ensure panel is fully rendered
-            QTimer.singleShot(400, lambda: self._trigger_topol_validate(topol_plugin))
-        except Exception:
-            pass
-
-    def _configure_topol_gap_rule(self, topol_plugin, layer):
-        """Configure 'must not have gaps' topology rule for the given vector layer."""
-        if not layer or not layer.isValid():
-            return
-
-        try:
-            layer_id = layer.id()
-            layer_name = layer.name()
-
-            rule_entries = [
-                f"{layer_id};must not have gaps;",
-                f"{layer_id};must not have gaps;none",
-                f"{layer_id};must not have gaps",
-                f"{layer_name};must not have gaps;",
-                f"{layer_name};must not have gaps"
-            ]
-
-            for key_path in [("Topol", "rules"), ("Topol", "rulesList"), ("TopolPlugin", "rules"), ("TopolPlugin", "rulesList")]:
-                existing_rules, ok = QgsProject.instance().readListEntry(key_path[0], key_path[1])
-                if not ok or existing_rules is None:
-                    existing_rules = []
-
-                has_rule = any("gaps" in str(r).lower() and (layer_id in str(r) or layer_name in str(r)) for r in existing_rules)
-                if not has_rule:
-                    existing_rules.append(rule_entries[0])
-                    QgsProject.instance().writeEntry(key_path[0], key_path[1], existing_rules)
-
-            # Find topol dock widget from main window
-            main_win = self.iface.mainWindow()
-            topol_dock = None
-            if main_win:
-                for d in main_win.findChildren(QDockWidget):
-                    name = d.objectName().lower()
-                    title = d.windowTitle().lower()
-                    if 'topol' in name or 'topology' in title or 'topol' in title:
-                        topol_dock = d
-                        break
-
-            if topol_dock:
-                for method_name in ['readRulesFromProject', 'updateRules', 'reloadRules', 'loadRules', 'initRules']:
-                    if hasattr(topol_dock, method_name):
-                        try:
-                            getattr(topol_dock, method_name)()
-                        except Exception:
-                            pass
-
-                if topol_plugin:
-                    for method_name in ['readRulesFromProject', 'updateRules', 'reloadRules', 'loadRules']:
-                        if hasattr(topol_plugin, method_name):
-                            try:
-                                getattr(topol_plugin, method_name)()
-                            except Exception:
-                                pass
+            # 6. Trigger Validate All with progressive retries (300ms & 700ms)
+            QTimer.singleShot(300, lambda: self._trigger_topol_validate(topol_plugin))
+            QTimer.singleShot(700, lambda: self._trigger_topol_validate(topol_plugin))
         except Exception:
             pass
 
@@ -819,13 +882,236 @@ class CheckAndUpdateDialog(QDialog):
         except Exception:
             pass
 
+    def _configure_layer_snapping(self, layer):
+        """Configure advanced snapping options for the PSA Reference Layer (12px tolerance, topological editing ON, self snapping ON, intersection snapping OFF, avoid overlap ON)."""
+        if not layer or not layer.isValid() or not isinstance(layer, QgsVectorLayer):
+            return
+
+        try:
+            prj = QgsProject.instance()
+
+            # 1. Enable Topological Editing ONLY IF NOT ALREADY ENABLED
+            try:
+                if hasattr(prj, 'isTopologicalEditingEnabled'):
+                    if not prj.isTopologicalEditingEnabled():
+                        prj.setTopologicalEditingEnabled(True)
+                elif hasattr(prj, 'setTopologicalEditingEnabled'):
+                    prj.setTopologicalEditingEnabled(True)
+            except Exception:
+                pass
+
+            # 2. Avoid Overlap on Active Layer
+            try:
+                if hasattr(prj, 'setAvoidIntersectionsMode') and hasattr(QgsProject, 'AvoidIntersectionsCurrentLayer'):
+                    prj.setAvoidIntersectionsMode(QgsProject.AvoidIntersectionsCurrentLayer)
+            except Exception:
+                pass
+
+            try:
+                if hasattr(prj, 'setAvoidIntersectionsLayers'):
+                    prj.setAvoidIntersectionsLayers([layer])
+            except Exception:
+                pass
+
+            # 3. Configure QgsSnappingConfig
+            snapping_cfg = prj.snappingConfig()
+            snapping_cfg.setEnabled(True)
+
+            # Set Mode to Advanced Configuration
+            if hasattr(QgsSnappingConfig, 'AdvancedConfiguration'):
+                snapping_cfg.setMode(QgsSnappingConfig.AdvancedConfiguration)
+
+            # Enable Self Snapping & DISABLE Intersection Snapping
+            if hasattr(snapping_cfg, 'setSelfSnappingEnabled'):
+                snapping_cfg.setSelfSnappingEnabled(True)
+
+            if hasattr(snapping_cfg, 'setIntersectionSnappingEnabled'):
+                snapping_cfg.setIntersectionSnappingEnabled(False)
+
+            # 4. Set Individual Layer Settings (Enabled = True, 12.0 Pixels, VertexAndSegment)
+            snap_type = getattr(QgsSnappingConfig, 'VertexAndSegment', None)
+            if snap_type is None and hasattr(QgsSnappingConfig, 'Vertex'):
+                snap_type = QgsSnappingConfig.Vertex
+
+            unit_pixels = getattr(QgsTolerance, 'Pixels', None)
+
+            try:
+                indiv_map = snapping_cfg.individualLayerSettings()
+                if not isinstance(indiv_map, dict):
+                    indiv_map = {}
+
+                indiv_setting = indiv_map.get(layer)
+                if not indiv_setting:
+                    try:
+                        indiv_setting = snapping_cfg.individualLayerSettings(layer)
+                    except Exception:
+                        indiv_setting = None
+
+                if not indiv_setting:
+                    indiv_setting = QgsSnappingConfig.IndividualLayerSettings()
+
+                # Explicitly enable layer snapping checkbox in Advanced Configuration table
+                indiv_setting.setEnabled(True)
+                indiv_setting.setTolerance(12.0)
+                if unit_pixels is not None:
+                    indiv_setting.setUnits(unit_pixels)
+
+                # Set snapping type using modern setTypeFlag or fallback with warning suppression
+                type_set = False
+                if hasattr(indiv_setting, 'setTypeFlag'):
+                    try:
+                        if hasattr(QgsSnappingConfig, 'SnappingTypeFlagVertex') and hasattr(QgsSnappingConfig, 'SnappingTypeFlagSegment'):
+                            indiv_setting.setTypeFlag(QgsSnappingConfig.SnappingTypeFlagVertex | QgsSnappingConfig.SnappingTypeFlagSegment)
+                            type_set = True
+                        elif snap_type is not None:
+                            indiv_setting.setTypeFlag(snap_type)
+                            type_set = True
+                    except Exception:
+                        pass
+
+                if not type_set and snap_type is not None and hasattr(indiv_setting, 'setType'):
+                    try:
+                        import warnings
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore", category=DeprecationWarning)
+                            indiv_setting.setType(snap_type)
+                    except Exception:
+                        pass
+
+                indiv_map[layer] = indiv_setting
+                snapping_cfg.setIndividualLayerSettings(indiv_map)
+                snapping_cfg.setIndividualLayerSettings(layer, indiv_setting)
+            except Exception:
+                pass
+
+            prj.setSnappingConfig(snapping_cfg)
+
+            # 5. Sync Snapping Toolbar QActions in QGIS Main Window
+            main_win = self.iface.mainWindow()
+            if main_win:
+                for act in main_win.findChildren(QAction):
+                    obj_name = act.objectName().lower()
+                    txt = act.text().lower()
+                    tooltip = act.toolTip().lower()
+
+                    # Enable Topological Editing action on toolbar ONLY if not checked
+                    if 'topologicalediting' in obj_name or 'topological editing' in tooltip or 'topological editing' in txt:
+                        if hasattr(act, 'setChecked') and not act.isChecked():
+                            act.setChecked(True)
+
+                    # Enable Self-Snapping action on toolbar ONLY if not checked
+                    if 'selfsnapping' in obj_name or 'self-snapping' in tooltip or 'self snapping' in tooltip or 'self snapping' in txt:
+                        if hasattr(act, 'setChecked') and not act.isChecked():
+                            act.setChecked(True)
+
+                    # Disable Intersection Snapping action on toolbar
+                    if 'intersectionsnapping' in obj_name or 'intersection snapping' in tooltip or 'snapping on intersection' in tooltip or 'intersection' in txt:
+                        if hasattr(act, 'setChecked') and act.isChecked():
+                            act.setChecked(False)
+        except Exception:
+            pass
+
+    def _setup_feature_edit_guard(self, layer, fid):
+        """Enable Feature Edit Guard to restrict vertex edits to the active feature ID only."""
+        try:
+            self._remove_feature_edit_guard()
+
+            self.active_edit_layer = layer
+            self.active_edit_fid = fid
+            self.guard_guarding = False
+
+            # Snapshot current feature geometries
+            self.feature_original_geometries = {}
+            for f in layer.getFeatures():
+                if f.isValid() and f.geometry():
+                    self.feature_original_geometries[f.id()] = QgsGeometry(f.geometry())
+
+            if hasattr(layer, 'geometryChanged'):
+                layer.geometryChanged.connect(self._on_layer_geometry_changed)
+        except Exception:
+            pass
+
+    def _remove_feature_edit_guard(self):
+        """Disconnect and reset Feature Edit Guard."""
+        try:
+            if self.active_edit_layer and hasattr(self.active_edit_layer, 'geometryChanged'):
+                try:
+                    self.active_edit_layer.geometryChanged.disconnect(self._on_layer_geometry_changed)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        self.active_edit_layer = None
+        self.active_edit_fid = None
+        self.feature_original_geometries = {}
+        self.guard_guarding = False
+
+    def _on_layer_geometry_changed(self, fid, new_geom):
+        """Signal handler enforcing single-feature editing lock by silently reverting edits to neighbor features."""
+        if self.guard_guarding or self.active_edit_fid is None or not self.active_edit_layer:
+            return
+
+        if fid != self.active_edit_fid:
+            self.guard_guarding = True
+            try:
+                old_geom = self.feature_original_geometries.get(fid)
+                if old_geom and not old_geom.isEmpty():
+                    self.active_edit_layer.changeGeometry(fid, old_geom)
+            except Exception:
+                pass
+            finally:
+                self.guard_guarding = False
+        else:
+            # Target feature was edited, update stored snapshot
+            self.feature_original_geometries[fid] = QgsGeometry(new_geom)
+
     def _run_done_editing(self):
-        """Save changes (commitChanges) and stop editing on the PSA Reference Layer, clear selections, then restore dialog."""
+        """Prompt user to Save, Discard, or Cancel edits on the PSA Reference Layer, then stop editing and restore dialog."""
+        self._remove_feature_edit_guard()
+
+        if self.digitize_dock:
+            try:
+                if hasattr(self.iface, 'removeDockWidget'):
+                    self.iface.removeDockWidget(self.digitize_dock)
+                self.digitize_dock.close()
+            except Exception:
+                pass
+            self.digitize_dock = None
+
         layer = self.psa_layer_combo.currentLayer()
+        if not layer or not layer.isValid() or not isinstance(layer, QgsVectorLayer):
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+            return
+
         committed = False
-        if layer and layer.isValid() and isinstance(layer, QgsVectorLayer):
-            if layer.isEditable():
+        action_taken = "none"
+
+        if layer.isEditable():
+            if layer.isModified():
+                res = QMessageBox.question(
+                    self,
+                    "Stop Editing",
+                    f"Do you want to save changes to layer '{layer.name()}'?",
+                    QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                    QMessageBox.Save
+                )
+
+                if res == QMessageBox.Save:
+                    committed = layer.commitChanges()
+                    action_taken = "saved"
+                elif res == QMessageBox.Discard:
+                    layer.rollBack()
+                    action_taken = "discarded"
+                else:
+                    # Cancel pressed: Abort stopping editing mode, keep window minimized
+                    return
+            else:
                 committed = layer.commitChanges()
+                action_taken = "stopped"
+
             layer.removeSelection()
 
         # Clear canvas MessageBar
@@ -837,10 +1123,12 @@ class CheckAndUpdateDialog(QDialog):
         self.raise_()
         self.activateWindow()
 
-        if committed:
+        if action_taken == "saved":
             QMessageBox.information(self, "Editing Complete", f"Successfully saved changes and closed editing mode for '{layer.name()}'.")
+        elif action_taken == "discarded":
+            QMessageBox.information(self, "Editing Complete", f"Discarded revisions and closed editing mode for '{layer.name()}'.")
         else:
-            QMessageBox.information(self, "Editing Complete", "No active layer edits needed saving.")
+            QMessageBox.information(self, "Editing Complete", f"Closed editing mode for '{layer.name()}'.")
 
     def _run_prev_layer(self):
         """Move to the previous feature in the Adjust Feature list, trigger Edit action, and re-validate topology."""
@@ -852,7 +1140,8 @@ class CheckAndUpdateDialog(QDialog):
         prev_idx = (curr_idx - 1) % count
         self.adjust_feature_combo.setCurrentIndex(prev_idx)
         self._run_edit_layer()
-        QTimer.singleShot(350, lambda: self._trigger_topol_validate())
+        QTimer.singleShot(300, lambda: self._trigger_topol_validate())
+        QTimer.singleShot(700, lambda: self._trigger_topol_validate())
 
     def _run_next_layer(self):
         """Advance to the next feature in the Adjust Feature list, trigger Edit action, and re-validate topology."""
@@ -864,7 +1153,8 @@ class CheckAndUpdateDialog(QDialog):
         next_idx = (curr_idx + 1) % count
         self.adjust_feature_combo.setCurrentIndex(next_idx)
         self._run_edit_layer()
-        QTimer.singleShot(350, lambda: self._trigger_topol_validate())
+        QTimer.singleShot(300, lambda: self._trigger_topol_validate())
+        QTimer.singleShot(700, lambda: self._trigger_topol_validate())
 
     def _run_georeferencer(self):
         """Invoke built-in QGIS Georeferencer action directly and auto-trigger Open Raster at C:\\PSA-GIS."""
