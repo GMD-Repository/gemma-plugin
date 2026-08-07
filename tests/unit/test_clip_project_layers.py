@@ -46,6 +46,10 @@ class TestClipProjectLayers(unittest.TestCase):
                 self.alg.OVERWRITE: True
             }
             context = QgsProcessingContext()
+            if hasattr(context, "temporaryLayerStore"):
+                context.temporaryLayerStore().addMapLayer(self.polygon_mask)
+                context.temporaryLayerStore().addMapLayer(self.point_layer)
+                context.temporaryLayerStore().addMapLayer(self.line_layer)
             feedback = QgsProcessingFeedback()
 
             res = self.alg.processAlgorithm(params, context, feedback)

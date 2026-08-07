@@ -97,6 +97,10 @@ class QgsGeometry:
     def fromPolygonXY(polygons):
         return QgsGeometry("Polygon", polygons=polygons)
 
+    @staticmethod
+    def fromWkt(wkt):
+        return QgsGeometry("Polygon")
+
     def type(self):
         if self.geom_type == "Point": return 0
         elif self.geom_type in ("LineString", "Line"): return 1
@@ -166,6 +170,9 @@ class QgsFields:
     def count(self):
         return len(self._fields)
 
+    def isEmpty(self):
+        return len(self._fields) == 0
+
     def __iter__(self):
         return iter(self._fields)
 
@@ -181,10 +188,28 @@ class QgsFeature:
         self._fields = fields
 
     def setAttributes(self, attrs):
-        self._attributes = attrs
+        self._attributes = list(attrs)
 
     def attributes(self):
         return self._attributes
+
+    def setFields(self, fields):
+        self._fields = fields
+
+    def fields(self):
+        return self._fields
+
+    def setAttribute(self, field, value):
+        if isinstance(field, int):
+            while len(self._attributes) <= field:
+                self._attributes.append(None)
+            self._attributes[field] = value
+        elif self._fields and hasattr(self._fields, "indexOf"):
+            idx = self._fields.indexOf(field)
+            if idx != -1:
+                while len(self._attributes) <= idx:
+                    self._attributes.append(None)
+                self._attributes[idx] = value
 
     def setGeometry(self, geom):
         self._geometry = geom
@@ -205,6 +230,23 @@ class QgsFeature:
         return None
 
 
+class QgsVectorDataProvider:
+    def __init__(self, layer):
+        self._layer = layer
+
+    def addAttributes(self, fields):
+        for f in fields:
+            self._layer._fields.append(f)
+        return True
+
+    def addFeatures(self, features):
+        self._layer._features.extend(features)
+        return True, features
+
+    def fields(self):
+        return self._layer._fields
+
+
 class QgsVectorLayer:
     def __init__(self, path="Polygon?crs=EPSG:4326", name="MockLayer", provider="memory"):
         self._path = path
@@ -219,6 +261,11 @@ class QgsVectorLayer:
     def fields(self): return self._fields
     def setFields(self, fields): self._fields = fields
     def setFeatures(self, features): self._features = features
+    def dataProvider(self): return QgsVectorDataProvider(self)
+    def updateFields(self): pass
+    def updateExtents(self): pass
+    def extent(self): return MockGenericClass()
+    def sourceExtent(self): return self.extent()
     def getFeatures(self, request=None): return iter(self._features)
     def crs(self): return MockGenericClass()
     def sourceCrs(self): return self.crs()

@@ -44,6 +44,8 @@ class TestScanGeometryErrors(unittest.TestCase):
             self.alg.OUTPUT_ERRORS: "TEMPORARY_OUTPUT"
         }
         context = QgsProcessingContext()
+        if hasattr(context, "temporaryLayerStore"):
+            context.temporaryLayerStore().addMapLayer(self.sample_layer)
         feedback = QgsProcessingFeedback()
 
         res = self.alg.processAlgorithm(params, context, feedback)

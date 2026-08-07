@@ -56,6 +56,8 @@ class TestLguFixProcessing(unittest.TestCase):
             self.alg.OUTPUT: 'memory:output_fixed_lgu'
         }
         context = QgsProcessingContext()
+        if hasattr(context, "temporaryLayerStore"):
+            context.temporaryLayerStore().addMapLayer(self.sample_layer)
         feedback = QgsProcessingFeedback()
 
         # The algorithm validates that control points must be present before executing transformation
