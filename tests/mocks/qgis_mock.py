@@ -479,7 +479,15 @@ def setup_qgis_mock_if_needed():
                         qgis_prefix = "/usr"
 
                     qgis.core.QgsApplication.setPrefixPath(qgis_prefix, True)
-                    _NATIVE_QGS_APP = qgis.core.QgsApplication(sys.argv, True)
+                    argv = [a.encode("utf-8") if isinstance(a, str) else a for a in sys.argv]
+                    try:
+                        _NATIVE_QGS_APP = qgis.core.QgsApplication(argv, True)
+                    except TypeError:
+                        try:
+                            _NATIVE_QGS_APP = qgis.core.QgsApplication(sys.argv, True)
+                        except TypeError:
+                            _NATIVE_QGS_APP = qgis.core.QgsApplication([], True)
+
                     _NATIVE_QGS_APP.initQgis()
 
                     try:
