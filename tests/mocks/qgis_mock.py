@@ -93,6 +93,11 @@ class QgsGeometry:
     def fromPolygonXY(polygons):
         return QgsGeometry("Polygon", polygons=polygons)
 
+    def type(self):
+        if self.geom_type == "Point": return 0
+        elif self.geom_type in ("LineString", "Line"): return 1
+        return 2  # PolygonGeometry
+
     def wkbType(self): return 3
     def isNull(self): return False
     def isEmpty(self): return False
@@ -108,12 +113,19 @@ class QgsGeometry:
     def area(self): return 100.0
     def length(self): return 40.0
 
+    def centroid(self): return QgsGeometry("Point")
+    def asPoint(self): return QgsPointXY(0.0, 0.0)
+
     def boundingBox(self):
         class MockBox:
             def xMinimum(self): return 0.0
             def xMaximum(self): return 10.0
             def yMinimum(self): return 0.0
             def yMaximum(self): return 10.0
+            def width(self): return 10.0
+            def height(self): return 10.0
+            def center(self): return QgsPointXY(5.0, 5.0)
+            def scale(self, factor): pass
         return MockBox()
 
     def __repr__(self):
@@ -226,6 +238,9 @@ class QgsProcessingContext:
     def project(self):
         return QgsProject.instance()
 
+    def transformContext(self):
+        return MockGenericClass()
+
 
 try:
     import qgis.core
@@ -241,6 +256,22 @@ except Exception:
 
 class QgsProcessingException(Exception):
     pass
+
+
+class QgsSpatialIndex:
+    def __init__(self, *args, **kwargs):
+        self._features = {}
+
+    def addFeature(self, feature):
+        if hasattr(feature, "id"):
+            self._features[feature.id()] = feature
+
+    def addFeatures(self, features):
+        for f in features:
+            self.addFeature(f)
+
+    def intersects(self, bbox):
+        return list(self._features.keys())
 
 
 class QgsProcessingAlgorithm:
@@ -468,6 +499,7 @@ def setup_qgis_mock_if_needed():
         core_mod.QgsFields = QgsFields
         core_mod.QgsFeature = QgsFeature
         core_mod.QgsVectorLayer = QgsVectorLayer
+        core_mod.QgsSpatialIndex = QgsSpatialIndex
         core_mod.QgsProcessingFeedback = QgsProcessingFeedback
         core_mod.QgsProcessingContext = QgsProcessingContext
         core_mod.QgsProcessingException = QgsProcessingException
@@ -478,12 +510,17 @@ def setup_qgis_mock_if_needed():
         core_mod.QgsWkbTypes = QgsWkbTypes
 
         # PyQt attributes
+        class MockSignal:
+            def emit(self, *args, **kwargs): pass
+            def connect(self, *args, **kwargs): pass
+            def disconnect(self, *args, **kwargs): pass
+
         qtcore_mod.QCoreApplication = MockQCoreApplication
         qtcore_mod.QThread = MockQThread
         qtcore_mod.QObject = MockQObject
         qtcore_mod.QVariant = MockQVariant
         qtcore_mod.Qt = MockQt
-        qtcore_mod.pyqtSignal = lambda *args: None
+        qtcore_mod.pyqtSignal = lambda *args, **kwargs: MockSignal()
 
         qtgui_mod.QWidget = MockQWidget
         qtgui_mod.QDialog = MockQDialog
@@ -519,7 +556,7 @@ def setup_qgis_mock_if_needed():
         pyqt5_qtcore_mod.Qt = MockQt
         pyqt5_qtcore_mod.QCoreApplication = MockQCoreApplication
         pyqt5_qtcore_mod.QObject = MockQObject
-        pyqt5_qtcore_mod.pyqtSignal = lambda *args: None
+        pyqt5_qtcore_mod.pyqtSignal = lambda *args, **kwargs: MockSignal()
 
         pyqt5_qtgui_mod.QWidget = MockQWidget
         pyqt5_qtgui_mod.QDialog = MockQDialog
