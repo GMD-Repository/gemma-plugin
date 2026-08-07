@@ -376,6 +376,12 @@ class EALauncherDialog(QDialog):
         self.compact_chk.setChecked(True)
         params_layout.addWidget(self.compact_chk)
 
+        # Allow Candidate Merging
+        self.allow_candidate_merge_chk = QCheckBox("Allow Merging Between Under-Threshold Candidate EAs")
+        self.allow_candidate_merge_chk.setToolTip("When checked, under-threshold candidate EAs (< 100 HH) can merge with neighboring candidate EAs when no normal reference EA exists in the barangay.")
+        self.allow_candidate_merge_chk.setChecked(True)
+        params_layout.addWidget(self.allow_candidate_merge_chk)
+
         # Sliver Polygon enum
         params_layout.addWidget(QLabel("Sliver Polygon Area Threshold"))
         self.sliver_combo = QComboBox()
@@ -1257,6 +1263,7 @@ class EALauncherDialog(QDialog):
             'MIN_HOUSEHOLD': self.min_hh_spin.value(),
             'MAX_HOUSEHOLD': self.max_hh_spin.value(),
             'USE_COMPACTNESS': self.compact_chk.isChecked(),
+            'ALLOW_CANDIDATE_MERGE': self.allow_candidate_merge_chk.isChecked(),
             'SLIVER_THRESHOLD': self.sliver_combo.currentIndex(),
             'TARGET_CRS': self.crs_widget.crs(),
             'PREVIEW_ONLY': False,
@@ -1313,30 +1320,55 @@ class EALauncherDialog(QDialog):
                 if not main_group:
                     main_group = root.insertGroup(0, main_group_name)
 
-                # Create structured sub-groups inside main_group
+                # Create structured sub-groups inside main_group in exact order:
+                # 1. Reference Layers
+                # 2. EAs
+                # 3. Candidates
+                reference_group = main_group.findGroup("Reference Layers")
+                if not reference_group:
+                    reference_group = main_group.insertGroup(0, "Reference Layers")
+
                 eas_group = main_group.findGroup("EAs")
                 if not eas_group:
-                    eas_group = main_group.addGroup("EAs")
+                    eas_group = main_group.insertGroup(1, "EAs")
 
                 candidates_group = main_group.findGroup("Candidates")
                 if not candidates_group:
-                    candidates_group = main_group.addGroup("Candidates")
+                    candidates_group = main_group.insertGroup(2, "Candidates")
 
-                reference_group = main_group.findGroup("Reference Layers")
-                if not reference_group:
-                    reference_group = main_group.addGroup("Reference Layers")
+                # Ensure existing groups are sorted in top-to-bottom order: Reference Layers -> EAs -> Candidates
+                ordered_subgroups = [
+                    ("Reference Layers", reference_group),
+                    ("EAs", eas_group),
+                    ("Candidates", candidates_group)
+                ]
+                for target_idx, (g_name, g_node) in enumerate(ordered_subgroups):
+                    children = main_group.children()
+                    if g_node in children:
+                        curr_idx = children.index(g_node)
+                        if curr_idx != target_idx:
+                            cloned = g_node.clone()
+                            main_group.insertChildNode(target_idx, cloned)
+                            main_group.removeChildNode(g_node)
+                            if g_name == "Reference Layers":
+                                reference_group = cloned
+                            elif g_name == "EAs":
+                                eas_group = cloned
+                            elif g_name == "Candidates":
+                                candidates_group = cloned
 
-                output_mapping = {
-                    'DELINEATED_OUTPUT': (f"{geo5}_delineated_ea2026", eas_group),
-                    'MERGED_OUTPUT': (f"{geo5}_merged_ea2026", eas_group),
-                    'SPECIAL_EA_OUTPUT': (f"{geo5}_special_ea", eas_group),
-                    'DELINEATION_CANDIDATE_OUTPUT': (f"{geo5}_delineation_candidates", candidates_group),
-                    'MERGE_CANDIDATE_OUTPUT': (f"{geo5}_merge_candidates", candidates_group),
-                    'EXTRACTED_BUILDINGS_OUTPUT': (f"{geo5}_extracted_bldgpts", reference_group),
-                }
+                # Output layers in exact top-to-bottom order for each group
+                output_mapping_ordered = [
+                    ('EXTRACTED_BUILDINGS_OUTPUT', f"{geo5}_extracted_bldgpts", reference_group),
+                    ('DELINEATED_OUTPUT', f"{geo5}_delineated_ea2026", eas_group),
+                    ('MERGED_OUTPUT', f"{geo5}_merged_ea2026", eas_group),
+                    ('SPECIAL_EA_OUTPUT', f"{geo5}_special_ea", eas_group),
+                    ('DELINEATION_CANDIDATE_OUTPUT', f"{geo5}_delineation_candidates", candidates_group),
+                    ('MERGE_CANDIDATE_OUTPUT', f"{geo5}_merge_candidates", candidates_group),
+                ]
 
                 if isinstance(results, dict):
-                    for out_key, (target_name, target_group) in output_mapping.items():
+                    for out_key, target_name, target_group in output_mapping_ordered:
                         if out_key in results:
                             layer_ref = results[out_key]
                             layer = None
@@ -1348,10 +1380,11 @@ class EALauncherDialog(QDialog):
                             if layer:
                                 layer.setName(target_name)
                                 lnode = root.findLayer(layer.id())
-                                if lnode and lnode.parent() != target_group:
-                                    clone = lnode.clone()
-                                    target_group.addChildNode(clone)
-                                    lnode.parent().removeChildNode(lnode)
+                                if lnode:
+                                    if lnode.parent() != target_group:
+                                        clone = lnode.clone()
+                                        target_group.addChildNode(clone)
+                                        lnode.parent().removeChildNode(lnode)
 
                 # Group any generated splitting line layers (ending with _eadel_update) into Reference Layers
                 for layer_id, proj_layer in QgsProject.instance().mapLayers().items():
@@ -1393,7 +1426,10 @@ class EALauncherDialog(QDialog):
 
                 if delin_cnt == 0 and merged_cnt == 0:
                     if merge_cand_cnt > 0:
-                        banner_text = f"Notice: 0 Delineated | 0 Merged EAs — {merge_cand_cnt} merge candidate features identified, but no valid adjacent neighbors exist in single-EA barangays."
+                        if self.allow_candidate_merge_chk.isChecked():
+                            banner_text = f"Notice: 0 Delineated | 0 Merged EAs — {merge_cand_cnt} merge candidate features identified."
+                        else:
+                            banner_text = f"Notice: 0 Delineated | 0 Merged EAs — {merge_cand_cnt} candidate EAs identified (candidate-to-candidate merging is disabled)."
                     else:
                         banner_text = "Notice: 0 Delineated | 0 Merged EAs — All starting EAs are within optimal threshold range (100–300 HH)."
                 else:
