@@ -7,6 +7,10 @@ Allows unit tests to run in standard Python CLI without throwing ModuleNotFoundE
 
 import sys
 import types
+import os
+
+# Ensure Qt offscreen platform plugin is used in headless/CI environments
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 class DynamicMockModule(types.ModuleType):
