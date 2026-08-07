@@ -47,19 +47,31 @@ except Exception:
 
 def _populate_layer(layer, fields, features):
     """Helper to populate fields and features across both Native PyQGIS and Mock layer objects."""
-    if hasattr(layer, "setFields"):
-        layer.setFields(fields)
-        layer.setFeatures(features)
-    elif hasattr(layer, "dataProvider"):
-        dp = layer.dataProvider()
-        if dp:
+    dp = layer.dataProvider() if hasattr(layer, "dataProvider") else None
+    if dp:
+        if dp.fields().count() == 0:
             dp.addAttributes(list(fields))
-            layer.updateFields()
-            layer_fields = layer.fields()
-            for f in features:
-                f.setFields(layer_fields)
-            dp.addFeatures(features)
+            if hasattr(layer, "updateFields"):
+                layer.updateFields()
+        layer_fields = layer.fields()
+        bound_features = []
+        for f in features:
+            nf = QgsFeature(layer_fields)
+            if hasattr(f, "geometry") and f.geometry():
+                nf.setGeometry(f.geometry())
+            if hasattr(f, "attributes"):
+                attrs = f.attributes()
+                for idx, val in enumerate(attrs):
+                    nf.setAttribute(idx, val)
+            bound_features.append(nf)
+        dp.addFeatures(bound_features)
+        if hasattr(layer, "updateExtents"):
             layer.updateExtents()
+    else:
+        if hasattr(layer, "setFields"):
+            layer.setFields(fields)
+        if hasattr(layer, "setFeatures"):
+            layer.setFeatures(features)
 
 
 def create_sample_polygon_layer(name="Sample_EA_Polygons", count=5):

@@ -37,7 +37,7 @@ class TestFillPolygonGaps(unittest.TestCase):
         # Find feature with ea_code='0517370001001'
         if hasattr(self.alg, "_find_target_feature"):
             target = self.alg._find_target_feature(
-                self.sample_layer, MockGenericClass(), "ea_code", "0517370001001", feedback
+                self.sample_layer, self.sample_layer.extent(), "ea_code", "0517370001001", feedback
             )
             self.assertIsNotNone(target, "Should locate target feature with code 0517370001001.")
 
