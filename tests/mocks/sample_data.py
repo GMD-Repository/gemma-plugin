@@ -7,15 +7,36 @@ and headless mock execution environments.
 """
 
 from tests.mocks.qgis_mock import (
-    QgsVectorLayer,
-    QgsFeature,
-    QgsGeometry,
-    QgsField,
-    QgsFields,
-    QgsPointXY,
-    QgsWkbTypes,
-    MockQVariant
+    MockQVariant,
 )
+
+# When running inside a real QGIS environment (e.g. qgis/qgis:latest Docker),
+# we MUST use the native C++ classes from qgis.core. If we use the mock Python
+# classes, the SIP bindings reject them with:
+#   TypeError: index 0 has type 'QgsField' but 'QgsField' is expected
+# Only fall back to mock classes when qgis.core is not available.
+try:
+    from qgis.core import (
+        QgsVectorLayer,
+        QgsFeature,
+        QgsGeometry,
+        QgsField,
+        QgsFields,
+        QgsPointXY,
+        QgsWkbTypes,
+    )
+    _NATIVE_QGIS = True
+except ImportError:
+    from tests.mocks.qgis_mock import (
+        QgsVectorLayer,
+        QgsFeature,
+        QgsGeometry,
+        QgsField,
+        QgsFields,
+        QgsPointXY,
+        QgsWkbTypes,
+    )
+    _NATIVE_QGIS = False
 
 try:
     from qgis.PyQt.QtCore import QVariant
@@ -23,21 +44,17 @@ except Exception:
     QVariant = MockQVariant
 
 
+
 def _populate_layer(layer, fields, features):
     """Helper to populate fields and features across both Native PyQGIS and Mock layer objects."""
     if hasattr(layer, "setFields"):
         layer.setFields(fields)
-    else:
-        dp = layer.dataProvider()
-        if dp:
-            dp.addAttributes(fields)
-            layer.updateFields()
-
-    if hasattr(layer, "setFeatures"):
         layer.setFeatures(features)
-    else:
+    elif hasattr(layer, "dataProvider"):
         dp = layer.dataProvider()
         if dp:
+            dp.addAttributes(list(fields))
+            layer.updateFields()
             dp.addFeatures(features)
             layer.updateExtents()
 
