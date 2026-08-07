@@ -105,7 +105,8 @@ def create_sample_polygon_layer(name="Sample_EA_Polygons", count=5):
             QgsPointXY(123.0 + i * 0.01, 13.0 + i * 0.01),
             QgsPointXY(123.01 + i * 0.01, 13.0 + i * 0.01),
             QgsPointXY(123.01 + i * 0.01, 13.01 + i * 0.01),
-            QgsPointXY(123.0 + i * 0.01, 13.01 + i * 0.01)
+            QgsPointXY(123.0 + i * 0.01, 13.01 + i * 0.01),
+            QgsPointXY(123.0 + i * 0.01, 13.0 + i * 0.01)
         ]
         feat.setGeometry(QgsGeometry.fromPolygonXY([pts]))
         features.append(feat)
