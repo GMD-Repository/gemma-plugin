@@ -60,6 +60,13 @@ The dedicated **EA Launcher** dialog provides an interactive workflow prior to e
 | **Candidate for Merging Layer** | Vector (Polygon) | Layer containing under-threshold initiator EAs (<=100 HH) together with their adjacent reference neighbor EAs evaluated for intra-barangay merging (`<geocode>_merge_candidates`). |
 | **Extracted Building Points Layer** | Vector (Point) | Point layer containing building points tagged with assigned EA identifiers. |
 
+::: note Understanding Zero Feature Counts in Output Layers
+Depending on your input dataset's household load distribution, specific output layers may legitimately contain **0 features**:
+
+- **Delineated EAs = 0**: Delineation (splitting) only occurs when starting EAs exceed the **Maximum Household Count per EA** threshold (default: >300 HH) or intersect Gap/Overlap layers. If no EAs exceed 300 HH, 0 Delineated EAs are generated.
+- **Merged EAs = 0**: Merging only occurs when under-threshold EAs (<=100 HH) are present. If all EAs fall within the valid target range (100–300 HH), 0 Merged EAs are generated.
+:::
+
 ## How It Works
 
 1. **Initialization and Coordinate Transformation**:
