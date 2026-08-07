@@ -621,10 +621,18 @@ def setup_qgis_mock_if_needed():
                 except Exception as e:
                     print(f"[QGIS Native Init Warning]: {e}")
 
-            global QgsProcessingContext, QgsProcessingFeedback, QgsVectorLayer
-            QgsProcessingContext = getattr(qgis.core, "QgsProcessingContext", QgsProcessingContext)
-            QgsProcessingFeedback = getattr(qgis.core, "QgsProcessingFeedback", QgsProcessingFeedback)
-            QgsVectorLayer = getattr(qgis.core, "QgsVectorLayer", QgsVectorLayer)
+            global QgsProcessingContext, QgsProcessingFeedback, QgsVectorLayer, QgsGeometry, QgsFeature, QgsFields, QgsPointXY, QgsWkbTypes, QgsProject, QgsFeatureSink, QgsSpatialIndex, QgsFeatureRequest, QgsProcessingException, QgsProcessingUtils, QVariant
+            for attr_name in [
+                "QgsProcessingContext", "QgsProcessingFeedback", "QgsVectorLayer",
+                "QgsGeometry", "QgsFeature", "QgsFields", "QgsField", "QgsPointXY",
+                "QgsWkbTypes", "QgsProject", "QgsFeatureSink", "QgsSpatialIndex",
+                "QgsFeatureRequest", "QgsProcessingException", "QgsProcessingUtils",
+                "QVariant"
+            ]:
+                if hasattr(qgis.core, attr_name):
+                    val = getattr(qgis.core, attr_name)
+                    globals()[attr_name] = val
+                    setattr(sys.modules[__name__], attr_name, val)
             return
     except ImportError:
         pass
