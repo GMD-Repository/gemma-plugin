@@ -486,10 +486,18 @@ def setup_qgis_mock_if_needed():
         import qgis.core
         if not hasattr(qgis.core, "MockGenericClass"):
             # Real PyQGIS detected — locate plugins directory if needed
+            # Add system QGIS plugin search paths for processing module
+            for plugin_path in [
+                "/usr/share/qgis/python/plugins",
+                "/usr/share/qgis/python",
+                "/usr/local/share/qgis/python/plugins",
+                "/usr/local/share/qgis/python",
+            ]:
+                if os.path.exists(plugin_path) and plugin_path not in sys.path:
+                    sys.path.insert(0, plugin_path)
+
             if hasattr(qgis.core, "__file__") and qgis.core.__file__:
                 core_file = os.path.abspath(qgis.core.__file__)
-                # qgis.core is inside <prefix>/python/qgis/core/__init__.py
-                # Navigate up to <prefix>/python/
                 qgis_python_dir = os.path.dirname(os.path.dirname(os.path.dirname(core_file)))
                 plugins_dir = os.path.join(qgis_python_dir, "plugins")
                 if os.path.exists(plugins_dir) and plugins_dir not in sys.path:

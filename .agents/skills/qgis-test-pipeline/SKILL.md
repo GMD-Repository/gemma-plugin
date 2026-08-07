@@ -85,9 +85,11 @@ python scripts/testing/generate_test_stubs.py --check
 
 The test architecture supports **dual execution modes**:
 
-1. **Native QGIS CLI / OSGeo4W Shell / Docker (`qgis/qgis:latest`)**:
-   - Uses real native PyQGIS (`qgis.core`, `processing`, `PyQt5`) C++ bindings.
+1. **Native QGIS CLI / OSGeo4W Shell / Docker (`qgis/qgis:3.40.10-bookworm`)**:
+   - Uses real native PyQGIS (`qgis.core`, `processing`, `qgis.PyQt`) C++ bindings.
    - Automatically initializes `QgsApplication` and `Processing.initialize()` on boot.
+   - Includes standard Linux QGIS plugin path resolution (`/usr/share/qgis/python/plugins`) so `import processing` resolves seamlessly in Debian/Ubuntu containers.
+   - Provides a transparent **Qt5→Qt6 compatibility bridge** in `qgis_mock.py` (`sys.modules["PyQt5"] = qgis.PyQt` + `QFrame` enum shims) enabling `gmd_scripts/` code to run on Qt6/QGIS 3.40 containers **without any source code modifications**.
    - Run command in QGIS CLI / OSGeo4W Shell / Docker:
      ```bash
      python tests/run_tests.py
@@ -116,7 +118,7 @@ python tests/run_tests.py
 ======================================================================
 Discovering tests under: .../tests
 ======================================================================
-Tests run: 50
+Tests run: 55
 Errors: 0
 Failures: 0
 Skipped: 0
@@ -142,10 +144,10 @@ python -m unittest tests/unit/test_repair_geometry_errors.py
 
 ## 5. GitHub Actions Virtual Environment Testing (`test-pr.yml`)
 
-Every Pull Request submitted to `main`, `master`, `develop`, or `enhance/**` branches automatically triggers the test pipeline inside an official **`qgis/qgis:latest`** Docker container hosted on GitHub Actions Virtual Machines.
+Every Pull Request submitted to `main`, `master`, `develop`, or `enhance/**` branches automatically triggers the test pipeline inside an official **`qgis/qgis:3.40.10-bookworm`** Docker container hosted on GitHub Actions Virtual Machines.
 
 ### GitHub CI Environment Details:
-- **Image**: `qgis/qgis:latest` (Contains pre-installed official native QGIS C++ binaries & PyQGIS bindings).
+- **Image**: `qgis/qgis:3.40.10-bookworm` (Contains pre-installed official native QGIS 3.40 C++ binaries & PyQGIS bindings).
 - **Headless Display & QgsApplication**: Enforces `QT_QPA_PLATFORM=offscreen` and initializes `QgsApplication([], True)` with dynamic `/usr` SRS resource path resolving.
 - **Automated Workflow**:
   1. **Coverage Check**: Runs `python3 scripts/testing/generate_test_stubs.py --check` (Fails if any script in `gmd_scripts/` lacks a unit test).
