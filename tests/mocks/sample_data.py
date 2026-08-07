@@ -55,6 +55,9 @@ def _populate_layer(layer, fields, features):
         if dp:
             dp.addAttributes(list(fields))
             layer.updateFields()
+            layer_fields = layer.fields()
+            for f in features:
+                f.setFields(layer_fields)
             dp.addFeatures(features)
             layer.updateExtents()
 
@@ -67,11 +70,11 @@ def create_sample_polygon_layer(name="Sample_EA_Polygons", count=5):
     var_int = getattr(QVariant, "Int", 2)
 
     fields = QgsFields()
-    fields.append(QgsField("brgy_code", var_str, "String", 9))
-    fields.append(QgsField("ea_code", var_str, "String", 12))
-    fields.append(QgsField("ea_name", var_str, "String", 50))
-    fields.append(QgsField("total_hh", var_int, "Integer"))
-    fields.append(QgsField("status", var_str, "String", 20))
+    fields.append(QgsField("brgy_code", var_str))
+    fields.append(QgsField("ea_code", var_str))
+    fields.append(QgsField("ea_name", var_str))
+    fields.append(QgsField("total_hh", var_int))
+    fields.append(QgsField("status", var_str))
 
     layer = QgsVectorLayer("Polygon?crs=EPSG:4326", name, "memory")
 
@@ -107,9 +110,9 @@ def create_sample_point_layer(name="Sample_Building_Points", count=10):
     var_int = getattr(QVariant, "Int", 2)
 
     fields = QgsFields()
-    fields.append(QgsField("building_id", var_int, "Integer"))
-    fields.append(QgsField("structure_type", var_str, "String", 30))
-    fields.append(QgsField("hh_count", var_int, "Integer"))
+    fields.append(QgsField("building_id", var_int))
+    fields.append(QgsField("structure_type", var_str))
+    fields.append(QgsField("hh_count", var_int))
 
     layer = QgsVectorLayer("Point?crs=EPSG:4326", name, "memory")
 
