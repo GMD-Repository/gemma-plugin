@@ -22,16 +22,22 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: qgis/qgis:latest
+      env:
+        QT_QPA_PLATFORM: offscreen
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Verify Test Coverage for All Scripts
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: |
           python3 scripts/testing/generate_test_stubs.py --check
 
       - name: Execute Full QGIS Unit & Integration Test Suite
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: |
           python3 tests/run_tests.py
 
