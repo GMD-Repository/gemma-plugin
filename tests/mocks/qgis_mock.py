@@ -463,10 +463,19 @@ def setup_qgis_mock_if_needed():
 
             if hasattr(qgis.core, "QgsApplication"):
                 if qgis.core.QgsApplication.instance() is None:
-                    if hasattr(qgis.core, "__file__") and qgis.core.__file__:
+                    if "QGIS_PREFIX_PATH" in os.environ:
+                        qgis_prefix = os.environ["QGIS_PREFIX_PATH"]
+                    elif os.path.exists("/usr/share/qgis/resources/srs.db"):
+                        qgis_prefix = "/usr"
+                    elif os.path.exists("/usr/local/share/qgis/resources/srs.db"):
+                        qgis_prefix = "/usr/local"
+                    elif hasattr(qgis.core, "__file__") and qgis.core.__file__:
                         qgis_prefix = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(qgis.core.__file__))))
-                        qgis.core.QgsApplication.setPrefixPath(qgis_prefix, True)
-                    qgs_app = qgis.core.QgsApplication([], False)
+                    else:
+                        qgis_prefix = "/usr"
+
+                    qgis.core.QgsApplication.setPrefixPath(qgis_prefix, True)
+                    qgs_app = qgis.core.QgsApplication([], True)
                     qgs_app.initQgis()
 
                 try:

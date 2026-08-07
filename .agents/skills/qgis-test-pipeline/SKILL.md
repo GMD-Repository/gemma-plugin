@@ -146,6 +146,7 @@ Every Pull Request submitted to `main`, `master`, `develop`, or `enhance/**` bra
 
 ### GitHub CI Environment Details:
 - **Image**: `qgis/qgis:latest` (Contains pre-installed official native QGIS C++ binaries & PyQGIS bindings).
+- **Headless Display & QgsApplication**: Enforces `QT_QPA_PLATFORM=offscreen` and initializes `QgsApplication([], True)` with dynamic `/usr` SRS resource path resolving.
 - **Automated Workflow**:
   1. **Coverage Check**: Runs `python3 scripts/testing/generate_test_stubs.py --check` (Fails if any script in `gmd_scripts/` lacks a unit test).
   2. **Full QGIS Execution**: Runs `python3 tests/run_tests.py` against the native QGIS engine inside the GitHub runner container.
