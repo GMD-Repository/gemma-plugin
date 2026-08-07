@@ -41,10 +41,8 @@ def is_delineation_candidate(ea_item, max_household, eadel_indi_col_idx=-1, full
 
 
 def is_merge_candidate(ea_item, min_household, merge_candidate_ids=None):
-    if ea_item.get('from_split', False):
+    if ea_item.get('from_split', False) or ea_item.get('from_merge', False):
         return ea_item['hh_count'] <= min_household
-    if ea_item.get('from_merge', False):
-        return False
     orig_id = ea_item.get('original_id')
     merge_set = merge_candidate_ids or set()
     return (orig_id in merge_set) or (ea_item['hh_count'] <= min_household)
@@ -176,7 +174,12 @@ def process_barangay_merge(
                     if neighbor.get('is_special_ea', False) and not is_merge_candidate(neighbor, min_household, merge_candidate_ids):
                         continue
 
-                    if ea['geom'].touches(neighbor['geom']) or ea['geom'].intersects(neighbor['geom']):
+                    is_adjacent = (
+                        ea['geom'].touches(neighbor['geom'])
+                        or ea['geom'].intersects(neighbor['geom'])
+                        or ea['geom'].buffer(0.001, 3).intersects(neighbor['geom'])
+                    )
+                    if is_adjacent:
                         combined_hh = ea['hh_count'] + neighbor['hh_count']
                         if combined_hh <= max_household:
                             score = abs(combined_hh - (max_household - 1))
@@ -198,7 +201,12 @@ def process_barangay_merge(
                         if neighbor.get('is_special_ea', False) and not is_merge_candidate(neighbor, min_household, merge_candidate_ids):
                             continue
 
-                        if ea['geom'].touches(neighbor['geom']) or ea['geom'].intersects(neighbor['geom']):
+                        is_adjacent = (
+                            ea['geom'].touches(neighbor['geom'])
+                            or ea['geom'].intersects(neighbor['geom'])
+                            or ea['geom'].buffer(0.001, 3).intersects(neighbor['geom'])
+                        )
+                        if is_adjacent:
                             combined_hh = ea['hh_count'] + neighbor['hh_count']
                             if combined_hh <= max_household:
                                 score = abs(combined_hh - (max_household - 1))

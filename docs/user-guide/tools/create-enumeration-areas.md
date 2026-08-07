@@ -92,6 +92,34 @@ The dedicated **EA Launcher** dialog provides an interactive workflow prior to e
    - Writes final polygons to output sinks while preserving original attribute fields from the previous EA layer.
    - Appends metadata tracking fields including `hhcount`, `bldg_count`, `split_by` (`road`, `river`, `kmeans`), `new_ea`, and `correspondence_ea_geocode`.
 
+## Candidate Merging Example
+
+The following example demonstrates how under-threshold candidate EAs are processed within a small barangay (e.g. Barangay 01737) under both configuration settings:
+
+### Input Dataset State (Barangay 01737)
+
+| EA Code | Households (HH) | Classification | Initial Status |
+|---|:---:|---|---|
+| `EA 01737001` | 45 HH | Under-Threshold Candidate ($\le 100$ HH) | Initiator Candidate |
+| `EA 01737002` | 35 HH | Under-Threshold Candidate ($\le 100$ HH) | Initiator Candidate |
+| `EA 01737003` | 50 HH | Under-Threshold Candidate ($\le 100$ HH) | Initiator Candidate |
+| `EA 01737004` | 40 HH | Under-Threshold Candidate ($\le 100$ HH) | Initiator Candidate |
+
+### Setting Comparison
+
+#### Case A: Allow Merging Between Candidate EAs = Disabled (`False`)
+- **Search Rule:** Candidates can only merge into adjacent reference EAs (>100 HH).
+- **Processing Outcome:** Because all 4 EAs in Barangay 01737 are candidates ($\le 100$ HH), no valid reference neighbors exist.
+- **Output:** **0 Merged EAs** created (`01737_merged_ea2026` is empty). All 4 EAs remain unmerged and are logged in `01737_merge_candidates`.
+
+#### Case B: Allow Merging Between Candidate EAs = Enabled (`True`, Default)
+- **Search Rule:** Candidate EAs are permitted to merge with adjacent candidate EAs if no reference EAs exist.
+- **Step-by-Step Consolidation:**
+  1. **Pass 1:** `EA 01737001` (45 HH) merges with adjacent candidate `EA 01737002` (35 HH) $\rightarrow$ Subtotal: **80 HH**.
+  2. **Pass 2:** Combined sub-polygon (80 HH) merges with adjacent candidate `EA 01737003` (50 HH) $\rightarrow$ Subtotal: **130 HH** (Reaches optimal 100–300 HH range!).
+  3. **Pass 3:** Remaining under-threshold `EA 01737004` (40 HH) merges into the 130 HH polygon $\rightarrow$ Total: **170 HH**.
+- **Output:** **1 Consolidated Merged EA** (170 HH) written to `<geocode>_merged_ea2026`, successfully resolving the under-threshold coverage gap.
+
 ## Supported Geometry Types
 
 - **Polygon** and **MultiPolygon** (Barangay, EA, Gap, Overlap layers)
