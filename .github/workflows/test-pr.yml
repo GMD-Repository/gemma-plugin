@@ -1,4 +1,4 @@
-name: GEMMA QGIS Plugin - Automated Test Gate
+name: GEMMA QGIS Plugin
 
 on:
   pull_request:
@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   test-suite:
-    name: Run Unit & Integration Test Suite (QGIS ${{ matrix.qgis-version }})
+    name: (QGIS ${{ matrix.qgis-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
