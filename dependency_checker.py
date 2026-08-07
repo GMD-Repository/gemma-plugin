@@ -173,11 +173,13 @@ def ensure_plugin_dependencies():
         reason = ''
         zip_path = None
 
+        import pathlib
+        gemma_dir = pathlib.Path(__file__).parent
+        deps_dir = gemma_dir / 'references' / 'plugin_dependencies'
+
         if min_version:
-            import pathlib
             # We expect the zip file to be in references/plugin_dependencies/
-            gemma_dir = pathlib.Path(__file__).parent
-            zip_path = gemma_dir / 'references' / 'plugin_dependencies' / f'{key}-{min_version}.zip'
+            zip_path = deps_dir / f'{key}-{min_version}.zip'
 
             if not installed_version:
                 needs_install = True
