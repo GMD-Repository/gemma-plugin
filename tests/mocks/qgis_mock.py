@@ -22,13 +22,15 @@ class DynamicMockModule(types.ModuleType):
 
 
 class MockMetaClass(type):
-    """Metaclass that returns 1 / MockGenericClass for any unassigned class attribute."""
     def __getattr__(cls, name):
-        if name.startswith("__"):
-            raise AttributeError(name)
-        if name in ("HLine", "VLine", "Sunken", "Raised", "NoFrame", "Plain", "Box", "Horizontal", "Vertical", "AlignLeft", "AlignRight", "AlignCenter"):
+        if name in ("HLine", "VLine", "Horizontal", "Vertical"):
             return 1
         return MockGenericClass
+
+    def __or__(cls, other): return cls
+    def __ror__(cls, other): return cls
+    def __and__(cls, other): return cls
+    def __rand__(cls, other): return cls
 
 
 class MockGenericClass(metaclass=MockMetaClass):
@@ -53,6 +55,10 @@ class MockGenericClass(metaclass=MockMetaClass):
     def __index__(self): return 0
     def __len__(self): return 0
     def __bool__(self): return True
+    def __or__(self, other): return self
+    def __ror__(self, other): return self
+    def __and__(self, other): return self
+    def __rand__(self, other): return self
 
     def __getattr__(self, name):
         if name.startswith("__"):
@@ -270,6 +276,7 @@ class QgsVectorLayer:
     def crs(self): return MockGenericClass()
     def sourceCrs(self): return self.crs()
     def wkbType(self): return 3  # Polygon
+    def geometryType(self): return 2  # PolygonGeometry
     def id(self): return f"layer_{self._name}"
     def setSubsetString(self, string): return True
     def selectByExpression(self, expr): pass
@@ -382,13 +389,38 @@ class QgsProcessingAlgorithm:
 class QgsProject:
     _instance = None
 
+    def __init__(self):
+        self._layers = {}
+
     @classmethod
     def instance(cls):
         if cls._instance is None:
             cls._instance = QgsProject()
         return cls._instance
 
-    def mapLayers(self): return {}
+    def addMapLayer(self, layer, addToLegend=True):
+        if layer:
+            lid = layer.id() if hasattr(layer, "id") else str(id(layer))
+            self._layers[lid] = layer
+        return layer
+
+    def addMapLayers(self, layers, addToLegend=True):
+        for l in layers:
+            self.addMapLayer(l)
+        return layers
+
+    def mapLayers(self):
+        return self._layers
+
+    def mapLayer(self, layer_id):
+        return self._layers.get(layer_id)
+
+    def removeMapLayer(self, layer_id):
+        self._layers.pop(layer_id, None)
+
+    def removeAllMapLayers(self):
+        self._layers.clear()
+
     def __getattr__(self, name): return MockGenericClass()
 
 

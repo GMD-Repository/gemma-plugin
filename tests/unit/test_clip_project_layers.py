@@ -45,7 +45,14 @@ class TestClipProjectLayers(unittest.TestCase):
                 self.alg.OUTPUT_FOLDER: tmp_dir,
                 self.alg.OVERWRITE: True
             }
+            from qgis.core import QgsProject
+            QgsProject.instance().addMapLayer(self.polygon_mask)
+            QgsProject.instance().addMapLayer(self.point_layer)
+            QgsProject.instance().addMapLayer(self.line_layer)
+
             context = QgsProcessingContext()
+            if hasattr(context, "setProject"):
+                context.setProject(QgsProject.instance())
             if hasattr(context, "temporaryLayerStore"):
                 context.temporaryLayerStore().addMapLayer(self.polygon_mask)
                 context.temporaryLayerStore().addMapLayer(self.point_layer)
