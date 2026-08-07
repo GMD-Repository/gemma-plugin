@@ -441,12 +441,16 @@ class MockProcessing:
         }
 
 
+_NATIVE_QGS_APP = None
+
+
 def setup_qgis_mock_if_needed():
     """
     Checks for native QGIS installation. If real PyQGIS is available, initializes native
     QgsApplication and Processing framework. Otherwise, installs headless mock proxies.
     """
     import os
+    global _NATIVE_QGS_APP
 
     try:
         import qgis.core
@@ -475,8 +479,15 @@ def setup_qgis_mock_if_needed():
                         qgis_prefix = "/usr"
 
                     qgis.core.QgsApplication.setPrefixPath(qgis_prefix, True)
-                    qgs_app = qgis.core.QgsApplication([], True)
-                    qgs_app.initQgis()
+                    _NATIVE_QGS_APP = qgis.core.QgsApplication(sys.argv, True)
+                    _NATIVE_QGS_APP.initQgis()
+
+                    try:
+                        import qgis.gui
+                        if hasattr(qgis.gui, "QgsGui"):
+                            qgis.gui.QgsGui.init()
+                    except Exception:
+                        pass
 
                 try:
                     import processing
