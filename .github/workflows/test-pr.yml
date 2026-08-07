@@ -21,7 +21,7 @@ jobs:
     name: Run Unit & Integration Test Suite
     runs-on: ubuntu-latest
     container:
-      image: qgis/qgis:3.40.10-bookworm
+      image: qgis/qgis:3.40.10
       env:
         QT_QPA_PLATFORM: offscreen
 
