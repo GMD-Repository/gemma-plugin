@@ -152,7 +152,7 @@ Every Pull Request submitted to `main`, `master`, `develop`, or `enhance/**` bra
   3. **Sticky PR Comment Bot**: Automatically posts or updates a PR comment table with test status, coverage status, and commit hash.
 
 ```markdown
-### 🔍 GEMMA QGIS Plugin — PR Test Results
+### 🔍 GEMMA QGIS Plugin - PR Test Results
 
 | Item | Value |
 | :--- | :--- |

@@ -1,4 +1,4 @@
-name: GEMMA QGIS Plugin — Automated Test Gate
+name: GEMMA QGIS Plugin - Automated Test Gate
 
 on:
   pull_request:
@@ -65,7 +65,7 @@ jobs:
               issue_number: context.payload.pull_request.number,
             });
             
-            const botComment = comments.find(c => c.body && c.body.includes('GEMMA QGIS Plugin — PR Test Results'));
+            const botComment = comments.find(c => c.body && c.body.includes('GEMMA QGIS Plugin - PR Test Results'));
             
             if (botComment) {
               await github.rest.issues.updateComment({
