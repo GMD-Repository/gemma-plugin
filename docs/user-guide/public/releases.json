@@ -1,6 +1,36 @@
 {
-  "latest": "1.0.1",
+  "latest": "1.0.2",
   "releases": [
+    {
+      "version": "1.0.2",
+      "date": "2026-08-07",
+      "tag": "v1.0.2",
+      "prerelease": false,
+      "contributors": [
+        "velascojasper0"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.2/gemma-plugin-v1.0.2.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.2",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "enhance Pre-Processing digitizing workflow & Topology Checker automation ([@velascojasper0](https://github.com/velascojasper0)) ([#120](https://github.com/GMD-Repository/gemma-plugin/pull/120))",
+          "add digitize dock widget, single feature edit guard, and snapping options ([@velascojasper0](https://github.com/velascojasper0)) ([#122](https://github.com/GMD-Repository/gemma-plugin/pull/122))",
+          "implement Check and Update tool for boundary georeferencing, geometry repair, and metadata updates ([@velascojasper0](https://github.com/velascojasper0))",
+          "add digitize dock widget, single feature edit guard, and snapping options ([@velascojasper0](https://github.com/velascojasper0))"
+        ],
+        "improvements": [],
+        "changes": [],
+        "fixes": [],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
     {
       "version": "1.0.1",
       "date": "2026-08-05",

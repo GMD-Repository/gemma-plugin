@@ -14,7 +14,7 @@ hero:
       link: /getting-started
     - theme: alt
       text: Download
-      link: https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.1/gemma-plugin-v1.0.1.zip
+      link: https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.2/gemma-plugin-v1.0.2.zip
 
 features:
   - icon:
@@ -37,6 +37,11 @@ features:
     title: Update LGU PSGC Metadata
     details: Auto-populate PSGC codes, region, province, and city/municipality fields using a reference table with fuzzy name matching.
     link: /tools/update-metadata
+  - icon:
+      src: /icons/update.svg
+    title: Update Metadata (by Geocode)
+    details: Perform a direct PSGC left-join on LGU boundary layers using geocodes, auto-populating standard 15-attribute schemas and exporting GeoPackages.
+    link: /tools/update-metadata-by-geocode
   - icon:
       src: /icons/crs.svg
     title: Fix LGU CRS
