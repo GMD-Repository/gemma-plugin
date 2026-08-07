@@ -38,6 +38,11 @@ features:
     details: Auto-populate PSGC codes, region, province, and city/municipality fields using a reference table with fuzzy name matching.
     link: /tools/update-metadata
   - icon:
+      src: /icons/update.svg
+    title: Update Metadata (by Geocode)
+    details: Perform a direct PSGC left-join on LGU boundary layers using geocodes, auto-populating standard 15-attribute schemas and exporting GeoPackages.
+    link: /tools/update-metadata-by-geocode
+  - icon:
       src: /icons/crs.svg
     title: Fix LGU CRS
     details: Batch-correct or reposition vector layers digitized in local arbitrary grid coordinates (~0 to ~100,000) to standard WGS 84 (EPSG:4326) using 2D Affine OLS transformation.
