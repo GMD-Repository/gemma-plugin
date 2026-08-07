@@ -44,6 +44,22 @@ def run_all_tests():
     print(f"Elapsed time: {duration:.3f}s")
     print("======================================================================")
 
+    passed = result.testsRun - len(result.errors) - len(result.failures) - len(result.skipped)
+    summary = {
+        "tests_run": result.testsRun,
+        "passed": passed,
+        "errors": len(result.errors),
+        "failures": len(result.failures),
+        "skipped": len(result.skipped),
+        "elapsed_seconds": round(duration, 3),
+        "success": result.wasSuccessful()
+    }
+    
+    import json
+    json_path = PROJECT_ROOT / "tests" / "test_results.json"
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2)
+
     if result.wasSuccessful():
         print("[STATUS] PASSED — All unit & integration tests succeeded.")
         return True
