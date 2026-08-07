@@ -31,7 +31,19 @@ def resolve_ea_parent_barangay(
     barangay_index: QgsSpatialIndex,
     barangay_by_id: Dict[int, QgsFeature]
 ) -> str:
-    """Resolve barangay code for an EA feature via field attribute or spatial fallback."""
+    """Resolve barangay code for an EA feature via spatial overlay (primary) or field attribute fallback."""
+    # 1. Primary: Spatial overlay with Barangay Layer
+    parent_feat = get_parent_barangay(ea_feat.geometry(), barangay_index, barangay_by_id)
+    if parent_feat:
+        val = parent_feat.attribute(barangay_id_field)
+        if val is not None and not (isinstance(val, QVariant) and val.isNull()):
+            val_str = str(val).strip()
+            if val_str.endswith(".0"):
+                val_str = val_str[:-2]
+            if val_str:
+                return val_str
+
+    # 2. Fallback: Attribute from EA layer
     if dc_geo_idx != -1:
         val = ea_feat.attribute(dc_geo_idx)
         if val is not None and not (isinstance(val, QVariant) and val.isNull()):
@@ -39,14 +51,7 @@ def resolve_ea_parent_barangay(
             if val_str.endswith(".0"):
                 val_str = val_str[:-2]
             if val_str:
+                if len(val_str) > 5 and len(val_str) in (9, 10, 11, 12):
+                    return val_str[:5]
                 return val_str
-    # Fallback to spatial overlay
-    parent_feat = get_parent_barangay(ea_feat.geometry(), barangay_index, barangay_by_id)
-    if parent_feat:
-        val = parent_feat.attribute(barangay_id_field)
-        if val is not None:
-            val_str = str(val).strip()
-            if val_str.endswith(".0"):
-                val_str = val_str[:-2]
-            return val_str
     return "Unknown"
