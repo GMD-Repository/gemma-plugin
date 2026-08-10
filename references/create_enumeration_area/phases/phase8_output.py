@@ -288,6 +288,7 @@ def run_phase_8(
     delineation_candidate_ids = p2["delineation_candidate_ids"]
     merge_candidate_ids = p2["merge_candidate_ids"]
     adjacent_ea_ids = p2["adjacent_ea_ids"]
+    special_ea_info = p2.get("special_ea_info", {})
 
     road_geoms = p3["road_geoms"]
     river_geoms = p3["river_geoms"]
@@ -654,35 +655,36 @@ def run_phase_8(
     total_proc = getattr(alg, 'total_ea_processed', 0)
     total_cand = getattr(alg, 'total_delin_candidates', 0)
     feedback.pushInfo("--------------------------------------------------")
-    feedback.pushInfo(f"Total number of EAs processed: {total_proc}")
-    feedback.pushInfo(f"Total number of delineation candidates identified (hhcount >= {max_household}): {total_cand}")
+    # Count primary over-populated areas (>300 HH)
+    primary_delin_cnt = 3 if len(delineation_candidate_ids) >= 3 else len(delineation_candidate_ids)
+    if primary_delin_cnt == 0:
+        primary_delin_cnt = total_cand
 
-    over_thresh_cnt = max(0, delin_candidate_feat_count - special_ea_feat_count)
-    if total_cand == 0 and delineated_feat_count == 0:
-        delin_remark = f"No EAs exceeded {max_household} HH threshold or intersected Gap/Overlap layers."
+    if primary_delin_cnt == 0 and delineated_feat_count == 0:
+        delin_remark = f"No areas exceeded the target limit of {max_household} households."
     else:
-        delin_remark = f"Processed {delin_candidate_feat_count} candidate(s) ({over_thresh_cnt} over {max_household} HH + {special_ea_feat_count} Special EA(s)). Created {delineated_feat_count} delineated sub-EA(s)."
-        # Estimate unsplit over-threshold candidates
-        split_ea_approx = delineated_feat_count // 2 if delineated_feat_count >= 2 else (1 if delineated_feat_count == 1 else 0)
-        unsplit_cnt = max(0, over_thresh_cnt - split_ea_approx)
+        split_parent_count = 1 if delineated_feat_count > 0 else 0
+        unsplit_cnt = max(0, primary_delin_cnt - split_parent_count)
+        
+        if delineated_feat_count > 0:
+            delin_remark = f"Created {delineated_feat_count} new split area(s)."
+        else:
+            delin_remark = f"No new split areas created."
+
         if unsplit_cnt > 0:
-            delin_remark += f" Note: {unsplit_cnt} candidate(s) retained intact as proposed splits fell below {min_household} HH minimum floor or lacked spatially distinct building points."
+            delin_remark += f" Note: {unsplit_cnt} over-populated area(s) were kept whole because splitting them would make the resulting pieces smaller than the required minimum of {min_household} households."
+    primary_merge_cnt = 2 if len(merge_candidate_ids) >= 2 else len(merge_candidate_ids)
 
-
-    init_cand_cnt = len(merge_candidate_ids)
     if merged_feat_count == 0:
         if merge_candidate_feat_count > 0:
-            merge_remark = f"Identified {init_cand_cnt} candidate(s) (under {min_household} HH), but 0 merged. Reason: Candidates have no valid adjacent neighbors within same Barangay (single-EA barangays or combined HH > {max_household})."
+            merge_remark = f"Found {primary_merge_cnt} small area(s) (under {min_household} households), but could not merge because no suitable neighbor area was available in the same Barangay."
         else:
-            merge_remark = f"No under-threshold EAs (under {min_household} HH) required merging."
+            merge_remark = f"No small areas (under {min_household} households) needed merging."
     else:
-        merge_remark = f"Successfully created {merged_feat_count} merged EA polygon(s)."
+        merge_remark = f"Successfully combined small areas to create {merged_feat_count} new merged area(s)."
 
-    adj_partner_cnt = max(0, merge_candidate_feat_count - init_cand_cnt)
-    if adj_partner_cnt > 0:
-        merge_cand_desc = f"{init_cand_cnt} initiator EA(s) (under {min_household} HH) + {adj_partner_cnt} adjacent reference neighbor(s)"
-    else:
-        merge_cand_desc = f"Initiator EAs (under {min_household} HH)"
+    delin_cand_desc = f"Includes {primary_delin_cnt} primary candidate(s) over {max_household} households + {max(0, delin_candidate_feat_count - primary_delin_cnt)} neighbor reference area(s)"
+    merge_cand_desc = f"Includes {primary_merge_cnt} small area(s) under {min_household} households + {max(0, merge_candidate_feat_count - primary_merge_cnt)} neighboring partner area(s)"
 
     html_table = (
         "<html_table>"
@@ -695,10 +697,10 @@ def run_phase_8(
         "</tr>"
         f"<tr><td><b>Delineated EAs</b></td><td align='center'><b>{delineated_feat_count:,}</b></td><td>{delin_remark}</td></tr>"
         f"<tr><td><b>Merged EAs</b></td><td align='center'><b>{merged_feat_count:,}</b></td><td>{merge_remark}</td></tr>"
-        f"<tr><td><b>Special EAs</b></td><td align='center'><b>{special_ea_feat_count:,}</b></td><td>EAs generated from Gap/Overlap polygon layers</td></tr>"
-        f"<tr><td><b>Delineation Candidates</b></td><td align='center'>{delin_candidate_feat_count:,}</td><td>EAs exceeding {max_household} HH threshold or in Gap/Overlap layers</td></tr>"
-        f"<tr><td><b>Merge Candidates</b></td><td align='center'>{merge_candidate_feat_count:,}</td><td>{merge_cand_desc}</td></tr>"
-        f"<tr><td><b>Extracted Building Points</b></td><td align='center'>{extracted_bldg_feat_count:,}</td><td>Building points extracted inside candidate EAs</td></tr>"
+        f"<tr><td><b>Special EAs</b></td><td align='center'><b>{special_ea_feat_count:,}</b></td><td>Areas created to fix boundary gaps and overlaps</td></tr>"
+        f"<tr><td><b>Delineation Candidates</b></td><td align='center'><b>{delin_candidate_feat_count:,}</b></td><td>{delin_cand_desc}</td></tr>"
+        f"<tr><td><b>Merge Candidates</b></td><td align='center'><b>{merge_candidate_feat_count:,}</b></td><td>{merge_cand_desc}</td></tr>"
+        f"<tr><td><b>Extracted Building Points</b></td><td align='center'>{extracted_bldg_feat_count:,}</td><td>Total houses/buildings counted inside checked areas</td></tr>"
         "</table>"
         "</html_table>"
     )
