@@ -36,6 +36,7 @@ export default defineConfig({
               { text: 'Fill Polygon Gaps', link: '/tools/fill-polygon-gaps' },
               { text: 'Export Preliminary Polygons', link: '/tools/export-preliminary-polygons' },
               { text: 'Update LGU PSGC Metadata', link: '/tools/update-metadata' },
+              { text: 'Update Metadata (by Geocode)', link: '/tools/update-metadata-by-geocode' },
               { text: 'Fix LGU CRS / Geometry', link: '/tools/fix-lgu-crs' },
               { text: 'Join Barangay Attributes', link: '/tools/join-barangay-attributes' },
               { text: 'Check and Update', link: '/tools/check-and-update' },
@@ -60,7 +61,7 @@ export default defineConfig({
         ]
       },
       {
-        text: 'v1.0.1',
+        text: 'v1.0.2',
         items: [
           { text: 'Changelog', link: '/changelog' },
           { text: 'Download Latest', link: 'https://github.com/GMD-Repository/gemma-plugin/releases/latest' },
@@ -85,6 +86,7 @@ export default defineConfig({
           { text: 'Fill Polygon Gaps', link: '/tools/fill-polygon-gaps' },
           { text: 'Export Preliminary Polygons', link: '/tools/export-preliminary-polygons' },
           { text: 'Update LGU PSGC Metadata', link: '/tools/update-metadata' },
+          { text: 'Update Metadata (by Geocode)', link: '/tools/update-metadata-by-geocode' },
           { text: 'Fix LGU CRS / Geometry', link: '/tools/fix-lgu-crs' },
           { text: 'Join Barangay Attributes', link: '/tools/join-barangay-attributes' },
           { text: 'Check and Update', link: '/tools/check-and-update' },

@@ -20,7 +20,7 @@ from qgis.PyQt.QtWidgets import (
     QSizePolicy, QSpacerItem, QWidget, QSpinBox, QDoubleSpinBox, QCheckBox,
     QComboBox, QLineEdit, QFileDialog, QTabWidget, QTableWidget, QTableWidgetItem,
     QHeaderView, QProgressBar, QTextEdit, QScrollArea, QSplitter, QGridLayout,
-    QTextBrowser, QMessageBox, QGroupBox
+    QTextBrowser, QMessageBox, QGroupBox, QToolButton
 )
 from qgis.PyQt.QtGui import QFont, QPixmap, QColor, QIcon, QTextCursor
 from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication, QThread, QObject, pyqtSignal, QVariant, QTimer
@@ -69,14 +69,34 @@ class CustomProcessingFeedback(QgsProcessingFeedback):
         super().setProgress(progress)
 
     def pushInfo(self, info):
-        # Clean processing text and print with styled labels
-        badge = "<span style='color: #0969da; font-weight: bold;'>[INFO]</span>"
-        if "success" in info.lower() or "complete" in info.lower() or "done" in info.lower():
-            badge = "<span style='color: #1a7f37; font-weight: bold;'>[SUCCESS]</span>"
-        elif "warning" in info.lower() or "skip" in info.lower():
-            badge = "<span style='color: #d17a00; font-weight: bold;'>[WARNING]</span>"
+        # Handle formatted HTML tables cleanly
+        if isinstance(info, str) and info.startswith("<html_table>") and info.endswith("</html_table>"):
+            clean_html = info[12:-13]
+            self.helper.append_html.emit(clean_html)
+            if QThread.currentThread() == QCoreApplication.instance().thread():
+                QCoreApplication.processEvents()
+            return
 
-        self.helper.append_html.emit(f"{badge} {info}")
+        # Strip any existing leading bracket tag if present to avoid duplication
+        clean_text = info
+        if clean_text.startswith("[INFO] "):
+            clean_text = clean_text[7:]
+        elif clean_text.startswith("[WARN] "):
+            clean_text = clean_text[7:]
+        elif clean_text.startswith("[WARNING] "):
+            clean_text = clean_text[10:]
+        elif clean_text.startswith("[SUCCESS] "):
+            clean_text = clean_text[10:]
+
+        info_lower = info.lower()
+        badge = "<span style='color: #0969da; font-weight: bold;'>[INFO]</span>"
+
+        if info.startswith("[WARN]") or info.startswith("[WARNING]") or "warning" in info_lower:
+            badge = "<span style='color: #d17a00; font-weight: bold;'>[WARNING]</span>"
+        elif "success" in info_lower or "complete" in info_lower or "done" in info_lower:
+            badge = "<span style='color: #1a7f37; font-weight: bold;'>[SUCCESS]</span>"
+
+        self.helper.append_html.emit(f"{badge} {clean_text}")
         if QThread.currentThread() == QCoreApplication.instance().thread():
             QCoreApplication.processEvents()
 
@@ -173,9 +193,7 @@ class EALauncherDialog(QDialog):
         header_layout.setContentsMargins(4, 4, 4, 4)
         header_layout.setSpacing(10)
 
-        header_layout.addStretch()
-
-        # Icon
+        # Icon (Left Aligned)
         icon_label = QLabel()
         icon_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "..", "icons", "create_ea.svg")
@@ -197,6 +215,31 @@ class EALauncherDialog(QDialog):
         header_layout.addWidget(title, 0, Qt.AlignVCenter)
 
         header_layout.addStretch()
+
+        # Description Toggle Icon Button (only icon, aligned in top header)
+        show_icon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "icons", "show_description.svg"))
+        hide_icon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "icons", "hide_description.svg"))
+
+        self.toggle_help_btn = QToolButton()
+        self.toggle_help_btn.setIcon(QIcon(hide_icon_path))
+        self.toggle_help_btn.setIconSize(QSize(20, 20))
+        self.toggle_help_btn.setFixedSize(28, 28)
+        self.toggle_help_btn.setToolTip("Show / Hide Description Panel")
+        self.toggle_help_btn.setCursor(Qt.PointingHandCursor)
+        self.toggle_help_btn.setStyleSheet("""
+            QToolButton {
+                border: none;
+                background-color: transparent;
+                padding: 2px;
+                border-radius: 4px;
+            }
+            QToolButton:hover {
+                background-color: rgba(140, 149, 159, 0.2);
+            }
+        """)
+        self.toggle_help_btn.clicked.connect(self.toggle_help)
+        header_layout.addWidget(self.toggle_help_btn, 0, Qt.AlignVCenter)
+
         root.addWidget(header)
 
         # ── Main Pane Splitter ────────────────────────────────────────────
@@ -220,9 +263,10 @@ class EALauncherDialog(QDialog):
         # 1. Inputs Section (QGroupBox)
         inputs_group = QGroupBox("Input Layers")
         inputs_layout = QVBoxLayout(inputs_group)
+        inputs_layout.setContentsMargins(8, 8, 8, 8)
         inputs_layout.setSpacing(8)
 
-        # Action Buttons row inside Inputs group
+        # Action buttons sub-row inside Input Layers group box
         inputs_btn_layout = QHBoxLayout()
         self.detect_btn = QPushButton("Auto-detect Layers")
         self.detect_btn.setToolTip("Scan current QGIS project layers and auto-select matching layers.")
@@ -264,6 +308,7 @@ class EALauncherDialog(QDialog):
         self.road_combo = QgsMapLayerComboBox()
         self.road_combo.setFilters(QgsMapLayerProxyModel.LineLayer)
         self.road_combo.setAllowEmptyLayer(True)
+        self.road_combo.setLayer(None)
         inputs_layout.addWidget(self.road_combo)
         self.road_status_lbl = QLabel("Optional.")
         inputs_layout.addWidget(self.road_status_lbl)
@@ -273,6 +318,7 @@ class EALauncherDialog(QDialog):
         self.river_combo = QgsMapLayerComboBox()
         self.river_combo.setFilters(QgsMapLayerProxyModel.LineLayer)
         self.river_combo.setAllowEmptyLayer(True)
+        self.river_combo.setLayer(None)
         inputs_layout.addWidget(self.river_combo)
         self.river_status_lbl = QLabel("Optional.")
         inputs_layout.addWidget(self.river_status_lbl)
@@ -282,6 +328,7 @@ class EALauncherDialog(QDialog):
         self.gap_combo = QgsMapLayerComboBox()
         self.gap_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
         self.gap_combo.setAllowEmptyLayer(True)
+        self.gap_combo.setLayer(None)
         inputs_layout.addWidget(self.gap_combo)
         self.gap_status_lbl = QLabel("Optional.")
         inputs_layout.addWidget(self.gap_status_lbl)
@@ -291,6 +338,7 @@ class EALauncherDialog(QDialog):
         self.overlap_combo = QgsMapLayerComboBox()
         self.overlap_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
         self.overlap_combo.setAllowEmptyLayer(True)
+        self.overlap_combo.setLayer(None)
         inputs_layout.addWidget(self.overlap_combo)
         self.overlap_status_lbl = QLabel("Optional.")
         inputs_layout.addWidget(self.overlap_status_lbl)
@@ -327,6 +375,12 @@ class EALauncherDialog(QDialog):
         self.compact_chk = QCheckBox("Optimize for Compactness")
         self.compact_chk.setChecked(True)
         params_layout.addWidget(self.compact_chk)
+
+        # Allow Candidate Merging
+        self.allow_candidate_merge_chk = QCheckBox("Allow Merging Between Under-Threshold Candidate EAs")
+        self.allow_candidate_merge_chk.setToolTip("When checked, under-threshold candidate EAs (< 100 HH) can merge with neighboring candidate EAs when no normal reference EA exists in the barangay.")
+        self.allow_candidate_merge_chk.setChecked(True)
+        params_layout.addWidget(self.allow_candidate_merge_chk)
 
         # Sliver Polygon enum
         params_layout.addWidget(QLabel("Sliver Polygon Area Threshold"))
@@ -492,11 +546,7 @@ class EALauncherDialog(QDialog):
         self.help_panel = QWidget()
         help_layout = QVBoxLayout(self.help_panel)
         help_layout.setContentsMargins(5, 5, 5, 5)
-        help_layout.setSpacing(8)
-
-        help_title = QLabel("Description")
-        help_title.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        help_layout.addWidget(help_title)
+        help_layout.setSpacing(0)
 
         self.help_text = QTextBrowser()
         self.help_text.setOpenExternalLinks(True)
@@ -511,49 +561,60 @@ class EALauncherDialog(QDialog):
 
         root.addWidget(main_splitter)
 
-        # ── Bottom Bar (Progress, Run, Cancel) ────────────────────────────
+        # ── Bottom Bar (Progress, Run, Cancel & Status Banner) ───────────
         bottom_bar = QWidget()
-        bottom_layout = QHBoxLayout(bottom_bar)
-        bottom_layout.setContentsMargins(10, 6, 10, 6)
-        bottom_layout.setSpacing(8)
+        bottom_main_layout = QVBoxLayout(bottom_bar)
+        bottom_main_layout.setContentsMargins(10, 4, 10, 6)
+        bottom_main_layout.setSpacing(6)
 
-        # Help Toggle Button
-        self.help_btn = QPushButton("Hide Description")
-        self.help_btn.setMinimumWidth(120)
-        self.help_btn.setFixedHeight(26)
-        self.help_btn.clicked.connect(self.toggle_help)
-        bottom_layout.addWidget(self.help_btn)
+        # Status Summary Banner above progress bar (Native QLabel without hardcoded stylesheet)
+        self.status_banner = QLabel("Ready to run algorithm.")
+        self.status_banner.setWordWrap(True)
+        self.status_banner.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        bottom_main_layout.addWidget(self.status_banner)
+
+        # Controls row (Progress bar, Cancel btn, Run btn)
+        bottom_controls_layout = QHBoxLayout()
+        bottom_controls_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_controls_layout.setSpacing(8)
 
         # Progress bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setFixedHeight(26)
-        bottom_layout.addWidget(self.progress_bar)
+        bottom_controls_layout.addWidget(self.progress_bar)
 
         # Actions
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.setMinimumWidth(80)
         self.cancel_btn.setFixedHeight(26)
         self.cancel_btn.setEnabled(False)
-        bottom_layout.addWidget(self.cancel_btn)
+        bottom_controls_layout.addWidget(self.cancel_btn)
 
         self.run_btn = QPushButton("Run")
         self.run_btn.setMinimumWidth(120)
         self.run_btn.setFixedHeight(26)
         self.run_btn.clicked.connect(self.run_pipeline)
-        bottom_layout.addWidget(self.run_btn)
+        bottom_controls_layout.addWidget(self.run_btn)
 
+        bottom_main_layout.addLayout(bottom_controls_layout)
         root.addWidget(bottom_bar)
 
     def toggle_help(self):
         """Toggle the visibility of the description help panel."""
-        visible = self.help_panel.isVisible()
-        self.help_panel.setVisible(not visible)
-        if not visible:
-            self.help_btn.setText("Hide Description")
+        is_visible = not self.help_panel.isVisible()
+        self.help_panel.setVisible(is_visible)
+
+        show_icon = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "icons", "show_description.svg"))
+        hide_icon = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "icons", "hide_description.svg"))
+
+        if is_visible:
+            self.toggle_help_btn.setIcon(QIcon(hide_icon))
+            self.toggle_help_btn.setToolTip("Hide Description Panel")
         else:
-            self.help_btn.setText("Show Description")
+            self.toggle_help_btn.setIcon(QIcon(show_icon))
+            self.toggle_help_btn.setToolTip("Show Description Panel")
 
     def _create_kpi_card(self, title, value, variant="stats"):
         card = QGroupBox(title)
@@ -624,8 +685,8 @@ class EALauncherDialog(QDialog):
 
     def _create_preview_table(self):
         table = QTableWidget()
-        table.setColumnCount(4)
-        table.setHorizontalHeaderLabels(["Geocode", "Barangay", "EA Name", "Household Count"])
+        table.setColumnCount(5)
+        table.setHorizontalHeaderLabels(["Geocode", "Barangay", "EA Name", "Household Count", "Role / Status"])
         table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         table.horizontalHeader().setStretchLastSection(True)
         table.verticalHeader().setVisible(False)
@@ -1064,27 +1125,31 @@ class EALauncherDialog(QDialog):
             total_hh += hh
             ea_count += 1
 
-            # Classify candidates: delineation candidates strictly require hh >= max_hh
+            # Classify candidates:
+            #   HH >= max_hh  → Delineation candidate (over-populated EA)
+            #   HH <= min_hh  → Merge candidate (under-populated EA)
+            #   Explicit field indicator ("for merging") → Merge candidate
             is_delin = (hh >= max_hh)
 
             is_merge = False
-            if merge_indi_idx != -1:
+            if not is_delin and merge_indi_idx != -1:
                 val = feat.attribute(merge_indi_idx)
                 if val is not None and str(val).strip().lower() in ("for merging", "for_merging"):
                     is_merge = True
-            if not is_merge and not is_delin:
+
+            # Default: under-populated EAs (HH <= min_hh) are merge candidates.
+            if not is_delin and not is_merge:
                 is_merge = (hh <= min_hh)
 
             if is_delin:
-                self.all_delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh))
+                self.all_delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, f"Delineation (>= {max_hh} HH)"))
             elif is_merge:
-                self.all_merge_candidates.append((ean_str, ea_name_str, bgy_name_str, hh))
+                self.all_merge_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, f"Initiator (<= {min_hh} HH)"))
 
         # Update KPI Dashboard Stats
         self.kpi_delin_val.setText(str(len(self.all_delineation_candidates)))
         self.kpi_merge_val.setText(str(len(self.all_merge_candidates)))
         
-
         # Trigger initial preview populates
         self.filter_previews()
 
@@ -1099,12 +1164,12 @@ class EALauncherDialog(QDialog):
         
         filtered_delin = []
         for row in self.all_delineation_candidates:
-            if not query or query in row[0].lower() or query in row[1].lower() or query in row[2].lower():
+            if not query or query in row[0].lower() or query in row[1].lower() or query in row[2].lower() or (len(row) > 4 and query in row[4].lower()):
                 filtered_delin.append(row)
                 
         filtered_merge = []
         for row in self.all_merge_candidates:
-            if not query or query in row[0].lower() or query in row[1].lower() or query in row[2].lower():
+            if not query or query in row[0].lower() or query in row[1].lower() or query in row[2].lower() or (len(row) > 4 and query in row[4].lower()):
                 filtered_merge.append(row)
 
         self._populate_table_rows(self.delineation_table, filtered_delin, is_delineation=True)
@@ -1122,18 +1187,23 @@ class EALauncherDialog(QDialog):
             bg_col = "#3d2121" if is_delineation else "#1e3f28"
             fg_col = "#ff6b6b" if is_delineation else "#2ecc71"
 
-        for row_idx, (ean_str, ea_name_str, bgy_name_str, hh) in enumerate(show_records):
+        for row_idx, record in enumerate(show_records):
+            ean_str, ea_name_str, bgy_name_str, hh = record[:4]
+            role_str = record[4] if len(record) > 4 else ("Delineation Candidate" if is_delineation else "Merge Candidate")
+            
             item_ean = QTableWidgetItem(ean_str)
             item_bgy = QTableWidgetItem(bgy_name_str)
             item_name = QTableWidgetItem(ea_name_str)
             item_hh = QTableWidgetItem(f"{hh:.0f}")
+            item_role = QTableWidgetItem(role_str)
             
             item_ean.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             item_bgy.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             item_name.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             item_hh.setTextAlignment(Qt.AlignCenter)
+            item_role.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             
-            for item in [item_ean, item_name, item_bgy, item_hh]:
+            for item in [item_ean, item_name, item_bgy, item_hh, item_role]:
                 item.setBackground(QColor(bg_col))
                 item.setForeground(QColor(fg_col))
             
@@ -1141,6 +1211,7 @@ class EALauncherDialog(QDialog):
             table.setItem(row_idx, 1, item_bgy)
             table.setItem(row_idx, 2, item_name)
             table.setItem(row_idx, 3, item_hh)
+            table.setItem(row_idx, 4, item_role)
 
     # ── Console Controls ───────────────────────────────────────────────────
 
@@ -1192,6 +1263,7 @@ class EALauncherDialog(QDialog):
             'MIN_HOUSEHOLD': self.min_hh_spin.value(),
             'MAX_HOUSEHOLD': self.max_hh_spin.value(),
             'USE_COMPACTNESS': self.compact_chk.isChecked(),
+            'ALLOW_CANDIDATE_MERGE': self.allow_candidate_merge_chk.isChecked(),
             'SLIVER_THRESHOLD': self.sliver_combo.currentIndex(),
             'TARGET_CRS': self.crs_widget.crs(),
             'PREVIEW_ONLY': False,
@@ -1211,6 +1283,7 @@ class EALauncherDialog(QDialog):
         self.run_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
         self.tab_widget.setCurrentIndex(1)
+        self.status_banner.setText("⏳ Processing algorithm... Please wait.")
 
         self.log_console.append("<span style='color:#1a7f37; font-weight:bold;'>[START] Starting Create Enumeration Areas...</span>")
         QCoreApplication.processEvents()
@@ -1237,21 +1310,65 @@ class EALauncherDialog(QDialog):
             if self.feedback.isCanceled():
                 self.log_console.append("<span style='color:#d17a00; font-weight:bold;'>[CANCEL] Pipeline execution cancelled by user.</span>")
             else:
-                # Rename loaded layers in QGIS Layers Panel using 5-digit geocode prefix
+                # Rename and organize loaded layers into structured QGIS Layer Sub-Groups
                 geo5 = self._extract_5digit_geocode() or "00000"
                 from qgis.core import QgsProject, QgsMapLayer
 
-                output_names = {
-                    'DELINEATED_OUTPUT': f"{geo5}_delineated_ea2026",
-                    'MERGED_OUTPUT': f"{geo5}_merged_ea2026",
-                    'SPECIAL_EA_OUTPUT': f"{geo5}_special_ea",
-                    'DELINEATION_CANDIDATE_OUTPUT': f"{geo5}_delineation_candidates",
-                    'MERGE_CANDIDATE_OUTPUT': f"{geo5}_merge_candidates",
-                    'EXTRACTED_BUILDINGS_OUTPUT': f"{geo5}_extracted_bldgpts",
-                }
+                root = QgsProject.instance().layerTreeRoot()
+                main_group_name = f"{geo5}_EA_Outputs"
+                main_group = root.findGroup(main_group_name)
+                if not main_group:
+                    main_group = root.insertGroup(0, main_group_name)
+
+                # Create structured sub-groups inside main_group in exact order:
+                # 1. Reference Layers
+                # 2. EAs
+                # 3. Candidates
+                reference_group = main_group.findGroup("Reference Layers")
+                if not reference_group:
+                    reference_group = main_group.insertGroup(0, "Reference Layers")
+
+                eas_group = main_group.findGroup("EAs")
+                if not eas_group:
+                    eas_group = main_group.insertGroup(1, "EAs")
+
+                candidates_group = main_group.findGroup("Candidates")
+                if not candidates_group:
+                    candidates_group = main_group.insertGroup(2, "Candidates")
+
+                # Ensure existing groups are sorted in top-to-bottom order: Reference Layers -> EAs -> Candidates
+                ordered_subgroups = [
+                    ("Reference Layers", reference_group),
+                    ("EAs", eas_group),
+                    ("Candidates", candidates_group)
+                ]
+                for target_idx, (g_name, g_node) in enumerate(ordered_subgroups):
+                    children = main_group.children()
+                    if g_node in children:
+                        curr_idx = children.index(g_node)
+                        if curr_idx != target_idx:
+                            cloned = g_node.clone()
+                            main_group.insertChildNode(target_idx, cloned)
+                            main_group.removeChildNode(g_node)
+                            if g_name == "Reference Layers":
+                                reference_group = cloned
+                            elif g_name == "EAs":
+                                eas_group = cloned
+                            elif g_name == "Candidates":
+                                candidates_group = cloned
+
+                # Output layers in exact top-to-bottom order for each group
+                output_mapping_ordered = [
+                    ('EXTRACTED_BUILDINGS_OUTPUT', f"{geo5}_extracted_bldgpts", reference_group),
+                    ('DELINEATED_OUTPUT', f"{geo5}_delineated_ea2026", eas_group),
+                    ('MERGED_OUTPUT', f"{geo5}_merged_ea2026", eas_group),
+                    ('SPECIAL_EA_OUTPUT', f"{geo5}_special_ea", eas_group),
+                    ('DELINEATION_CANDIDATE_OUTPUT', f"{geo5}_delineation_candidates", candidates_group),
+                    ('MERGE_CANDIDATE_OUTPUT', f"{geo5}_merge_candidates", candidates_group),
+                ]
 
                 if isinstance(results, dict):
-                    for out_key, target_name in output_names.items():
+                    for out_key, target_name, target_group in output_mapping_ordered:
                         if out_key in results:
                             layer_ref = results[out_key]
                             layer = None
@@ -1262,12 +1379,67 @@ class EALauncherDialog(QDialog):
                             
                             if layer:
                                 layer.setName(target_name)
+                                lnode = root.findLayer(layer.id())
+                                if lnode:
+                                    if lnode.parent() != target_group:
+                                        clone = lnode.clone()
+                                        target_group.addChildNode(clone)
+                                        lnode.parent().removeChildNode(lnode)
+
+                # Group any generated splitting line layers (ending with _eadel_update) into Reference Layers
+                for layer_id, proj_layer in QgsProject.instance().mapLayers().items():
+                    if proj_layer.name().endswith("_eadel_update"):
+                        lnode = root.findLayer(layer_id)
+                        if lnode and lnode.parent() != reference_group:
+                            clone = lnode.clone()
+                            reference_group.addChildNode(clone)
+                            lnode.parent().removeChildNode(lnode)
 
                 self.progress_bar.setValue(100)
                 self.log_console.append("<span style='color:#1a7f37; font-weight:bold;'>[COMPLETE] Pipeline execution complete! Results loaded to map.</span>")
 
+                # Update Status Banner above progress bar with clear result explanation
+                delin_cnt = 0
+                merged_cnt = 0
+                merge_cand_cnt = 0
+                if isinstance(results, dict):
+                    d_ref = results.get('DELINEATED_OUTPUT')
+                    m_ref = results.get('MERGED_OUTPUT')
+                    mc_ref = results.get('MERGE_CANDIDATE_OUTPUT')
+                    if isinstance(d_ref, str):
+                        d_l = QgsProject.instance().mapLayer(d_ref)
+                        delin_cnt = d_l.featureCount() if d_l else 0
+                    elif isinstance(d_ref, QgsMapLayer):
+                        delin_cnt = d_ref.featureCount()
+
+                    if isinstance(m_ref, str):
+                        m_l = QgsProject.instance().mapLayer(m_ref)
+                        merged_cnt = m_l.featureCount() if m_l else 0
+                    elif isinstance(m_ref, QgsMapLayer):
+                        merged_cnt = m_ref.featureCount()
+
+                    if isinstance(mc_ref, str):
+                        mc_l = QgsProject.instance().mapLayer(mc_ref)
+                        merge_cand_cnt = mc_l.featureCount() if mc_l else 0
+                    elif isinstance(mc_ref, QgsMapLayer):
+                        merge_cand_cnt = mc_ref.featureCount()
+
+                if delin_cnt == 0 and merged_cnt == 0:
+                    if merge_cand_cnt > 0:
+                        if self.allow_candidate_merge_chk.isChecked():
+                            banner_text = f"Notice: 0 Delineated | 0 Merged EAs — {merge_cand_cnt} merge candidate features identified."
+                        else:
+                            banner_text = f"Notice: 0 Delineated | 0 Merged EAs — {merge_cand_cnt} candidate EAs identified (candidate-to-candidate merging is disabled)."
+                    else:
+                        banner_text = "Notice: 0 Delineated | 0 Merged EAs — All starting EAs are within optimal threshold range (100–300 HH)."
+                else:
+                    banner_text = f"Success: Created {delin_cnt} Delineated EA(s) and {merged_cnt} Merged EA(s)."
+
+                self.status_banner.setText(banner_text)
+
         except Exception as e:
             self.log_console.append(f"<span style='color:#cf222e; font-weight:bold;'>[FATAL] Error executing pipeline: {str(e)}</span>")
+            self.status_banner.setText(f"Error: Pipeline execution failed — {str(e)}")
         
         finally:
             self.run_btn.setEnabled(True)
