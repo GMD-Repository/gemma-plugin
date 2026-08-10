@@ -295,10 +295,12 @@ def run_phase_8(
     # Sinks & Count trackers from p2 (or p1)
     delineated_sink = p2.get("delineated_sink") or p1.get("delineated_sink")
     merged_sink = p2.get("merged_sink") or p1.get("merged_sink")
+    special_ea_sink = p2.get("special_ea_sink") or p1.get("special_ea_sink")
     extracted_buildings_sink = p2.get("extracted_buildings_sink") or p1.get("extracted_buildings_sink")
 
     delineated_feat_count = 0
     merged_feat_count = 0
+    special_ea_feat_count = 0
     extracted_bldg_feat_count = 0
 
     delin_candidate_feat_count = p2.get("delin_candidate_feat_count", len(delineation_candidate_ids))
@@ -529,26 +531,57 @@ def run_phase_8(
             concat_val = f"{map_uuid_str}:{geocode_str}:{sy_str}"
             out_feat.setAttribute(corr_ea_geo_idx, concat_val)
 
-        _ea_id = ea.get('original_id')
-        _is_delineation_result = (
-            ea.get('from_split', False)
-            or ea.get('is_special_ea', False)
-            or _ea_id in delineation_candidate_ids
+        # Explicitly set eadel_indi indicator field
+        eadel_indi_out_idx = out_fields.indexOf("eadel_indi")
+        if eadel_indi_out_idx != -1:
+            _ea_id_tmp = ea.get('original_id')
+            is_delin_feat = (_ea_id_tmp in delineation_candidate_ids) or ea.get('from_split', False)
+            out_feat.setAttribute(eadel_indi_out_idx, "for_delineation" if is_delin_feat else "ea_reference")
+
+        # Check if EA feature is blank (empty geometry or missing geocode/ean identifiers)
+        _gc_val = out_feat.attribute(out_fields.indexOf("geocode")) if out_fields.indexOf("geocode") != -1 else None
+        _ean_val = out_feat.attribute(out_fields.indexOf(ea_id_field)) if out_fields.indexOf(ea_id_field) != -1 else None
+        _is_blank_feat = out_feat.geometry().isEmpty() or (
+            (_gc_val is None or (isinstance(_gc_val, QVariant) and _gc_val.isNull()) or str(_gc_val).strip() in ('', 'NULL', 'None'))
+            and (_ean_val is None or (isinstance(_ean_val, QVariant) and _ean_val.isNull()) or str(_ean_val).strip() in ('', 'NULL', 'None'))
         )
-        if _is_delineation_result:
-            if delineated_sink is not None:
-                if delineated_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
-                    delineated_feat_count += 1
-                else:
-                    feedback.reportError(f"Failed to add EA {i} to delineated sink.")
 
-        if ea.get('from_merge', False) and not _is_delineation_result:
-            if merged_sink is not None:
-                if merged_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
-                    merged_feat_count += 1
-                else:
-                    feedback.reportError(f"Failed to add EA {i} to merged sink.")
+        if _is_blank_feat:
+            feedback.pushWarning(f"[Output] Skipped writing blank EA feature to output layer (code={ea.get('original_code', '?')}).")
+        else:
+            _ea_id = ea.get('original_id')
+            # Add to Special EAs sink if it is a Special EA (Gap/Overlap)
+            if ea.get('is_special_ea', False):
+                if special_ea_sink is not None:
+                    if special_ea_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
+                        special_ea_feat_count += 1
+                    else:
+                        feedback.reportError(f"Failed to add Special EA {i} to special EA sink.")
+            # Add to delineated sink if it was split and not a Special EA
+            elif ea.get('from_split', False):
+                if delineated_sink is not None:
+                    if delineated_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
+                        delineated_feat_count += 1
+                    else:
+                        feedback.reportError(f"Failed to add EA {i} to delineated sink.")
 
+            # Add to merged sink if it was merged, not split, not Special EA, and has >0 hh_count and >0 bldg_count
+            if ea.get('from_merge', False) and not ea.get('from_split', False) and not ea.get('is_special_ea', False):
+                if merged_sink is not None:
+                    _m_hh = ea.get('hh_count', 0.0)
+                    _m_bldg = ea.get('bldg_count', 0)
+                    if _m_hh > 0 and _m_bldg > 0:
+                        if merged_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
+                            merged_feat_count += 1
+                        else:
+                            feedback.reportError(f"Failed to add EA {i} to merged sink.")
+                    else:
+                        feedback.pushWarning(
+                            f"[Merged Output] Skipped writing zero-count merged EA (code={ea.get('original_code', '?')}, "
+                            f"hh_count={_m_hh}, bldg_count={_m_bldg}) to merged sink."
+                        )
+
+        # Add matched buildings to extracted buildings sink
         if extracted_buildings_sink is not None:
             bldg_out_fields = QgsFields(building_source.fields())
             if bldg_out_fields.indexOf("parent_ean") == -1:
@@ -655,6 +688,7 @@ def run_phase_8(
         "</tr>"
         f"<tr><td><b>Delineated EAs</b></td><td align='center'><b>{delineated_feat_count:,}</b></td><td>{delin_remark}</td></tr>"
         f"<tr><td><b>Merged EAs</b></td><td align='center'><b>{merged_feat_count:,}</b></td><td>{merge_remark}</td></tr>"
+        f"<tr><td><b>Special EAs</b></td><td align='center'><b>{special_ea_feat_count:,}</b></td><td>EAs generated from Gap/Overlap polygon layers</td></tr>"
         f"<tr><td><b>Delineation Candidates</b></td><td align='center'>{delin_candidate_feat_count:,}</td><td>EAs exceeding {max_household} HH threshold or in Gap/Overlap layers</td></tr>"
         f"<tr><td><b>Merge Candidates</b></td><td align='center'>{merge_candidate_feat_count:,}</td><td>{merge_cand_desc}</td></tr>"
         f"<tr><td><b>Extracted Building Points</b></td><td align='center'>{extracted_bldg_feat_count:,}</td><td>Building points extracted inside candidate EAs</td></tr>"

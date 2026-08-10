@@ -53,6 +53,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
     OUTPUT = "OUTPUT"
     DELINEATED_OUTPUT = "DELINEATED_OUTPUT"
     MERGED_OUTPUT = "MERGED_OUTPUT"
+    SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
     DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
     MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
     EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
@@ -411,6 +412,15 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             QgsProcessingParameterFeatureSink(
                 self.MERGED_OUTPUT,
                 "Merged EAs Layer",
+                optional=True,
+            )
+        )
+
+        # Special EAs output layer (Gap/Overlap)
+        self.addParameter(
+            QgsProcessingParameterFeatureSink(
+                self.SPECIAL_EA_OUTPUT,
+                "Special EAs Layer (Gap/Overlap)",
                 optional=True,
             )
         )
