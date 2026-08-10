@@ -777,8 +777,11 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
 
         _ea_ean = str(ea_item.get('original_code', '')).strip()
         _ea_id = ea_item.get('original_id')
-        num_parts = max(2, int(math.ceil(ea_item['hh_count'] / float(max_household)))) if ea_item['hh_count'] > 0 else 2
-        hhdivthres = 1.0 / num_parts
+        hhdivthres = delineation_candidate_hhdivthres.get(_ea_id)
+        if hhdivthres is None:
+            hhdivthres = delineation_candidate_hhdivthres.get(_ea_ean)
+        if hhdivthres is None:
+            hhdivthres = max_household / ea_item['hh_count'] if ea_item['hh_count'] > 0.0 else 1.0
 
         unassigned_set = set(id(b) for b in bldgs)
         unassigned_list = [b for b in bldgs]
@@ -1048,9 +1051,12 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                         else:
                             split_parts = split_ea(ea, max_household, fback)
                             if len(split_parts) > 1:
+                                _ea_id = ea.get('original_id')
                                 _ea_ean = str(ea.get('original_code', '')).strip()
-                                if _ea_ean in delineation_candidate_hhdivthres:
-                                    _parent_hhdivthres = delineation_candidate_hhdivthres[_ea_ean]
+                                _parent_hhdivthres = delineation_candidate_hhdivthres.get(_ea_id)
+                                if _parent_hhdivthres is None:
+                                    _parent_hhdivthres = delineation_candidate_hhdivthres.get(_ea_ean)
+                                if _parent_hhdivthres is not None:
                                     _max_bldgpv = max(
                                         sum(b.get('bldgpoints_value', 0.0) for b in p['buildings'])
                                         for p in split_parts

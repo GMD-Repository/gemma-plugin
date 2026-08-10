@@ -657,10 +657,17 @@ def run_phase_8(
     feedback.pushInfo(f"Total number of EAs processed: {total_proc}")
     feedback.pushInfo(f"Total number of delineation candidates identified (hhcount >= {max_household}): {total_cand}")
 
+    over_thresh_cnt = max(0, delin_candidate_feat_count - special_ea_feat_count)
     if total_cand == 0 and delineated_feat_count == 0:
         delin_remark = f"No EAs exceeded {max_household} HH threshold or intersected Gap/Overlap layers."
     else:
-        delin_remark = f"Processed {total_cand} candidate(s) into {delineated_feat_count} delineated sub-EA(s)."
+        delin_remark = f"Processed {delin_candidate_feat_count} candidate(s) ({over_thresh_cnt} over {max_household} HH + {special_ea_feat_count} Special EA(s)). Created {delineated_feat_count} delineated sub-EA(s)."
+        # Estimate unsplit over-threshold candidates
+        split_ea_approx = delineated_feat_count // 2 if delineated_feat_count >= 2 else (1 if delineated_feat_count == 1 else 0)
+        unsplit_cnt = max(0, over_thresh_cnt - split_ea_approx)
+        if unsplit_cnt > 0:
+            delin_remark += f" Note: {unsplit_cnt} candidate(s) retained intact as proposed splits fell below {min_household} HH minimum floor or lacked spatially distinct building points."
+
 
     init_cand_cnt = len(merge_candidate_ids)
     if merged_feat_count == 0:
