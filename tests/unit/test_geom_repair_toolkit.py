@@ -16,12 +16,12 @@ class TestGeomRepairToolkit(unittest.TestCase):
     """Test suite for geom_repair_toolkit.py topology engine and repair helpers."""
 
     def setUp(self):
-        self.mod = importlib.import_module("gmd_scripts.geom_repair_toolkit")
+        self.mod = importlib.import_module("gmd_scripts.deprecated.geom_repair_toolkit")
         self.sample_layer = create_sample_polygon_layer("Barangay_Polygons", count=4)
 
     def test_module_import(self):
         """Verify module imports successfully."""
-        self.assertIsNotNone(self.mod, "Module gmd_scripts.geom_repair_toolkit should import successfully.")
+        self.assertIsNotNone(self.mod, "Module gmd_scripts.deprecated.geom_repair_toolkit should import successfully.")
 
     def test_topology_error_class(self):
         """Test TopologyError object instantiation and properties."""
