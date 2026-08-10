@@ -2,6 +2,17 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.2
+<time>Aug 07, 2026</time>
+
+### ✨ New Features
+- enhance Pre-Processing digitizing workflow & Topology Checker automation ([@velascojasper0](https://github.com/velascojasper0)) ([#120](https://github.com/GMD-Repository/gemma-plugin/pull/120))
+- add digitize dock widget, single feature edit guard, and snapping options ([@velascojasper0](https://github.com/velascojasper0)) ([#122](https://github.com/GMD-Repository/gemma-plugin/pull/122))
+- implement Check and Update tool for boundary georeferencing, geometry repair, and metadata updates ([@velascojasper0](https://github.com/velascojasper0))
+- add digitize dock widget, single feature edit guard, and snapping options ([@velascojasper0](https://github.com/velascojasper0))
+
+<Contributors :contributors="['velascojasper0']" />
+
 ## 1.0.1
 <time>Aug 05, 2026</time>
 

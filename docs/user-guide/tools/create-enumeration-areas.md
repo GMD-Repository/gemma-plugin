@@ -42,6 +42,7 @@ The dedicated **EA Launcher** dialog provides an interactive workflow prior to e
 | **Minimum Household Count per EA** | Integer | Minimum target household threshold per EA (default: 100). EAs below this limit are merged. |
 | **Maximum Household Count per EA** | Integer | Maximum target household threshold per EA (default: 300). EAs above this limit are split. |
 | **Optimize for Compactness** | Boolean | Prefers spatially compact EA shapes over purely household-balanced splits (default: True). |
+| **Allow Merging Between Under-Threshold Candidate EAs** | Boolean | Controls whether under-threshold candidate EAs (<=100 HH) can merge with each other when no reference EAs exist (default: True). |
 | **Sliver Polygon Area Threshold** | Enumeration | Controls area threshold for identifying and dissolving remnant sliver polygons into neighboring EAs. |
 | **Snapping Tolerance (metres)** | Double | Maximum search distance for snapping proposed split lines to road or river centrelines (default: 15.0 m). |
 | **Target CRS** | CRS | Output Coordinate Reference System (default: EPSG:4326). |
@@ -56,8 +57,15 @@ The dedicated **EA Launcher** dialog provides an interactive workflow prior to e
 | **Merged EAs Layer** | Vector (Polygon) | Optional output containing only EAs generated from merging underpopulated EAs (`<geocode>_merged_ea2026`). |
 | **Special EAs Layer** | Vector (Polygon) | Optional output containing Special EAs generated from Gap and Overlap layers (`<geocode>_special_ea`). |
 | **Candidate for Delineation Layer** | Vector (Polygon) | Layer containing EAs identified as candidates for delineation (>300 HH). |
-| **Candidate for Merging Layer** | Vector (Polygon) | Layer containing EAs identified as candidates for merging (<100 HH). |
+| **Candidate for Merging Layer** | Vector (Polygon) | Layer containing under-threshold initiator EAs (<=100 HH) together with their adjacent reference neighbor EAs evaluated for intra-barangay merging (`<geocode>_merge_candidates`). |
 | **Extracted Building Points Layer** | Vector (Point) | Point layer containing building points tagged with assigned EA identifiers. |
+
+::: note Understanding Zero Feature Counts in Output Layers
+Depending on your input dataset's household load distribution, specific output layers may legitimately contain **0 features**:
+
+- **Delineated EAs = 0**: Delineation (splitting) only occurs when starting EAs exceed the **Maximum Household Count per EA** threshold (default: >300 HH) or intersect Gap/Overlap layers. If no EAs exceed 300 HH, 0 Delineated EAs are generated.
+- **Merged EAs = 0**: Merging only occurs when under-threshold EAs (<=100 HH) are present. If all EAs fall within the valid target range (100–300 HH), 0 Merged EAs are generated.
+:::
 
 ## How It Works
 
@@ -80,7 +88,8 @@ The dedicated **EA Launcher** dialog provides an interactive workflow prior to e
 
 6. **Iterative EA Merging**:
    - Underpopulated EAs undergo up to 5 iterative passes of spatial adjacency merging.
-   - Merging is strictly restricted to 2 contiguous EAs (`touches()` or `intersects()`) within the same parent barangay, ensuring combined households do not exceed the maximum threshold (300 HH).
+   - Merging is strictly restricted to contiguous EAs (`touches()` or `intersects()`) within the same parent barangay, ensuring combined households do not exceed the maximum threshold (300 HH).
+   - When **Allow Merging Between Under-Threshold Candidate EAs** is enabled (default), candidate EAs can merge with neighboring candidate EAs in barangays lacking standard reference EAs.
 
 7. **Compliance Sweep and Sliver Dissolve**:
    - Identifies remnant sliver polygons smaller than `SLIVER_THRESHOLD` and dissolves them into the largest adjacent neighbor.
@@ -89,6 +98,34 @@ The dedicated **EA Launcher** dialog provides an interactive workflow prior to e
 8. **Output Sink Writing and Attribute Inheritance**:
    - Writes final polygons to output sinks while preserving original attribute fields from the previous EA layer.
    - Appends metadata tracking fields including `hhcount`, `bldg_count`, `split_by` (`road`, `river`, `kmeans`), `new_ea`, and `correspondence_ea_geocode`.
+
+## Candidate Merging Example
+
+The following example demonstrates how under-threshold candidate EAs are processed within a small barangay (e.g. Barangay 01737) under both configuration settings:
+
+### Input Dataset State (Barangay 01737)
+
+| EA Code | Households (HH) | Classification | Initial Status |
+|---|:---:|---|---|
+| `EA 01737001` | 45 HH | Under-Threshold Candidate ($\le 100$ HH) | Initiator Candidate |
+| `EA 01737002` | 35 HH | Under-Threshold Candidate ($\le 100$ HH) | Initiator Candidate |
+| `EA 01737003` | 50 HH | Under-Threshold Candidate ($\le 100$ HH) | Initiator Candidate |
+| `EA 01737004` | 40 HH | Under-Threshold Candidate ($\le 100$ HH) | Initiator Candidate |
+
+### Setting Comparison
+
+#### Case A: Allow Merging Between Candidate EAs = Disabled (`False`)
+- **Search Rule:** Candidates can only merge into adjacent reference EAs (>100 HH).
+- **Processing Outcome:** Because all 4 EAs in Barangay 01737 are candidates ($\le 100$ HH), no valid reference neighbors exist.
+- **Output:** **0 Merged EAs** created (`01737_merged_ea2026` is empty). All 4 EAs remain unmerged and are logged in `01737_merge_candidates`.
+
+#### Case B: Allow Merging Between Candidate EAs = Enabled (`True`, Default)
+- **Search Rule:** Candidate EAs are permitted to merge with adjacent candidate EAs if no reference EAs exist.
+- **Step-by-Step Consolidation:**
+  1. **Pass 1:** `EA 01737001` (45 HH) merges with adjacent candidate `EA 01737002` (35 HH) $\rightarrow$ Subtotal: **80 HH**.
+  2. **Pass 2:** Combined sub-polygon (80 HH) merges with adjacent candidate `EA 01737003` (50 HH) $\rightarrow$ Subtotal: **130 HH** (Reaches optimal 100–300 HH range!).
+  3. **Pass 3:** Remaining under-threshold `EA 01737004` (40 HH) merges into the 130 HH polygon $\rightarrow$ Total: **170 HH**.
+- **Output:** **1 Consolidated Merged EA** (170 HH) written to `<geocode>_merged_ea2026`, successfully resolving the under-threshold coverage gap.
 
 ## Supported Geometry Types
 

@@ -1,0 +1,928 @@
+import math
+
+from qgis.core import (
+    QgsFeature,
+    QgsFields,
+    QgsField,
+    QgsGeometry,
+    QgsWkbTypes,
+    QgsProcessingException,
+    QgsSpatialIndex,
+    QgsCoordinateTransform,
+    QgsRectangle,
+    QgsFeatureRequest,
+    QgsFeatureSink,
+)
+from qgis.PyQt.QtCore import QVariant
+
+from ..helpers.constants import _PHASE_LABELS, yield_to_ui
+
+
+def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
+    """
+    Executes Phase 2 (Candidate Identification & Building Assignment), including:
+    - Initializing output sinks and completion details
+    - Phase 1.5: hhcount Imputation from Building Points if null/zero
+    - Scanning Previous EAs to classify Delineation & Merge candidates
+    - Identifying contiguous merge partners
+    - Building candidate-only temporal spatial indexes
+    - Matching building points to candidate EAs
+    - Preview mode early exit handling
+
+    Returns state dictionary containing candidate maps, sinks, counts, and building indexes.
+    """
+    barangay_source = p1["barangay_source"]
+    building_source = p1["building_source"]
+    previous_ea_source = p1["previous_ea_source"]
+    gap_source = p1["gap_source"]
+    overlap_source = p1["overlap_source"]
+    min_household = p1["min_household"]
+    max_household = p1["max_household"]
+    target_household = p1["target_household"]
+    target_crs = p1["target_crs"]
+    ea_id_field = p1["ea_id_field"]
+    household_field = p1["household_field"]
+    bldg_hh_field = p1["bldg_hh_field"]
+    barangay_id_field = p1["barangay_id_field"]
+    bar_geocode_field = p1["bar_geocode_field"]
+    eadel_indi_col_idx = p1["eadel_indi_col_idx"]
+    merge_indi_col_idx = p1["merge_indi_col_idx"]
+    all_ea_features = p1["all_ea_features"]
+    special_ea_info = p1["special_ea_info"]
+    special_ea_ids = p1["special_ea_ids"]
+    output_layer_name = p1["output_layer_name"]
+    geocode_prefix = output_layer_name.split("_")[0] if "_" in output_layer_name else "00000"
+    transform = p1["transform"]
+    preview_only = p1["preview_only"]
+    barangay_index = p1["barangay_index"]
+    barangay_by_id = p1["barangay_by_id"]
+    _dc_geo_idx = p1["_dc_geo_idx"]
+
+    def get_parent_barangay(ea_geom):
+        candidates = barangay_index.intersects(ea_geom.boundingBox())
+        max_overlap = -1
+        parent_feat = None
+        for cid in candidates:
+            bar = barangay_by_id[cid]
+            bar_geom = bar.geometry()
+            if bar_geom.intersects(ea_geom):
+                overlap_area = bar_geom.intersection(ea_geom).area()
+                if overlap_area > max_overlap:
+                    max_overlap = overlap_area
+                    parent_feat = bar
+        return parent_feat
+
+    def resolve_ea_parent_barangay(ea_feat):
+        if _dc_geo_idx != -1:
+            val = ea_feat.attribute(_dc_geo_idx)
+            if val is not None and not (isinstance(val, QVariant) and val.isNull()):
+                val_str = str(val).strip()
+                if val_str.endswith(".0"):
+                    val_str = val_str[:-2]
+                if val_str:
+                    return val_str
+        parent_feat = get_parent_barangay(ea_feat.geometry())
+        if parent_feat:
+            val = parent_feat.attribute(barangay_id_field)
+            if val is not None:
+                val_str = str(val).strip()
+                if val_str.endswith(".0"):
+                    val_str = val_str[:-2]
+                return val_str
+        return "Unknown"
+
+    # Create output schema (inherits all fields from previous_ea_source)
+    out_fields = QgsFields(previous_ea_source.fields())
+
+    output_hh_field = "household"
+    if household_field in [f.name() for f in out_fields]:
+        output_hh_field = household_field
+    else:
+        out_fields.append(QgsField(output_hh_field, QVariant.Double))
+
+    if "split_by" not in [f.name() for f in out_fields]:
+        out_fields.append(QgsField("split_by", QVariant.String))
+
+    if "new_ea" not in [f.name() for f in out_fields]:
+        out_fields.append(QgsField("new_ea", QVariant.String))
+
+    if "bldg_count" not in [f.name() for f in out_fields]:
+        out_fields.append(QgsField("bldg_count", QVariant.Int))
+
+    if "hh_count" not in [f.name() for f in out_fields]:
+        out_fields.append(QgsField("hh_count", QVariant.Double))
+
+    if "hhcount" not in [f.name() for f in out_fields]:
+        out_fields.append(QgsField("hhcount", QVariant.Double))
+
+    if "bldgpoints_value" not in [f.name() for f in out_fields]:
+        out_fields.append(QgsField("bldgpoints_value", QVariant.Double))
+
+    if "correspondence_ea_geocode" not in [f.name() for f in out_fields]:
+        out_fields.append(QgsField("correspondence_ea_geocode", QVariant.String))
+
+    if "ea_type" not in [f.name() for f in out_fields]:
+        out_fields.append(QgsField("ea_type", QVariant.String))
+    if "special_type" not in [f.name() for f in out_fields]:
+        out_fields.append(QgsField("special_type", QVariant.String))
+    if "source_id" not in [f.name() for f in out_fields]:
+        out_fields.append(QgsField("source_id", QVariant.String))
+    if "remarks" not in [f.name() for f in out_fields]:
+        out_fields.append(QgsField("remarks", QVariant.String))
+
+    out_wkb_type = QgsWkbTypes.multiType(previous_ea_source.wkbType())
+
+    delineated_sink = None
+    delineated_dest_id = None
+    if alg.DELINEATED_OUTPUT in parameters and parameters[alg.DELINEATED_OUTPUT] is not None:
+        (delineated_sink, delineated_dest_id) = alg.parameterAsSink(
+            parameters,
+            alg.DELINEATED_OUTPUT,
+            context,
+            out_fields,
+            out_wkb_type,
+            target_crs,
+        )
+
+    merged_sink = None
+    merged_dest_id = None
+    if alg.MERGED_OUTPUT in parameters and parameters[alg.MERGED_OUTPUT] is not None:
+        (merged_sink, merged_dest_id) = alg.parameterAsSink(
+            parameters,
+            alg.MERGED_OUTPUT,
+            context,
+            out_fields,
+            out_wkb_type,
+            target_crs,
+        )
+
+    extracted_buildings_sink = None
+    extracted_buildings_dest_id = None
+    if alg.EXTRACTED_BUILDINGS_OUTPUT in parameters and parameters[alg.EXTRACTED_BUILDINGS_OUTPUT] is not None:
+        bldg_out_fields = QgsFields(building_source.fields())
+        if bldg_out_fields.indexOf("parent_ean") == -1:
+            bldg_out_fields.append(QgsField("parent_ean", QVariant.String))
+
+        bldgpts_idx = bldg_out_fields.indexOf("bldgpoints_value")
+        if bldgpts_idx == -1:
+            bldgpts_idx = bldg_out_fields.indexOf("bldgpts_val")
+        if bldgpts_idx == -1:
+            bldg_out_fields.append(QgsField("bldgpoints_value", QVariant.Double))
+
+        pop_out_idx = bldg_out_fields.indexOf("pop")
+        if pop_out_idx == -1:
+            pop_out_idx = bldg_out_fields.indexOf(bldg_hh_field)
+        if pop_out_idx == -1:
+            bldg_out_fields.append(QgsField("pop", QVariant.Double))
+
+        (extracted_buildings_sink, extracted_buildings_dest_id) = alg.parameterAsSink(
+            parameters,
+            alg.EXTRACTED_BUILDINGS_OUTPUT,
+            context,
+            bldg_out_fields,
+            building_source.wkbType(),
+            target_crs,
+        )
+
+    delin_candidate_sink = None
+    delin_candidate_dest_id = None
+    if alg.DELINEATION_CANDIDATE_OUTPUT in parameters and parameters[alg.DELINEATION_CANDIDATE_OUTPUT] is not None:
+        delin_cand_fields = QgsFields(out_fields)
+        for fname in [output_hh_field, "hh_count", "hhcount"]:
+            if fname.lower() != household_field.lower():
+                idx = delin_cand_fields.indexOf(fname)
+                if idx != -1:
+                    delin_cand_fields.remove(idx)
+        if delin_cand_fields.indexOf("eadel_indi") == -1:
+            delin_cand_fields.append(QgsField("eadel_indi", QVariant.String))
+        (delin_candidate_sink, delin_candidate_dest_id) = alg.parameterAsSink(
+            parameters,
+            alg.DELINEATION_CANDIDATE_OUTPUT,
+            context,
+            delin_cand_fields,
+            out_wkb_type,
+            target_crs,
+        )
+
+    merge_candidate_sink = None
+    merge_candidate_dest_id = None
+    merge_cand_fields_filtered = None
+    if alg.MERGE_CANDIDATE_OUTPUT in parameters and parameters[alg.MERGE_CANDIDATE_OUTPUT] is not None:
+        merge_cand_fields_filtered = QgsFields(out_fields)
+        for fname in [output_hh_field, "hh_count", "hhcount"]:
+            if fname.lower() != household_field.lower():
+                idx = merge_cand_fields_filtered.indexOf(fname)
+                if idx != -1:
+                    merge_cand_fields_filtered.remove(idx)
+        for fname in ["merge_partner", "split_by", "new_ea", "bldg_count", "bldgpoints_value", "bldgpts_val", "bldgpoint_value"]:
+            idx = merge_cand_fields_filtered.indexOf(fname)
+            if idx != -1:
+                merge_cand_fields_filtered.remove(idx)
+        if merge_cand_fields_filtered.indexOf("merge_indi") == -1:
+            merge_cand_fields_filtered.append(QgsField("merge_indi", QVariant.String))
+        (merge_candidate_sink, merge_candidate_dest_id) = alg.parameterAsSink(
+            parameters,
+            alg.MERGE_CANDIDATE_OUTPUT,
+            context,
+            merge_cand_fields_filtered,
+            out_wkb_type,
+            target_crs,
+        )
+
+    outputs = {}
+    if delineated_dest_id is not None:
+        outputs[alg.DELINEATED_OUTPUT] = delineated_dest_id
+    if merged_dest_id is not None:
+        outputs[alg.MERGED_OUTPUT] = merged_dest_id
+    if delin_candidate_dest_id is not None:
+        outputs[alg.DELINEATION_CANDIDATE_OUTPUT] = delin_candidate_dest_id
+    if merge_candidate_dest_id is not None:
+        outputs[alg.MERGE_CANDIDATE_OUTPUT] = merge_candidate_dest_id
+    if extracted_buildings_dest_id is not None:
+        outputs[alg.EXTRACTED_BUILDINGS_OUTPUT] = extracted_buildings_dest_id
+
+    delineated_feat_count = 0
+    merged_feat_count = 0
+    delin_candidate_feat_count = 0
+    merge_candidate_feat_count = 0
+    extracted_bldg_feat_count = 0
+
+    try:
+        if delineated_dest_id and context.willLoadLayerOnCompletion(delineated_dest_id):
+            details = context.layerToLoadOnCompletionDetails(delineated_dest_id)
+            details.name = f"{geocode_prefix}_delineated_ea2026"
+            feedback.pushInfo(f"Set completion layer name to: {geocode_prefix}_delineated_ea2026")
+    except Exception as e:
+        feedback.pushInfo(f"Could not set delineated layer completion name: {str(e)}")
+
+    try:
+        if merged_dest_id and context.willLoadLayerOnCompletion(merged_dest_id):
+            details = context.layerToLoadOnCompletionDetails(merged_dest_id)
+            details.name = f"{geocode_prefix}_merged_ea2026"
+            feedback.pushInfo(f"Set completion layer name to: {geocode_prefix}_merged_ea2026")
+    except Exception as e:
+        feedback.pushInfo(f"Could not set merged layer completion name: {str(e)}")
+
+    try:
+        if delin_candidate_dest_id and context.willLoadLayerOnCompletion(delin_candidate_dest_id):
+            details = context.layerToLoadOnCompletionDetails(delin_candidate_dest_id)
+            details.name = f"{geocode_prefix}_delineation_candidates_ea2026"
+            feedback.pushInfo(f"Set completion layer name to: {geocode_prefix}_delineation_candidates_ea2026")
+    except Exception as e:
+        feedback.pushInfo(f"Could not set delineation candidate layer completion name: {str(e)}")
+
+    try:
+        if merge_candidate_dest_id and context.willLoadLayerOnCompletion(merge_candidate_dest_id):
+            details = context.layerToLoadOnCompletionDetails(merge_candidate_dest_id)
+            details.name = f"{geocode_prefix}_merge_candidates_ea2026"
+            feedback.pushInfo(f"Set completion layer name to: {geocode_prefix}_merge_candidates_ea2026")
+    except Exception as e:
+        feedback.pushInfo(f"Could not set merge candidate layer completion name: {str(e)}")
+
+    try:
+        if extracted_buildings_dest_id and context.willLoadLayerOnCompletion(extracted_buildings_dest_id):
+            details = context.layerToLoadOnCompletionDetails(extracted_buildings_dest_id)
+            details.name = f"{geocode_prefix}_extracted_buildings_ea2026"
+            feedback.pushInfo(f"Set completion layer name to: {geocode_prefix}_extracted_buildings_ea2026")
+    except Exception as e:
+        feedback.pushInfo(f"Could not set extracted buildings layer completion name: {str(e)}")
+
+    # Transform target for output/candidates
+    barangay_to_target = None
+    if previous_ea_source.sourceCrs() != target_crs:
+        feedback.pushInfo(f"Transforming output/candidates to {target_crs.authid()}...")
+        barangay_to_target = QgsCoordinateTransform(
+            previous_ea_source.sourceCrs(), target_crs, context.transformContext()
+        )
+
+    feedback.pushInfo(f"Previous EA Source CRS: {previous_ea_source.sourceCrs().authid()}")
+    feedback.pushInfo(f"Target CRS: {target_crs.authid()}")
+    feedback.pushInfo(f"Household Threshold: {min_household} - {max_household} HH (Target: {target_household} HH)")
+
+    previous_ea_count = len(all_ea_features)
+    barangay_count = barangay_source.featureCount()
+    building_count = building_source.featureCount()
+
+    feedback.pushInfo(f"Input Barangay Count: {barangay_count}")
+    feedback.pushInfo(f"Input Previous EA Count: {previous_ea_count}")
+    feedback.pushInfo(f"Input Building Count: {building_count}")
+    multi_feedback.setProgress(100)
+
+    if multi_feedback.isCanceled():
+        raise QgsProcessingException("Algorithm cancelled by user.")
+
+    # ── Phase 1.5: hhcount Imputation from Building Points ───────────────────────
+    _dc_pop_idx_imp = previous_ea_source.fields().indexOf(household_field)
+    imputed_hhcount = {}
+    eas_needing_imputation = []
+
+    for _ea_feat in all_ea_features:
+        _ea_hh_val = _ea_feat.attribute(_dc_pop_idx_imp) if _dc_pop_idx_imp != -1 else None
+        _needs_imputation = False
+        if _ea_hh_val is None or (isinstance(_ea_hh_val, QVariant) and _ea_hh_val.isNull()):
+            _needs_imputation = True
+        else:
+            try:
+                if float(_ea_hh_val) == 0.0:
+                    _needs_imputation = True
+            except (TypeError, ValueError):
+                _needs_imputation = True
+
+        if _needs_imputation and _ea_feat.geometry() and not _ea_feat.geometry().isEmpty():
+            eas_needing_imputation.append(_ea_feat)
+
+    if eas_needing_imputation:
+        feedback.pushInfo(
+            f"Phase 1.5: Imputing null/zero hhcount for {len(eas_needing_imputation)} EA(s) from building points..."
+        )
+        combined_imp_bbox = QgsRectangle()
+        for _eaf in eas_needing_imputation:
+            combined_imp_bbox.combineExtentWith(_eaf.geometry().boundingBox())
+
+        imp_request = QgsFeatureRequest()
+        if transform and not combined_imp_bbox.isEmpty():
+            bldg_to_ea_tr = QgsCoordinateTransform(previous_ea_source.sourceCrs(), building_source.sourceCrs(), context.transformContext())
+            imp_request.setFilterRect(bldg_to_ea_tr.transformBoundingBox(combined_imp_bbox))
+        elif not combined_imp_bbox.isEmpty():
+            imp_request.setFilterRect(combined_imp_bbox)
+
+        _imp_bldg_index = QgsSpatialIndex()
+        _imp_bldg_by_id = {}
+        _imp_bldg_count = 0
+
+        _imp_bldg_hh_field = household_field
+        _bldg_fields = building_source.fields()
+        if _bldg_fields.indexOf(_imp_bldg_hh_field) == -1:
+            for _candidate_name in ["hhcount", "hh_count", "household", "household_count", "pop", "population"]:
+                if _bldg_fields.indexOf(_candidate_name) != -1:
+                    _imp_bldg_hh_field = _candidate_name
+                    break
+
+        _imp_bldg_hh_idx = _bldg_fields.indexOf(_imp_bldg_hh_field)
+
+        for _bfeat in building_source.getFeatures(imp_request):
+            if multi_feedback.isCanceled():
+                raise QgsProcessingException("Algorithm cancelled by user.")
+            _bgeom = _bfeat.geometry()
+            if not _bgeom or _bgeom.isEmpty():
+                continue
+            if transform:
+                _bgeom = QgsGeometry(_bgeom)
+                _bgeom.transform(transform)
+            _bpt = _bgeom.asPoint()
+            _bpop_val = _bfeat.attribute(_imp_bldg_hh_idx) if _imp_bldg_hh_idx != -1 else None
+            try:
+                _bpop = float(_bpop_val) if _bpop_val is not None else 1.0
+            except (TypeError, ValueError):
+                _bpop = 1.0
+            _bindex_feat = QgsFeature(_bfeat.id())
+            _bindex_feat.setGeometry(_bgeom)
+            _imp_bldg_index.insertFeature(_bindex_feat)
+            _imp_bldg_by_id[_bfeat.id()] = (_bpt, _bpop)
+            _imp_bldg_count += 1
+
+        for _ea_feat in eas_needing_imputation:
+            _ea_geom = _ea_feat.geometry()
+            _ea_bbox = _ea_geom.boundingBox()
+            _nearby_bldg_ids = _imp_bldg_index.intersects(_ea_bbox)
+            _total_bldg_hh = 0.0
+            for _bid in _nearby_bldg_ids:
+                if _bid not in _imp_bldg_by_id:
+                    continue
+                _bpt, _bpop = _imp_bldg_by_id[_bid]
+                _bpt_geom = QgsGeometry.fromPointXY(_bpt)
+                if _ea_geom.contains(_bpt_geom) or _ea_geom.intersects(_bpt_geom):
+                    _total_bldg_hh += _bpop
+
+            imputed_hhcount[_ea_feat.id()] = _total_bldg_hh
+            feedback.pushInfo(
+                f"  EA (FID={_ea_feat.id()}) imputed {_total_bldg_hh:.0f} HH from nearby building points."
+            )
+    else:
+        feedback.pushInfo("Phase 1.5: All EAs contain valid hhcount. Skipping building imputation.")
+
+    feedback.pushInfo(
+        f"  hhcount imputation complete: {len(imputed_hhcount)} EA(s) imputed from building points."
+    )
+
+    # ── Phase 2: Identifying and saving delineation and merge candidates ──────────
+    multi_feedback.setCurrentStep(1)
+    multi_feedback.setProgressText(f"{_PHASE_LABELS[1]}...")
+
+    feedback.pushInfo("Phase 2/8: Identifying and saving delineation and merge candidates...")
+    delineation_candidate_ids = set()
+    merge_candidate_ids = set()
+    delineation_candidate_hhdivthres = {}
+    delineation_candidates_by_geocode = {}
+    delineation_candidate_bar_geocodes = set()
+
+    _dc_pop_idx = previous_ea_source.fields().indexOf(household_field)
+    if _dc_pop_idx == -1:
+        raise QgsProcessingException("Error: The required 'hhcount' (or configured household) field does not exist in the input Previous EA layer.")
+
+    total_ea_processed = 0
+    total_delin_candidates = 0
+
+    ea_to_target = None
+    if previous_ea_source.sourceCrs() != target_crs:
+        ea_to_target = QgsCoordinateTransform(
+            previous_ea_source.sourceCrs(), target_crs, context.transformContext()
+        )
+
+    gap_index = None
+    gap_features = []
+    gap_to_ea_transform = None
+    if gap_source is not None:
+        gap_index = QgsSpatialIndex()
+        for go_feat in gap_source.getFeatures():
+            if go_feat.geometry() and not go_feat.geometry().isEmpty():
+                gap_index.insertFeature(go_feat)
+                gap_features.append(go_feat)
+        if gap_source.sourceCrs() != previous_ea_source.sourceCrs():
+            gap_to_ea_transform = QgsCoordinateTransform(gap_source.sourceCrs(), previous_ea_source.sourceCrs(), context.transformContext())
+
+    overlap_index = None
+    overlap_features = []
+    overlap_to_ea_transform = None
+    if overlap_source is not None:
+        overlap_index = QgsSpatialIndex()
+        for go_feat in overlap_source.getFeatures():
+            if go_feat.geometry() and not go_feat.geometry().isEmpty():
+                overlap_index.insertFeature(go_feat)
+                overlap_features.append(go_feat)
+        if overlap_source.sourceCrs() != previous_ea_source.sourceCrs():
+            overlap_to_ea_transform = QgsCoordinateTransform(overlap_source.sourceCrs(), previous_ea_source.sourceCrs(), context.transformContext())
+
+    for _dc_feat in previous_ea_source.getFeatures():
+        if multi_feedback.isCanceled():
+            raise QgsProcessingException("Algorithm cancelled by user.")
+        total_ea_processed += 1
+        yield_to_ui(total_ea_processed)
+
+        _dc_hh = 0.0
+        _dc_val = _dc_feat.attribute(_dc_pop_idx)
+        if _dc_feat.id() in imputed_hhcount:
+            _dc_hh = imputed_hhcount[_dc_feat.id()]
+        elif _dc_val is None or (isinstance(_dc_val, QVariant) and _dc_val.isNull()):
+            _dc_hh = 0.0
+        else:
+            try:
+                _dc_hh = float(_dc_val)
+            except (TypeError, ValueError):
+                _dc_hh = 0.0
+
+        _dc_ean = _dc_feat.attribute(ea_id_field)
+        _dc_ean_str = str(_dc_ean).strip() if _dc_ean is not None else ""
+        if _dc_ean_str.endswith(".0"):
+            _dc_ean_str = _dc_ean_str[:-2]
+
+        intersects_gap_or_overlap = False
+        if _dc_feat.geometry() and not _dc_feat.geometry().isEmpty():
+            if gap_index:
+                candidates = gap_index.intersects(_dc_feat.geometry().boundingBox())
+                for go_fid in candidates:
+                    go_feat = next((f for f in gap_features if f.id() == go_fid), None)
+                    if go_feat:
+                        go_geom = go_feat.geometry()
+                        if gap_to_ea_transform:
+                            go_geom = QgsGeometry(go_geom)
+                            go_geom.transform(gap_to_ea_transform)
+                        if _dc_feat.geometry().intersects(go_geom):
+                            intersects_gap_or_overlap = True
+                            break
+            if not intersects_gap_or_overlap and overlap_index:
+                candidates = overlap_index.intersects(_dc_feat.geometry().boundingBox())
+                for go_fid in candidates:
+                    go_feat = next((f for f in overlap_features if f.id() == go_fid), None)
+                    if go_feat:
+                        go_geom = go_feat.geometry()
+                        if overlap_to_ea_transform:
+                            go_geom = QgsGeometry(go_geom)
+                            go_geom.transform(overlap_to_ea_transform)
+                        if _dc_feat.geometry().intersects(go_geom):
+                            intersects_gap_or_overlap = True
+                            break
+
+        is_delin = False
+        is_merge = False
+
+        if intersects_gap_or_overlap:
+            is_delin = True
+        elif _dc_hh <= min_household:
+            is_merge = True
+        elif _dc_hh >= max_household:
+            is_delin = True
+        elif eadel_indi_col_idx != -1:
+            val = _dc_feat.attribute(eadel_indi_col_idx)
+            if val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"):
+                is_delin = True
+
+        if is_delin:
+            total_delin_candidates += 1
+            _dc_num_parts = max(2, int(math.ceil(_dc_hh / float(max_household)))) if _dc_hh > 0 else 2
+            _dc_hhdivthres = 1.0 / _dc_num_parts
+            delineation_candidate_ids.add(_dc_feat.id())
+            delineation_candidate_hhdivthres[_dc_feat.id()] = _dc_hhdivthres
+            _dc_geo = ""
+            if _dc_geo_idx != -1:
+                _dc_geo_val = _dc_feat.attribute(_dc_geo_idx)
+                _dc_geo = str(_dc_geo_val).strip() if _dc_geo_val is not None else ""
+            delineation_candidates_by_geocode.setdefault(_dc_geo, []).append(
+                (_dc_ean_str, _dc_hhdivthres)
+            )
+
+            parent_bar = resolve_ea_parent_barangay(_dc_feat)
+            if parent_bar and parent_bar != "Unknown":
+                delineation_candidate_bar_geocodes.add(parent_bar)
+        elif is_merge:
+            merge_candidate_ids.add(_dc_feat.id())
+
+    alg.total_ea_processed = total_ea_processed
+    alg.total_delin_candidates = total_delin_candidates
+
+    if gap_source is not None or overlap_source is not None:
+        for special_fid in special_ea_info.keys():
+            merge_candidate_ids.add(special_fid)
+
+    if delin_candidate_sink is not None:
+        for feat in previous_ea_source.getFeatures():
+            if multi_feedback.isCanceled():
+                raise QgsProcessingException("Algorithm cancelled by user.")
+
+            is_cand = feat.id() in delineation_candidate_ids
+            parent_bar = resolve_ea_parent_barangay(feat)
+            is_ref_in_bar = (not is_cand) and (parent_bar in delineation_candidate_bar_geocodes)
+
+            if not (is_cand or is_ref_in_bar):
+                continue
+
+            out_feat = QgsFeature(delin_cand_fields)
+            _dc_geom = feat.geometry()
+            if ea_to_target:
+                _dc_geom = QgsGeometry(_dc_geom)
+                _dc_geom.transform(ea_to_target)
+            out_feat.setGeometry(_dc_geom)
+            attrs = []
+            for f in delin_cand_fields:
+                orig_idx = feat.fields().indexOf(f.name())
+                if orig_idx != -1:
+                    attrs.append(feat.attribute(orig_idx))
+                else:
+                    attrs.append(None)
+            out_feat.setAttributes(attrs)
+            corr_ea_geo_idx = delin_cand_fields.indexOf("correspondence_ea_geocode")
+            if corr_ea_geo_idx != -1:
+                map_uuid_idx = delin_cand_fields.indexOf("map_uuid")
+                geocode_idx = delin_cand_fields.indexOf("geocode")
+                sy_idx = delin_cand_fields.indexOf("sy")
+                map_uuid_val = out_feat.attribute(map_uuid_idx) if map_uuid_idx != -1 else ""
+                geocode_val = out_feat.attribute(geocode_idx) if geocode_idx != -1 else ""
+                sy_val = out_feat.attribute(sy_idx) if sy_idx != -1 else ""
+                map_uuid_str = str(map_uuid_val) if map_uuid_val is not None else ""
+                geocode_str = str(geocode_val) if geocode_val is not None else ""
+                sy_str = str(sy_val) if sy_val is not None else ""
+                if map_uuid_str.endswith(".0"): map_uuid_str = map_uuid_str[:-2]
+                if geocode_str.endswith(".0"): geocode_str = geocode_str[:-2]
+                if sy_str.endswith(".0"): sy_str = sy_str[:-2]
+                out_feat.setAttribute(corr_ea_geo_idx, f"{map_uuid_str}:{geocode_str}:{sy_str}")
+
+            eadel_indi_idx = delin_cand_fields.indexOf("eadel_indi")
+            if eadel_indi_idx != -1:
+                out_feat.setAttribute(eadel_indi_idx, "for_delineation" if is_cand else "ea_reference")
+
+            fid_idx = delin_cand_fields.indexOf("fid")
+            if fid_idx != -1:
+                out_feat.setAttribute(fid_idx, None)
+
+            if delin_candidate_sink.addFeature(out_feat):
+                delin_candidate_feat_count += 1
+
+    feedback.pushInfo(
+        f"Delineation Candidate Index: {len(delineation_candidate_ids)} EA(s) flagged "
+        f"for delineation across {len(delineation_candidates_by_geocode)} barangay(s)."
+    )
+
+    alg.total_ea_processed = total_ea_processed
+    alg.total_delin_candidates = total_delin_candidates
+
+    feedback.pushInfo("Building full previous EA spatial index for merge partner lookup...")
+    full_ea_index = QgsSpatialIndex()
+    full_ea_by_id = {}
+    for feat in previous_ea_source.getFeatures():
+        full_ea_index.insertFeature(feat)
+        full_ea_by_id[feat.id()] = feat
+
+    feedback.pushInfo("Identifying contiguous partners for Merge Candidates...")
+    merge_candidates_by_geocode = {}
+    adjacent_ea_ids = set()
+    for feat in previous_ea_source.getFeatures():
+        if multi_feedback.isCanceled():
+            raise QgsProcessingException("Algorithm cancelled by user.")
+        geom = feat.geometry()
+        if not geom or geom.isEmpty():
+            continue
+
+        _dc_val = feat.attribute(_dc_pop_idx)
+        if feat.id() in imputed_hhcount:
+            _dc_hh = imputed_hhcount[feat.id()]
+        elif _dc_val is None or (isinstance(_dc_val, QVariant) and _dc_val.isNull()):
+            _dc_hh = 0.0
+        else:
+            try:
+                _dc_hh = float(_dc_val)
+            except (TypeError, ValueError):
+                _dc_hh = 0.0
+
+        if feat.id() in merge_candidate_ids:
+            partners = []
+            candidates = full_ea_index.intersects(geom.boundingBox())
+            parent_bar_geo = resolve_ea_parent_barangay(feat)
+
+            for cid in candidates:
+                if cid == feat.id():
+                    continue
+                nb_feat = full_ea_by_id[cid]
+                if geom.touches(nb_feat.geometry()) or geom.intersects(nb_feat.geometry()):
+                    nb_parent_bar_geo = resolve_ea_parent_barangay(nb_feat)
+                    p_bar = parent_bar_geo[:9] if len(parent_bar_geo) >= 9 else parent_bar_geo
+                    nb_bar = nb_parent_bar_geo[:9] if len(nb_parent_bar_geo) >= 9 else nb_parent_bar_geo
+                    if p_bar and nb_bar and p_bar == nb_bar:
+                        nb_ean = nb_feat.attribute(ea_id_field)
+                        nb_ean_str = str(nb_ean).strip() if nb_ean is not None else ""
+                        if nb_ean_str.endswith(".0"):
+                            nb_ean_str = nb_ean_str[:-2]
+                        if nb_ean_str:
+                            adjacent_ea_ids.add(nb_feat.id())
+
+                        nb_hh = imputed_hhcount.get(nb_feat.id(), 0.0)
+                        if nb_hh == 0.0:
+                            nb_hh_val = nb_feat.attribute(_dc_pop_idx)
+                            try:
+                                nb_hh = float(nb_hh_val) if nb_hh_val is not None else 0.0
+                            except (TypeError, ValueError):
+                                nb_hh = 0.0
+                        if nb_hh < max_household:
+                            if nb_ean_str:
+                                partners.append(nb_ean_str)
+
+            _mc_ean = feat.attribute(ea_id_field)
+            _mc_ean_str = str(_mc_ean).strip() if _mc_ean is not None else ""
+            merge_candidates_by_geocode.setdefault(parent_bar_geo, []).append(
+                (_mc_ean_str, _dc_hh, partners)
+            )
+
+    if merge_candidate_sink is not None:
+        merge_related_ids = merge_candidate_ids | adjacent_ea_ids
+        for feat in previous_ea_source.getFeatures():
+            if multi_feedback.isCanceled():
+                raise QgsProcessingException("Algorithm cancelled by user.")
+            _ean = feat.attribute(ea_id_field)
+            _ean_str = str(_ean).strip() if _ean is not None else ""
+            if _ean_str.endswith(".0"):
+                _ean_str = _ean_str[:-2]
+            if feat.id() in merge_related_ids:
+                partners = []
+                for _mc_entries in merge_candidates_by_geocode.values():
+                    for _mc_ean_str, _mc_hh, _mc_partners in _mc_entries:
+                        if _mc_ean_str == _ean_str:
+                            partners = _mc_partners
+                            break
+
+                out_feat = QgsFeature(merge_cand_fields_filtered)
+                _dc_geom = feat.geometry()
+                if ea_to_target:
+                    _dc_geom = QgsGeometry(_dc_geom)
+                    _dc_geom.transform(ea_to_target)
+                out_feat.setGeometry(_dc_geom)
+                attrs = []
+                for f in merge_cand_fields_filtered:
+                    orig_idx = feat.fields().indexOf(f.name())
+                    if orig_idx != -1:
+                        attrs.append(feat.attribute(orig_idx))
+                    else:
+                        attrs.append(None)
+                out_feat.setAttributes(attrs)
+                corr_ea_geo_idx = merge_cand_fields_filtered.indexOf("correspondence_ea_geocode")
+                if corr_ea_geo_idx != -1:
+                    map_uuid_idx = merge_cand_fields_filtered.indexOf("map_uuid")
+                    geocode_idx = merge_cand_fields_filtered.indexOf("geocode")
+                    sy = merge_cand_fields_filtered.indexOf("sy")
+                    map_uuid_val = out_feat.attribute(map_uuid_idx) if map_uuid_idx != -1 else ""
+                    geocode_val = out_feat.attribute(geocode_idx) if geocode_idx != -1 else ""
+                    sy_val = out_feat.attribute(sy) if sy != -1 else ""
+                    map_uuid_str = str(map_uuid_val) if map_uuid_val is not None else ""
+                    geocode_str = str(geocode_val) if geocode_val is not None else ""
+                    sy_str = str(sy_val) if sy_val is not None else ""
+                    if map_uuid_str.endswith(".0"): map_uuid_str = map_uuid_str[:-2]
+                    if geocode_str.endswith(".0"): geocode_str = geocode_str[:-2]
+                    if sy_str.endswith(".0"): sy_str = sy_str[:-2]
+                    out_feat.setAttribute(corr_ea_geo_idx, f"{map_uuid_str}:{geocode_str}:{sy_str}")
+                filtered_partner_idx = merge_cand_fields_filtered.indexOf("merge_partner")
+                if filtered_partner_idx != -1:
+                    out_feat.setAttribute(filtered_partner_idx, ",".join(sorted(partners)))
+
+                merge_indi_idx = merge_cand_fields_filtered.indexOf("merge_indi")
+                if merge_indi_idx != -1:
+                    indi_val = "for_merging" if feat.id() in merge_candidate_ids else "merge_partner"
+                    out_feat.setAttribute(merge_indi_idx, indi_val)
+
+                fid_idx = merge_cand_fields_filtered.indexOf("fid")
+                if fid_idx != -1:
+                    out_feat.setAttribute(fid_idx, None)
+
+                if merge_candidate_sink.addFeature(out_feat):
+                    merge_candidate_feat_count += 1
+
+    feedback.pushInfo("Building temporal previous EA index (candidates and adjacent EAs only)...")
+    temp_ea_index = QgsSpatialIndex()
+    temp_ea_by_id = {}
+    for feat in all_ea_features:
+        _ean = feat.attribute(ea_id_field)
+        _ean_str = str(_ean).strip() if _ean is not None else ""
+        if _ean_str.endswith(".0"):
+            _ean_str = _ean_str[:-2]
+        if feat.id() in delineation_candidate_ids or feat.id() in merge_candidate_ids or feat.id() in adjacent_ea_ids:
+            temp_ea_index.insertFeature(feat)
+            temp_ea_by_id[feat.id()] = feat
+
+    ea_index = temp_ea_index
+    ea_by_id = temp_ea_by_id
+
+    feedback.pushInfo("Assigning building points...")
+    ea_geometries = {fid: feat.geometry() for fid, feat in ea_by_id.items()}
+    ea_id_to_buildings = {}
+
+    combined_bbox = QgsRectangle()
+    for parent_feat in ea_by_id.values():
+        if parent_feat.geometry() and not parent_feat.geometry().isEmpty():
+            combined_bbox.combineExtentWith(parent_feat.geometry().boundingBox())
+
+    bbox_transform = None
+    if building_source.sourceCrs() != previous_ea_source.sourceCrs():
+        bbox_transform = QgsCoordinateTransform(previous_ea_source.sourceCrs(), building_source.sourceCrs(), context.transformContext())
+
+    if bbox_transform and not combined_bbox.isEmpty():
+        combined_bbox = bbox_transform.transformBoundingBox(combined_bbox)
+
+    request = QgsFeatureRequest()
+    if not combined_bbox.isEmpty():
+        request.setFilterRect(combined_bbox)
+
+    bldg_processed_count = 0
+    bldg_matched_count = 0
+
+    for idx, feat in enumerate(building_source.getFeatures(request)):
+        if multi_feedback.isCanceled():
+            raise QgsProcessingException("Algorithm cancelled by user.")
+
+        if idx % 2000 == 0:
+            yield_to_ui(idx, 100)
+            multi_feedback.setProgressText(f"{_PHASE_LABELS[1]} [Processed {idx:,} building points]...")
+
+        bldg_processed_count += 1
+        geom = feat.geometry()
+        if geom and not geom.isEmpty():
+            if transform:
+                geom_clone = QgsGeometry(geom)
+                geom_clone.transform(transform)
+                p = geom_clone.asPoint()
+            else:
+                p = geom.asPoint()
+
+            pt_geom = QgsGeometry.fromPointXY(p)
+
+            candidate_ids = ea_index.intersects(pt_geom.boundingBox())
+            for parent_ea_id in candidate_ids:
+                parent_geom = ea_geometries[parent_ea_id]
+                if parent_geom.contains(pt_geom) or parent_geom.intersects(pt_geom):
+                    pop_val = feat.attribute(bldg_hh_field)
+                    if pop_val is None or (isinstance(pop_val, QVariant) and pop_val.isNull()) or str(pop_val).strip() == "":
+                        pop_val = 1.0
+                    else:
+                        try:
+                            pop_val = float(pop_val)
+                            if pop_val <= 0.0:
+                                pop_val = 1.0
+                        except (TypeError, ValueError):
+                            pop_val = 1.0
+
+                    bldg_val = None
+                    bldg_val_idx = feat.fields().indexOf("bldgpoints_value")
+                    if bldg_val_idx == -1:
+                        bldg_val_idx = feat.fields().indexOf("bldgpts_val")
+                    if bldg_val_idx != -1:
+                        b_val = feat.attribute(bldg_val_idx)
+                        try:
+                            bldg_val = float(b_val) if b_val is not None else None
+                        except (TypeError, ValueError):
+                            bldg_val = None
+
+                    ea_id_to_buildings.setdefault(parent_ea_id, []).append({
+                        'point': p,
+                        'pop': pop_val,
+                        'bldgpoints_value': bldg_val,
+                        'attributes': feat.attributes()
+                    })
+                    bldg_matched_count += 1
+                    break
+
+    feedback.pushInfo(f"Matched {bldg_matched_count} of {bldg_processed_count} building points.")
+    multi_feedback.setProgress(100)
+
+    if multi_feedback.isCanceled():
+        raise QgsProcessingException("Algorithm cancelled by user.")
+
+    if preview_only:
+        if extracted_buildings_sink is not None:
+            feedback.pushInfo("Writing matched building points to extracted buildings output layer...")
+            bldg_out_fields = QgsFields(building_source.fields())
+            if bldg_out_fields.indexOf("parent_ean") == -1:
+                bldg_out_fields.append(QgsField("parent_ean", QVariant.String))
+
+            bldgpts_idx = bldg_out_fields.indexOf("bldgpoints_value")
+            if bldgpts_idx == -1:
+                bldgpts_idx = bldg_out_fields.indexOf("bldgpts_val")
+            if bldgpts_idx == -1:
+                bldg_out_fields.append(QgsField("bldgpoints_value", QVariant.Double))
+
+            pop_out_idx = bldg_out_fields.indexOf("pop")
+            if pop_out_idx == -1:
+                pop_out_idx = bldg_out_fields.indexOf(bldg_hh_field)
+            if pop_out_idx == -1:
+                bldg_out_fields.append(QgsField("pop", QVariant.Double))
+
+            barangay_to_target = None
+            if previous_ea_source.sourceCrs() != target_crs:
+                barangay_to_target = QgsCoordinateTransform(
+                    previous_ea_source.sourceCrs(), target_crs, context.transformContext()
+                )
+
+            bldg_written_preview = 0
+            for parent_ea_id, buildings in ea_id_to_buildings.items():
+                parent_feat = ea_by_id[parent_ea_id]
+                parent_ean_val = parent_feat.attribute(ea_id_field)
+
+                for b in buildings:
+                    b_feat = QgsFeature(bldg_out_fields)
+                    b_geom = QgsGeometry.fromPointXY(b['point'])
+                    if barangay_to_target:
+                        b_geom.transform(barangay_to_target)
+                    b_feat.setGeometry(b_geom)
+
+                    b_feat.setAttributes(b['attributes'])
+                    attrs = b_feat.attributes()
+                    needed = bldg_out_fields.count() - len(attrs)
+                    if needed > 0:
+                        attrs.extend([None] * needed)
+                        b_feat.setAttributes(attrs)
+
+                    b_feat["parent_ean"] = str(parent_ean_val)
+
+                    if "pop" in [f.name() for f in bldg_out_fields]:
+                        b_feat["pop"] = b['pop']
+                    elif bldg_hh_field in [f.name() for f in bldg_out_fields]:
+                        b_feat[bldg_hh_field] = b['pop']
+
+                    if "bldgpoints_value" in [f.name() for f in bldg_out_fields]:
+                        b_feat["bldgpoints_value"] = b['bldgpoints_value']
+                    elif "bldgpts_val" in [f.name() for f in bldg_out_fields]:
+                        b_feat["bldgpts_val"] = b['bldgpoints_value']
+
+                    if extracted_buildings_sink.addFeature(b_feat, QgsFeatureSink.Flag.FastInsert):
+                        bldg_written_preview += 1
+                        extracted_bldg_feat_count += 1
+            feedback.pushInfo(f"Successfully wrote {bldg_written_preview} building features to output in preview mode.")
+
+        feedback.pushInfo("PREVIEW ONLY check is active — exiting early after creating candidate layers.")
+        return {"preview_exit": True, "outputs": outputs}
+
+    return {
+        "preview_exit": False,
+        "outputs": outputs,
+        "out_fields": out_fields,
+        "out_wkb_type": out_wkb_type,
+        "delineated_sink": delineated_sink,
+        "merged_sink": merged_sink,
+        "extracted_buildings_sink": extracted_buildings_sink,
+        "delin_candidate_sink": delin_candidate_sink,
+        "merge_candidate_sink": merge_candidate_sink,
+        "delineated_feat_count": delineated_feat_count,
+        "merged_feat_count": merged_feat_count,
+        "delin_candidate_feat_count": delin_candidate_feat_count,
+        "merge_candidate_feat_count": merge_candidate_feat_count,
+        "extracted_bldg_feat_count": extracted_bldg_feat_count,
+        "delineation_candidate_ids": delineation_candidate_ids,
+        "merge_candidate_ids": merge_candidate_ids,
+        "delineation_candidate_hhdivthres": delineation_candidate_hhdivthres,
+        "delineation_candidates_by_geocode": delineation_candidates_by_geocode,
+        "delineation_candidate_bar_geocodes": delineation_candidate_bar_geocodes,
+        "adjacent_ea_ids": adjacent_ea_ids,
+        "imputed_hhcount": imputed_hhcount,
+        "ea_index": ea_index,
+        "ea_by_id": ea_by_id,
+        "temp_ea_index": temp_ea_index,
+        "temp_ea_by_id": temp_ea_by_id,
+        "ea_id_to_buildings": ea_id_to_buildings,
+        "output_hh_field": output_hh_field,
+        "full_ea_by_id": full_ea_by_id,
+    }
