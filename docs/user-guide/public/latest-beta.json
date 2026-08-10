@@ -1,9 +1,9 @@
 {
-  "version": "1.0.2-r445",
-  "tag": "r445",
-  "releaseDate": "2026-08-07",
+  "version": "1.0.2-r485",
+  "tag": "r485",
+  "releaseDate": "2026-08-10",
   "repositoryUrl": "https://gemma-plugin.vercel.app/gemma-beta.xml",
-  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r445/gemma-plugin-r445.zip",
-  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r445",
-  "changelogUrl": "https://gemma-plugin.vercel.app/changelog/r445"
+  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r485/gemma-plugin-r485.zip",
+  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r485",
+  "changelogUrl": "https://gemma-plugin.vercel.app/changelog/r485"
 }
