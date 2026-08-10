@@ -2,6 +2,9 @@
 import unittest
 from typing import Dict, Any, List
 
+from tests.mocks.qgis_mock import setup_qgis_mock_if_needed
+setup_qgis_mock_if_needed()
+
 from qgis.core import (
     QgsFeature,
     QgsGeometry,

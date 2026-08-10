@@ -203,6 +203,7 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
         changelog = generate_changelog(
             version=version,
             raw_lines=raw_lines,
+            ai_token=os.environ.get("HF_TOKEN", ""),
         )
 
     logger.info("Changelog: %d highlights (AI=%s)", len(changelog.highlights), changelog.ai_generated)
