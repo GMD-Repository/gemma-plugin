@@ -584,6 +584,9 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         split_parts = enforce_min_household(split_parts, fback, ea_geom=ea_item['geom'])
 
         if len(split_parts) < 2:
+            if is_delineation_candidate(ea_item):
+                fback.pushInfo(f"[EA {ea_item['original_code']}] Sequential/Voronoi split returned < 2 parts. Falling back to forced geometric split...")
+                return force_geometric_split(ea_item, target_pop, fback)
             ea_item['split_by'] = split_by
             return [ea_item]
 
@@ -754,6 +757,8 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             clipped = p['geom'].intersection(parent_geom).buffer(0.0, 3)
             if not clipped.isEmpty():
                 p['geom'] = clipped
+            p['split_by'] = 'forced_grid'
+            p['remarks'] = f"Forced straight cut (road/river split was unbalanced >{max_household} HH or <{min_household} HH)"
 
         fback.pushWarning(
             f"[EA {ea_item['original_code']}] FORCED SPLIT: Applied {accepted_orientation} "
@@ -775,13 +780,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         all_lines = road_lines + river_lines
         line_geom = merge_line_geometries(all_lines)
 
-        _ea_ean = str(ea_item.get('original_code', '')).strip()
-        _ea_id = ea_item.get('original_id')
-        hhdivthres = delineation_candidate_hhdivthres.get(_ea_id)
-        if hhdivthres is None:
-            hhdivthres = delineation_candidate_hhdivthres.get(_ea_ean)
-        if hhdivthres is None:
-            hhdivthres = max_household / ea_item['hh_count'] if ea_item['hh_count'] > 0.0 else 1.0
+        hhdivthres = max_household / ea_item['hh_count'] if ea_item['hh_count'] > 0.0 else 1.0
 
         unassigned_set = set(id(b) for b in bldgs)
         unassigned_list = [b for b in bldgs]
@@ -1053,23 +1052,16 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                             if len(split_parts) > 1:
                                 _ea_id = ea.get('original_id')
                                 _ea_ean = str(ea.get('original_code', '')).strip()
-                                _parent_hhdivthres = delineation_candidate_hhdivthres.get(_ea_id)
-                                if _parent_hhdivthres is None:
-                                    _parent_hhdivthres = delineation_candidate_hhdivthres.get(_ea_ean)
-                                if _parent_hhdivthres is not None:
-                                    _max_bldgpv = max(
-                                        sum(b.get('bldgpoints_value', 0.0) for b in p['buildings'])
-                                        for p in split_parts
+                                _max_part_hh = max(p['hh_count'] for p in split_parts) if split_parts else 0
+                                if _max_part_hh > max_household:
+                                    _parent_hhdivthres = max_household / ea['hh_count'] if ea['hh_count'] > 0 else 1.0
+                                    fback.pushWarning(
+                                        f"[Barangay {bar_code}] [EA {ea['original_code']}] "
+                                        f"Part exceeds max_household ({_max_part_hh} > {max_household}). "
+                                        f"Enforcing {min_household + 1}–{max_household - 1} HH range on parts."
                                     )
-                                    if _max_bldgpv >= _parent_hhdivthres:
-                                        fback.pushWarning(
-                                            f"[Barangay {bar_code}] [EA {ea['original_code']}] "
-                                            f"bldgpoints_value validation: max part's bldgpoints_value ({_max_bldgpv:.4f}) "
-                                            f">= hhdivthres ({_parent_hhdivthres:.4f}). "
-                                            f"Enforcing {min_household + 1}–{max_household - 1} HH range on parts."
-                                        )
-                                        split_parts = enforce_min_household(split_parts, fback, ea_geom=ea['geom'])
-                                        split_parts = enforce_bldgpv_threshold(split_parts, _parent_hhdivthres, fback, ea_geom=ea['geom'])
+                                    split_parts = enforce_min_household(split_parts, fback, ea_geom=ea['geom'])
+                                    split_parts = enforce_bldgpv_threshold(split_parts, _parent_hhdivthres, fback, ea_geom=ea['geom'])
                                 new_eas.extend(split_parts)
                                 changed = True
                                 fback.pushInfo(f"[Barangay {bar_code}] Split over-populated EA (code={ea['original_code']}, pop={ea['hh_count']}) into {len(split_parts)} sub-polygons.")
