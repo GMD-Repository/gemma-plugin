@@ -59,6 +59,7 @@ jobs:
         id: release
         env:
           GITHUB_TOKEN: ${{ steps.generate-token.outputs.token || secrets.GITHUB_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           python scripts/release/release_pipeline.py \
             --mode stable \
