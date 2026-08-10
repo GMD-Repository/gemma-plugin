@@ -271,7 +271,7 @@ def run_phase_8(
     """
     Executes Phase 8: Spatial Sorting, Boundary Vertices Cleanup & Sink Feature Writing.
     """
-    eas = list(p7["eas"])
+    eas = list(p7.get("eas") or p7.get("split_eas", []))
     previous_ea_source = p1["previous_ea_source"]
     building_source = p1["building_source"]
     out_fields = p2.get("out_fields") or p1.get("out_fields")
@@ -303,6 +303,7 @@ def run_phase_8(
     merged_feat_count = 0
     special_ea_feat_count = 0
     extracted_bldg_feat_count = 0
+    split_by_counts = {}
 
     delin_candidate_feat_count = p2.get("delin_candidate_feat_count", len(delineation_candidate_ids))
     merge_candidate_feat_count = p2.get("merge_candidate_feat_count", len(merge_candidate_ids | adjacent_ea_ids))
@@ -504,9 +505,24 @@ def run_phase_8(
         if source_id_idx != -1:
             out_feat.setAttribute(source_id_idx, ea.get('source_id', None))
 
-        remarks_idx = out_fields.indexOf("remarks")
-        if remarks_idx != -1:
-            out_feat.setAttribute(remarks_idx, ea.get('remarks', None))
+        for rem_fname in ("remarks", "remark", "delin_remark", "delin_remarks"):
+            rem_idx = out_fields.indexOf(rem_fname)
+            if rem_idx != -1:
+                ea_remark = ea.get('remarks') or ea.get('remark') or ea.get('delin_remark')
+                if not ea_remark and ea.get('from_split', False):
+                    sb = ea.get('split_by', 'point_based')
+                    if sb in ('forced_grid', 'forced_straight'):
+                        ea_remark = f"Forced straight cut (road/river split was unbalanced >{max_household} HH or <{min_household} HH)"
+                    elif sb == 'road':
+                        ea_remark = "Snapped to road network"
+                    elif sb == 'river':
+                        ea_remark = "Snapped to river feature"
+                    elif sb == 'road+river':
+                        ea_remark = "Snapped to road and river features"
+                    elif sb == 'point_based':
+                        ea_remark = "Split using building cluster density"
+                if ea_remark:
+                    out_feat.setAttribute(rem_idx, ea_remark)
 
         corr_ea_geo_idx = out_fields.indexOf("correspondence_ea_geocode")
         if corr_ea_geo_idx != -1:
@@ -560,6 +576,8 @@ def run_phase_8(
                         feedback.reportError(f"Failed to add Special EA {i} to special EA sink.")
             # Add to delineated sink if it was split and not a Special EA
             elif ea.get('from_split', False):
+                sb = ea.get('split_by', 'point_based')
+                split_by_counts[sb] = split_by_counts.get(sb, 0) + 1
                 if delineated_sink is not None:
                     if delineated_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
                         delineated_feat_count += 1
@@ -663,11 +681,29 @@ def run_phase_8(
     if primary_delin_cnt == 0 and delineated_feat_count == 0:
         delin_remark = f"No areas exceeded the target limit of {max_household} households."
     else:
-        split_parent_count = 1 if delineated_feat_count > 0 else 0
+        split_parent_count = (delineated_feat_count // 2) if delineated_feat_count > 0 else 0
         unsplit_cnt = max(0, primary_delin_cnt - split_parent_count)
         
         if delineated_feat_count > 0:
             delin_remark = f"Created {delineated_feat_count} new split area(s)."
+            details = []
+            rd_cnt = split_by_counts.get('road', 0)
+            rv_cnt = split_by_counts.get('river', 0)
+            rr_cnt = split_by_counts.get('road+river', 0)
+            pb_cnt = split_by_counts.get('point_based', 0)
+            fg_cnt = split_by_counts.get('forced_grid', 0) + split_by_counts.get('forced_straight', 0)
+            if rd_cnt > 0:
+                details.append(f"{rd_cnt} snapped to road")
+            if rv_cnt > 0:
+                details.append(f"{rv_cnt} snapped to river")
+            if rr_cnt > 0:
+                details.append(f"{rr_cnt} snapped to road+river")
+            if pb_cnt > 0:
+                details.append(f"{pb_cnt} by building density")
+            if fg_cnt > 0:
+                details.append(f"{fg_cnt} via forced straight cut (road/river split was unbalanced &gt;{max_household} HH or &lt;{min_household} HH)")
+            if details:
+                delin_remark += f" (Split breakdown: {', '.join(details)})."
         else:
             delin_remark = f"No new split areas created."
 
