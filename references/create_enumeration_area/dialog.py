@@ -14,7 +14,11 @@ from qgis.core import (
     QgsProcessingContext, QgsProcessingFeedback, QgsCoordinateReferenceSystem, NULL,
     QgsMapLayerProxyModel
 )
-from qgis.gui import QgsMapLayerComboBox, QgsProjectionSelectionWidget
+try:
+    from qgis.gui import QgsMapLayerComboBox, QgsProjectionSelectionWidget, QgsCollapsibleGroupBox
+except ImportError:
+    from qgis.gui import QgsMapLayerComboBox, QgsProjectionSelectionWidget
+    QgsCollapsibleGroupBox = QGroupBox
 from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
     QSizePolicy, QSpacerItem, QWidget, QSpinBox, QDoubleSpinBox, QCheckBox,
@@ -281,7 +285,7 @@ class EALauncherDialog(QDialog):
 
         # Barangay Layer
         inputs_layout.addWidget(QLabel("Barangay Layer (Polygon)*"))
-        self.bar_combo = QgsMapLayerComboBox()
+        self.bar_combo = QgsMapLayerComboBox(self)
         self.bar_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
         inputs_layout.addWidget(self.bar_combo)
         self.bar_status_lbl = QLabel("No layer selected.")
@@ -289,7 +293,7 @@ class EALauncherDialog(QDialog):
 
         # Building Points
         inputs_layout.addWidget(QLabel("Building Point Layer (Point)*"))
-        self.bldg_combo = QgsMapLayerComboBox()
+        self.bldg_combo = QgsMapLayerComboBox(self)
         self.bldg_combo.setFilters(QgsMapLayerProxyModel.PointLayer)
         inputs_layout.addWidget(self.bldg_combo)
         self.bldg_status_lbl = QLabel("No layer selected.")
@@ -297,7 +301,7 @@ class EALauncherDialog(QDialog):
 
         # Previous EAs
         inputs_layout.addWidget(QLabel("Previous EA Layer (Polygon)*"))
-        self.prev_ea_combo = QgsMapLayerComboBox()
+        self.prev_ea_combo = QgsMapLayerComboBox(self)
         self.prev_ea_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
         inputs_layout.addWidget(self.prev_ea_combo)
         self.prev_ea_status_lbl = QLabel("No layer selected.")
@@ -305,7 +309,7 @@ class EALauncherDialog(QDialog):
 
         # Road (Optional)
         inputs_layout.addWidget(QLabel("Road Layer (Line, Optional)"))
-        self.road_combo = QgsMapLayerComboBox()
+        self.road_combo = QgsMapLayerComboBox(self)
         self.road_combo.setFilters(QgsMapLayerProxyModel.LineLayer)
         self.road_combo.setAllowEmptyLayer(True)
         self.road_combo.setLayer(None)
@@ -315,7 +319,7 @@ class EALauncherDialog(QDialog):
 
         # River (Optional)
         inputs_layout.addWidget(QLabel("River Layer (Line, Optional)"))
-        self.river_combo = QgsMapLayerComboBox()
+        self.river_combo = QgsMapLayerComboBox(self)
         self.river_combo.setFilters(QgsMapLayerProxyModel.LineLayer)
         self.river_combo.setAllowEmptyLayer(True)
         self.river_combo.setLayer(None)
@@ -325,7 +329,7 @@ class EALauncherDialog(QDialog):
 
         # Gap (Optional)
         inputs_layout.addWidget(QLabel("Gap Layer (Polygon, Optional)"))
-        self.gap_combo = QgsMapLayerComboBox()
+        self.gap_combo = QgsMapLayerComboBox(self)
         self.gap_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
         self.gap_combo.setAllowEmptyLayer(True)
         self.gap_combo.setLayer(None)
@@ -335,7 +339,7 @@ class EALauncherDialog(QDialog):
 
         # Overlap (Optional)
         inputs_layout.addWidget(QLabel("Overlap Layer (Polygon, Optional)"))
-        self.overlap_combo = QgsMapLayerComboBox()
+        self.overlap_combo = QgsMapLayerComboBox(self)
         self.overlap_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
         self.overlap_combo.setAllowEmptyLayer(True)
         self.overlap_combo.setLayer(None)
@@ -345,53 +349,45 @@ class EALauncherDialog(QDialog):
 
         scroll_layout.addWidget(inputs_group)
 
-        # 2. Parameters Section (QGroupBox)
-        params_group = QGroupBox("Delineation Thresholds Settings")
+        # 2. Parameters Section (Collapsible QGroupBox)
+        params_group = QgsCollapsibleGroupBox("Delineation Thresholds Settings")
+        if hasattr(params_group, "setCollapsed"):
+            params_group.setCollapsed(True)
         params_layout = QVBoxLayout(params_group)
         params_layout.setSpacing(8)
 
+        # Enable Household Count Thresholds checkbox
+        self.enable_thresholds_chk = QCheckBox("Enable Custom Thresholds")
+        self.enable_thresholds_chk.setChecked(False)
+        self.enable_thresholds_chk.toggled.connect(self._toggle_thresholds)
+        params_layout.addWidget(self.enable_thresholds_chk)
+
         # Min Household
-        params_layout.addWidget(QLabel("Minimum Household count per EA"))
+        self.min_hh_label = QLabel("Minimum Household count per EA")
+        params_layout.addWidget(self.min_hh_label)
         self.min_hh_spin = QSpinBox()
         self.min_hh_spin.setRange(1, 99999)
         self.min_hh_spin.setValue(100)
         params_layout.addWidget(self.min_hh_spin)
 
         # Max Household
-        params_layout.addWidget(QLabel("Maximum Household count per EA"))
+        self.max_hh_label = QLabel("Maximum Household count per EA")
+        params_layout.addWidget(self.max_hh_label)
         self.max_hh_spin = QSpinBox()
         self.max_hh_spin.setRange(1, 99999)
         self.max_hh_spin.setValue(300)
         params_layout.addWidget(self.max_hh_spin)
 
         # Snapping Tolerance
-        params_layout.addWidget(QLabel("Snapping Tolerance (meters) for road/river alignment"))
+        self.tolerance_label = QLabel("Snapping Tolerance (meters) for road/river alignment")
+        params_layout.addWidget(self.tolerance_label)
         self.tolerance_spin = QDoubleSpinBox()
         self.tolerance_spin.setRange(0.0, 999.0)
         self.tolerance_spin.setValue(15.0)
         params_layout.addWidget(self.tolerance_spin)
 
-        # Split Strategy enum
-        params_layout.addWidget(QLabel("Splitting Rule for Large Areas (>300 Houses)"))
-        self.split_strategy_combo = QComboBox()
-        self.split_strategy_combo.addItems([
-            "Follow Roads & Rivers (Recommended)",
-            "Strict Minimum 100 Houses",
-            "Do Not Split"
-        ])
-        params_layout.addWidget(self.split_strategy_combo)
-
-        # Split Method / Type enum
-        params_layout.addWidget(QLabel("Boundary Cut Method"))
-        self.split_type_combo = QComboBox()
-        self.split_type_combo.addItems([
-            "Auto (Roads First, then Houses)",
-            "Roads & Rivers Only",
-            "House Groups Only",
-            "Straight Line Only",
-            "Do Not Split"
-        ])
-        params_layout.addWidget(self.split_type_combo)
+        # Apply initial disabled state to threshold & tolerance inputs
+        self._toggle_thresholds(False)
 
         # Compactness optimization
         self.compact_chk = QCheckBox("Optimize for Compactness")
@@ -623,6 +619,35 @@ class EALauncherDialog(QDialog):
         bottom_main_layout.addLayout(bottom_controls_layout)
         root.addWidget(bottom_bar)
 
+    def _safe_set_layer(self, combo, layer):
+        if combo is None or layer is None:
+            return
+        try:
+            from qgis.PyQt import sip
+            if not sip.isdeleted(combo):
+                combo.setLayer(layer)
+        except (RuntimeError, AttributeError, TypeError):
+            pass
+
+    def _safe_get_layer(self, combo):
+        if combo is None:
+            return None
+        try:
+            from qgis.PyQt import sip
+            if not sip.isdeleted(combo):
+                return combo.currentLayer()
+        except (RuntimeError, AttributeError, TypeError):
+            return None
+        return None
+
+    def _toggle_thresholds(self, checked: bool):
+        self.min_hh_label.setEnabled(checked)
+        self.min_hh_spin.setEnabled(checked)
+        self.max_hh_label.setEnabled(checked)
+        self.max_hh_spin.setEnabled(checked)
+        self.tolerance_label.setEnabled(checked)
+        self.tolerance_spin.setEnabled(checked)
+
     def toggle_help(self):
         """Toggle the visibility of the description help panel."""
         is_visible = not self.help_panel.isVisible()
@@ -677,7 +702,7 @@ class EALauncherDialog(QDialog):
 
     def _extract_5digit_geocode(self):
         """Extract 5-digit geocode prefix from selected Barangay or EA layer."""
-        layers = [self.bar_combo.currentLayer(), self.prev_ea_combo.currentLayer()]
+        layers = [self._safe_get_layer(self.bar_combo), self._safe_get_layer(self.prev_ea_combo)]
         for lyr in layers:
             if not lyr:
                 continue
@@ -722,16 +747,27 @@ class EALauncherDialog(QDialog):
 
     def _setup_preview_connections(self):
         """Hook parameter modification signals up to preview auto-refresh and validators."""
-        self.bar_combo.currentIndexChanged.connect(self.validate_layer_inputs)
-        self.bldg_combo.currentIndexChanged.connect(self.validate_layer_inputs)
-        self.prev_ea_combo.currentIndexChanged.connect(self.validate_layer_inputs)
-        self.road_combo.currentIndexChanged.connect(self.validate_layer_inputs)
-        self.river_combo.currentIndexChanged.connect(self.validate_layer_inputs)
-        self.gap_combo.currentIndexChanged.connect(self.validate_layer_inputs)
-        self.overlap_combo.currentIndexChanged.connect(self.validate_layer_inputs)
-        
-        self.min_hh_spin.valueChanged.connect(self.trigger_auto_refresh)
-        self.max_hh_spin.valueChanged.connect(self.trigger_auto_refresh)
+        for combo in (
+            getattr(self, 'bar_combo', None),
+            getattr(self, 'bldg_combo', None),
+            getattr(self, 'prev_ea_combo', None),
+            getattr(self, 'road_combo', None),
+            getattr(self, 'river_combo', None),
+            getattr(self, 'gap_combo', None),
+            getattr(self, 'overlap_combo', None),
+        ):
+            if combo is not None:
+                try:
+                    combo.currentIndexChanged.connect(self.validate_layer_inputs)
+                except (RuntimeError, TypeError):
+                    pass
+
+        for spin in (getattr(self, 'min_hh_spin', None), getattr(self, 'max_hh_spin', None)):
+            if spin is not None:
+                try:
+                    spin.valueChanged.connect(self.trigger_auto_refresh)
+                except (RuntimeError, TypeError):
+                    pass
 
     def trigger_auto_refresh(self, *args, **kwargs):
         """Called when parameters are modified. Warns the user that the preview is out of sync."""
@@ -770,8 +806,8 @@ class EALauncherDialog(QDialog):
 
     def fill_missing_hhcount(self):
         """Populate null/empty hhcount values in the EA layer from building points inside each EA."""
-        prev_ea_layer = self.prev_ea_combo.currentLayer()
-        bldg_layer = self.bldg_combo.currentLayer()
+        prev_ea_layer = self._safe_get_layer(self.prev_ea_combo)
+        bldg_layer = self._safe_get_layer(self.bldg_combo)
         if not prev_ea_layer or not bldg_layer:
             QMessageBox.warning(
                 self,
@@ -943,33 +979,33 @@ class EALauncherDialog(QDialog):
 
         # Apply detected layers using the correct QgsMapLayerComboBox API
         if candidates["bar"]:
-            self.bar_combo.setLayer(candidates["bar"])
+            self._safe_set_layer(self.bar_combo, candidates["bar"])
         if candidates["bldg"]:
-            self.bldg_combo.setLayer(candidates["bldg"])
+            self._safe_set_layer(self.bldg_combo, candidates["bldg"])
         if candidates["prev_ea"]:
-            self.prev_ea_combo.setLayer(candidates["prev_ea"])
+            self._safe_set_layer(self.prev_ea_combo, candidates["prev_ea"])
         if candidates["road"]:
-            self.road_combo.setLayer(candidates["road"])
+            self._safe_set_layer(self.road_combo, candidates["road"])
         if candidates["river"]:
-            self.river_combo.setLayer(candidates["river"])
+            self._safe_set_layer(self.river_combo, candidates["river"])
         if candidates["gap"]:
-            self.gap_combo.setLayer(candidates["gap"])
+            self._safe_set_layer(self.gap_combo, candidates["gap"])
         if candidates["overlap"]:
-            self.overlap_combo.setLayer(candidates["overlap"])
+            self._safe_set_layer(self.overlap_combo, candidates["overlap"])
 
         self.validate_layer_inputs()
 
     def validate_layer_inputs(self):
         """Perform validation on selected layers and show dynamic status subtitles."""
         # 1. Barangay Layer
-        bar_layer = self.bar_combo.currentLayer()
+        bar_layer = self._safe_get_layer(self.bar_combo)
         if not bar_layer:
             self.bar_status_lbl.setText("Barangay Layer is required.")
         else:
             self.bar_status_lbl.setText(f"Active: {bar_layer.featureCount()} polygons loaded ({bar_layer.crs().authid()}).")
 
         # 2. Building Layer
-        bldg_layer = self.bldg_combo.currentLayer()
+        bldg_layer = self._safe_get_layer(self.bldg_combo)
         if not bldg_layer:
             self.bldg_status_lbl.setText("Building Point Layer is required.")
         else:
@@ -979,7 +1015,7 @@ class EALauncherDialog(QDialog):
             self.bldg_status_lbl.setText(f"Active: {bldg_layer.featureCount()} points loaded{hh_msg}.")
 
         # 3. Previous EA Layer
-        prev_ea_layer = self.prev_ea_combo.currentLayer()
+        prev_ea_layer = self._safe_get_layer(self.prev_ea_combo)
         hh_found = False
         ean_found = False
         if not prev_ea_layer:
@@ -998,28 +1034,28 @@ class EALauncherDialog(QDialog):
 
         # Enable fill-missing button only when required layers are present
         self.fill_missing_btn.setEnabled(bool(prev_ea_layer and bldg_layer and hh_found))
-        road_layer = self.road_combo.currentLayer()
+        road_layer = self._safe_get_layer(self.road_combo)
         if not road_layer:
             self.road_status_lbl.setText("Optional: Road boundary snapping will be skipped.")
         else:
             self.road_status_lbl.setText(f"Active: {road_layer.featureCount()} line features loaded.")
 
         # 5. River Layer (Optional)
-        river_layer = self.river_combo.currentLayer()
+        river_layer = self._safe_get_layer(self.river_combo)
         if not river_layer:
             self.river_status_lbl.setText("Optional: River boundary snapping will be skipped.")
         else:
             self.river_status_lbl.setText(f"Active: {river_layer.featureCount()} line features loaded.")
 
         # 6. Gap Layer (Optional)
-        gap_layer = self.gap_combo.currentLayer()
+        gap_layer = self._safe_get_layer(self.gap_combo)
         if not gap_layer:
             self.gap_status_lbl.setText("Optional: Gap workflow will be skipped.")
         else:
             self.gap_status_lbl.setText(f"Active: {gap_layer.featureCount()} polygon features loaded.")
 
         # 7. Overlap Layer (Optional)
-        overlap_layer = self.overlap_combo.currentLayer()
+        overlap_layer = self._safe_get_layer(self.overlap_combo)
         if not overlap_layer:
             self.overlap_status_lbl.setText("Optional: Overlap workflow will be skipped.")
         else:
@@ -1049,7 +1085,7 @@ class EALauncherDialog(QDialog):
         if not hasattr(self, "delineation_table") or not hasattr(self, "merge_table"):
             return
 
-        prev_ea_layer = self.prev_ea_combo.currentLayer()
+        prev_ea_layer = self._safe_get_layer(self.prev_ea_combo)
         if not prev_ea_layer:
             self.kpi_delin_val.setText("0")
             self.kpi_merge_val.setText("0")
@@ -1256,13 +1292,13 @@ class EALauncherDialog(QDialog):
 
     def run_pipeline(self):
         """Execute processing algorithm directly using custom feedback."""
-        bar_layer = self.bar_combo.currentLayer()
-        bldg_layer = self.bldg_combo.currentLayer()
-        prev_ea_layer = self.prev_ea_combo.currentLayer()
-        road_layer = self.road_combo.currentLayer()
-        river_layer = self.river_combo.currentLayer()
-        gap_layer = self.gap_combo.currentLayer()
-        overlap_layer = self.overlap_combo.currentLayer()
+        bar_layer = self._safe_get_layer(self.bar_combo)
+        bldg_layer = self._safe_get_layer(self.bldg_combo)
+        prev_ea_layer = self._safe_get_layer(self.prev_ea_combo)
+        road_layer = self._safe_get_layer(self.road_combo)
+        river_layer = self._safe_get_layer(self.river_combo)
+        gap_layer = self._safe_get_layer(self.gap_combo)
+        overlap_layer = self._safe_get_layer(self.overlap_combo)
 
         if not bar_layer or not bldg_layer or not prev_ea_layer:
             self.log_console.append(
@@ -1282,10 +1318,11 @@ class EALauncherDialog(QDialog):
             'GAP_INPUT': gap_layer,
             'OVERLAP_INPUT': overlap_layer,
             'SNAP_TOLERANCE': self.tolerance_spin.value(),
+            'ENABLE_THRESHOLDS': self.enable_thresholds_chk.isChecked(),
             'MIN_HOUSEHOLD': self.min_hh_spin.value(),
             'MAX_HOUSEHOLD': self.max_hh_spin.value(),
-            'SPLIT_STRATEGY': self.split_strategy_combo.currentIndex(),
-            'SPLIT_TYPE': self.split_type_combo.currentIndex(),
+            'SPLIT_STRATEGY': 0,
+            'SPLIT_TYPE': 0,
             'USE_COMPACTNESS': self.compact_chk.isChecked(),
             'ALLOW_CANDIDATE_MERGE': self.allow_candidate_merge_chk.isChecked(),
             'SLIVER_THRESHOLD': self.sliver_combo.currentIndex(),
@@ -1391,16 +1428,18 @@ class EALauncherDialog(QDialog):
 
                 # Output layers in exact top-to-bottom order for each group
                 output_mapping_ordered = [
-                    ('EXTRACTED_BUILDINGS_OUTPUT', f"{geo5}_extracted_bldgpts", reference_group),
-                    ('DELINEATED_OUTPUT', f"{geo5}_delineated_ea2026", eas_group),
-                    ('MERGED_OUTPUT', f"{geo5}_merged_ea2026", eas_group),
-                    ('SPECIAL_EA_OUTPUT', f"{geo5}_special_ea", eas_group),
-                    ('DELINEATION_CANDIDATE_OUTPUT', f"{geo5}_delineation_candidates", candidates_group),
-                    ('MERGE_CANDIDATE_OUTPUT', f"{geo5}_merge_candidates", candidates_group),
+                    ('EXTRACTED_BUILDINGS_OUTPUT', f"{geo5}_extracted_bldgpts", reference_group, "1. Base Layer Building Points.qml"),
+                    ('DELINEATED_OUTPUT', f"{geo5}_delineated_ea2026", eas_group, "ea_output.qml"),
+                    ('MERGED_OUTPUT', f"{geo5}_merged_ea2026", eas_group, "ea_output.qml"),
+                    ('SPECIAL_EA_OUTPUT', f"{geo5}_special_ea", eas_group, "ea_output.qml"),
+                    ('DELINEATION_CANDIDATE_OUTPUT', f"{geo5}_delineation_candidates", candidates_group, "delineation_candidates.qml"),
+                    ('MERGE_CANDIDATE_OUTPUT', f"{geo5}_merge_candidates", candidates_group, "merge_candidates.qml"),
                 ]
 
+                from .helpers.style import apply_qml_to_layer
+
                 if isinstance(results, dict):
-                    for out_key, target_name, target_group in output_mapping_ordered:
+                    for out_key, target_name, target_group, qml_filename in output_mapping_ordered:
                         if out_key in results:
                             layer_ref = results[out_key]
                             layer = None
@@ -1411,6 +1450,7 @@ class EALauncherDialog(QDialog):
                             
                             if layer:
                                 layer.setName(target_name)
+                                apply_qml_to_layer(layer, qml_filename)
                                 lnode = root.findLayer(layer.id())
                                 if lnode:
                                     if lnode.parent() != target_group:
