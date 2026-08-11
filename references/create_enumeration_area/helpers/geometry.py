@@ -6,7 +6,36 @@ from qgis.core import (
     QgsGeometry,
     QgsWkbTypes,
     QgsSpatialIndex,
+    QgsPointXY,
 )
+
+
+def get_polylines_from_geom(geom: QgsGeometry) -> List[List[QgsPointXY]]:
+    """Helper to extract individual polylines (as list of QgsPointXY) from a QgsGeometry."""
+    lines = []
+    if geom.isEmpty():
+        return lines
+    flat_type = QgsWkbTypes.flatType(geom.wkbType())
+    if flat_type == QgsWkbTypes.LineString:
+        pts = geom.asPolyline()
+        if pts and len(pts) >= 2:
+            lines.append(pts)
+    elif flat_type in (QgsWkbTypes.MultiLineString, QgsWkbTypes.GeometryCollection) or geom.isMultipart():
+        try:
+            for part in geom.constParts():
+                part_pts = [QgsPointXY(pt.x(), pt.y()) for pt in part]
+                if len(part_pts) >= 2:
+                    lines.append(part_pts)
+        except Exception:
+            pts = geom.asPolyline()
+            if pts and len(pts) >= 2:
+                lines.append(pts)
+    else:
+        pts = geom.asPolyline()
+        if pts and len(pts) >= 2:
+            lines.append(pts)
+    return lines
+
 
 def get_polygons_from_geom(geom: QgsGeometry) -> List[QgsGeometry]:
     """Helper to extract individual contiguous polygon parts from a QgsGeometry."""

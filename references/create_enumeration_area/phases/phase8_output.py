@@ -310,14 +310,14 @@ def clean_unsnapped_vertices(eas_list: List[dict], snap_tolerance: float, road_g
                         else:
                             temp_geom = QgsGeometry.fromMultiPolygonXY(test_parts)
 
-                        if not temp_geom.isValid() or temp_geom.isEmpty():
+                        if not temp_geom.isGeosValid() or temp_geom.isEmpty():
                             pt_idx += 1
                             continue
 
                         buildings_lost = False
                         for b in ea_item.get('buildings', []):
                             b_geom = QgsGeometry.fromPointXY(b['point'])
-                            if not (temp_geom.contains(b_geom) or temp_geom.intersects(b_geom)):
+                            if not temp_geom.intersects(b_geom):
                                 buildings_lost = True
                                 break
                         if buildings_lost:
@@ -344,12 +344,15 @@ def clean_unsnapped_vertices(eas_list: List[dict], snap_tolerance: float, road_g
                 new_parts.append(new_rings)
 
             if polygon_changed:
+                old_geom = geom
                 if flat_type == QgsWkbTypes.Polygon:
                     ea_item['geom'] = QgsGeometry.fromPolygonXY(new_parts[0])
                 else:
                     ea_item['geom'] = QgsGeometry.fromMultiPolygonXY(new_parts)
 
-                idx_spatial.deleteFeature(idx_ea)
+                f_del = QgsFeature(idx_ea)
+                f_del.setGeometry(old_geom)
+                idx_spatial.deleteFeature(f_del)
                 f_ea = QgsFeature(idx_ea)
                 f_ea.setGeometry(ea_item['geom'])
                 idx_spatial.insertFeature(f_ea)
@@ -613,21 +616,27 @@ def run_phase_8(
         for rem_fname in ("remarks", "remark", "delin_remark", "delin_remarks"):
             rem_idx = out_fields.indexOf(rem_fname)
             if rem_idx != -1:
-                ea_remark = ea.get('remarks') or ea.get('remark') or ea.get('delin_remark')
-                if not ea_remark and ea.get('from_split', False):
+                if ea.get('from_split', False):
                     sb = ea.get('split_by', 'point_based')
                     if sb in ('forced_grid', 'forced_straight'):
                         ea_remark = f"Forced straight cut (road/river split was unbalanced >{max_household} HH or <{min_household} HH)"
                     elif sb == 'road':
-                        ea_remark = "Snapped to road network"
+                        ea_remark = "Split along road network"
                     elif sb == 'river':
-                        ea_remark = "Snapped to river feature"
+                        ea_remark = "Split along river feature"
                     elif sb == 'road+river':
-                        ea_remark = "Snapped to road and river features"
+                        ea_remark = "Split along road and river features"
                     elif sb == 'point_based':
                         ea_remark = "Split using building cluster density"
-                if ea_remark:
-                    out_feat.setAttribute(rem_idx, ea_remark)
+                    else:
+                        ea_remark = "Split EA"
+                elif ea.get('from_merge', False):
+                    ea_remark = "Merged EA"
+                else:
+                    ea_remark = ea.get('remarks') or ea.get('remark') or ea.get('delin_remark')
+
+                if ea_remark is not None:
+                    out_feat.setAttribute(rem_idx, str(ea_remark))
 
         corr_ea_geo_idx = out_fields.indexOf("correspondence_ea_geocode")
         if corr_ea_geo_idx != -1:
@@ -939,13 +948,13 @@ def run_phase_8(
             pb_cnt = split_by_counts.get('point_based', 0)
             fg_cnt = split_by_counts.get('forced_grid', 0) + split_by_counts.get('forced_straight', 0)
             if rd_cnt > 0:
-                details.append(f"{rd_cnt} snapped to road")
+                details.append(f"{rd_cnt} split along road")
             if rv_cnt > 0:
-                details.append(f"{rv_cnt} snapped to river")
+                details.append(f"{rv_cnt} split along river")
             if rr_cnt > 0:
-                details.append(f"{rr_cnt} snapped to road+river")
+                details.append(f"{rr_cnt} split along road+river")
             if pb_cnt > 0:
-                details.append(f"{pb_cnt} by building density")
+                details.append(f"{pb_cnt} by building cluster density")
             if fg_cnt > 0:
                 details.append(f"{fg_cnt} via forced straight cut (road/river split was unbalanced &gt;{max_household} HH or &lt;{min_household} HH)")
             if details:
@@ -968,6 +977,73 @@ def run_phase_8(
     delin_cand_desc = f"Includes {primary_delin_cnt} primary candidate(s) over {max_household} households + {max(0, delin_candidate_feat_count - primary_delin_cnt)} neighbor reference area(s)"
     merge_cand_desc = f"Includes {primary_merge_cnt} small area(s) under {min_household} households + {max(0, merge_candidate_feat_count - primary_merge_cnt)} neighboring partner area(s)"
 
+    splitting_lines_count = len(all_splitting_lines)
+    if splitting_lines_count > 0:
+        split_lines_remark = f"Generated {splitting_lines_count} delineation boundary cut line(s) along features"
+    else:
+        split_lines_remark = "No splitting lines generated (no areas were split)."
+
+    breakdown_table = ""
+    if delineated_feat_count > 0 and final_geom_by_candidate:
+        rows = []
+        for candidate_id, part_tuples in final_geom_by_candidate.items():
+            if len(part_tuples) < 2:
+                continue
+            first_ea = part_tuples[0][1]
+            parent_bar = first_ea.get('parent_barangay', '')
+            parent_ean = first_ea.get('original_code', 'Unknown')
+            orig_pop = first_ea.get('original_hhcount', 0.0)
+            if orig_pop == 0.0:
+                orig_pop = sum(p[1].get('hh_count', 0.0) for p in part_tuples)
+
+            parts_str_list = []
+            sb_set = set()
+            for _, p_ea in part_tuples:
+                p_code = p_ea.get('new_ea_code') or p_ea.get('original_code', '')
+                p_hh = p_ea.get('hh_count', 0.0)
+                parts_str_list.append(f"<b>EAN {p_code}</b> ({p_hh:,.1f} HH)")
+                sb_set.add(p_ea.get('split_by', 'point_based'))
+
+            parts_html = "<br/>".join(parts_str_list)
+            sb_label = ", ".join(sorted(sb_set))
+            if sb_label in ('road', 'river', 'road+river'):
+                rem_text = f"Split along {sb_label} features"
+            elif sb_label == 'point_based':
+                rem_text = "Split using building cluster density"
+            elif 'forced' in sb_label:
+                rem_text = "Forced straight cut"
+            else:
+                rem_text = "Split EA"
+
+            rows.append(
+                f"<tr>"
+                f"<td>{parent_bar}</td>"
+                f"<td align='center'><b>{parent_ean}</b></td>"
+                f"<td align='center'>{orig_pop:,.1f}</td>"
+                f"<td align='center'><b>{len(part_tuples)}</b></td>"
+                f"<td>{parts_html}</td>"
+                f"<td align='center'><code>{sb_label}</code></td>"
+                f"<td>{rem_text}</td>"
+                f"</tr>"
+            )
+
+        if rows:
+            breakdown_table = (
+                "<br/><b>Delineated EAs Breakdown (Parent Candidate &rarr; Resulting Sub-Polygons)</b>"
+                "<table border='1' cellspacing='0' cellpadding='6' style='border-collapse:collapse; width:100%; margin:8px 0; font-family:sans-serif; font-size:11px;'>"
+                "<tr style='background-color:#2d3748; color:#ffffff; font-weight:bold;'>"
+                "<th align='left'>Parent Barangay</th>"
+                "<th align='center'>Parent EA</th>"
+                "<th align='center'>Original HH</th>"
+                "<th align='center'>Parts</th>"
+                "<th align='left'>Resulting Sub-Polygons (EAN &amp; HH)</th>"
+                "<th align='center'>Split By</th>"
+                "<th align='left'>Remarks</th>"
+                "</tr>"
+                + "".join(rows)
+                + "</table>"
+            )
+
     html_table = (
         "<html_table>"
         "<br/><b>Execution Results &amp; Output Summary</b>"
@@ -978,13 +1054,15 @@ def run_phase_8(
         "<th align='left'>Execution Remark / Status</th>"
         "</tr>"
         f"<tr><td><b>Delineated EAs</b></td><td align='center'><b>{delineated_feat_count:,}</b></td><td>{delin_remark}</td></tr>"
+        f"<tr><td><b>Splitting Lines</b></td><td align='center'><b>{splitting_lines_count:,}</b></td><td>{split_lines_remark}</td></tr>"
         f"<tr><td><b>Merged EAs</b></td><td align='center'><b>{merged_feat_count:,}</b></td><td>{merge_remark}</td></tr>"
         f"<tr><td><b>Special EAs</b></td><td align='center'><b>{special_ea_feat_count:,}</b></td><td>Areas created to fix boundary gaps and overlaps</td></tr>"
         f"<tr><td><b>Delineation Candidates</b></td><td align='center'><b>{delin_candidate_feat_count:,}</b></td><td>{delin_cand_desc}</td></tr>"
         f"<tr><td><b>Merge Candidates</b></td><td align='center'><b>{merge_candidate_feat_count:,}</b></td><td>{merge_cand_desc}</td></tr>"
         f"<tr><td><b>Extracted Building Points</b></td><td align='center'>{extracted_bldg_feat_count:,}</td><td>Total houses/buildings counted inside checked areas</td></tr>"
         "</table>"
-        "</html_table>"
+        + breakdown_table
+        + "</html_table>"
     )
 
     feedback.pushInfo(html_table)

@@ -93,7 +93,9 @@ class QgsGeometry:
 
     @staticmethod
     def fromPointXY(point):
-        return QgsGeometry("Point")
+        g = QgsGeometry("Point")
+        g._point = point
+        return g
 
     @staticmethod
     def fromPolylineXY(polyline):
@@ -143,8 +145,20 @@ class QgsGeometry:
     def isMultipart(self): return self.geom_type.startswith("Multi")
     def makeValid(self): return self
     def touches(self, other): return True
-    def intersects(self, other): return True
-    def intersection(self, other): return QgsGeometry("LineString")
+    def contains(self, other):
+        if hasattr(other, 'geom_type') and other.geom_type == "Point":
+            pt = other.asPoint()
+            bbox = self.boundingBox()
+            return (bbox.xMinimum() <= pt.x() <= bbox.xMaximum() and bbox.yMinimum() <= pt.y() <= bbox.yMaximum())
+        return True
+    def intersects(self, other):
+        if hasattr(other, 'geom_type') and other.geom_type == "Point":
+            return self.contains(other)
+        return True
+    def intersection(self, other):
+        if self.geom_type in ("Polygon", "MultiPolygon") and hasattr(other, 'geom_type') and other.geom_type in ("Polygon", "MultiPolygon"):
+            return QgsGeometry("Polygon", other.polygons or self.polygons)
+        return QgsGeometry("LineString")
     def difference(self, other): return QgsGeometry("Polygon")
     def mergeLines(self): return QgsGeometry("LineString")
     def simplify(self, tol): return self
@@ -161,14 +175,39 @@ class QgsGeometry:
     def clone(self): return QgsGeometry(self.geom_type, self.polygons)
     def transform(self, ct): pass
     def combine(self, other): return QgsGeometry("Polygon")
-    def buffer(self, distance, segments=3): return QgsGeometry("Polygon")
+    def buffer(self, distance, segments=3): return QgsGeometry("Polygon", self.polygons)
     def area(self): return 100.0
     def length(self): return 40.0
 
+    def splitGeometry(self, split_line, preserve_input=False):
+        p2 = QgsGeometry.fromPolygonXY([[QgsPointXY(5, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(5, 10), QgsPointXY(5, 0)]])
+        return 0, [p2], []
+
+    def voronoiDiagram(self, extent=None):
+        return QgsGeometry("MultiPolygon")
+
     def centroid(self): return QgsGeometry("Point")
-    def asPoint(self): return QgsPointXY(0.0, 0.0)
+    def asPoint(self): return getattr(self, '_point', QgsPointXY(0.0, 0.0))
 
     def boundingBox(self):
+        if self.polygons and self.polygons[0]:
+            xs = [p.x() for p in self.polygons[0]]
+            ys = [p.y() for p in self.polygons[0]]
+            xmin, xmax = min(xs), max(xs)
+            ymin, ymax = min(ys), max(ys)
+            class MockBox:
+                def __init__(self, x0, x1, y0, y1):
+                    self._x0, self._x1, self._y0, self._y1 = x0, x1, y0, y1
+                def xMinimum(self): return self._x0
+                def xMaximum(self): return self._x1
+                def yMinimum(self): return self._y0
+                def yMaximum(self): return self._y1
+                def width(self): return self._x1 - self._x0
+                def height(self): return self._y1 - self._y0
+                def center(self): return QgsPointXY((self._x0+self._x1)/2, (self._y0+self._y1)/2)
+                def buffered(self, b): return self
+                def scale(self, factor): pass
+            return MockBox(xmin, xmax, ymin, ymax)
         class MockBox:
             def xMinimum(self): return 0.0
             def xMaximum(self): return 10.0
@@ -177,6 +216,7 @@ class QgsGeometry:
             def width(self): return 10.0
             def height(self): return 10.0
             def center(self): return QgsPointXY(5.0, 5.0)
+            def buffered(self, b): return self
             def scale(self, factor): pass
         return MockBox()
 

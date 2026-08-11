@@ -9,12 +9,14 @@ from qgis.core import (
     QgsPointXY,
     QgsSpatialIndex,
     QgsProcessingException,
+    QgsWkbTypes,
 )
 from qgis.PyQt.QtCore import QCoreApplication, QThread
 
 from ..helpers.constants import _PHASE_LABELS
 from ..helpers.geometry import (
     get_polygons_from_geom,
+    get_polylines_from_geom,
     allocate_gaps_to_parts,
     collect_linear_features,
     merge_line_geometries,
@@ -80,8 +82,9 @@ def force_geometric_split(ea_item, target_pop, fback, min_household=100, max_hou
         for poly in strip_polys:
             buildings_in_poly = []
             for b in bldgs:
-                pt_geom = QgsPointXY(b['point'])
-                if poly.contains(QgsGeometry.fromPointXY(pt_geom)) or poly.intersects(QgsGeometry.fromPointXY(pt_geom)):
+                pt = b['point']
+                pt_geom = QgsGeometry.fromPointXY(pt) if isinstance(pt, QgsPointXY) else QgsGeometry.fromPointXY(QgsPointXY(pt[0], pt[1]))
+                if poly.contains(pt_geom) or poly.intersects(pt_geom):
                     buildings_in_poly.append(b)
             sub_pop = sum(b['pop'] for b in buildings_in_poly)
             parts.append({
@@ -208,8 +211,9 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         orig_id = ea_item.get('original_id')
         if orig_id is not None and eadel_indi_col_idx != -1 and orig_id in full_ea_by_id:
             val = full_ea_by_id[orig_id].attribute(eadel_indi_col_idx)
-            return val is not None and str(val).strip().lower() in ("for delineation", "for_delineation")
-        return False
+            if val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"):
+                return True
+        return (orig_id in delineation_candidate_ids) or (ea_item.get('original_hhcount', ea_item.get('hh_count', 0)) >= max_household)
 
     def is_delineation_candidate(ea_item):
         if ea_item.get('from_split', False) or ea_item.get('from_merge', False):
@@ -766,6 +770,302 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         )
         return final_parts
 
+    def split_polygon_by_linear_features(ea_item, road_lines, river_lines, target_pop, fback):
+        if fback.isCanceled():
+            return [ea_item]
+
+        bldgs = ea_item.get('buildings', [])
+        parent_geom = ea_item['geom']
+        bbox = parent_geom.boundingBox()
+        ext_len = max(100.0, max(bbox.width(), bbox.height()) * 3.0)
+
+        all_input_lines = road_lines + river_lines
+        if not all_input_lines:
+            return [ea_item]
+
+        all_polylines = []
+        for lg in all_input_lines:
+            all_polylines.extend(get_polylines_from_geom(lg))
+
+        if not all_polylines:
+            return [ea_item]
+
+        current_polys = [parent_geom]
+        used_split = False
+
+        for polyline in all_polylines:
+            if len(polyline) < 2:
+                continue
+
+            p0, p1 = polyline[0], polyline[1]
+            dx0, dy0 = p0.x() - p1.x(), p0.y() - p1.y()
+            len0 = math.hypot(dx0, dy0)
+            p0_ext = QgsPointXY(p0.x() + (dx0 / len0) * ext_len, p0.y() + (dy0 / len0) * ext_len) if len0 > 1e-7 else p0
+
+            pn, pn_prev = polyline[-1], polyline[-2]
+            dxn, dyn = pn.x() - pn_prev.x(), pn.y() - pn_prev.y()
+            lenn = math.hypot(dxn, dyn)
+            pn_ext = QgsPointXY(pn.x() + (dxn / lenn) * ext_len, pn.y() + (dyn / lenn) * ext_len) if lenn > 1e-7 else pn
+
+            extended_line = [p0_ext] + list(polyline) + [pn_ext]
+
+            next_polys = []
+            for poly in current_polys:
+                target_geom = QgsGeometry(poly)
+                res, new_geoms, _ = target_geom.splitGeometry(extended_line, False)
+                if res == 0 and len(new_geoms) > 0:
+                    split_pieces = [target_geom] + new_geoms
+                    valid_pieces = []
+                    for sp in split_pieces:
+                        if sp and not sp.isEmpty() and sp.area() > 1e-6:
+                            clipped = sp.intersection(parent_geom).buffer(0.0, 3)
+                            if not clipped.isEmpty() and clipped.area() > 1e-6:
+                                valid_pieces.append(clipped)
+                    if len(valid_pieces) >= 2:
+                        next_polys.extend(valid_pieces)
+                        used_split = True
+                    else:
+                        next_polys.append(poly)
+                else:
+                    next_polys.append(poly)
+            current_polys = next_polys
+
+        if not used_split or len(current_polys) < 2:
+            return [ea_item]
+
+        extracted_polys = []
+        for cp in current_polys:
+            extracted_polys.extend(get_polygons_from_geom(cp))
+
+        if len(extracted_polys) < 2:
+            return [ea_item]
+
+        split_by = 'road'
+        if road_lines and river_lines:
+            split_by = 'road+river'
+        elif river_lines:
+            split_by = 'river'
+
+        parts = []
+        for poly in extracted_polys:
+            buildings_in_poly = []
+            for b in bldgs:
+                pt_geom = QgsGeometry.fromPointXY(b['point'])
+                if poly.contains(pt_geom) or poly.intersects(pt_geom):
+                    buildings_in_poly.append(b)
+            sub_pop = sum(b['pop'] for b in buildings_in_poly)
+            parts.append({
+                'geom': poly,
+                'buildings': buildings_in_poly,
+                'hh_count': sub_pop,
+                'original_hhcount': ea_item.get('original_hhcount', 0),
+                'bldg_count': len(buildings_in_poly),
+                'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
+                'attributes': list(ea_item['attributes']),
+                'original_id': ea_item['original_id'],
+                'original_code': ea_item['original_code'],
+                'is_new': True,
+                'from_split': True,
+                'split_by': split_by,
+                'parent_barangay': ea_item['parent_barangay']
+            })
+
+        zero_parts = [p for p in parts if p['hh_count'] == 0]
+        nonzero_parts = [p for p in parts if p['hh_count'] > 0]
+
+        if not nonzero_parts:
+            return [ea_item]
+
+        for zp in zero_parts:
+            best_nb = None
+            best_overlap = -1.0
+            for np in nonzero_parts:
+                if zp['geom'].intersects(np['geom']) or zp['geom'].touches(np['geom']):
+                    inter = zp['geom'].intersection(np['geom'])
+                    overlap = inter.length() if not inter.isEmpty() else 0.0
+                    if overlap > best_overlap:
+                        best_overlap = overlap
+                        best_nb = np
+            if best_nb is None:
+                zp_centroid = zp['geom'].centroid().asPoint()
+                best_nb = min(nonzero_parts, key=lambda np: zp_centroid.distance(np['geom'].centroid().asPoint()))
+
+            raw_combined = best_nb['geom'].combine(zp['geom']).buffer(0.0, 3)
+            clipped = raw_combined.intersection(parent_geom).buffer(0.0, 3)
+            best_nb['geom'] = clipped if not clipped.isEmpty() else raw_combined
+            best_nb['buildings'].extend(zp['buildings'])
+            best_nb['bldg_count'] = len(best_nb['buildings'])
+
+        parts = nonzero_parts
+        if len(parts) < 2:
+            return [ea_item]
+
+        parts = enforce_min_household(parts, fback, ea_geom=parent_geom)
+        if len(parts) < 2:
+            return [ea_item]
+
+        final_parts = []
+        for p in parts:
+            if p['hh_count'] > max_household:
+                sub_parts = split_ea(p, target_pop, fback)
+                if len(sub_parts) > 1:
+                    final_parts.extend(sub_parts)
+                else:
+                    final_parts.append(p)
+            else:
+                final_parts.append(p)
+
+        orig_code_str = str(ea_item['original_code']).strip() if ea_item['original_code'] is not None else "000"
+        digits = "".join([c for c in orig_code_str if c.isdigit()])
+        orig_first3 = digits[:3] if len(digits) >= 3 else digits.zfill(3)
+        if orig_first3 != "000" and len(final_parts) > 0:
+            final_parts.sort(key=lambda x: x['hh_count'], reverse=True)
+            final_parts[0]['is_new'] = False
+
+        final_parts = allocate_gaps_to_parts(final_parts, parent_geom)
+        for p in final_parts:
+            clipped = p['geom'].intersection(parent_geom).buffer(0.0, 3)
+            if not clipped.isEmpty():
+                p['geom'] = clipped
+            p['split_by'] = split_by
+
+        return final_parts
+
+    def split_ea_by_building_clusters(ea_item, target_pop, fback):
+        if fback.isCanceled():
+            return [ea_item]
+
+        bldgs = ea_item.get('buildings', [])
+        if not bldgs:
+            return [ea_item]
+
+        coord_to_pt = {}
+        for b in bldgs:
+            pt = b['point']
+            coord_to_pt[(pt.x(), pt.y())] = pt
+        unique_pts = list(coord_to_pt.values())
+
+        if len(unique_pts) < 2:
+            return [ea_item]
+
+        hh_cnt = ea_item['hh_count']
+        target = target_pop if target_pop > 0 else 200
+        k_val = max(2, int(round(hh_cnt / float(target))))
+        k_val = min(k_val, len(unique_pts))
+        if k_val < 2:
+            k_val = 2
+
+        pts = [(pt.x(), pt.y()) for pt in unique_pts]
+        pt_to_weight = {}
+        for b in bldgs:
+            pt_key = (b['point'].x(), b['point'].y())
+            pt_to_weight[pt_key] = pt_to_weight.get(pt_key, 0.0) + b['pop']
+        wts = [pt_to_weight.get((pt.x(), pt.y()), 1.0) for pt in unique_pts]
+
+        labels, centroids = weighted_kmeans(pts, wts, k_val)
+        centroid_pts = [QgsPointXY(c[0], c[1]) for c in centroids]
+
+        unique_centroids = []
+        seen_c = set()
+        for cp in centroid_pts:
+            ck = (round(cp.x(), 6), round(cp.y(), 6))
+            if ck not in seen_c:
+                seen_c.add(ck)
+                unique_centroids.append(cp)
+
+        if len(unique_centroids) < 2:
+            unique_centroids = unique_pts[:k_val]
+
+        points_geom = QgsGeometry.fromMultiPointXY(unique_centroids)
+        bbox = ea_item['geom'].boundingBox()
+        buffer_size = max(0.01, max(bbox.width(), bbox.height()) * 0.5)
+        extent_geom = QgsGeometry.fromRect(bbox.buffered(buffer_size))
+
+        voronoi_geom = points_geom.voronoiDiagram(extent_geom)
+        if voronoi_geom.isEmpty():
+            return [ea_item]
+
+        cells = get_polygons_from_geom(voronoi_geom)
+        if not cells:
+            return [ea_item]
+
+        parent_geom = ea_item['geom']
+        split_parts = []
+        for cell in cells:
+            intersected = parent_geom.intersection(cell)
+            if not intersected.isEmpty():
+                polys = get_polygons_from_geom(intersected)
+                for poly in polys:
+                    buildings_in_poly = []
+                    for b in bldgs:
+                        pt_geom = QgsGeometry.fromPointXY(b['point'])
+                        if poly.contains(pt_geom) or poly.intersects(pt_geom):
+                            buildings_in_poly.append(b)
+                    sub_pop = sum(b['pop'] for b in buildings_in_poly)
+                    split_parts.append({
+                        'geom': poly,
+                        'buildings': buildings_in_poly,
+                        'hh_count': sub_pop,
+                        'original_hhcount': ea_item.get('original_hhcount', 0),
+                        'bldg_count': len(buildings_in_poly),
+                        'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
+                        'attributes': list(ea_item['attributes']),
+                        'original_id': ea_item['original_id'],
+                        'original_code': ea_item['original_code'],
+                        'is_new': True,
+                        'from_split': True,
+                        'split_by': 'point_based',
+                        'parent_barangay': ea_item['parent_barangay']
+                    })
+
+        zero_parts = [p for p in split_parts if p['hh_count'] == 0]
+        nonzero_parts = [p for p in split_parts if p['hh_count'] > 0]
+
+        if not nonzero_parts:
+            return [ea_item]
+
+        for zp in zero_parts:
+            zp_centroid = zp['geom'].centroid().asPoint()
+            best_neighbor = min(nonzero_parts, key=lambda np: zp_centroid.distance(np['geom'].centroid().asPoint()))
+            raw_combined = best_neighbor['geom'].combine(zp['geom']).buffer(0.0, 3)
+            clipped = raw_combined.intersection(parent_geom).buffer(0.0, 3)
+            best_neighbor['geom'] = clipped if not clipped.isEmpty() else raw_combined
+            best_neighbor['buildings'].extend(zp['buildings'])
+            best_neighbor['bldg_count'] = len(best_neighbor['buildings'])
+
+        split_parts = nonzero_parts
+        split_parts = enforce_min_household(split_parts, fback, ea_geom=parent_geom)
+
+        if len(split_parts) < 2:
+            return [ea_item]
+
+        final_parts = []
+        for p in split_parts:
+            if p['hh_count'] > max_household:
+                sub_parts = split_ea_by_building_clusters(p, target_pop, fback)
+                if len(sub_parts) > 1:
+                    final_parts.extend(sub_parts)
+                else:
+                    final_parts.append(p)
+            else:
+                final_parts.append(p)
+
+        orig_code_str = str(ea_item['original_code']).strip() if ea_item['original_code'] is not None else "000"
+        digits = "".join([c for c in orig_code_str if c.isdigit()])
+        orig_first3 = digits[:3] if len(digits) >= 3 else digits.zfill(3)
+        if orig_first3 != "000" and len(final_parts) > 0:
+            final_parts.sort(key=lambda x: x['hh_count'], reverse=True)
+            final_parts[0]['is_new'] = False
+
+        for p in final_parts:
+            clipped = p['geom'].intersection(parent_geom).buffer(0.0, 3)
+            if not clipped.isEmpty():
+                p['geom'] = clipped
+            p['split_by'] = 'point_based'
+
+        final_parts = allocate_gaps_to_parts(final_parts, parent_geom)
+        return final_parts
+
     def split_ea(ea_item, target_pop, fback):
         if fback.isCanceled():
             return [ea_item]
@@ -775,245 +1075,40 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                 fback.pushInfo(f"[EA {ea_item['original_code']}] Delineation candidate has no building points. Forcing geometric split...")
                 return force_geometric_split(ea_item, target_pop, fback)
             return [ea_item]
+
         road_lines = collect_linear_features(ea_item['geom'], road_index, road_geoms)
         river_lines = collect_linear_features(ea_item['geom'], river_index, river_geoms)
-        all_lines = road_lines + river_lines
-        line_geom = merge_line_geometries(all_lines)
 
-        hhdivthres = max_household / ea_item['hh_count'] if ea_item['hh_count'] > 0.0 else 1.0
+        # ── Tier 1: Direct Physical Split along Road / River Lines ───────────────
+        if road_lines or river_lines:
+            fback.pushInfo(f"[EA {ea_item['original_code']}] Attempting direct geometric split along road/river features...")
+            linear_parts = split_polygon_by_linear_features(ea_item, road_lines, river_lines, target_pop, fback)
+            if len(linear_parts) >= 2:
+                fback.pushInfo(
+                    f"[EA {ea_item['original_code']}] Linear split succeeded: "
+                    f"{len(linear_parts)} sub-polygons created along {linear_parts[0].get('split_by', 'road/river')}."
+                )
+                return linear_parts
 
-        unassigned_set = set(id(b) for b in bldgs)
-        unassigned_list = [b for b in bldgs]
-        unassigned_index = QgsSpatialIndex()
-        bldg_id_map = {}
-        for idx, b in enumerate(bldgs):
-            feat = QgsFeature(idx)
-            feat.setGeometry(QgsGeometry.fromPointXY(b['point']))
-            unassigned_index.insertFeature(feat)
-            bldg_id_map[idx] = b
-            b['spatial_index_id'] = idx
+        # ── Tier 2: Building Point Cluster Partitioning (No road / river) ───────
+        fback.pushInfo(f"[EA {ea_item['original_code']}] Splitting by building point cluster distribution...")
+        cluster_parts = split_ea_by_building_clusters(ea_item, target_pop, fback)
+        if len(cluster_parts) >= 2:
+            fback.pushInfo(
+                f"[EA {ea_item['original_code']}] Building-point cluster split accepted: "
+                f"{len(cluster_parts)} parts created."
+            )
+            return cluster_parts
 
-        def remove_from_unassigned(bldg):
-            unassigned_set.discard(id(bldg))
-            feat = QgsFeature(bldg['spatial_index_id'])
-            feat.setGeometry(QgsGeometry.fromPointXY(bldg['point']))
-            unassigned_index.deleteFeature(feat)
+        # ── Tier 3: Last Resort Forced Geometric Split ──────────────────────────
+        if is_delineation_candidate(ea_item):
+            fback.pushWarning(
+                f"[EA {ea_item['original_code']}] Linear and point-based splits could not partition EA. "
+                f"Falling back to forced geometric split as last resort..."
+            )
+            return force_geometric_split(ea_item, target_pop, fback)
 
-        groups = []
-        unassigned_idx_ptr = 0
-
-        while unassigned_idx_ptr < len(unassigned_list):
-            seed = unassigned_list[unassigned_idx_ptr]
-            unassigned_idx_ptr += 1
-            if id(seed) not in unassigned_set:
-                continue
-
-            remove_from_unassigned(seed)
-            current_group = [seed]
-            running_total = seed.get('bldgpoints_value', 0.0)
-
-            group_frontier = [seed]
-
-            while group_frontier:
-                best_bldg = None
-                best_group_pt = None
-                min_dist = float('inf')
-
-                stale_frontier = []
-                for g_bldg in group_frontier:
-                    g_pt = QgsPointXY(g_bldg['point'].x(), g_bldg['point'].y())
-                    nearest_ids = unassigned_index.nearestNeighbor(g_pt, 1)
-                    if nearest_ids:
-                        n_id = nearest_ids[0]
-                        n_b = bldg_id_map[n_id]
-                        n_pt = QgsPointXY(n_b['point'].x(), n_b['point'].y())
-                        dist = g_pt.distance(n_pt)
-                        if dist < min_dist:
-                            min_dist = dist
-                            best_bldg = n_b
-                            best_group_pt = g_pt
-                    else:
-                        stale_frontier.append(g_bldg)
-
-                for sb in stale_frontier:
-                    group_frontier.remove(sb)
-
-                if best_bldg is None:
-                    break
-
-                is_separated = False
-                if line_geom and not line_geom.isEmpty():
-                    b_pt = QgsPointXY(best_bldg['point'].x(), best_bldg['point'].y())
-                    segment_geom = QgsGeometry.fromPolylineXY([best_group_pt, b_pt])
-                    if segment_geom.intersects(line_geom):
-                        is_separated = True
-
-                if is_separated:
-                    break
-
-                next_val = best_bldg.get('bldgpoints_value', 0.0)
-                if running_total + next_val >= hhdivthres:
-                    break
-
-                current_group.append(best_bldg)
-                group_frontier.append(best_bldg)
-                remove_from_unassigned(best_bldg)
-                running_total += next_val
-
-            groups.append(current_group)
-
-        pt_to_coords = {}
-        for b in bldgs:
-            pt_to_coords[(b['point'].x(), b['point'].y())] = b['point']
-        unique_pts = list(pt_to_coords.values())
-
-        point_based_parts = []
-        if len(groups) >= 2 and len(unique_pts) >= 2:
-            centroid_pts = [QgsPointXY(pt.x(), pt.y()) for pt in unique_pts]
-            points_geom = QgsGeometry.fromMultiPointXY(centroid_pts)
-
-            bbox = ea_item['geom'].boundingBox()
-            buffer_size = max(0.01, max(bbox.width(), bbox.height()) * 0.2)
-            extent_geom = QgsGeometry.fromRect(bbox.buffered(buffer_size))
-
-            voronoi_geom = points_geom.voronoiDiagram(extent_geom)
-            if not voronoi_geom.isEmpty():
-                cells = get_polygons_from_geom(voronoi_geom)
-                if cells:
-                    if all_lines:
-                        from qgis.analysis import QgsGeometrySnapper
-                        line_index = QgsSpatialIndex()
-                        line_map = {}
-                        for l_idx, line in enumerate(all_lines):
-                            feat = QgsFeature(l_idx)
-                            feat.setGeometry(line)
-                            line_index.insertFeature(feat)
-                            line_map[l_idx] = line
-
-                        snapped_cells = []
-                        for cell_geom in cells:
-                            buffered_bbox = cell_geom.boundingBox().buffered(snap_tolerance)
-                            candidate_line_ids = line_index.intersects(buffered_bbox)
-
-                            if not candidate_line_ids:
-                                snapped_cells.append(cell_geom)
-                                continue
-
-                            nearby_lines = [line_map[lid] for lid in candidate_line_ids]
-
-                            densified_cell = cell_geom.densifyByDistance(densify_dist)
-                            snapped_cell = QgsGeometrySnapper.snapGeometry(
-                                densified_cell,
-                                snap_tolerance,
-                                nearby_lines,
-                                QgsGeometrySnapper.PreferClosest
-                            )
-                            clean_snapped_cell = snapped_cell.buffer(0.0, 3)
-                            if clean_snapped_cell and not clean_snapped_cell.isEmpty():
-                                snapped_cells.append(clean_snapped_cell)
-                            else:
-                                snapped_cells.append(cell_geom)
-                        cells = snapped_cells
-
-                    pt_to_cell = {}
-                    for cell_geom in cells:
-                        for pt in unique_pts:
-                            pt_geom = QgsGeometry.fromPointXY(pt)
-                            if cell_geom.contains(pt_geom) or cell_geom.intersects(pt_geom):
-                                pt_to_cell[(pt.x(), pt.y())] = cell_geom
-
-                    raw_parts = []
-                    for g_idx, group in enumerate(groups):
-                        group_cells = []
-                        group_unique_coords = set()
-                        for b in group:
-                            coord = (b['point'].x(), b['point'].y())
-                            if coord not in group_unique_coords:
-                                group_unique_coords.add(coord)
-                                cell = pt_to_cell.get(coord)
-                                if cell:
-                                    group_cells.append(cell)
-
-                        if not group_cells:
-                            continue
-
-                        combined_geom = group_cells[0]
-                        for cell in group_cells[1:]:
-                            combined_geom = combined_geom.combine(cell)
-
-                        combined_geom = combined_geom.buffer(0.0, 3)
-                        intersected = ea_item['geom'].intersection(combined_geom)
-                        if not intersected.isEmpty():
-                            polys = get_polygons_from_geom(intersected)
-                            for poly in polys:
-                                buildings_in_poly = []
-                                for b in group:
-                                    pt_geom = QgsGeometry.fromPointXY(b['point'])
-                                    if poly.contains(pt_geom) or poly.intersects(pt_geom):
-                                        buildings_in_poly.append(b)
-
-                                sub_pop = sum(b['pop'] for b in buildings_in_poly)
-                                split_by = 'point_based'
-                                if road_lines:
-                                    split_by = 'road'
-                                if river_lines:
-                                    split_by = 'river' if split_by == 'road' else split_by + '+river'
-
-                                raw_parts.append({
-                                    'geom': poly,
-                                    'buildings': buildings_in_poly,
-                                    'hh_count': sub_pop,
-                                    'original_hhcount': ea_item.get('original_hhcount', 0),
-                                    'bldg_count': len(buildings_in_poly),
-                                    'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
-                                    'attributes': list(ea_item['attributes']),
-                                    'original_id': ea_item['original_id'],
-                                    'original_code': ea_item['original_code'],
-                                    'is_new': True,
-                                    'from_split': True,
-                                    'split_by': split_by,
-                                    'parent_barangay': ea_item['parent_barangay']
-                                })
-
-                    if len(raw_parts) >= 2:
-                        point_based_parts = enforce_min_household(raw_parts, fback, ea_geom=ea_item['geom'])
-
-        if len(point_based_parts) >= 2:
-            fback.pushInfo(f"[EA {ea_item['original_code']}] Point-based sequential split accepted: {len(point_based_parts)} parts created.")
-
-            orig_code_str = str(ea_item['original_code']).strip() if ea_item['original_code'] is not None else "000"
-            digits = "".join([c for c in orig_code_str if c.isdigit()])
-            orig_first3 = digits[:3] if len(digits) >= 3 else digits.zfill(3)
-            if orig_first3 != "000":
-                point_based_parts.sort(key=lambda x: x['hh_count'], reverse=True)
-                point_based_parts[0]['is_new'] = False
-
-            parent_geom = ea_item['geom']
-            for p in point_based_parts:
-                clipped = p['geom'].intersection(parent_geom).buffer(0.0, 3)
-                if not clipped.isEmpty():
-                    p['geom'] = clipped
-            point_based_parts = allocate_gaps_to_parts(point_based_parts, parent_geom)
-            return point_based_parts
-
-        fback.pushInfo(f"[EA {ea_item['original_code']}] Point-based sequential split could not partition EA. Falling back to K-Means + Voronoi...")
-
-        split_parts = split_ea_voronoi(ea_item, target_pop, fback, split_by='none')
-
-        if len(split_parts) < 2:
-            fback.pushInfo(f"[EA {ea_item['original_code']}] K-Means + Voronoi failed. Falling back to Forced Geometric split...")
-            split_parts = force_geometric_split(ea_item, target_pop, fback)
-
-        if len(split_parts) >= 2:
-            split_parts = enforce_bldgpv_threshold(split_parts, hhdivthres, fback, ea_geom=ea_item['geom'])
-
-        parent_geom = ea_item['geom']
-        for p in split_parts:
-            clipped = p['geom'].intersection(parent_geom).buffer(0.0, 3)
-            if not clipped.isEmpty():
-                p['geom'] = clipped
-
-        return split_parts
+        return [ea_item]
 
     def process_barangay_split(bar_code, bar_eas, fback):
         iteration = 0
