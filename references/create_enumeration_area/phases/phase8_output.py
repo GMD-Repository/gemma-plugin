@@ -774,7 +774,7 @@ def run_phase_8(
 
     multi_feedback.setProgress(100)
 
-    # ── Output Splitting Lines Layer Per Barangay ───────────────────────
+    # ── Output Splitting Lines Layer (Single Unified Layer: {geo5}_eadel_update) ──
     full_ea_by_id = {feat.id(): feat for feat in p1.get("all_ea_features", [])}
     snap_tolerance = p1.get("snap_tolerance", 15.0)
 
@@ -790,7 +790,7 @@ def run_phase_8(
     eadel_indi_idx = src_fields.indexOf("eadel_indi")
     remarks_idx = src_fields.indexOf("remarks")
 
-    lines_by_barangay = {}
+    all_splitting_lines = []
 
     for candidate_id, part_tuples in final_geom_by_candidate.items():
         if len(part_tuples) < 2:
@@ -799,10 +799,6 @@ def run_phase_8(
         if candidate_id not in full_ea_by_id:
             continue
         parent_feat = full_ea_by_id[candidate_id]
-
-        bar_code = part_tuples[0][1].get('parent_barangay')
-        if not bar_code:
-            continue
 
         shared_edges = []
         for p_i in range(len(part_tuples)):
@@ -857,50 +853,66 @@ def run_phase_8(
             'remarks': str(parent_feat.attribute(remarks_idx)) if remarks_idx != -1 and parent_feat.attribute(remarks_idx) is not None else "",
         }
 
-        lines_by_barangay.setdefault(bar_code, []).append((merged, attrs))
+        all_splitting_lines.append((merged, attrs))
 
-    for bar_code, bar_line_features in lines_by_barangay.items():
-        if bar_line_features:
-            cleaned_digits = "".join([c for c in str(bar_code) if c.isdigit()])
-            if len(cleaned_digits) > 9:
-                cleaned_digits = cleaned_digits[:9]
-            ppmmbbb = cleaned_digits.zfill(9)
-            layer_name = f"{ppmmbbb}_eadel_update"
+    if all_splitting_lines:
+        geo5 = "00000"
+        for ea_item in eas:
+            bar = ea_item.get('parent_barangay')
+            if bar:
+                digits = "".join([c for c in str(bar) if c.isdigit()])
+                if len(digits) >= 5:
+                    geo5 = digits[:5]
+                    break
+        if geo5 == "00000":
+            for feat in p1.get("all_ea_features", []):
+                for fname in ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code"]:
+                    idx = feat.fields().indexOf(fname)
+                    if idx != -1:
+                        val = str(feat.attribute(idx) or "").strip()
+                        digits = "".join([c for c in val if c.isdigit()])
+                        if len(digits) >= 5:
+                            geo5 = digits[:5]
+                            break
+                if geo5 != "00000":
+                    break
 
-            crs_auth_id = target_crs.authid()
-            uri = f"MultiLineString?crs={crs_auth_id}&field=geocode:string&field=ean:string&field=region:string&field=province:string&field=city_mun:string&field=barangay:string&field=indicator:string&field=remarks:string"
-            line_layer = QgsVectorLayer(uri, layer_name, "memory")
+        layer_name = f"{geo5}_eadel_update"
 
-            if line_layer.isValid():
-                pr = line_layer.dataProvider()
-                features_to_add = []
-                for line_geom, attrs in bar_line_features:
-                    if not line_geom.isMultipart():
-                        line_geom.convertToMultiType()
-                    f = QgsFeature(line_layer.fields())
-                    f.setGeometry(line_geom)
-                    f.setAttribute("geocode", attrs.get('geocode', ''))
-                    f.setAttribute("ean", attrs.get('ean', ''))
-                    f.setAttribute("region", attrs.get('region', ''))
-                    f.setAttribute("province", attrs.get('province', ''))
-                    f.setAttribute("city_mun", attrs.get('city_mun', ''))
-                    f.setAttribute("barangay", attrs.get('barangay', ''))
-                    f.setAttribute("indicator", attrs.get('indicator', ''))
-                    f.setAttribute("remarks", attrs.get('remarks', ''))
-                    features_to_add.append(f)
+        crs_auth_id = target_crs.authid()
+        uri = f"MultiLineString?crs={crs_auth_id}&field=geocode:string&field=ean:string&field=region:string&field=province:string&field=city_mun:string&field=barangay:string&field=indicator:string&field=remarks:string"
+        line_layer = QgsVectorLayer(uri, layer_name, "memory")
 
-                pr.addFeatures(features_to_add)
-                line_layer.updateExtents()
+        if line_layer.isValid():
+            pr = line_layer.dataProvider()
+            features_to_add = []
+            for line_geom, attrs in all_splitting_lines:
+                if not line_geom.isMultipart():
+                    line_geom.convertToMultiType()
+                f = QgsFeature(line_layer.fields())
+                f.setGeometry(line_geom)
+                f.setAttribute("geocode", attrs.get('geocode', ''))
+                f.setAttribute("ean", attrs.get('ean', ''))
+                f.setAttribute("region", attrs.get('region', ''))
+                f.setAttribute("province", attrs.get('province', ''))
+                f.setAttribute("city_mun", attrs.get('city_mun', ''))
+                f.setAttribute("barangay", attrs.get('barangay', ''))
+                f.setAttribute("indicator", attrs.get('indicator', ''))
+                f.setAttribute("remarks", attrs.get('remarks', ''))
+                features_to_add.append(f)
 
-                project = QgsProject.instance()
-                if project:
-                    project.addMapLayer(line_layer)
-                feedback.pushInfo(
-                    f"Created line layer '{layer_name}' with {len(features_to_add)} "
-                    f"feature(s) ({len(final_geom_by_candidate)} candidate(s) processed)."
-                )
-            else:
-                feedback.reportError(f"Failed to create memory layer for {layer_name}")
+            pr.addFeatures(features_to_add)
+            line_layer.updateExtents()
+
+            project = QgsProject.instance()
+            if project:
+                project.addMapLayer(line_layer)
+            feedback.pushInfo(
+                f"Created line layer '{layer_name}' with {len(features_to_add)} "
+                f"feature(s) ({len(final_geom_by_candidate)} candidate(s) processed)."
+            )
+        else:
+            feedback.reportError(f"Failed to create memory layer for {layer_name}")
 
     feedback.pushInfo("Successfully created and structured Enumeration Areas.")
 
