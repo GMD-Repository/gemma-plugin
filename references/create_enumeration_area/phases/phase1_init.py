@@ -531,6 +531,8 @@ def run_phase_1(
     feedback.pushInfo(f"Input Previous EA Count: {previous_ea_source.featureCount()}")
     feedback.pushInfo(f"Input Building Count: {building_source.featureCount()}")
 
+    split_strategy = alg.parameterAsEnum(parameters, getattr(alg, 'SPLIT_STRATEGY', 'SPLIT_STRATEGY'), context) if hasattr(alg, 'SPLIT_STRATEGY') else 0
+
     return {
         "barangay_source": barangay_source,
         "building_source": building_source,
@@ -542,6 +544,7 @@ def run_phase_1(
         "snap_tolerance_m": snap_tolerance_m,
         "preview_only": preview_only,
         "allow_candidate_merge": allow_candidate_merge,
+        "split_strategy": split_strategy,
         "eadel_indi_col_idx": eadel_indi_col_idx,
         "merge_indi_col_idx": merge_indi_col_idx,
         "ea_id_field": ea_id_field,
