@@ -1322,23 +1322,29 @@ class EALauncherDialog(QDialog):
 
                 # Create structured sub-groups inside main_group in exact order:
                 # 1. Reference Layers
-                # 2. EAs
-                # 3. Candidates
+                # 2. Splitting Lines
+                # 3. EAs
+                # 4. Candidates
                 reference_group = main_group.findGroup("Reference Layers")
                 if not reference_group:
                     reference_group = main_group.insertGroup(0, "Reference Layers")
 
+                splitting_lines_group = main_group.findGroup("Splitting Lines")
+                if not splitting_lines_group:
+                    splitting_lines_group = main_group.insertGroup(1, "Splitting Lines")
+
                 eas_group = main_group.findGroup("EAs")
                 if not eas_group:
-                    eas_group = main_group.insertGroup(1, "EAs")
+                    eas_group = main_group.insertGroup(2, "EAs")
 
                 candidates_group = main_group.findGroup("Candidates")
                 if not candidates_group:
-                    candidates_group = main_group.insertGroup(2, "Candidates")
+                    candidates_group = main_group.insertGroup(3, "Candidates")
 
-                # Ensure existing groups are sorted in top-to-bottom order: Reference Layers -> EAs -> Candidates
+                # Ensure existing groups are sorted in top-to-bottom order: Reference Layers -> Splitting Lines -> EAs -> Candidates
                 ordered_subgroups = [
                     ("Reference Layers", reference_group),
+                    ("Splitting Lines", splitting_lines_group),
                     ("EAs", eas_group),
                     ("Candidates", candidates_group)
                 ]
@@ -1352,6 +1358,8 @@ class EALauncherDialog(QDialog):
                             main_group.removeChildNode(g_node)
                             if g_name == "Reference Layers":
                                 reference_group = cloned
+                            elif g_name == "Splitting Lines":
+                                splitting_lines_group = cloned
                             elif g_name == "EAs":
                                 eas_group = cloned
                             elif g_name == "Candidates":
@@ -1386,14 +1394,20 @@ class EALauncherDialog(QDialog):
                                         target_group.addChildNode(clone)
                                         lnode.parent().removeChildNode(lnode)
 
-                # Group any generated splitting line layers (ending with _eadel_update) into Reference Layers
+                # Group any generated splitting line layers (ending with _eadel_update) into Splitting Lines
+                has_splitting_lines = False
                 for layer_id, proj_layer in QgsProject.instance().mapLayers().items():
                     if proj_layer.name().endswith("_eadel_update"):
+                        has_splitting_lines = True
                         lnode = root.findLayer(layer_id)
-                        if lnode and lnode.parent() != reference_group:
+                        if lnode and lnode.parent() != splitting_lines_group:
                             clone = lnode.clone()
-                            reference_group.addChildNode(clone)
+                            splitting_lines_group.addChildNode(clone)
                             lnode.parent().removeChildNode(lnode)
+
+                # Clean up empty Splitting Lines group if no splitting lines were generated
+                if not has_splitting_lines and len(splitting_lines_group.children()) == 0:
+                    main_group.removeChildNode(splitting_lines_group)
 
                 self.progress_bar.setValue(100)
                 self.log_console.append("<span style='color:#1a7f37; font-weight:bold;'>[COMPLETE] Pipeline execution complete! Results loaded to map.</span>")
