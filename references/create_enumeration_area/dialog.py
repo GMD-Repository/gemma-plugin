@@ -371,6 +371,28 @@ class EALauncherDialog(QDialog):
         self.tolerance_spin.setValue(15.0)
         params_layout.addWidget(self.tolerance_spin)
 
+        # Split Strategy enum
+        params_layout.addWidget(QLabel("Split Strategy for Over-Populated EAs"))
+        self.split_strategy_combo = QComboBox()
+        self.split_strategy_combo.addItems([
+            "Road + River Priority (Recommended - follow physical features)",
+            "Strict Threshold (Reject road/river split if sub-EA < min_household)",
+            "Keep Whole (Do not split over-populated EAs)"
+        ])
+        params_layout.addWidget(self.split_strategy_combo)
+
+        # Split Method / Type enum
+        params_layout.addWidget(QLabel("Delineation Split Method / Type"))
+        self.split_type_combo = QComboBox()
+        self.split_type_combo.addItems([
+            "Auto (Road/River Priority -> Voronoi -> Forced Cut)",
+            "Road & River Alignment Only (Follow linear features)",
+            "Building Point Voronoi Only (Cluster building density)",
+            "Forced Geometric Cut Only (Straight strip cuts)",
+            "Keep Whole (No Splitting)"
+        ])
+        params_layout.addWidget(self.split_type_combo)
+
         # Compactness optimization
         self.compact_chk = QCheckBox("Optimize for Compactness")
         self.compact_chk.setChecked(True)
@@ -1262,6 +1284,8 @@ class EALauncherDialog(QDialog):
             'SNAP_TOLERANCE': self.tolerance_spin.value(),
             'MIN_HOUSEHOLD': self.min_hh_spin.value(),
             'MAX_HOUSEHOLD': self.max_hh_spin.value(),
+            'SPLIT_STRATEGY': self.split_strategy_combo.currentIndex(),
+            'SPLIT_TYPE': self.split_type_combo.currentIndex(),
             'USE_COMPACTNESS': self.compact_chk.isChecked(),
             'ALLOW_CANDIDATE_MERGE': self.allow_candidate_merge_chk.isChecked(),
             'SLIVER_THRESHOLD': self.sliver_combo.currentIndex(),
