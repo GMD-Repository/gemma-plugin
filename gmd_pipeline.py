@@ -119,6 +119,59 @@ class GMDPipeline(object):
             return  # Let user restart; avoid loading alongside half-unloaded providers
         # ────────────────────────────────────────────────────────────────────
 
+        # ── Ensure plugin dependencies are installed / up-to-date ────────
+        from qgis.core import QgsSettings
+        import pathlib
+        from .dependency_checker import ensure_plugin_dependencies, REQUIRED_PLUGINS
+        
+        settings = QgsSettings()
+        gemma_dir = pathlib.Path(__file__).parent
+        metadata_path = gemma_dir / 'metadata.txt'
+        
+        current_version = 'unknown'
+        if metadata_path.exists():
+            try:
+                with open(metadata_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.startswith('version='):
+                            current_version = line.strip().split('=', 1)[1]
+                            break
+            except Exception:
+                pass
+                
+        last_checked_version = settings.value("GEMMA/dependencies_checked_version", "")
+        
+        # Always verify that all required plugins are actually present on disk.
+        # The version gate only controls whether we already ran the full
+        # repository-fetch + update flow for this GEMMA version; if any
+        # dependency is missing we must re-run regardless.
+        plugins_dir = gemma_dir.parent  # .../plugins/
+        all_present = all(
+            (plugins_dir / dep['key']).is_dir()
+            for dep in REQUIRED_PLUGINS
+        )
+        
+        if not all_present or last_checked_version != current_version:
+            results = ensure_plugin_dependencies()
+            # Only record the version as "checked" when every dependency
+            # was successfully resolved (already present or just installed).
+            still_missing = [
+                dep['display_name']
+                for dep in REQUIRED_PLUGINS
+                if not (plugins_dir / dep['key']).is_dir()
+            ]
+            if not still_missing:
+                settings.setValue("GEMMA/dependencies_checked_version", current_version)
+                settings.sync()
+            else:
+                QgsMessageLog.logMessage(
+                    f'Some dependencies are still missing after install attempt: '
+                    f'{", ".join(still_missing)}. Will retry on next QGIS startup.',
+                    'GEMMA',
+                    level=Qgis.Warning,
+                )
+        # ────────────────────────────────────────────────────────────────────
+
         self.initProcessing()
 
         self.gema_menu = QMenu("Gemma")
@@ -190,7 +243,8 @@ class GMDPipeline(object):
 
 
     def unload(self):
-        self.iface.mainWindow().menuBar().removeAction(self.gema_menu.menuAction())
+        if self.gema_menu is not None:
+            self.iface.mainWindow().menuBar().removeAction(self.gema_menu.menuAction())
 
         if self.toolbar:
             del self.toolbar
