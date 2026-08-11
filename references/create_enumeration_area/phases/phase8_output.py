@@ -25,7 +25,7 @@ from qgis.core import (
 )
 
 from ..helpers.constants import _PHASE_LABELS, yield_to_ui
-from ..helpers.geometry import get_polygons_from_geom
+from ..helpers.geometry import get_polygons_from_geom, allocate_gaps_to_parts
 from ..helpers.style import apply_qml_to_layer
 
 
@@ -426,8 +426,31 @@ def run_phase_8(
         centroid = ea_item['geom'].centroid().asPoint()
         return (centroid.x(), centroid.y())
 
+    bar_geocode_field = p1.get("bar_geocode_field", "geocode")
+
     for bar in sorted(barangay_to_final_eas.keys(), key=lambda k: str(k) if k is not None else ""):
         bar_eas = barangay_to_final_eas[bar]
+
+        # Allocate uncovered Barangay gaps into constituent EAs
+        parent_bgy_feat = None
+        bar_str = str(bar).strip() if bar is not None else ""
+        if bar_str.endswith(".0"):
+            bar_str = bar_str[:-2]
+        for b_feat in barangay_by_id.values():
+            val = b_feat.attribute(bar_geocode_field)
+            if val is not None:
+                val_str = str(val).strip()
+                if val_str.endswith(".0"):
+                    val_str = val_str[:-2]
+                if val_str == bar_str or (len(val_str) >= 9 and len(bar_str) >= 9 and val_str[:9] == bar_str[:9]):
+                    parent_bgy_feat = b_feat
+                    break
+        if parent_bgy_feat is None and isinstance(bar, int) and bar in barangay_by_id:
+            parent_bgy_feat = barangay_by_id[bar]
+
+        if parent_bgy_feat and parent_bgy_feat.geometry() and not parent_bgy_feat.geometry().isEmpty():
+            allocate_gaps_to_parts(bar_eas, parent_bgy_feat.geometry())
+
         has_delin = any(ea.get('original_id') in delineation_candidate_ids for ea in bar_eas)
         if has_delin:
             bar_eas.sort(key=get_sort_key)
