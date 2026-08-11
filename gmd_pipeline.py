@@ -196,7 +196,7 @@ class GMDPipeline(object):
         self.ea_delineation_menu = QMenu(u'EA Delineation')
         self.gema_add_submenu(self.ea_delineation_menu, create_ea_icon)
 
-        self.create_ea_action = QAction(create_ea_icon, "Create Enumeration Areas", self.iface.mainWindow())
+        self.create_ea_action = QAction(create_ea_icon, "EA Delineation and Merging", self.iface.mainWindow())
         self.create_ea_action.triggered.connect(self.show_create_ea_dialog)
         self.ea_delineation_menu.addAction(self.create_ea_action)
 
@@ -224,9 +224,9 @@ class GMDPipeline(object):
         self.check_and_update_toolbar_action.triggered.connect(self.show_check_and_update_dialog)
         self.toolbar.addAction(self.check_and_update_toolbar_action)
 
-        # 2. Create Enumeration Areas
+        # 2. EA Delineation and Merging
         self.create_ea_toolbar_action = QAction(
-            create_ea_icon, "Create Enumeration Areas", self.iface.mainWindow()
+            create_ea_icon, "EA Delineation and Merging", self.iface.mainWindow()
         )
         self.create_ea_toolbar_action.triggered.connect(self.show_create_ea_dialog)
         self.toolbar.addAction(self.create_ea_toolbar_action)

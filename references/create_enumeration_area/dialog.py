@@ -1,18 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-Create Enumeration Areas -- Custom Processing UI Dialog
--------------------------------------------------------
-Provides a comprehensive custom user interface for the Create Enumeration Areas
-processing algorithm. Adapts to dynamic light and dark themes (defaulting to white),
-and features validation indicators, layer auto-detection, KPI cards, candidate table filters,
-and a stylized console interface.
+EA Delineation and Merging -- Custom Processing UI Dialog
+---------------------------------------------------------
+Provides a comprehensive custom user interface for the EA Delineation and Merging
+processing workflow. Houses two main tabs:
+  Tab 1 — Pre-EA Processing   : clips EAs to their Barangay and fills coverage gaps.
+  Tab 2 — Create Enumeration Areas : existing EA delineation and merging algorithm.
+
+Adapts to dynamic light and dark themes (defaulting to white) and features validation
+indicators, layer auto-detection, KPI cards, candidate table filters, and a stylized
+console interface.
 """
 
 import os
 from qgis.core import (
-    QgsProject, QgsVectorLayer, QgsCoordinateTransform, QgsSpatialIndex, QgsFeature, QgsGeometry,
-    QgsProcessingContext, QgsProcessingFeedback, QgsCoordinateReferenceSystem, NULL,
-    QgsMapLayerProxyModel
+    QgsApplication, QgsProject, QgsVectorLayer, QgsCoordinateTransform, QgsSpatialIndex,
+    QgsFeature, QgsGeometry, QgsProcessingContext, QgsProcessingFeedback,
+    QgsCoordinateReferenceSystem, NULL, QgsMapLayerProxyModel
 )
 try:
     from qgis.gui import QgsMapLayerComboBox, QgsProjectionSelectionWidget, QgsCollapsibleGroupBox
@@ -123,33 +127,36 @@ class CustomProcessingFeedback(QgsProcessingFeedback):
 
 
 class EALauncherDialog(QDialog):
-    """Comprehensive Processing UI for Create Enumeration Areas."""
+    """Comprehensive Processing UI for EA Delineation and Merging."""
 
     ALGORITHM_ID = "gmd_pipeline:createea"
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Create Enumeration Areas")
+        self.setWindowTitle("EA Delineation and Merging")
         icon_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "..", "icons", "create_ea.svg")
         )
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
-            
-        self.setMinimumSize(1150, 650)
+
+        self.setMinimumSize(1150, 700)
         self.setWindowFlags(
             Qt.Dialog |
             Qt.WindowCloseButtonHint |
             Qt.WindowMaximizeButtonHint |
             Qt.WindowTitleHint
         )
-        
+
         self.feedback = None
-        
+
+        # Pre-EA processing worker reference (QgsTask)
+        self._pre_ea_task = None
+
         # Initialize algorithm instance for help text metadata
         from .algorithm import CreateEAAlgorithm
         self.algo = CreateEAAlgorithm()
-        
+
         # Candidate lists storage for live search/filter
         self.all_delineation_candidates = []
         self.all_merge_candidates = []
@@ -177,17 +184,839 @@ class EALauncherDialog(QDialog):
         dialog is actually visible — i.e. the moment the user opens the tool —
         and not during invisible construction or in response to subsequent
         project layer additions.
+
+        Runs both Tab 1 (Pre-EA Processing) and Tab 2 (Create Enumeration Areas)
+        auto-detection on first display.
         """
         super().showEvent(event)
         if not self._initial_detect_done:
             self._initial_detect_done = True
+            self._pre_ea_auto_detect_layers()
             self.auto_detect_layers()
 
     # ── UI Construction ─────────────────────────────────────────────────────
 
     def _build_ui(self):
+        """Build the root layout containing the top-level main tab widget."""
         root = QVBoxLayout(self)
-        root.setContentsMargins(10, 10, 10, 10)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # Top-level tab widget: Tab 1 = Pre-EA Processing, Tab 2 = Create Enumeration Areas
+        self.main_tabs = QTabWidget()
+        self.main_tabs.setObjectName("mainTabs")
+        self.main_tabs.tabBar().setElideMode(Qt.ElideNone)
+
+        self._build_pre_ea_tab()
+        self._build_create_ea_tab()
+
+        root.addWidget(self.main_tabs)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Tab 1 — Pre-EA Processing
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _build_pre_ea_tab(self):
+        """Build the Pre-EA Processing tab (Tab 1) and add it to main_tabs."""
+        tab_widget = QWidget()
+        tab_layout = QVBoxLayout(tab_widget)
+        tab_layout.setContentsMargins(10, 10, 10, 10)
+        tab_layout.setSpacing(10)
+
+        # ── Header ────────────────────────────────────────────────────────
+        header = QWidget()
+        header.setObjectName("preEaHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(4, 4, 4, 4)
+        header_layout.setSpacing(10)
+
+        icon_label = QLabel()
+        icon_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "icons", "create_ea.svg")
+        )
+        if os.path.exists(icon_path):
+            pix = QIcon(icon_path).pixmap(28, 28)
+            icon_label.setPixmap(pix)
+        icon_label.setFixedSize(28, 28)
+        icon_label.setAlignment(Qt.AlignCenter)
+        header_layout.addWidget(icon_label, 0, Qt.AlignVCenter)
+
+        title_lbl = QLabel("Pre-EA Processing")
+        title_lbl.setObjectName("preEaTitle")
+        title_lbl.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        header_layout.addWidget(title_lbl, 0, Qt.AlignVCenter)
+        header_layout.addStretch()
+
+        # Description toggle button
+        show_icon_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "icons", "show_description.svg")
+        )
+        hide_icon_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "icons", "hide_description.svg")
+        )
+        self.pre_ea_toggle_desc_btn = QToolButton()
+        self.pre_ea_toggle_desc_btn.setIcon(
+            QIcon(hide_icon_path) if os.path.exists(hide_icon_path)
+            else QgsApplication.getThemeIcon("/mActionHideAllLayers.svg")
+        )
+        self.pre_ea_toggle_desc_btn.setIconSize(QSize(20, 20))
+        self.pre_ea_toggle_desc_btn.setFixedSize(28, 28)
+        self.pre_ea_toggle_desc_btn.setToolTip("Show / Hide Description Panel")
+        self.pre_ea_toggle_desc_btn.setCursor(Qt.PointingHandCursor)
+        self.pre_ea_toggle_desc_btn.setStyleSheet("""
+            QToolButton {
+                border: none;
+                background-color: transparent;
+                padding: 2px;
+                border-radius: 4px;
+            }
+            QToolButton:hover {
+                background-color: rgba(140, 149, 159, 0.2);
+            }
+        """)
+        self.pre_ea_toggle_desc_btn.clicked.connect(self._pre_ea_toggle_description)
+        header_layout.addWidget(self.pre_ea_toggle_desc_btn, 0, Qt.AlignVCenter)
+        tab_layout.addWidget(header)
+
+        # ── Main Splitter: left (inputs+options) / right (results+log) ────
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setObjectName("preEaSplitter")
+
+        # ── LEFT PANEL ──────────────────────────────────────────────────
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(2, 2, 2, 2)
+        left_layout.setSpacing(8)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 5, 0)
+        scroll_layout.setSpacing(10)
+
+        # ── Input Layers Group ───────────────────────────────────────────
+        inputs_group = QGroupBox("Input Layers")
+        inputs_layout = QVBoxLayout(inputs_group)
+        inputs_layout.setContentsMargins(8, 8, 8, 8)
+        inputs_layout.setSpacing(6)
+
+        self.pre_ea_detect_btn = QPushButton("Auto-detect Layers")
+        self.pre_ea_detect_btn.setToolTip(
+            "Scan project layers and auto-select Barangay (*_bgy) and EA (*_ea / *_ea2024) layers."
+        )
+        self.pre_ea_detect_btn.clicked.connect(self._pre_ea_auto_detect_layers)
+        inputs_layout.addWidget(self.pre_ea_detect_btn)
+
+        # Barangay Layer
+        inputs_layout.addWidget(QLabel("Barangay Layer (Polygon)*"))
+        self.pre_ea_bgy_combo = QgsMapLayerComboBox()
+        self.pre_ea_bgy_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
+        self.pre_ea_bgy_combo.setAllowEmptyLayer(True)
+        self.pre_ea_bgy_combo.setLayer(None)
+        inputs_layout.addWidget(self.pre_ea_bgy_combo)
+        self.pre_ea_bgy_status_lbl = QLabel("No layer selected.")
+        self.pre_ea_bgy_status_lbl.setWordWrap(True)
+        inputs_layout.addWidget(self.pre_ea_bgy_status_lbl)
+
+        # EA Layer
+        inputs_layout.addWidget(QLabel("EA Layer (Polygon)*"))
+        self.pre_ea_ea_combo = QgsMapLayerComboBox()
+        self.pre_ea_ea_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
+        self.pre_ea_ea_combo.setAllowEmptyLayer(True)
+        self.pre_ea_ea_combo.setLayer(None)
+        inputs_layout.addWidget(self.pre_ea_ea_combo)
+        self.pre_ea_ea_status_lbl = QLabel("No layer selected.")
+        self.pre_ea_ea_status_lbl.setWordWrap(True)
+        inputs_layout.addWidget(self.pre_ea_ea_status_lbl)
+
+        # Connect validation
+        self.pre_ea_bgy_combo.currentIndexChanged.connect(self._pre_ea_validate_inputs)
+        self.pre_ea_ea_combo.currentIndexChanged.connect(self._pre_ea_validate_inputs)
+
+        scroll_layout.addWidget(inputs_group)
+
+        # ── Processing Options Group ─────────────────────────────────────
+        options_group = QGroupBox("Processing Options")
+        options_layout = QVBoxLayout(options_group)
+        options_layout.setContentsMargins(8, 8, 8, 8)
+        options_layout.setSpacing(6)
+
+        tol_row = QHBoxLayout()
+        tol_row.addWidget(QLabel("Gap Area Tolerance (m\u00b2):"))
+        self.pre_ea_gap_tol_spin = QDoubleSpinBox()
+        self.pre_ea_gap_tol_spin.setRange(0.0, 100000.0)
+        self.pre_ea_gap_tol_spin.setDecimals(2)
+        self.pre_ea_gap_tol_spin.setValue(1.0)
+        self.pre_ea_gap_tol_spin.setToolTip(
+            "Gaps smaller than this area (in m\u00b2) are treated as geometry precision artifacts "
+            "and ignored. Set to 0 to process all gaps."
+        )
+        tol_row.addWidget(self.pre_ea_gap_tol_spin)
+        options_layout.addLayout(tol_row)
+
+        self.pre_ea_clip_chk = QCheckBox("Clip EA to Barangay Boundary")
+        self.pre_ea_clip_chk.setChecked(True)
+        self.pre_ea_clip_chk.setToolTip(
+            "Remove any EA area that extends outside its parent Barangay polygon."
+        )
+        options_layout.addWidget(self.pre_ea_clip_chk)
+
+        self.pre_ea_detect_gaps_chk = QCheckBox("Detect Uncovered Barangay Areas")
+        self.pre_ea_detect_gaps_chk.setChecked(True)
+        self.pre_ea_detect_gaps_chk.setToolTip(
+            "After clipping, calculate the area within each Barangay not covered by any EA."
+        )
+        options_layout.addWidget(self.pre_ea_detect_gaps_chk)
+
+        self.pre_ea_assign_gaps_chk = QCheckBox("Assign Gaps to Contiguous EA")
+        self.pre_ea_assign_gaps_chk.setChecked(True)
+        self.pre_ea_assign_gaps_chk.setToolTip(
+            "Merge each uncovered area into the adjacent EA that shares the longest boundary with it."
+        )
+        options_layout.addWidget(self.pre_ea_assign_gaps_chk)
+
+        scroll_layout.addWidget(options_group)
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        left_layout.addWidget(scroll)
+        left_widget.setMinimumWidth(300)
+        splitter.addWidget(left_widget)
+
+        # ── RIGHT PANEL ─────────────────────────────────────────────────
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(2, 2, 2, 2)
+        right_layout.setSpacing(8)
+
+        right_tabs = QTabWidget()
+        right_tabs.setObjectName("preEaRightTabs")
+
+        # ── Results Tab ─────────────────────────────────────────────────
+        results_tab = QWidget()
+        results_layout = QVBoxLayout(results_tab)
+        results_layout.setContentsMargins(6, 6, 6, 6)
+        results_layout.setSpacing(6)
+
+        self.pre_ea_results_table = QTableWidget()
+        self.pre_ea_results_table.setObjectName("preEaResultsTable")
+        self.pre_ea_results_table.setColumnCount(7)
+        self.pre_ea_results_table.setHorizontalHeaderLabels(
+            ["Barangay", "EA", "Original Area (m\u00b2)", "Corrected Area (m\u00b2)",
+             "Area Change (m\u00b2)", "Action", "Status"]
+        )
+        self.pre_ea_results_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.pre_ea_results_table.horizontalHeader().setStretchLastSection(True)
+        self.pre_ea_results_table.verticalHeader().setVisible(False)
+        self.pre_ea_results_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.pre_ea_results_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.pre_ea_results_table.setAlternatingRowColors(True)
+        results_layout.addWidget(self.pre_ea_results_table)
+
+        right_tabs.addTab(results_tab, "Processing Results")
+
+        # ── Summary Tab ─────────────────────────────────────────────────
+        summary_tab = QWidget()
+        summary_layout = QVBoxLayout(summary_tab)
+        summary_layout.setContentsMargins(10, 10, 10, 10)
+        summary_layout.setSpacing(8)
+
+        summary_title = QLabel("Pre-EA Processing Summary")
+        summary_title.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        summary_layout.addWidget(summary_title)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        summary_layout.addWidget(sep)
+
+        summary_grid = QGridLayout()
+        summary_grid.setSpacing(4)
+        summary_grid.setColumnStretch(1, 1)
+
+        def _add_summary_row(label_text, row_idx):
+            lbl = QLabel(label_text)
+            val = QLabel("-")
+            val.setFont(QFont("Segoe UI", 9, QFont.Bold))
+            val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            summary_grid.addWidget(lbl, row_idx, 0)
+            summary_grid.addWidget(val, row_idx, 1)
+            return val
+
+        self._pre_ea_sum_bgy_val = _add_summary_row("Barangays Processed:", 0)
+        self._pre_ea_sum_ea_val = _add_summary_row("EAs Processed:", 1)
+        self._pre_ea_sum_corr_val = _add_summary_row("EAs Requiring Correction:", 2)
+        self._pre_ea_sum_clip_val = _add_summary_row("EAs Clipped:", 3)
+        self._pre_ea_sum_gaps_det_val = _add_summary_row("Gaps Detected:", 4)
+        self._pre_ea_sum_gaps_asgn_val = _add_summary_row("Gaps Assigned:", 5)
+        self._pre_ea_sum_unres_val = _add_summary_row("Unresolved Gaps:", 6)
+        self._pre_ea_sum_outside_val = _add_summary_row("Final EAs Outside Bgy:", 7)
+        self._pre_ea_sum_uncov_val = _add_summary_row("Final Uncovered Area (m\u00b2):", 8)
+        self._pre_ea_sum_output_val = _add_summary_row("Output:", 9)
+
+        summary_layout.addLayout(summary_grid)
+
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.HLine)
+        sep2.setFrameShadow(QFrame.Sunken)
+        summary_layout.addWidget(sep2)
+
+        self._pre_ea_sum_status_lbl = QLabel("Status: -")
+        self._pre_ea_sum_status_lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        summary_layout.addWidget(self._pre_ea_sum_status_lbl)
+        summary_layout.addStretch()
+
+        right_tabs.addTab(summary_tab, "Summary")
+
+        # ── Log Tab ─────────────────────────────────────────────────────
+        log_tab = QWidget()
+        log_layout = QVBoxLayout(log_tab)
+        log_layout.setContentsMargins(6, 6, 6, 6)
+        log_layout.setSpacing(4)
+
+        log_controls = QHBoxLayout()
+        log_controls.addWidget(QLabel("Processing Log:"))
+        log_controls.addStretch()
+        self.pre_ea_copy_log_btn = QPushButton("Copy Log")
+        self.pre_ea_copy_log_btn.setToolTip("Copy processing log to clipboard.")
+        self.pre_ea_copy_log_btn.clicked.connect(self._pre_ea_copy_log)
+        log_controls.addWidget(self.pre_ea_copy_log_btn)
+        self.pre_ea_clear_log_btn = QPushButton("Clear")
+        self.pre_ea_clear_log_btn.setToolTip("Clear the processing log.")
+        self.pre_ea_clear_log_btn.clicked.connect(lambda: self.pre_ea_log_console.clear())
+        log_controls.addWidget(self.pre_ea_clear_log_btn)
+        log_layout.addLayout(log_controls)
+
+        self.pre_ea_log_console = QTextEdit()
+        self.pre_ea_log_console.setObjectName("preEaLogConsole")
+        self.pre_ea_log_console.setReadOnly(True)
+        log_layout.addWidget(self.pre_ea_log_console)
+
+        right_tabs.addTab(log_tab, "Processing Log")
+
+        right_layout.addWidget(right_tabs)
+        right_widget.setMinimumWidth(480)
+        splitter.addWidget(right_widget)
+
+        # ── Description Panel (third splitter pane) ──────────────────────
+        self.pre_ea_desc_panel = QWidget()
+        desc_panel_layout = QVBoxLayout(self.pre_ea_desc_panel)
+        desc_panel_layout.setContentsMargins(4, 4, 4, 4)
+        desc_panel_layout.setSpacing(0)
+
+        self.pre_ea_desc_browser = QTextBrowser()
+        self.pre_ea_desc_browser.setObjectName("preEaDescBrowser")
+        self.pre_ea_desc_browser.setOpenExternalLinks(True)
+        self.pre_ea_desc_browser.setHtml(self._pre_ea_help_html())
+        desc_panel_layout.addWidget(self.pre_ea_desc_browser)
+
+        self.pre_ea_desc_panel.setMinimumWidth(240)
+        splitter.addWidget(self.pre_ea_desc_panel)
+        splitter.setSizes([310, 640, 260])
+
+        tab_layout.addWidget(splitter)
+
+        # ── Bottom Bar ───────────────────────────────────────────────────
+        bottom = QWidget()
+        bottom_layout = QVBoxLayout(bottom)
+        bottom_layout.setContentsMargins(10, 4, 10, 6)
+        bottom_layout.setSpacing(4)
+
+        self.pre_ea_status_banner = QLabel("Ready.")
+        self.pre_ea_status_banner.setWordWrap(True)
+        self.pre_ea_status_banner.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        bottom_layout.addWidget(self.pre_ea_status_banner)
+
+        controls_row = QHBoxLayout()
+        self.pre_ea_progress_bar = QProgressBar()
+        self.pre_ea_progress_bar.setRange(0, 100)
+        self.pre_ea_progress_bar.setValue(0)
+        self.pre_ea_progress_bar.setFixedHeight(26)
+        controls_row.addWidget(self.pre_ea_progress_bar)
+
+        self.pre_ea_cancel_btn = QPushButton("Cancel")
+        self.pre_ea_cancel_btn.setMinimumWidth(80)
+        self.pre_ea_cancel_btn.setFixedHeight(26)
+        self.pre_ea_cancel_btn.setEnabled(False)
+        self.pre_ea_cancel_btn.clicked.connect(self._pre_ea_cancel)
+        controls_row.addWidget(self.pre_ea_cancel_btn)
+
+        self.pre_ea_run_btn = QPushButton("Run")
+        self.pre_ea_run_btn.setMinimumWidth(120)
+        self.pre_ea_run_btn.setFixedHeight(26)
+        self.pre_ea_run_btn.clicked.connect(self._pre_ea_run)
+        controls_row.addWidget(self.pre_ea_run_btn)
+
+        bottom_layout.addLayout(controls_row)
+        tab_layout.addWidget(bottom)
+
+        self.main_tabs.addTab(tab_widget, "Pre-EA Processing")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Tab 1 — Pre-EA Processing Slots
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _pre_ea_auto_detect_layers(self):
+        """Auto-detect Barangay (*_bgy) and EA (*_ea, *_ea2024) layers from the QGIS project."""
+        layers = list(QgsProject.instance().mapLayers().values())
+
+        bgy_match = None
+        ea_match = None
+
+        bgy_patterns = ["_bgy", "_barangay", "_brgy"]
+        ea_patterns = ["_ea2024", "_ea2023", "_ea2022", "_ea2025", "_ea2026", "_ea"]
+
+        for layer in layers:
+            if not isinstance(layer, QgsVectorLayer):
+                continue
+            if layer.geometryType() != 2:  # Polygon
+                continue
+            name_lower = layer.name().lower()
+
+            if bgy_match is None:
+                for pat in bgy_patterns:
+                    if pat in name_lower:
+                        bgy_match = layer
+                        break
+
+            if ea_match is None:
+                for pat in ea_patterns:
+                    if pat in name_lower:
+                        ea_match = layer
+                        break
+
+            if bgy_match and ea_match:
+                break
+
+        if bgy_match:
+            self.pre_ea_bgy_combo.setLayer(bgy_match)
+        if ea_match:
+            self.pre_ea_ea_combo.setLayer(ea_match)
+
+        self._pre_ea_validate_inputs()
+
+    def _pre_ea_validate_inputs(self):
+        """Validate selected layers and update status labels."""
+        bgy_layer = self.pre_ea_bgy_combo.currentLayer()
+        ea_layer = self.pre_ea_ea_combo.currentLayer()
+
+        if not bgy_layer:
+            self.pre_ea_bgy_status_lbl.setText("Barangay Layer is required.")
+        else:
+            self.pre_ea_bgy_status_lbl.setText(
+                f"Active: {bgy_layer.featureCount()} polygons ({bgy_layer.crs().authid()})."
+            )
+
+        if not ea_layer:
+            self.pre_ea_ea_status_lbl.setText("EA Layer is required.")
+        else:
+            self.pre_ea_ea_status_lbl.setText(
+                f"Active: {ea_layer.featureCount()} EA polygons ({ea_layer.crs().authid()})."
+            )
+
+        can_run = bool(bgy_layer and ea_layer)
+        self.pre_ea_run_btn.setEnabled(can_run)
+
+    def _pre_ea_cancel(self):
+        """Request cancellation of the running Pre-EA processing task."""
+        if self._pre_ea_task is not None:
+            try:
+                self._pre_ea_task.cancel()
+            except Exception:
+                pass
+        self._pre_ea_append_log(
+            "<span style='color:#d17a00; font-weight:bold;'>[CANCEL] Cancellation requested...</span>"
+        )
+
+    def _pre_ea_copy_log(self):
+        """Copy the processing log to the clipboard."""
+        clipboard = QCoreApplication.instance().clipboard()
+        clipboard.setText(self.pre_ea_log_console.toPlainText())
+        self.pre_ea_copy_log_btn.setText("Copied!")
+        QTimer.singleShot(1500, lambda: self.pre_ea_copy_log_btn.setText("Copy Log"))
+
+    def _pre_ea_toggle_description(self) -> None:
+        """Show or hide the Pre-EA description panel."""
+        is_visible = not self.pre_ea_desc_panel.isVisible()
+        self.pre_ea_desc_panel.setVisible(is_visible)
+
+        show_icon_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "icons", "show_description.svg")
+        )
+        hide_icon_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "icons", "hide_description.svg")
+        )
+        if is_visible:
+            icon = QIcon(hide_icon_path) if os.path.exists(hide_icon_path) else QIcon()
+            self.pre_ea_toggle_desc_btn.setIcon(icon)
+            self.pre_ea_toggle_desc_btn.setToolTip("Hide Description Panel")
+        else:
+            icon = QIcon(show_icon_path) if os.path.exists(show_icon_path) else QIcon()
+            self.pre_ea_toggle_desc_btn.setIcon(icon)
+            self.pre_ea_toggle_desc_btn.setToolTip("Show Description Panel")
+
+    @staticmethod
+    def _pre_ea_help_html() -> str:
+        """Return the HTML description string for the Pre-EA Processing description panel."""
+        return """
+<html><body style="font-family: 'Segoe UI', Arial, sans-serif; font-size: 9pt;
+                   margin: 8px; color: #24292f;">
+
+<h2 style="margin-top:0; color:#0550ae;">Pre-EA Processing</h2>
+<p style="margin-top:0;">
+  Prepares an existing EA layer for use in the Create Enumeration Areas workflow by
+  enforcing two fundamental spatial rules:
+</p>
+<ol>
+  <li><b>Every EA polygon must be completely within its parent Barangay.</b></li>
+  <li><b>Every Barangay must be fully covered by its EAs</b> (no meaningful gaps).</li>
+</ol>
+
+<hr style="border:none; border-top:1px solid #d0d7de; margin:8px 0;">
+
+<h3 style="color:#0550ae;">Inputs</h3>
+<table cellspacing="0" cellpadding="3" width="100%">
+  <tr>
+    <td width="40%"><b>Barangay Layer</b></td>
+    <td>Polygon layer of Barangay boundaries. Auto-detected by <code>*_bgy</code> name pattern.</td>
+  </tr>
+  <tr style="background:#f6f8fa;">
+    <td><b>EA Layer</b></td>
+    <td>Polygon layer of existing EAs. Auto-detected by <code>*_ea</code> or <code>*_ea2024</code>.</td>
+  </tr>
+</table>
+
+<hr style="border:none; border-top:1px solid #d0d7de; margin:8px 0;">
+
+<h3 style="color:#0550ae;">Processing Rules</h3>
+
+<h4>Rule 1 &mdash; Clip EA to Barangay</h4>
+<p>
+  For each EA that extends outside its parent Barangay, the portion outside is removed
+  by intersecting the EA geometry with the Barangay polygon:
+</p>
+<pre style="background:#f6f8fa; padding:6px; border-radius:4px; font-size:8pt;">
+corrected_ea = ea.geometry().intersection(
+    barangay.geometry()
+)
+</pre>
+
+<h4>Rule 2 &mdash; Detect and Fill Coverage Gaps</h4>
+<p>
+  After clipping, any uncovered area within the Barangay is identified:
+</p>
+<pre style="background:#f6f8fa; padding:6px; border-radius:4px; font-size:8pt;">
+gap = barangay.geometry().difference(
+    unary_union(ea_geometries)
+)
+</pre>
+<p>
+  Each meaningful gap is assigned to the contiguous EA with the
+  <b>longest shared boundary</b>:
+</p>
+<pre style="background:#f6f8fa; padding:6px; border-radius:4px; font-size:8pt;">
+updated_ea = ea.geometry().union(gap)
+</pre>
+<p>
+  No new EA numbers are created. The gap simply becomes part of the existing EA.
+</p>
+
+<hr style="border:none; border-top:1px solid #d0d7de; margin:8px 0;">
+
+<h3 style="color:#0550ae;">Processing Options</h3>
+<table cellspacing="0" cellpadding="3" width="100%">
+  <tr>
+    <td width="45%"><b>Gap Area Tolerance (m&sup2;)</b></td>
+    <td>
+      Gaps smaller than this value are treated as geometry precision slivers and
+      skipped. Default: <b>1.0 m&sup2;</b>.
+    </td>
+  </tr>
+  <tr style="background:#f6f8fa;">
+    <td><b>Clip EA to Barangay Boundary</b></td>
+    <td>Enable Rule 1. Removes any EA area that extends outside its parent Barangay.</td>
+  </tr>
+  <tr>
+    <td><b>Detect Uncovered Barangay Areas</b></td>
+    <td>Enable Rule 2 (detection). Identifies gaps after clipping.</td>
+  </tr>
+  <tr style="background:#f6f8fa;">
+    <td><b>Assign Gaps to Contiguous EA</b></td>
+    <td>Enable Rule 2 (assignment). Merges each gap into the adjacent EA with the longest shared boundary.</td>
+  </tr>
+</table>
+
+<hr style="border:none; border-top:1px solid #d0d7de; margin:8px 0;">
+
+<h3 style="color:#0550ae;">EA&ndash;Barangay Matching</h3>
+<p>
+  Each EA is matched to its parent Barangay using, in order:
+</p>
+<ol>
+  <li><b>Geocode prefix</b> &mdash; first 9 digits of the <code>geocode</code>, <code>psgc</code>,
+      or <code>adm4_pcode</code> attribute field.</li>
+  <li><b>Centroid containment</b> &mdash; Barangay whose polygon contains the EA centroid.</li>
+  <li><b>Largest intersection area</b> &mdash; Barangay with the greatest overlap with the EA.</li>
+</ol>
+<p>
+  An EA is never matched across Barangay boundaries.
+</p>
+
+<hr style="border:none; border-top:1px solid #d0d7de; margin:8px 0;">
+
+<h3 style="color:#0550ae;">Output</h3>
+<p>
+  A new polygon layer is created and added to the QGIS project:
+</p>
+<pre style="background:#f6f8fa; padding:6px; border-radius:4px; font-size:8pt;">
+&lt;pppmm&gt;_ea2026_preprocessed
+
+Example: 04340_ea2026_preprocessed
+</pre>
+<p>
+  The 5-digit code (<code>pppmm</code>) is extracted automatically from the Barangay or
+  EA layer name. The original EA layer is never overwritten.
+</p>
+
+<hr style="border:none; border-top:1px solid #d0d7de; margin:8px 0;">
+
+<h3 style="color:#0550ae;">Result Actions</h3>
+<table cellspacing="0" cellpadding="3" width="100%">
+  <tr style="background:#f6f8fa;"><td><b>No Change</b></td>
+      <td>EA was already within its Barangay; no gap assigned.</td></tr>
+  <tr><td><b>Clipped</b></td>
+      <td>EA area outside the Barangay was removed.</td></tr>
+  <tr style="background:#f6f8fa;"><td><b>Gap Assigned</b></td>
+      <td>An uncovered Barangay area was merged into this EA.</td></tr>
+  <tr><td><b>Unresolved</b></td>
+      <td>A gap could not be matched to any contiguous EA. Reported, not discarded.</td></tr>
+  <tr style="background:#f6f8fa;"><td><b>Error</b></td>
+      <td>A geometry operation failed for this EA feature.</td></tr>
+</table>
+
+<hr style="border:none; border-top:1px solid #d0d7de; margin:8px 0;">
+
+<h3 style="color:#0550ae;">Validation</h3>
+<p>After processing, the following checks are performed:</p>
+<ul>
+  <li>No EA extends outside its Barangay (tolerance: 0.01 m&sup2;).</li>
+  <li>No meaningful uncovered Barangay area remains (tolerance: 1 m&sup2;).</li>
+  <li>All EA geometries are valid (repaired automatically where possible).</li>
+  <li>All EAs have a matched parent Barangay.</li>
+  <li>No EA from one Barangay is used to fill a gap in another Barangay.</li>
+</ul>
+
+<hr style="border:none; border-top:1px solid #d0d7de; margin:8px 0;">
+
+<p style="color:#57606a; font-size:8pt;">
+  The output layer <b>pppmm_ea2026_preprocessed</b> is available for subsequent
+  use as the Previous EA Layer input in the
+  <b>Create Enumeration Areas</b> tab.
+</p>
+
+</body></html>
+"""
+
+    def _pre_ea_append_log(self, html: str) -> None:
+        """Append an HTML-formatted line to the Pre-EA log console."""
+        self.pre_ea_log_console.append(html)
+        self.pre_ea_log_console.ensureCursorVisible()
+        QCoreApplication.processEvents()
+
+    def _pre_ea_format_log(self, msg: str) -> str:
+        """Format a plain log message string as styled HTML."""
+        msg_lower = msg.lower()
+        if msg.startswith("[ERROR]"):
+            return f"<span style='color:#cf222e; font-weight:bold;'>{msg}</span>"
+        if msg.startswith("[WARNING]"):
+            return f"<span style='color:#d17a00; font-weight:bold;'>{msg}</span>"
+        if msg.startswith("[INFO]") and ("complete" in msg_lower or "pass" in msg_lower or "success" in msg_lower):
+            return f"<span style='color:#1a7f37; font-weight:bold;'>{msg}</span>"
+        return f"<span style='color:#0969da;'>{msg}</span>"
+
+    def _pre_ea_run(self):
+        """Validate inputs and launch the Pre-EA Processing workflow."""
+        from qgis.core import QgsApplication
+
+        bgy_layer = self.pre_ea_bgy_combo.currentLayer()
+        ea_layer = self.pre_ea_ea_combo.currentLayer()
+
+        if not bgy_layer:
+            self._pre_ea_append_log(
+                "<span style='color:#cf222e; font-weight:bold;'>[ERROR] Barangay Layer is required.</span>"
+            )
+            return
+        if not ea_layer:
+            self._pre_ea_append_log(
+                "<span style='color:#cf222e; font-weight:bold;'>[ERROR] EA Layer is required.</span>"
+            )
+            return
+
+        # UI state — running
+        self.pre_ea_run_btn.setEnabled(False)
+        self.pre_ea_cancel_btn.setEnabled(True)
+        self.pre_ea_progress_bar.setValue(0)
+        self.pre_ea_log_console.clear()
+        self.pre_ea_results_table.setRowCount(0)
+        self.pre_ea_status_banner.setText("Processing...")
+
+        # Switch to log tab so user sees progress
+        right_tabs = self.pre_ea_log_console.parent().parent()
+        if hasattr(right_tabs, "setCurrentIndex"):
+            right_tabs.setCurrentIndex(2)  # Log tab
+
+        gap_tolerance = self.pre_ea_gap_tol_spin.value()
+        clip_to_bgy = self.pre_ea_clip_chk.isChecked()
+        detect_gaps = self.pre_ea_detect_gaps_chk.isChecked()
+        assign_gaps = self.pre_ea_assign_gaps_chk.isChecked()
+
+        # --- Cancelled flag shared with task --------------------------------
+        self._pre_ea_cancelled = False
+
+        def is_cancelled_fn():
+            return self._pre_ea_cancelled
+
+        def feedback_callback(msg):
+            self._pre_ea_append_log(self._pre_ea_format_log(msg))
+
+        def progress_callback(pct):
+            self.pre_ea_progress_bar.setValue(pct)
+            QCoreApplication.processEvents()
+
+        # Run synchronously on the main thread (processor is fast for typical
+        # datasets; for very large data a QgsTask wrapper can be added later).
+        from .pre_ea_processor import PreEAProcessor
+
+        processor = PreEAProcessor()
+        result = processor.run(
+            barangay_layer=bgy_layer,
+            ea_layer=ea_layer,
+            gap_tolerance=gap_tolerance,
+            clip_to_bgy=clip_to_bgy,
+            detect_gaps=detect_gaps,
+            assign_gaps=assign_gaps,
+            feedback_callback=feedback_callback,
+            progress_callback=progress_callback,
+            is_cancelled_fn=is_cancelled_fn,
+        )
+
+        self._pre_ea_on_finished(result)
+
+    def _pre_ea_on_finished(self, result) -> None:
+        """Handle completion of the Pre-EA Processing run and update the UI."""
+        # Re-enable controls
+        self.pre_ea_run_btn.setEnabled(True)
+        self.pre_ea_cancel_btn.setEnabled(False)
+
+        summary = result.summary
+
+        if not result.success:
+            self.pre_ea_status_banner.setText(f"Error: {result.error_message}")
+            return
+
+        # Populate summary tab
+        self._pre_ea_sum_bgy_val.setText(str(summary.barangays_processed))
+        self._pre_ea_sum_ea_val.setText(str(summary.eas_processed))
+        self._pre_ea_sum_corr_val.setText(str(summary.eas_requiring_correction))
+        self._pre_ea_sum_clip_val.setText(str(summary.eas_clipped))
+        self._pre_ea_sum_gaps_det_val.setText(str(summary.gaps_detected))
+        self._pre_ea_sum_gaps_asgn_val.setText(str(summary.gaps_assigned))
+        self._pre_ea_sum_unres_val.setText(str(summary.unresolved_gaps))
+        self._pre_ea_sum_outside_val.setText(str(summary.final_eas_outside_bgy))
+        self._pre_ea_sum_uncov_val.setText(f"{summary.final_uncovered_area:.4f}")
+        self._pre_ea_sum_output_val.setText(summary.output_name)
+
+        status_colors = {"PASS": "#1a7f37", "WARNING": "#d17a00", "ERROR": "#cf222e"}
+        status_color = status_colors.get(summary.overall_status, "#333")
+        self._pre_ea_sum_status_lbl.setText(
+            f"<span style='color:{status_color}; font-weight:bold;'>Status: {summary.overall_status}</span>"
+        )
+        self._pre_ea_sum_status_lbl.setTextFormat(Qt.RichText)
+
+        # Populate results table
+        table = self.pre_ea_results_table
+        table.setRowCount(0)
+        table.setRowCount(len(result.result_rows))
+
+        action_colors = {
+            "No Change": ("#f6f8fa", "#333"),
+            "Clipped": ("#fff8c5", "#7d4e00"),
+            "Gap Assigned": ("#dafbe1", "#1a7f37"),
+            "Geometry Fixed": ("#ddf4ff", "#0969da"),
+            "Unresolved": ("#ffebe9", "#cf222e"),
+            "Error": ("#ffebe9", "#cf222e"),
+        }
+        if self.current_theme == "dark":
+            action_colors = {
+                "No Change": ("#2d333b", "#adbac7"),
+                "Clipped": ("#3d3300", "#e3b341"),
+                "Gap Assigned": ("#1e3f28", "#2ecc71"),
+                "Geometry Fixed": ("#0e2235", "#79c0ff"),
+                "Unresolved": ("#3d1f1f", "#ff6b6b"),
+                "Error": ("#3d1f1f", "#ff6b6b"),
+            }
+
+        for row_idx, row in enumerate(result.result_rows):
+            bg, fg = action_colors.get(row.action, ("#f6f8fa", "#333"))
+            cells = [
+                row.barangay_id,
+                row.ea_id,
+                f"{row.original_area:.4f}",
+                f"{row.corrected_area:.4f}",
+                f"{row.area_change:+.4f}",
+                row.action,
+                row.status,
+            ]
+            for col_idx, cell_text in enumerate(cells):
+                item = QTableWidgetItem(cell_text)
+                item.setBackground(QColor(bg))
+                item.setForeground(QColor(fg))
+                item.setTextAlignment(
+                    Qt.AlignCenter if col_idx in (2, 3, 4) else Qt.AlignLeft | Qt.AlignVCenter
+                )
+                table.setItem(row_idx, col_idx, item)
+
+        # Status banner
+        if summary.overall_status == "PASS":
+            self.pre_ea_status_banner.setText(
+                f"Complete — EAs Clipped: {summary.eas_clipped}  "
+                f"Gaps Filled: {summary.gaps_assigned}  "
+                f"Unresolved: {summary.unresolved_gaps}  |  Status: PASS"
+            )
+        elif summary.overall_status == "WARNING":
+            self.pre_ea_status_banner.setText(
+                f"Complete with warnings — "
+                f"Unresolved Gaps: {summary.unresolved_gaps}  "
+                f"EAs Outside Bgy: {summary.final_eas_outside_bgy}"
+            )
+        else:
+            self.pre_ea_status_banner.setText(
+                f"Processing finished with errors — {result.error_message}"
+            )
+
+        self.pre_ea_progress_bar.setValue(100)
+
+        # Switch to Summary tab
+        right_tabs_widget = table.parent().parent().parent()
+        if hasattr(right_tabs_widget, "setCurrentIndex"):
+            right_tabs_widget.setCurrentIndex(1)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Tab 2 — Create Enumeration Areas
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _build_create_ea_tab(self):
+        """Build the Create Enumeration Areas tab (Tab 2) and add it to main_tabs."""
+        tab_widget = QWidget()
+        tab_root_layout = QVBoxLayout(tab_widget)
+        tab_root_layout.setContentsMargins(10, 10, 10, 10)
+        tab_root_layout.setSpacing(10)
+        self._build_create_ea_content(tab_root_layout)
+        self.main_tabs.addTab(tab_widget, "Create Enumeration Areas")
+
+    def _build_create_ea_content(self, root):
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(10)
 
         # ── Header Panel ──────────────────────────────────────────────────
@@ -214,8 +1043,8 @@ class EALauncherDialog(QDialog):
 
         # Title
         title = QLabel("Create Enumeration Areas")
-        title.setObjectName("title")
-        title.setFont(QFont("Segoe UI", 13, QFont.Bold))
+        title.setObjectName("createEaTitle")
+        title.setFont(QFont("Segoe UI", 11, QFont.Bold))
         header_layout.addWidget(title, 0, Qt.AlignVCenter)
 
         header_layout.addStretch()
