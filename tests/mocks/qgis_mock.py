@@ -292,10 +292,22 @@ class QgsField:
 
 class QgsFields:
     def __init__(self, fields=None):
-        self._fields = fields or []
+        if fields is None:
+            self._fields = []
+        elif isinstance(fields, QgsFields):
+            self._fields = list(fields._fields)
+        else:
+            self._fields = list(fields)
 
     def append(self, field):
         self._fields.append(field)
+
+    def remove(self, i):
+        if 0 <= i < len(self._fields):
+            self._fields.pop(i)
+
+    def at(self, i):
+        return self._fields[i] if 0 <= i < len(self._fields) else None
 
     def names(self):
         return [f.name() for f in self._fields]
