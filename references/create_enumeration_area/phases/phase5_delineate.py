@@ -504,6 +504,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
     area_threshold = p1["area_threshold"]
     num_cores = p1.get("num_cores", QThread.idealThreadCount())
     split_strategy = p1.get("split_strategy", 0)
+    split_type = p1.get("split_type", 0)
 
     delineation_candidate_ids = p2["delineation_candidate_ids"]
     merge_candidate_ids = p2["merge_candidate_ids"]
@@ -544,6 +545,8 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
 
     def enforce_min_household(parts, fback, ea_geom=None):
         while len(parts) > 1:
+            if split_strategy == 0 and len(parts) <= 2:
+                break
             under = [i for i, p in enumerate(parts) if p['hh_count'] < min_household]
             if not under:
                 break
@@ -1111,67 +1114,97 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         labels, centroids = weighted_kmeans(pts, wts, k_val)
         centroid_pts = [QgsPointXY(c[0], c[1]) for c in centroids]
 
-        # ── Step 2: Physical Road/River Mesh Slicing ──
+        # ── Step 2: Physical Road/River Mesh Slicing via Polygonization ──
         all_input_lines = road_lines + river_lines
         if not all_input_lines:
             return [ea_item]
 
-        all_polylines = []
+        # Primary method: Polygonize boundary lines + road/river lines
+        lines_to_union = []
+        if parent_geom.isMultipart():
+            for poly in parent_geom.asMultiPolygon():
+                for ring in poly:
+                    lines_to_union.append(QgsGeometry.fromPolylineXY(ring))
+        else:
+            for ring in parent_geom.asPolygon():
+                lines_to_union.append(QgsGeometry.fromPolylineXY(ring))
+
         for lg in all_input_lines:
-            all_polylines.extend(get_polylines_from_geom(lg))
-
-        if not all_polylines:
-            return [ea_item]
-
-        bbox = parent_geom.boundingBox()
-        ext_len = max(100.0, max(bbox.width(), bbox.height()) * 3.0)
-
-        current_polys = [parent_geom]
-        used_split = False
-
-        for polyline in all_polylines:
-            if len(polyline) < 2:
-                continue
-
-            p0, p1 = polyline[0], polyline[1]
-            dx0, dy0 = p0.x() - p1.x(), p0.y() - p1.y()
-            len0 = math.hypot(dx0, dy0)
-            p0_ext = QgsPointXY(p0.x() + (dx0 / len0) * ext_len, p0.y() + (dy0 / len0) * ext_len) if len0 > 1e-7 else p0
-
-            pn, pn_prev = polyline[-1], polyline[-2]
-            dxn, dyn = pn.x() - pn_prev.x(), pn.y() - pn_prev.y()
-            lenn = math.hypot(dxn, dyn)
-            pn_ext = QgsPointXY(pn.x() + (dxn / lenn) * ext_len, pn.y() + (dyn / lenn) * ext_len) if lenn > 1e-7 else pn
-
-            extended_line = [p0_ext] + list(polyline) + [pn_ext]
-
-            next_polys = []
-            for poly in current_polys:
-                target_geom = QgsGeometry(poly)
-                res, new_geoms, _ = target_geom.splitGeometry(extended_line, False)
-                if res == 0 and len(new_geoms) > 0:
-                    split_pieces = [target_geom] + new_geoms
-                    valid_pieces = []
-                    for sp in split_pieces:
-                        if sp and not sp.isEmpty() and sp.area() > 1e-6:
-                            clipped = sp.intersection(parent_geom).buffer(0.0, 3)
-                            if not clipped.isEmpty() and clipped.area() > 1e-6:
-                                valid_pieces.append(clipped)
-                    if len(valid_pieces) >= 2:
-                        next_polys.extend(valid_pieces)
-                        used_split = True
-                    else:
-                        next_polys.append(poly)
-                else:
-                    next_polys.append(poly)
-            current_polys = next_polys
-
-        if not used_split or len(current_polys) < 2:
-            return [ea_item]
+            if lg and not lg.isEmpty():
+                inter = lg.intersection(parent_geom)
+                if not inter.isEmpty():
+                    lines_to_union.append(inter)
 
         atomic_blocks = []
-        for cp in current_polys:
-            atomic_blocks.extend(get_polygons_from_geom(cp))
+        if len(lines_to_union) >= 2:
+            noded = QgsGeometry.unaryUnion(lines_to_union)
+            if noded and not noded.isEmpty():
+                poly_collection = QgsGeometry.polygonize([noded])
+                if poly_collection and not poly_collection.isEmpty():
+                    for face in get_polygons_from_geom(poly_collection):
+                        if face and not face.isEmpty() and face.area() > 1e-6:
+                            clipped = face.intersection(parent_geom).buffer(0.0, 3)
+                            if not clipped.isEmpty() and clipped.area() > 1e-6:
+                                atomic_blocks.append(clipped)
+
+        # Fallback method: Ray extension slicing if polygonization yielded < 2 blocks
+        if len(atomic_blocks) < 2:
+            all_polylines = []
+            for lg in all_input_lines:
+                all_polylines.extend(get_polylines_from_geom(lg))
+
+            if not all_polylines:
+                return [ea_item]
+
+            bbox = parent_geom.boundingBox()
+            ext_len = max(100.0, max(bbox.width(), bbox.height()) * 3.0)
+
+            current_polys = [parent_geom]
+            used_split = False
+
+            for polyline in all_polylines:
+                if len(polyline) < 2:
+                    continue
+
+                p0, p1 = polyline[0], polyline[1]
+                dx0, dy0 = p0.x() - p1.x(), p0.y() - p1.y()
+                len0 = math.hypot(dx0, dy0)
+                p0_ext = QgsPointXY(p0.x() + (dx0 / len0) * ext_len, p0.y() + (dy0 / len0) * ext_len) if len0 > 1e-7 else p0
+
+                pn, pn_prev = polyline[-1], polyline[-2]
+                dxn, dyn = pn.x() - pn_prev.x(), pn.y() - pn_prev.y()
+                lenn = math.hypot(dxn, dyn)
+                pn_ext = QgsPointXY(pn.x() + (dxn / lenn) * ext_len, pn.y() + (dyn / lenn) * ext_len) if lenn > 1e-7 else pn
+
+                extended_line = [p0_ext] + list(polyline) + [pn_ext]
+
+                next_polys = []
+                for poly in current_polys:
+                    target_geom = QgsGeometry(poly)
+                    res, new_geoms, _ = target_geom.splitGeometry(extended_line, False)
+                    if res == 0 and len(new_geoms) > 0:
+                        split_pieces = [target_geom] + new_geoms
+                        valid_pieces = []
+                        for sp in split_pieces:
+                            if sp and not sp.isEmpty() and sp.area() > 1e-6:
+                                clipped = sp.intersection(parent_geom).buffer(0.0, 3)
+                                if not clipped.isEmpty() and clipped.area() > 1e-6:
+                                    valid_pieces.append(clipped)
+                        if len(valid_pieces) >= 2:
+                            next_polys.extend(valid_pieces)
+                            used_split = True
+                        else:
+                            next_polys.append(poly)
+                    else:
+                        next_polys.append(poly)
+                current_polys = next_polys
+
+            if not used_split or len(current_polys) < 2:
+                return [ea_item]
+
+            atomic_blocks = []
+            for cp in current_polys:
+                atomic_blocks.extend(get_polygons_from_geom(cp))
 
         atomic_blocks = [ab for ab in atomic_blocks if ab and not ab.isEmpty() and ab.area() > 1e-6]
         if len(atomic_blocks) < 2:
@@ -1322,13 +1355,13 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             p['bldgpoints_value'] = p['hh_count'] / p['bldg_count'] if p['bldg_count'] > 0 else 0.0
             p['split_by'] = split_by
 
-        # Reject the split if any resulting part falls below the min_household threshold
-        if any(p['hh_count'] < min_household for p in final_parts):
+        # Reject the split if any resulting part falls below the min_household threshold (Strict Threshold mode only)
+        if split_strategy == 1 and any(p['hh_count'] < min_household for p in final_parts):
             under_parts = [p for p in final_parts if p['hh_count'] < min_household]
             fback.pushWarning(
                 f"[EA {ea_item['original_code']}] Hybrid split rejected: "
                 f"{len(under_parts)} sub-polygon(s) fall below min threshold "
-                f"({min_household} HH)."
+                f"({min_household} HH). Keeping EA whole."
             )
             return [ea_item]
 
@@ -1471,13 +1504,13 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
 
         final_parts = allocate_gaps_to_parts(final_parts, parent_geom)
 
-        # Reject the split if any resulting part falls below the min_household threshold
-        if any(p['hh_count'] < min_household for p in final_parts):
+        # Reject the split if any resulting part falls below the min_household threshold (Strict Threshold mode only)
+        if split_strategy == 1 and any(p['hh_count'] < min_household for p in final_parts):
             under_parts = [p for p in final_parts if p['hh_count'] < min_household]
             fback.pushWarning(
                 f"[EA {ea_item['original_code']}] Building-cluster split rejected: "
                 f"{len(under_parts)} sub-polygon(s) fall below min threshold "
-                f"({min_household} HH)."
+                f"({min_household} HH). Keeping EA whole."
             )
             return [ea_item]
 
@@ -1486,19 +1519,49 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
     def split_ea(ea_item, target_pop, fback):
         if fback.isCanceled():
             return [ea_item]
-        if split_strategy == 2:
+
+        # Mode 4 or Strategy 2: Keep Whole (No Splitting)
+        if split_type == 4 or split_strategy == 2:
             fback.pushInfo(f"[EA {ea_item['original_code']}] Strategy 'Keep Whole' selected. Preserving EA whole.")
             ea_item['remarks'] = "Kept whole (no-split mode)"
             return [ea_item]
+
         bldgs = ea_item.get('buildings', [])
+        road_lines = collect_linear_features(ea_item['geom'], road_index, road_geoms)
+        river_lines = collect_linear_features(ea_item['geom'], river_index, river_geoms)
+
+        # Mode 3: Forced Geometric Cut Only
+        if split_type == 3:
+            fback.pushInfo(f"[EA {ea_item['original_code']}] Forced geometric split requested...")
+            return force_geometric_split(ea_item, target_pop, fback)
+
+        # Mode 2: Building Point Voronoi Clustering Only
+        if split_type == 2:
+            if bldgs:
+                fback.pushInfo(f"[EA {ea_item['original_code']}] Splitting by building point Voronoi cluster distribution...")
+                cluster_parts = split_ea_by_building_clusters(ea_item, target_pop, fback)
+                if len(cluster_parts) >= 2:
+                    return cluster_parts
+            if is_delineation_candidate(ea_item):
+                return force_geometric_split(ea_item, target_pop, fback)
+            return [ea_item]
+
+        # Mode 1: Road & River Alignment Only
+        if split_type == 1:
+            if road_lines or river_lines:
+                fback.pushInfo(f"[EA {ea_item['original_code']}] Partitioning with Voronoi clustering and road/river boundary alignment...")
+                hybrid_parts = split_ea_voronoi_road_hybrid(ea_item, road_lines, river_lines, target_pop, fback)
+                if len(hybrid_parts) >= 2:
+                    return hybrid_parts
+            fback.pushWarning(f"[EA {ea_item['original_code']}] Road & River alignment unavailable or yielded 1 part. Keeping whole under Road/River Only mode.")
+            return [ea_item]
+
+        # Mode 0: Auto (Hybrid Road/River -> Voronoi -> Forced Cut) [Default]
         if not bldgs:
             if is_delineation_candidate(ea_item):
                 fback.pushInfo(f"[EA {ea_item['original_code']}] Delineation candidate has no building points. Forcing geometric split...")
                 return force_geometric_split(ea_item, target_pop, fback)
             return [ea_item]
-
-        road_lines = collect_linear_features(ea_item['geom'], road_index, road_geoms)
-        river_lines = collect_linear_features(ea_item['geom'], river_index, river_geoms)
 
         # ── Tier 1: Voronoi Population Clustering + Road/River Physical Boundaries ──
         if road_lines or river_lines:

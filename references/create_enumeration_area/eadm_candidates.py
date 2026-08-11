@@ -67,6 +67,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
     OVERLAP_INPUT = "OVERLAP_INPUT"
     SNAP_TOLERANCE = "SNAP_TOLERANCE"
     SPLIT_STRATEGY = "SPLIT_STRATEGY"
+    SPLIT_TYPE = "SPLIT_TYPE"
     # Buffer tolerance (meters) for snapping splits to linear features
     LINE_BUFFER_TOLERANCE = 0.5
 
@@ -324,7 +325,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 minValue=1,
             )
         )
-        # Split strategy option for over-populated EAs
+        # Split Strategy option for over-populated EAs
         self.addParameter(
             QgsProcessingParameterEnum(
                 self.SPLIT_STRATEGY,
@@ -333,6 +334,21 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                     "Road + River Priority (Recommended - follow physical features)",
                     "Strict Threshold (Reject road/river split if sub-EA < min_household)",
                     "Keep Whole (Do not split over-populated EAs)",
+                ],
+                defaultValue=0,
+            )
+        )
+        # Split Type option (algorithm selection)
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                self.SPLIT_TYPE,
+                "Delineation Split Method / Type",
+                options=[
+                    "Auto (Road/River Priority -> Voronoi -> Forced Cut)",
+                    "Road & River Alignment Only (Follow linear features)",
+                    "Building Point Voronoi Only (Cluster building density)",
+                    "Forced Geometric Cut Only (Straight strip cuts)",
+                    "Keep Whole (No Splitting)",
                 ],
                 defaultValue=0,
             )
