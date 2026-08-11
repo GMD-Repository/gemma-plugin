@@ -1,0 +1,97 @@
+<?xml version = '1.0' encoding = 'UTF-8'?>
+<?xml-stylesheet type="text/xsl" href="/static/style/plugins.xsl" ?>
+<plugins>
+    <pyqgis_plugin name="Spreadsheet Layers" version="2.1.3" plugin_id="766">
+        <description><![CDATA[Load layers from spreadsheet files (*.ods, *.xls, *.xlsx)]]></description>
+        <about><![CDATA[This plugin adds a &quot;Add spreadsheet layer&quot; entry in &quot;Layer&quot; / &quot;Add new Layer&quot; menu and a corresponding button in the &quot;Layers&quot; toolbar.
+These two links open the same dialog to load a layer from a spreadsheet file (*.ods, *.xls, *.xlsx) with some options (use header at first line, ignore some rows and optionally load geometry from x and y fields).
+When this dialog is accepted, it creates a new GDAL VRT file in same folder as the source data file and layer name, expanded with a .vrt suffix which is loaded into QGIS using OGR VRT driver.
+When reusing the same file twice, the dialog loads its values from the existing .vrt file.
+No need to install additional dependencies.]]></about>
+        <trusted>False</trusted>
+        <qgis_minimum_version>3.0.0</qgis_minimum_version>
+        <qgis_maximum_version>3.99.0</qgis_maximum_version>
+        <homepage><![CDATA[https://github.com/camptocamp/QGIS-SpreadSheetLayers]]></homepage>
+        <file_name>SpreadsheetLayers.2.1.3.zip</file_name>
+        <icon>/media/packages/2026/mActionAddSpreadsheetLayer_XS4D06r.svg</icon>
+        <author_name><![CDATA[Camptocamp]]></author_name>
+        <download_url>https://plugins.qgis.org/plugins/SpreadsheetLayers/version/2.1.3/download/</download_url>
+        <uploaded_by><![CDATA[amorvan]]></uploaded_by>
+        <create_date>2015-06-03T12:03:00.836659+00:00</create_date>
+        <update_date>2026-05-07T14:24:40.761011+00:00</update_date>
+        <experimental>False</experimental>
+        <deprecated>False</deprecated>
+        <tracker><![CDATA[https://github.com/camptocamp/QGIS-SpreadSheetLayers/issues]]></tracker>
+        <repository><![CDATA[https://github.com/camptocamp/QGIS-SpreadSheetLayers]]></repository>
+        <tags><![CDATA[excel,xlsx,ods,xls,spreadsheet,calc]]></tags>
+        <downloads>674181</downloads>
+        <average_vote>4.1703323239833185</average_vote>
+        <rating_votes>499</rating_votes>
+        <external_dependencies></external_dependencies>
+        <server>False</server>
+    </pyqgis_plugin>
+    <pyqgis_plugin name="HCMGIS" version="25.12.5" plugin_id="1430">
+        <description><![CDATA[HCMGIS - Basemaps, Download OpenData, Batch Converter, VN-2000 Projections, and Field Calculation Utilities]]></description>
+        <about><![CDATA[- Basemaps: Add vector and raster basemaps from Google, Carto, ESRI, Vgrid, etc;
+
+- Batch Converter: Batch convert CSV to Point Shapefiles and other GIS formats (including OSM pbf, GeoPackage) in a folder and its subfolders;
+
+- Download OpenData: Download Open Data from OSM Geofabrik, GADM, Who&#x27;s On First (WOF), and other OGC OpenData Repos;-
+
+ Vn-2000 Projections: Lookup EPSG Code for Vn-2000/ TM3 Projection for all Provinces in Vietnam;
+
+- Spatial Processing: has been moved to BecaGIS Plugin;  
+
+- Attribute Calculation: merge/ split data fields, Vietnamese Font Converter: Unicode &lt;-&gt; TCVN3 &lt;-&gt; Vni-Windows, UPPER CASE, lower case.]]></about>
+        <trusted>False</trusted>
+        <qgis_minimum_version>3.0.0</qgis_minimum_version>
+        <qgis_maximum_version>3.99.0</qgis_maximum_version>
+        <homepage><![CDATA[https://gishub.vn]]></homepage>
+        <file_name>HCMGIS.25.12.5.zip</file_name>
+        <icon>/media/packages/2026/hcmgis_opendata_MqtIt4L.png</icon>
+        <author_name><![CDATA[Thang Quach]]></author_name>
+        <download_url>https://plugins.qgis.org/plugins/HCMGIS/version/25.12.5/download/</download_url>
+        <uploaded_by><![CDATA[thangqd]]></uploaded_by>
+        <create_date>2018-03-26T09:58:24.375486+00:00</create_date>
+        <update_date>2025-12-05T06:20:41.995635+00:00</update_date>
+        <experimental>False</experimental>
+        <deprecated>False</deprecated>
+        <tracker><![CDATA[https://github.com/opengeoshub/HCMGIS/issues]]></tracker>
+        <repository><![CDATA[https://github.com/opengeoshub/HCMGIS]]></repository>
+        <tags><![CDATA[merge,openstreetmap,split,OSM,google maps,Esri,basemap,vietnam,vector tile,vn,HCMGIS,Vietnamese,font converter,VN2000,vector tiles,Carto,Batch Converter,OSM Downloader,CSV to Point]]></tags>
+        <downloads>2187286</downloads>
+        <average_vote>4.284356763721806</average_vote>
+        <rating_votes>2634</rating_votes>
+        <external_dependencies></external_dependencies>
+        <server>False</server>
+    </pyqgis_plugin>
+    <pyqgis_plugin name="Spreadsheet Layers" version="2.1.0-alpha1" plugin_id="766">
+        <description><![CDATA[Load layers from spreadsheet files (*.ods, *.xls, *.xlsx)]]></description>
+        <about><![CDATA[This plugin adds a &quot;Add spreadsheet layer&quot; entry in &quot;Layer&quot; / &quot;Add new Layer&quot; menu and a corresponding button in the &quot;Layers&quot; toolbar.
+These two links open the same dialog to load a layer from a spreadsheet file (*.ods, *.xls, *.xlsx) with some options (use header at first line, ignore some rows and optionally load geometry from x and y fields).
+When this dialog is accepted, it creates a new GDAL VRT file in same folder as the source data file and layer name, expanded with a .vrt suffix which is loaded into QGIS using OGR VRT driver.
+When reusing the same file twice, the dialog loads its values from the existing .vrt file.
+No need to install additional dependencies.]]></about>
+        <trusted>False</trusted>
+        <qgis_minimum_version>3.0.0</qgis_minimum_version>
+        <qgis_maximum_version>3.99.0</qgis_maximum_version>
+        <homepage><![CDATA[https://github.com/camptocamp/QGIS-SpreadSheetLayers]]></homepage>
+        <file_name>SpreadsheetLayers.2.1.0-alpha1.zip</file_name>
+        <icon>/media/packages/2026/mActionAddSpreadsheetLayer_XS4D06r.svg</icon>
+        <author_name><![CDATA[Camptocamp]]></author_name>
+        <download_url>https://plugins.qgis.org/plugins/SpreadsheetLayers/version/2.1.0-alpha1/download/</download_url>
+        <uploaded_by><![CDATA[amorvan]]></uploaded_by>
+        <create_date>2015-06-03T12:03:00.836659+00:00</create_date>
+        <update_date>2022-09-04T13:38:40.072713+00:00</update_date>
+        <experimental>True</experimental>
+        <deprecated>False</deprecated>
+        <tracker><![CDATA[https://github.com/camptocamp/QGIS-SpreadSheetLayers/issues]]></tracker>
+        <repository><![CDATA[https://github.com/camptocamp/QGIS-SpreadSheetLayers]]></repository>
+        <tags><![CDATA[excel,xlsx,ods,xls,spreadsheet,calc]]></tags>
+        <downloads>674181</downloads>
+        <average_vote>4.1703323239833185</average_vote>
+        <rating_votes>499</rating_votes>
+        <external_dependencies></external_dependencies>
+        <server>False</server>
+    </pyqgis_plugin>
+</plugins>
