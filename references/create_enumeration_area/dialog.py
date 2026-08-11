@@ -372,24 +372,24 @@ class EALauncherDialog(QDialog):
         params_layout.addWidget(self.tolerance_spin)
 
         # Split Strategy enum
-        params_layout.addWidget(QLabel("Split Strategy for Over-Populated EAs"))
+        params_layout.addWidget(QLabel("Splitting Rule for Large Areas (>300 Houses)"))
         self.split_strategy_combo = QComboBox()
         self.split_strategy_combo.addItems([
-            "Road + River Priority (Recommended - follow physical features)",
-            "Strict Threshold (Reject road/river split if sub-EA < min_household)",
-            "Keep Whole (Do not split over-populated EAs)"
+            "Follow Roads & Rivers (Recommended)",
+            "Strict Minimum 100 Houses",
+            "Do Not Split"
         ])
         params_layout.addWidget(self.split_strategy_combo)
 
         # Split Method / Type enum
-        params_layout.addWidget(QLabel("Delineation Split Method / Type"))
+        params_layout.addWidget(QLabel("Boundary Cut Method"))
         self.split_type_combo = QComboBox()
         self.split_type_combo.addItems([
-            "Auto (Road/River Priority -> Voronoi -> Forced Cut)",
-            "Road & River Alignment Only (Follow linear features)",
-            "Building Point Voronoi Only (Cluster building density)",
-            "Forced Geometric Cut Only (Straight strip cuts)",
-            "Keep Whole (No Splitting)"
+            "Auto (Roads First, then Houses)",
+            "Roads & Rivers Only",
+            "House Groups Only",
+            "Straight Line Only",
+            "Do Not Split"
         ])
         params_layout.addWidget(self.split_type_combo)
 

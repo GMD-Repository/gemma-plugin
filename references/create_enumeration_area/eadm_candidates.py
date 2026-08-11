@@ -122,10 +122,14 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             "Fields and region attributes from this layer are inherited by the output.</li>"
             "<li><b>Minimum / Maximum Household Count per EA</b> — Target range (default 100–300 HH). "
             "EAs below the minimum are merged with neighbours; EAs above the maximum are split.</li>"
+            "<li><b>Splitting Rule for Large Areas (&gt;300 Houses)</b> — Controls how strictly household limits are enforced during splits. "
+            "Options: <i>Follow Roads & Rivers (Recommended)</i>, <i>Strict Minimum 100 Houses</i>, or <i>Do Not Split</i>.</li>"
+            "<li><b>Boundary Cut Method</b> — Selects the line tool used to cut boundaries. "
+            "Options: <i>Auto (Roads First, then Houses)</i>, <i>Roads & Rivers Only</i>, <i>House Groups Only</i>, <i>Straight Line Only</i>, or <i>Do Not Split</i>.</li>"
             "<li><b>Optimize for Compactness</b> — When enabled, the clustering algorithm "
             "prefers spatially compact EA shapes over purely household-balanced splits.</li>"
             "<li><b>Allow Merging Between Under-Threshold Candidate EAs</b> — When enabled (default: True), "
-            "under-threshold EAs (<= min_household) can merge with each other when no reference EAs are available in the barangay.</li>"
+            "under-threshold EAs (&lt;= min_household) can merge with each other when no reference EAs are available in the barangay.</li>"
             "<li><b>Sliver Polygon Area Threshold</b> — Controls how small a remnant polygon "
             "must be before it is discarded as a sliver. <i>Auto-detect</i> derives the threshold "
             "from the average nearest-neighbour spacing of building points.</li>"
@@ -138,7 +142,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             "<li><b>River Layer</b> (line) — River/waterway network used in the same "
             "boundary-snapping process as the road layer.</li>"
             "<li><b>Snapping Tolerance (metres)</b> — Maximum distance a proposed split line "
-            "is shifted to coincide with the nearest road or river segment (default 20 m).</li>"
+            "is shifted to coincide with the nearest road or river segment (default 15 m).</li>"
             "</ul>"
 
             "<h4>Process</h4>"
@@ -325,15 +329,15 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 minValue=1,
             )
         )
-        # Split Strategy option for over-populated EAs
+        # Split Strategy option for large EAs
         self.addParameter(
             QgsProcessingParameterEnum(
                 self.SPLIT_STRATEGY,
-                "Split Strategy for Over-Populated EAs",
+                "Splitting Rule for Large Areas (>300 Houses)",
                 options=[
-                    "Road + River Priority (Recommended - follow physical features)",
-                    "Strict Threshold (Reject road/river split if sub-EA < min_household)",
-                    "Keep Whole (Do not split over-populated EAs)",
+                    "Follow Roads & Rivers (Recommended)",
+                    "Strict Minimum 100 Houses",
+                    "Do Not Split",
                 ],
                 defaultValue=0,
             )
@@ -342,13 +346,13 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterEnum(
                 self.SPLIT_TYPE,
-                "Delineation Split Method / Type",
+                "Boundary Cut Method",
                 options=[
-                    "Auto (Road/River Priority -> Voronoi -> Forced Cut)",
-                    "Road & River Alignment Only (Follow linear features)",
-                    "Building Point Voronoi Only (Cluster building density)",
-                    "Forced Geometric Cut Only (Straight strip cuts)",
-                    "Keep Whole (No Splitting)",
+                    "Auto (Roads First, then Houses)",
+                    "Roads & Rivers Only",
+                    "House Groups Only",
+                    "Straight Line Only",
+                    "Do Not Split",
                 ],
                 defaultValue=0,
             )

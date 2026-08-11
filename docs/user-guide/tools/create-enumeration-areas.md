@@ -41,6 +41,8 @@ The dedicated **EA Launcher** dialog provides an interactive workflow prior to e
 | **Overlap Layer** | Vector (Polygon) | Polygon layer representing boundary overlaps, extracted into Special EAs. Optional. |
 | **Minimum Household Count per EA** | Integer | Minimum target household threshold per EA (default: 100). EAs below this limit are merged. |
 | **Maximum Household Count per EA** | Integer | Maximum target household threshold per EA (default: 300). EAs above this limit are split. |
+| **Splitting Rule for Large Areas (>300 Houses)** | Enumeration | Controls splitting rule: `Follow Roads & Rivers (Recommended)`, `Strict Minimum 100 Houses`, or `Do Not Split`. |
+| **Boundary Cut Method** | Enumeration | Selects boundary line tool: `Auto (Roads First, then Houses)`, `Roads & Rivers Only`, `House Groups Only`, `Straight Line Only`, or `Do Not Split`. |
 | **Optimize for Compactness** | Boolean | Prefers spatially compact EA shapes over purely household-balanced splits (default: True). |
 | **Allow Merging Between Under-Threshold Candidate EAs** | Boolean | Controls whether under-threshold candidate EAs (<=100 HH) can merge with each other when no reference EAs exist (default: True). |
 | **Sliver Polygon Area Threshold** | Enumeration | Controls area threshold for identifying and dissolving remnant sliver polygons into neighboring EAs. |
