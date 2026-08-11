@@ -79,9 +79,9 @@ features:
     link: /tools/package-qfield
   - icon:
       src: /icons/create_ea.svg
-    title: Create Enumeration Areas
-    details: Delineate enumeration areas from barangay boundaries for census and survey field operations.
-    link: /tools/create-enumeration-areas
+    title: EA Delineation and Merging
+    details: Integrated module for pre-processing, gap filling, delineation (splitting), and merging of enumeration area boundaries.
+    link: /tools/ea-delineation-and-merging
   - icon:
       src: /icons/clip_layers.svg
     title: Clip Project Layers by Extent

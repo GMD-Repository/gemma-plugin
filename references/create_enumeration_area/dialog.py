@@ -197,73 +197,48 @@ class EALauncherDialog(QDialog):
     # ── UI Construction ─────────────────────────────────────────────────────
 
     def _build_ui(self):
-        """Build the root layout containing the top-level main tab widget."""
+        """Build the root layout containing the top-level header and tab widget."""
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
 
-        # Top-level tab widget: Tab 1 = Pre-EA Processing, Tab 2 = Create Enumeration Areas
-        self.main_tabs = QTabWidget()
-        self.main_tabs.setObjectName("mainTabs")
-        self.main_tabs.tabBar().setElideMode(Qt.ElideNone)
+        # Top Header Row (Title & Subtitle on left, Description Toggle button on right)
+        header_container = QHBoxLayout()
+        header_container.setContentsMargins(0, 0, 0, 0)
+        header_container.setSpacing(8)
 
-        self._build_pre_ea_tab()
-        self._build_create_ea_tab()
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(2)
 
-        root.addWidget(self.main_tabs)
+        title_label = QLabel("EA Delineation and Merging")
+        title_label.setWordWrap(True)
+        title_label.setStyleSheet("font-size: 15px; font-weight: bold; color: #2C3E50; padding: 0;")
+        text_layout.addWidget(title_label)
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Tab 1 — Pre-EA Processing
-    # ─────────────────────────────────────────────────────────────────────────
+        sub_label = QLabel("Step-by-step workflow to prepare boundary layers, create enumeration areas, and merge small zones.")
+        sub_label.setWordWrap(True)
+        sub_label.setStyleSheet("color: #7F8C8D; font-size: 11px;")
+        text_layout.addWidget(sub_label)
 
-    def _build_pre_ea_tab(self):
-        """Build the Pre-EA Processing tab (Tab 1) and add it to main_tabs."""
-        tab_widget = QWidget()
-        tab_layout = QVBoxLayout(tab_widget)
-        tab_layout.setContentsMargins(10, 10, 10, 10)
-        tab_layout.setSpacing(10)
+        header_container.addLayout(text_layout, 1)
 
-        # ── Header ────────────────────────────────────────────────────────
-        header = QWidget()
-        header.setObjectName("preEaHeader")
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(4, 4, 4, 4)
-        header_layout.setSpacing(10)
-
-        icon_label = QLabel()
-        icon_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "icons", "create_ea.svg")
-        )
-        if os.path.exists(icon_path):
-            pix = QIcon(icon_path).pixmap(28, 28)
-            icon_label.setPixmap(pix)
-        icon_label.setFixedSize(28, 28)
-        icon_label.setAlignment(Qt.AlignCenter)
-        header_layout.addWidget(icon_label, 0, Qt.AlignVCenter)
-
-        title_lbl = QLabel("Pre-EA Processing")
-        title_lbl.setObjectName("preEaTitle")
-        title_lbl.setFont(QFont("Segoe UI", 12, QFont.Bold))
-        header_layout.addWidget(title_lbl, 0, Qt.AlignVCenter)
-        header_layout.addStretch()
-
-        # Description toggle button
+        # Unified Description Toggle Button in Top Header
         show_icon_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "..", "icons", "show_description.svg")
         )
         hide_icon_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "..", "icons", "hide_description.svg")
         )
-        self.pre_ea_toggle_desc_btn = QToolButton()
-        self.pre_ea_toggle_desc_btn.setIcon(
+        self.toggle_desc_btn = QToolButton()
+        self.toggle_desc_btn.setIcon(
             QIcon(hide_icon_path) if os.path.exists(hide_icon_path)
             else QgsApplication.getThemeIcon("/mActionHideAllLayers.svg")
         )
-        self.pre_ea_toggle_desc_btn.setIconSize(QSize(20, 20))
-        self.pre_ea_toggle_desc_btn.setFixedSize(28, 28)
-        self.pre_ea_toggle_desc_btn.setToolTip("Show / Hide Description Panel")
-        self.pre_ea_toggle_desc_btn.setCursor(Qt.PointingHandCursor)
-        self.pre_ea_toggle_desc_btn.setStyleSheet("""
+        self.toggle_desc_btn.setIconSize(QSize(20, 20))
+        self.toggle_desc_btn.setFixedSize(28, 28)
+        self.toggle_desc_btn.setToolTip("Show / Hide Description Panel")
+        self.toggle_desc_btn.setCursor(Qt.PointingHandCursor)
+        self.toggle_desc_btn.setStyleSheet("""
             QToolButton {
                 border: none;
                 background-color: transparent;
@@ -274,9 +249,83 @@ class EALauncherDialog(QDialog):
                 background-color: rgba(140, 149, 159, 0.2);
             }
         """)
-        self.pre_ea_toggle_desc_btn.clicked.connect(self._pre_ea_toggle_description)
-        header_layout.addWidget(self.pre_ea_toggle_desc_btn, 0, Qt.AlignVCenter)
-        tab_layout.addWidget(header)
+        self.toggle_desc_btn.clicked.connect(self._toggle_current_tab_description)
+        header_container.addWidget(self.toggle_desc_btn, 0, Qt.AlignVCenter)
+
+        # Backwards-compatibility aliases
+        self.pre_ea_toggle_desc_btn = self.toggle_desc_btn
+        self.toggle_help_btn = self.toggle_desc_btn
+
+        root.addLayout(header_container)
+
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("color: #BDC3C7;")
+        root.addWidget(line)
+
+        # Top-level tab widget: Tab 1 = Pre-EA Processing, Tab 2 = Create Enumeration Areas
+        self.main_tabs = QTabWidget()
+        self.main_tabs.setObjectName("mainTabs")
+        self.main_tabs.tabBar().setElideMode(Qt.ElideNone)
+        self.main_tabs.setStyleSheet("""
+            QTabWidget#mainTabs > QTabBar::tab {
+                font-weight: bold;
+                font-size: 12px;
+                min-width: 180px;
+                padding: 10px 24px;
+                margin-right: 2px;
+                background-color: #EAEDED;
+                color: #2C3E50;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }
+            QTabWidget#mainTabs > QTabBar::tab:selected {
+                background-color: #FFFFFF;
+                color: #2980B9;
+                border-bottom: 3px solid #3498DB;
+            }
+            QTabWidget#mainTabs > QTabBar::tab:hover:!selected {
+                background-color: #D5D8DC;
+            }
+        """)
+
+        self._build_pre_ea_tab()
+        self._build_create_ea_tab()
+
+        self.main_tabs.currentChanged.connect(self._on_main_tab_changed)
+
+        root.addWidget(self.main_tabs, stretch=1)
+
+    def _toggle_current_tab_description(self):
+        """Toggle the description panel for whichever main tab is currently active."""
+        if self.main_tabs.currentIndex() == 0:
+            self._pre_ea_toggle_description()
+        else:
+            self.toggle_help()
+
+    def _on_main_tab_changed(self, index):
+        """Update toggle button icon state when switching tabs."""
+        show_icon = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "icons", "show_description.svg"))
+        hide_icon = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "icons", "hide_description.svg"))
+        
+        is_vis = self.pre_ea_desc_panel.isVisible() if index == 0 else self.help_panel.isVisible()
+        if is_vis:
+            self.toggle_desc_btn.setIcon(QIcon(hide_icon))
+            self.toggle_desc_btn.setToolTip("Hide Description Panel")
+        else:
+            self.toggle_desc_btn.setIcon(QIcon(show_icon))
+            self.toggle_desc_btn.setToolTip("Show Description Panel")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Tab 1 — Pre-EA Processing
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _build_pre_ea_tab(self):
+        """Build the Pre-EA Processing tab (Tab 1) and add it to main_tabs."""
+        tab_widget = QWidget()
+        tab_layout = QVBoxLayout(tab_widget)
+        tab_layout.setContentsMargins(6, 6, 6, 6)
+        tab_layout.setSpacing(6)
 
         # ── Main Splitter: left (inputs+options) / right (results+log) ────
         splitter = QSplitter(Qt.Horizontal)
@@ -515,7 +564,7 @@ class EALauncherDialog(QDialog):
         splitter.addWidget(self.pre_ea_desc_panel)
         splitter.setSizes([310, 640, 260])
 
-        tab_layout.addWidget(splitter)
+        tab_layout.addWidget(splitter, 1)
 
         # ── Bottom Bar ───────────────────────────────────────────────────
         bottom = QWidget()
@@ -850,70 +899,14 @@ class EALauncherDialog(QDialog):
         """Build the Create Enumeration Areas tab (Tab 2) and add it to main_tabs."""
         tab_widget = QWidget()
         tab_root_layout = QVBoxLayout(tab_widget)
-        tab_root_layout.setContentsMargins(10, 10, 10, 10)
-        tab_root_layout.setSpacing(10)
+        tab_root_layout.setContentsMargins(6, 6, 6, 6)
+        tab_root_layout.setSpacing(6)
         self._build_create_ea_content(tab_root_layout)
-        self.main_tabs.addTab(tab_widget, "Create Enumeration Areas")
+        self.main_tabs.addTab(tab_widget, "EA Delineation and Merging")
 
     def _build_create_ea_content(self, root):
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(10)
-
-        # ── Header Panel ──────────────────────────────────────────────────
-        header = QWidget()
-        header.setObjectName("header")
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(4, 4, 4, 4)
-        header_layout.setSpacing(10)
-
-        # Icon (Left Aligned)
-        icon_label = QLabel()
-        icon_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "icons", "create_ea.svg")
-        )
-        if os.path.exists(icon_path):
-            pix = QIcon(icon_path).pixmap(36, 36)
-            icon_label.setPixmap(pix)
-        else:
-            icon_label.setText("🗺")
-            icon_label.setFont(QFont("Segoe UI Emoji", 20))
-        icon_label.setFixedSize(36, 36)
-        icon_label.setAlignment(Qt.AlignCenter)
-        header_layout.addWidget(icon_label, 0, Qt.AlignVCenter)
-
-        # Title
-        title = QLabel("Create Enumeration Areas")
-        title.setObjectName("createEaTitle")
-        title.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        header_layout.addWidget(title, 0, Qt.AlignVCenter)
-
-        header_layout.addStretch()
-
-        # Description Toggle Icon Button (only icon, aligned in top header)
-        show_icon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "icons", "show_description.svg"))
-        hide_icon_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "icons", "hide_description.svg"))
-
-        self.toggle_help_btn = QToolButton()
-        self.toggle_help_btn.setIcon(QIcon(hide_icon_path))
-        self.toggle_help_btn.setIconSize(QSize(20, 20))
-        self.toggle_help_btn.setFixedSize(28, 28)
-        self.toggle_help_btn.setToolTip("Show / Hide Description Panel")
-        self.toggle_help_btn.setCursor(Qt.PointingHandCursor)
-        self.toggle_help_btn.setStyleSheet("""
-            QToolButton {
-                border: none;
-                background-color: transparent;
-                padding: 2px;
-                border-radius: 4px;
-            }
-            QToolButton:hover {
-                background-color: rgba(140, 149, 159, 0.2);
-            }
-        """)
-        self.toggle_help_btn.clicked.connect(self.toggle_help)
-        header_layout.addWidget(self.toggle_help_btn, 0, Qt.AlignVCenter)
-
-        root.addWidget(header)
+        root.setSpacing(6)
 
         # ── Main Pane Splitter ────────────────────────────────────────────
         main_splitter = QSplitter(Qt.Horizontal)
@@ -922,8 +915,8 @@ class EALauncherDialog(QDialog):
         # Left Panel (Parameters Scroll Area)
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
-        left_layout.setContentsMargins(5, 5, 5, 5)
-        left_layout.setSpacing(8)
+        left_layout.setContentsMargins(2, 2, 2, 2)
+        left_layout.setSpacing(6)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -1137,8 +1130,8 @@ class EALauncherDialog(QDialog):
         # Right Panel (Tabs for Live Preview and Execution Logs)
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
-        right_layout.setContentsMargins(5, 5, 5, 5)
-        right_layout.setSpacing(8)
+        right_layout.setContentsMargins(2, 2, 2, 2)
+        right_layout.setSpacing(6)
 
         self.tab_widget = QTabWidget()
         self.tab_widget.setObjectName("rightTabs")
@@ -1232,7 +1225,7 @@ class EALauncherDialog(QDialog):
         # ── Help / Description Panel ──────────────────────────────────────
         self.help_panel = QWidget()
         help_layout = QVBoxLayout(self.help_panel)
-        help_layout.setContentsMargins(5, 5, 5, 5)
+        help_layout.setContentsMargins(2, 2, 2, 2)
         help_layout.setSpacing(0)
 
         self.help_text = QTextBrowser()
@@ -1246,7 +1239,7 @@ class EALauncherDialog(QDialog):
         # Set proportional initial widths for the panels
         main_splitter.setSizes([390, 500, 260])
 
-        root.addWidget(main_splitter)
+        root.addWidget(main_splitter, 1)
 
         # ── Bottom Bar (Progress, Run, Cancel & Status Banner) ───────────
         bottom_bar = QWidget()
@@ -2015,7 +2008,7 @@ class EALauncherDialog(QDialog):
         self.tab_widget.setCurrentIndex(1)
         self.status_banner.setText("⏳ Processing algorithm... Please wait.")
 
-        self.log_console.append("<span style='color:#1a7f37; font-weight:bold;'>[START] Starting Create Enumeration Areas...</span>")
+        self.log_console.append("<span style='color:#1a7f37; font-weight:bold;'>[START] Starting EA Delineation and Merging...</span>")
         QCoreApplication.processEvents()
 
         # Instantiate feedback
