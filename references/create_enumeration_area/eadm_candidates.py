@@ -66,6 +66,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
     GAP_INPUT = "GAP_INPUT"
     OVERLAP_INPUT = "OVERLAP_INPUT"
     SNAP_TOLERANCE = "SNAP_TOLERANCE"
+    ENABLE_THRESHOLDS = "ENABLE_THRESHOLDS"
     SPLIT_STRATEGY = "SPLIT_STRATEGY"
     SPLIT_TYPE = "SPLIT_TYPE"
     # Buffer tolerance (meters) for snapping splits to linear features
@@ -308,6 +309,15 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
         )
 
         # Hidden fields for Barangay ID, EA ID, and Household Count are hardcoded in processAlgorithm
+
+        # Enable Household Thresholds option
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.ENABLE_THRESHOLDS,
+                "Enable Household Count Thresholds",
+                defaultValue=True,
+            )
+        )
 
         # Minimum household threshold
         self.addParameter(
@@ -672,6 +682,30 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
         return run_phase_8(
             self, parameters, context, feedback, multi_feedback, p1, p2, p3, p4, p7
         )
+
+    def postProcessAlgorithm(self, context, feedback):
+        """Automatically apply QML styles and automated labeling to generated output layers."""
+        try:
+            from .helpers.style import apply_qml_to_layer
+
+            styles_map = {
+                self.DELINEATED_OUTPUT: "ea_output.qml",
+                self.MERGED_OUTPUT: "ea_output.qml",
+                self.DELINEATION_CANDIDATE_OUTPUT: "delineation_candidates.qml",
+                self.MERGE_CANDIDATE_OUTPUT: "merge_candidates.qml",
+            }
+
+            for param_name, qml_filename in styles_map.items():
+                layer_id = self.parameterAsOutputLayer(context, param_name)
+                if layer_id:
+                    layer = context.getMapLayer(layer_id)
+                    if layer is not None:
+                        apply_qml_to_layer(layer, qml_filename)
+        except Exception as e:
+            if feedback:
+                feedback.pushInfo(f"Note: Could not auto-apply QML style: {str(e)}")
+
+        return super().postProcessAlgorithm(context, feedback)
 
     def createInstance(self):
         """Create a new instance of this algorithm."""

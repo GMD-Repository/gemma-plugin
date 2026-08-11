@@ -50,17 +50,18 @@ The dedicated **EA Launcher** dialog provides an interactive workflow prior to e
 | **Target CRS** | CRS | Output Coordinate Reference System (default: EPSG:4326). |
 | **Preview Candidates Only** | Boolean | When enabled, generates candidate preview layers and exits without altering EA geometries. |
 
-### Outputs
+### Outputs & QML Symbology Styles
 
-| Output | Type | Description |
-|--------|------|-------------|
-| **Output EA Layer** | Vector (Polygon) | Consolidated output layer containing all final updated EA polygons (`<geocode>_ea2026`). |
-| **Delineated EAs Layer** | Vector (Polygon) | Optional output containing all sub-polygons generated from delineation (`<geocode>_delineated_ea2026`). |
-| **Merged EAs Layer** | Vector (Polygon) | Optional output containing only EAs generated from merging underpopulated EAs (`<geocode>_merged_ea2026`). |
-| **Special EAs Layer** | Vector (Polygon) | Optional output containing Special EAs generated from Gap and Overlap layers (`<geocode>_special_ea`). |
-| **Candidate for Delineation Layer** | Vector (Polygon) | Layer containing EAs identified as candidates for delineation (>300 HH). |
-| **Candidate for Merging Layer** | Vector (Polygon) | Layer containing under-threshold initiator EAs (<=100 HH) together with their adjacent reference neighbor EAs evaluated for intra-barangay merging (`<geocode>_merge_candidates`). |
-| **Extracted Building Points Layer** | Vector (Point) | Point layer containing building points tagged with assigned EA identifiers. |
+| Output | Type | Style File (.qml) | Description |
+|--------|------|-------------------|-------------|
+| **Output EA Layer** | Vector (Polygon) | `ea_output.qml` | Consolidated output layer containing all final updated EA polygons (`<geocode>_ea2026`). Styled with vibrant blue borders and automated `new_ean` & `hhcount` labels. |
+| **Delineated EAs Layer** | Vector (Polygon) | `ea_output.qml` | Optional output containing all sub-polygons generated from delineation (`<geocode>_delineated_ea2026`). |
+| **Merged EAs Layer** | Vector (Polygon) | `ea_output.qml` | Optional output containing only EAs generated from merging underpopulated EAs (`<geocode>_merged_ea2026`). |
+| **Boundary Update Lines Layer** | Vector (Line) | `eadel_update_lines.qml` | Line layer (`<geocode>_eadel_update`) representing new boundary cuts generated from road/river splits. Styled with prominent dashed orange-red lines and split indicator labels. |
+| **Special EAs Layer** | Vector (Polygon) | `ea_output.qml` | Optional output containing Special EAs generated from Gap and Overlap layers (`<geocode>_special_ea`). |
+| **Candidate for Delineation Layer** | Vector (Polygon) | `delineation_candidates.qml` | Layer containing EAs identified as candidates for delineation (>300 HH). Styled with amber highlight fill and border. |
+| **Candidate for Merging Layer** | Vector (Polygon) | `merge_candidates.qml` | Layer containing under-threshold initiator EAs (<=100 HH) together with their adjacent reference neighbor EAs evaluated for intra-barangay merging (`<geocode>_merge_candidates`). Styled with purple highlight fill and border. |
+| **Extracted Building Points Layer** | Vector (Point) | `building.qml` | Point layer containing building points tagged with assigned EA identifiers. |
 
 ::: note Understanding Zero Feature Counts in Output Layers
 Depending on your input dataset's household load distribution, specific output layers may legitimately contain **0 features**:

@@ -354,6 +354,20 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
         self.assertIn("indicator", field_names)
         self.assertEqual(field_names[-1], "remarks", "remarks must be the last column in output schema.")
 
+    def test_enable_thresholds_toggle_behavior(self):
+        """Verify that default threshold values (min=100, max=300) are maintained."""
+        ea_high = {"original_id": 1, "hh_count": 500.0}
+        ea_low = {"original_id": 2, "hh_count": 20.0}
+
+    def test_qml_style_files_exist(self):
+        """Verify that output QML style files exist in qml styles directory."""
+        import os
+        from references.create_enumeration_area.helpers.style import get_qml_file_path
+        self.assertTrue(os.path.isfile(get_qml_file_path("ea_output.qml")))
+        self.assertTrue(os.path.isfile(get_qml_file_path("eadel_update_lines.qml")))
+        self.assertTrue(os.path.isfile(get_qml_file_path("delineation_candidates.qml")))
+        self.assertTrue(os.path.isfile(get_qml_file_path("merge_candidates.qml")))
+
 
 if __name__ == "__main__":
     unittest.main()

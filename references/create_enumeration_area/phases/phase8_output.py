@@ -6,6 +6,7 @@ and renders HTML execution summary tables.
 """
 
 import math
+import os
 from typing import Dict, Any, List
 from PyQt5.QtCore import QVariant
 from qgis.core import (
@@ -25,6 +26,7 @@ from qgis.core import (
 
 from ..helpers.constants import _PHASE_LABELS, yield_to_ui
 from ..helpers.geometry import get_polygons_from_geom
+from ..helpers.style import apply_qml_to_layer
 
 
 def refine_split_line(geom: QgsGeometry, gap_tolerance: float, min_branch_len: float) -> QgsGeometry:
@@ -935,6 +937,8 @@ def run_phase_8(
 
             pr.addFeatures(features_to_add)
             line_layer.updateExtents()
+
+            apply_qml_to_layer(line_layer, "eadel_update_lines.qml")
 
             project = QgsProject.instance()
             if project:
