@@ -1406,11 +1406,23 @@ class EALauncherDialog(QDialog):
                     d_ref = results.get('DELINEATED_OUTPUT')
                     m_ref = results.get('MERGED_OUTPUT')
                     mc_ref = results.get('MERGE_CANDIDATE_OUTPUT')
+                    d_l = None
                     if isinstance(d_ref, str):
                         d_l = QgsProject.instance().mapLayer(d_ref)
                         delin_cnt = d_l.featureCount() if d_l else 0
                     elif isinstance(d_ref, QgsMapLayer):
-                        delin_cnt = d_ref.featureCount()
+                        d_l = d_ref
+                        delin_cnt = d_l.featureCount()
+
+                    forced_cnt = 0
+                    if d_l:
+                        sb_idx = d_l.fields().indexOf("split_by")
+                        rem_idx = d_l.fields().indexOf("remarks")
+                        for f in d_l.getFeatures():
+                            sb_val = str(f.attribute(sb_idx)).lower() if sb_idx != -1 else ""
+                            rem_val = str(f.attribute(rem_idx)).lower() if rem_idx != -1 else ""
+                            if "forced" in sb_val or "forced" in rem_val:
+                                forced_cnt += 1
 
                     if isinstance(m_ref, str):
                         m_l = QgsProject.instance().mapLayer(m_ref)
@@ -1433,7 +1445,8 @@ class EALauncherDialog(QDialog):
                     else:
                         banner_text = "Notice: 0 Delineated | 0 Merged EAs — All starting EAs are within optimal threshold range (100–300 HH)."
                 else:
-                    banner_text = f"Success: Created {delin_cnt} Delineated EA(s) and {merged_cnt} Merged EA(s)."
+                    split_detail = f" ({forced_cnt} via forced straight cut)" if forced_cnt > 0 else ""
+                    banner_text = f"Success: Created {delin_cnt} Delineated EA(s){split_detail} and {merged_cnt} Merged EA(s)."
 
                 self.status_banner.setText(banner_text)
 

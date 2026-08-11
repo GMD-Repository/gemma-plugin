@@ -528,9 +528,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         is_delin = False
         is_merge = False
 
-        if intersects_gap_or_overlap:
-            is_delin = True
-        elif _dc_hh <= min_household:
+        if _dc_hh <= min_household:
             is_merge = True
         elif _dc_hh >= max_household:
             is_delin = True
