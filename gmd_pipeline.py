@@ -42,6 +42,7 @@ class GMDPipeline(object):
         self.provider = None
         self.toolbar = None
         self.geometry_toolkit_dlg = None
+        self.geometry_legacy_dlg = None
         self.check_update_dlg = None
         self.push_dlg = None
         self.check_and_update_action = None
@@ -155,9 +156,9 @@ class GMDPipeline(object):
         self.others_menu = QMenu(u'Others')
         self.gema_add_submenu(self.others_menu, others_icon)
 
-        self.geometry_toolkit_action = QAction(geom_toolkit_icon, "Geometry Repair Toolkit", self.iface.mainWindow())
-        self.geometry_toolkit_action.triggered.connect(self.show_geometry_toolkit)
-        self.others_menu.addAction(self.geometry_toolkit_action)
+        self.geometry_legacy_action = QAction(geom_toolkit_icon, "Geometry Check & Repair (Legacy)", self.iface.mainWindow())
+        self.geometry_legacy_action.triggered.connect(self.show_geometry_legacy)
+        self.others_menu.addAction(self.geometry_legacy_action)
 
         # Gemma Toolbar (Ordered Chronologically: Check and Update -> Create EAs -> Package for QField)
         self.toolbar = self.iface.addToolBar("Gemma Toolbar")
@@ -206,16 +207,16 @@ class GMDPipeline(object):
                 del self.provider
                 self.provider = None
 
-    def show_geometry_toolkit(self):
-        """Open the Geometry Repair Toolkit dialog."""
-        from .gmd_scripts.geom_repair_toolkit import GeometryToolkit
-        
-        if self.geometry_toolkit_dlg is None:
-            self.geometry_toolkit_dlg = GeometryToolkit()
-        
-        self.geometry_toolkit_dlg.show()
-        self.geometry_toolkit_dlg.raise_()
-        self.geometry_toolkit_dlg.activateWindow()
+    def show_geometry_legacy(self):
+        """Open the Geometry Check & Repair (Legacy) dialog."""
+        from .gmd_scripts.geom_check_repair_legacy import GeometryCheckRepairLegacyDialog
+
+        if self.geometry_legacy_dlg is None:
+            self.geometry_legacy_dlg = GeometryCheckRepairLegacyDialog(self.iface)
+
+        self.geometry_legacy_dlg.show()
+        self.geometry_legacy_dlg.raise_()
+        self.geometry_legacy_dlg.activateWindow()
 
     def show_package_dialog(self):
         """
