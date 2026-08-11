@@ -127,7 +127,12 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         out_fields.append(QgsField("special_type", QVariant.String))
     if "source_id" not in [f.name() for f in out_fields]:
         out_fields.append(QgsField("source_id", QVariant.String))
-    if "remarks" not in [f.name() for f in out_fields]:
+    rem_idx = out_fields.indexOf("remarks")
+    if rem_idx != -1:
+        if out_fields.at(rem_idx).type() != QVariant.String:
+            out_fields.remove(rem_idx)
+            out_fields.append(QgsField("remarks", QVariant.String))
+    else:
         out_fields.append(QgsField("remarks", QVariant.String))
 
     out_wkb_type = QgsWkbTypes.multiType(previous_ea_source.wkbType())
