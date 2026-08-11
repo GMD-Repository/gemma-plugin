@@ -1115,7 +1115,12 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         centroid_pts = [QgsPointXY(c[0], c[1]) for c in centroids]
 
         # ── Step 2: Physical Road/River Mesh Slicing via Polygonization ──
-        all_input_lines = road_lines + river_lines
+        # Prioritize main road bisector by sorting input lines by length inside parent EA
+        all_input_lines = sorted(
+            road_lines + river_lines,
+            key=lambda lg: lg.intersection(parent_geom).length() if lg and not lg.isEmpty() else 0.0,
+            reverse=True
+        )
         if not all_input_lines:
             return [ea_item]
 
@@ -1286,9 +1291,21 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                 'parent_barangay': ea_item['parent_barangay']
             })
 
-        # ── Step 6: Merge Zero-Population Fragments into Adjacent Neighbor ──
-        zero_parts = [p for p in parts if p['hh_count'] == 0]
-        nonzero_parts = [p for p in parts if p['hh_count'] > 0]
+        def is_ribbon_polygon(p):
+            g = p['geom']
+            area = g.area()
+            peri = g.length()
+            if area <= 1e-7:
+                return True
+            thinness = (peri * peri) / area
+            # If thinness ratio > 60 and HH count <= 25, it's an impractical thin ribbon strip
+            if thinness > 60.0 and p['hh_count'] <= 25.0:
+                return True
+            return False
+
+        # ── Step 6: Merge Zero-Population Fragments & Thin Ribbon Corridors into Adjacent Neighbor ──
+        zero_parts = [p for p in parts if p['hh_count'] == 0 or is_ribbon_polygon(p)]
+        nonzero_parts = [p for p in parts if p['hh_count'] > 0 and not is_ribbon_polygon(p)]
 
         if not nonzero_parts:
             return [ea_item]
