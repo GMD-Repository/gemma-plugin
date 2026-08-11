@@ -55,7 +55,7 @@ export default defineConfig({
             text: 'QField & Enumeration',
             items: [
               { text: 'Package for QField', link: '/tools/package-qfield' },
-              { text: 'Create Enumeration Areas', link: '/tools/create-enumeration-areas' },
+              { text: 'EA Delineation and Merging', link: '/tools/ea-delineation-and-merging' },
             ]
           }
         ]
@@ -107,7 +107,7 @@ export default defineConfig({
         collapsed: false,
         items: [
           { text: 'Package for QField', link: '/tools/package-qfield' },
-          { text: 'Create Enumeration Areas', link: '/tools/create-enumeration-areas' },
+          { text: 'EA Delineation and Merging', link: '/tools/ea-delineation-and-merging' },
         ]
       },
     ],

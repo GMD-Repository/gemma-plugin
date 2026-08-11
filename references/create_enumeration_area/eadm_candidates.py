@@ -78,7 +78,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
 
     def displayName(self) -> str:
         """Returns the translated algorithm name for display."""
-        return "Create Enumeration Areas"
+        return "EA Delineation and Merging"
 
     def createInstance(self):
         return EADMCandidatesAlgorithm()
@@ -105,7 +105,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
     def shortHelpString(self) -> str:
         """Returns a short description of the algorithm."""
         return (
-            "<h3>Create Enumeration Areas</h3>"
+            "<h3>EA Delineation and Merging</h3>"
             "<p>Delineates new Enumeration Areas (EAs) by spatially aggregating or splitting "
             "existing EA polygons to meet household-count thresholds, with optional alignment "
             "to road and river boundaries.</p>"
