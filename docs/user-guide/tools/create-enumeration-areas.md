@@ -76,7 +76,7 @@ Depending on your input dataset's household load distribution, specific output l
 
 2. **Building Point Spatial Join and Household Aggregation**:
    - Performs a spatial join between building points and previous EA boundaries.
-   - Calculates total building load (`bldg_count`) and sums households (`hhcount`) per EA.
+   - Calculates total building load (`bldgcount`) and sums households (`hhcount`) per EA.
 
 3. **Spatial Indexing of Linear and Special Layers**:
    - Builds spatial R-tree indexes for road networks, river centrelines, and gap/overlap polygons for fast spatial queries.
@@ -99,7 +99,7 @@ Depending on your input dataset's household load distribution, specific output l
 
 8. **Output Sink Writing and Attribute Inheritance**:
    - Writes final polygons to output sinks while preserving original attribute fields from the previous EA layer.
-   - Appends metadata tracking fields including `hhcount`, `bldg_count`, `split_by` (`road`, `river`, `kmeans`), `new_ea`, and `correspondence_ea_geocode`.
+   - Appends metadata tracking fields including `hhcount`, `bldgcount`, `split_by` (`road`, `river`, `kmeans`), `new_ean`, `correspondence_ea_geocode`, `indicator`, and `remarks` as the final column.
 
 ## Candidate Merging Example
 

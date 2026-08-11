@@ -328,7 +328,7 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
         hh_idx = -1
         for i in range(fields.count()):
             name_lower = fields.at(i).name().lower()
-            if name_lower in ["hhcount", "hh_count", "household", "household_count"]:
+            if name_lower in ["new_hhcount", "hhcount", "hh_count", "household", "household_count"]:
                 hh_idx = i
                 break
                 
@@ -336,7 +336,7 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
         ean_idx = -1
         for i in range(fields.count()):
             name_lower = fields.at(i).name().lower()
-            if name_lower in ["ean", "ea_number", "ea_code", "id", "geocode"]:
+            if name_lower in ["ean", "new_ean", "ea_number", "ea_code", "id", "geocode"]:
                 ean_idx = i
                 break
 

@@ -103,14 +103,11 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     if "split_by" not in [f.name() for f in out_fields]:
         out_fields.append(QgsField("split_by", QVariant.String))
 
-    if "new_ea" not in [f.name() for f in out_fields]:
-        out_fields.append(QgsField("new_ea", QVariant.String))
+    if "new_ean" not in [f.name() for f in out_fields]:
+        out_fields.append(QgsField("new_ean", QVariant.String))
 
-    if "bldg_count" not in [f.name() for f in out_fields]:
-        out_fields.append(QgsField("bldg_count", QVariant.Int))
-
-    if "hh_count" not in [f.name() for f in out_fields]:
-        out_fields.append(QgsField("hh_count", QVariant.Double))
+    if "bldgcount" not in [f.name() for f in out_fields]:
+        out_fields.append(QgsField("bldgcount", QVariant.Int))
 
     if "hhcount" not in [f.name() for f in out_fields]:
         out_fields.append(QgsField("hhcount", QVariant.Double))
@@ -127,13 +124,13 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         out_fields.append(QgsField("special_type", QVariant.String))
     if "source_id" not in [f.name() for f in out_fields]:
         out_fields.append(QgsField("source_id", QVariant.String))
+    if "indicator" not in [f.name() for f in out_fields]:
+        out_fields.append(QgsField("indicator", QVariant.String))
+
     rem_idx = out_fields.indexOf("remarks")
     if rem_idx != -1:
-        if out_fields.at(rem_idx).type() != QVariant.String:
-            out_fields.remove(rem_idx)
-            out_fields.append(QgsField("remarks", QVariant.String))
-    else:
-        out_fields.append(QgsField("remarks", QVariant.String))
+        out_fields.remove(rem_idx)
+    out_fields.append(QgsField("remarks", QVariant.String))
 
     out_wkb_type = QgsWkbTypes.multiType(previous_ea_source.wkbType())
 
@@ -205,13 +202,13 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     delin_candidate_dest_id = None
     if alg.DELINEATION_CANDIDATE_OUTPUT in parameters and parameters[alg.DELINEATION_CANDIDATE_OUTPUT] is not None:
         delin_cand_fields = QgsFields(out_fields)
-        for fname in [output_hh_field, "hh_count", "hhcount"]:
+        for fname in [output_hh_field, "new_hhcount", "hh_count", "hhcount"]:
             if fname.lower() != household_field.lower():
                 idx = delin_cand_fields.indexOf(fname)
                 if idx != -1:
                     delin_cand_fields.remove(idx)
-        if delin_cand_fields.indexOf("eadel_indi") == -1:
-            delin_cand_fields.append(QgsField("eadel_indi", QVariant.String))
+        if delin_cand_fields.indexOf("indicator") == -1 and delin_cand_fields.indexOf("eadel_indi") == -1:
+            delin_cand_fields.append(QgsField("indicator", QVariant.String))
         (delin_candidate_sink, delin_candidate_dest_id) = alg.parameterAsSink(
             parameters,
             alg.DELINEATION_CANDIDATE_OUTPUT,
@@ -226,12 +223,12 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     merge_cand_fields_filtered = None
     if alg.MERGE_CANDIDATE_OUTPUT in parameters and parameters[alg.MERGE_CANDIDATE_OUTPUT] is not None:
         merge_cand_fields_filtered = QgsFields(out_fields)
-        for fname in [output_hh_field, "hh_count", "hhcount"]:
+        for fname in [output_hh_field, "new_hhcount", "hh_count", "hhcount"]:
             if fname.lower() != household_field.lower():
                 idx = merge_cand_fields_filtered.indexOf(fname)
                 if idx != -1:
                     merge_cand_fields_filtered.remove(idx)
-        for fname in ["merge_partner", "split_by", "new_ea", "bldg_count", "bldgpoints_value", "bldgpts_val", "bldgpoint_value"]:
+        for fname in ["merge_partner", "split_by", "new_ea", "new_ean", "bldg_count", "new_bldgcount", "bldgpoints_value", "bldgpts_val", "bldgpoint_value"]:
             idx = merge_cand_fields_filtered.indexOf(fname)
             if idx != -1:
                 merge_cand_fields_filtered.remove(idx)
@@ -611,7 +608,9 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                 if sy_str.endswith(".0"): sy_str = sy_str[:-2]
                 out_feat.setAttribute(corr_ea_geo_idx, f"{map_uuid_str}:{geocode_str}:{sy_str}")
 
-            eadel_indi_idx = delin_cand_fields.indexOf("eadel_indi")
+            eadel_indi_idx = delin_cand_fields.indexOf("indicator")
+            if eadel_indi_idx == -1:
+                eadel_indi_idx = delin_cand_fields.indexOf("eadel_indi")
             if eadel_indi_idx != -1:
                 out_feat.setAttribute(eadel_indi_idx, "for_delineation" if is_cand else "ea_reference")
 

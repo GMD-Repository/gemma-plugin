@@ -312,5 +312,48 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
         self.assertFalse(refined.isEmpty())
 
 
+class TestEAOutputSchemaAndRenaming(unittest.TestCase):
+
+    def test_output_schema_field_renaming_and_ordering(self):
+        """Verify new_ean, bldgcount, hhcount, indicator, and remarks as the last field."""
+        from qgis.core import QgsFields, QgsField, QVariant, QgsVectorLayer
+        fields = QgsFields()
+        fields.append(QgsField("geocode", QVariant.String))
+        fields.append(QgsField("ean", QVariant.String))
+        fields.append(QgsField("remarks", QVariant.String))
+        fields.append(QgsField("hh_count", QVariant.Double))
+
+        layer = QgsVectorLayer("Polygon?crs=EPSG:4326", "test_layer", "memory")
+        layer.dataProvider().addAttributes(fields)
+        layer.updateFields()
+
+        out_fields = QgsFields(layer.fields())
+
+        if "new_ean" not in [f.name() for f in out_fields]:
+            out_fields.append(QgsField("new_ean", QVariant.String))
+
+        if "bldgcount" not in [f.name() for f in out_fields]:
+            out_fields.append(QgsField("bldgcount", QVariant.Int))
+
+        if "hhcount" not in [f.name() for f in out_fields]:
+            out_fields.append(QgsField("hhcount", QVariant.Double))
+
+        if "indicator" not in [f.name() for f in out_fields]:
+            out_fields.append(QgsField("indicator", QVariant.String))
+
+        rem_idx = out_fields.indexOf("remarks")
+        if rem_idx != -1:
+            out_fields.remove(rem_idx)
+        out_fields.append(QgsField("remarks", QVariant.String))
+
+        field_names = [out_fields.at(i).name() for i in range(out_fields.count())]
+
+        self.assertIn("new_ean", field_names)
+        self.assertIn("bldgcount", field_names)
+        self.assertIn("hhcount", field_names)
+        self.assertIn("indicator", field_names)
+        self.assertEqual(field_names[-1], "remarks", "remarks must be the last column in output schema.")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -50,7 +50,7 @@ def run_phase_1(
     merge_indi_col_idx = -1
     for i in range(ea_fields.count()):
         name_lower = ea_fields.at(i).name().lower()
-        if name_lower == "eadel_indi":
+        if name_lower in ["eadel_indi", "indicator"]:
             eadel_indi_col_idx = i
         elif name_lower == "merge_indi":
             merge_indi_col_idx = i
@@ -58,14 +58,14 @@ def run_phase_1(
     ea_id_field = "ean"
     for i in range(ea_fields.count()):
         name_lower = ea_fields.at(i).name().lower()
-        if name_lower in ["ean", "ea_number", "ea_code", "id"]:
+        if name_lower in ["ean", "new_ean", "ea_number", "ea_code", "id"]:
             ea_id_field = ea_fields.at(i).name()
             break
 
-    household_field = "hhcount"
+    household_field = "new_hhcount"
     for i in range(ea_fields.count()):
         name_lower = ea_fields.at(i).name().lower()
-        if name_lower in ["hhcount", "hh_count", "household", "household_count"]:
+        if name_lower in ["new_hhcount", "hhcount", "hh_count", "household", "household_count"]:
             household_field = ea_fields.at(i).name()
             break
 

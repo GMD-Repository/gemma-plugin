@@ -573,7 +573,9 @@ def run_phase_8(
         if fid_idx != -1:
             out_feat.setAttribute(fid_idx, None)
 
-        new_ea_idx = out_fields.indexOf("new_ea")
+        new_ea_idx = out_fields.indexOf("new_ean")
+        if new_ea_idx == -1:
+            new_ea_idx = out_fields.indexOf("new_ea")
         if new_ea_idx != -1:
             out_feat.setAttribute(new_ea_idx, ea.get('new_ea_tracker'))
 
@@ -596,19 +598,15 @@ def run_phase_8(
                 new_gc = bar_code + new_code
             out_feat.setAttribute(geocode_idx, new_gc)
 
-        for bldg_fname in ("bldgcount", "bldg_count", "bldg_cnt", "bldgpts_cnt"):
+        for bldg_fname in ("new_bldgcount", "bldgcount", "bldg_count", "bldg_cnt", "bldgpts_cnt"):
             bldg_idx = out_fields.indexOf(bldg_fname)
             if bldg_idx != -1:
                 out_feat.setAttribute(bldg_idx, ea.get('bldg_count', 0))
 
-        hh_count_idx = out_fields.indexOf("hh_count")
-        if hh_count_idx != -1:
-            out_feat.setAttribute(hh_count_idx, final_pop)
-
-        for hh_fname in ("hhcount", "hh_cnt"):
+        for hh_fname in ("new_hhcount", "hh_count", "hhcount", "hh_cnt"):
             hh_idx = out_fields.indexOf(hh_fname)
             if hh_idx != -1:
-                out_feat.setAttribute(hh_idx, int(round(final_pop)))
+                out_feat.setAttribute(hh_idx, final_pop if hh_fname in ("new_hhcount", "hh_count") else int(round(final_pop)))
 
         bldgpts_val_idx = out_fields.indexOf("bldgpoints_value")
         if bldgpts_val_idx != -1:
@@ -683,12 +681,14 @@ def run_phase_8(
             concat_val = f"{map_uuid_str}:{geocode_str}:{sy_str}"
             out_feat.setAttribute(corr_ea_geo_idx, concat_val)
 
-        # Explicitly set eadel_indi indicator field
-        eadel_indi_out_idx = out_fields.indexOf("eadel_indi")
-        if eadel_indi_out_idx != -1:
+        # Explicitly set indicator field
+        indicator_out_idx = out_fields.indexOf("indicator")
+        if indicator_out_idx == -1:
+            indicator_out_idx = out_fields.indexOf("eadel_indi")
+        if indicator_out_idx != -1:
             _ea_id_tmp = ea.get('original_id')
             is_delin_feat = (_ea_id_tmp in delineation_candidate_ids) or ea.get('from_split', False)
-            out_feat.setAttribute(eadel_indi_out_idx, "for_delineation" if is_delin_feat else "ea_reference")
+            out_feat.setAttribute(indicator_out_idx, "for_delineation" if is_delin_feat else "ea_reference")
 
         # Check if EA feature is blank (empty geometry or missing geocode/ean identifiers)
         _gc_val = out_feat.attribute(out_fields.indexOf("geocode")) if out_fields.indexOf("geocode") != -1 else None
@@ -817,7 +817,9 @@ def run_phase_8(
     barangay_idx_col = src_fields.indexOf("barangay")
     if barangay_idx_col == -1:
         barangay_idx_col = src_fields.indexOf("bgy")
-    eadel_indi_idx = src_fields.indexOf("eadel_indi")
+    eadel_indi_idx = src_fields.indexOf("indicator")
+    if eadel_indi_idx == -1:
+        eadel_indi_idx = src_fields.indexOf("eadel_indi")
     remarks_idx = src_fields.indexOf("remarks")
 
     all_splitting_lines = []
