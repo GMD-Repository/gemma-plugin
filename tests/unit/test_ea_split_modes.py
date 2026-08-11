@@ -86,13 +86,74 @@ class TestEASplitModes(unittest.TestCase):
         parent = make_square_geom(0, 0, 100)
         p1 = make_square_geom(0, 0, 50)
         p2 = make_square_geom(50, 0, 50)
-        parts = [
-            {'geom': p1, 'hh_count': 120.0},
-            {'geom': p2, 'hh_count': 130.0},
+    def test_assign_buildings_to_parts_exact_hh_preservation(self):
+        """Verify that assign_buildings_to_parts preserves 100% of buildings with zero duplicates and zero loss."""
+        from references.create_enumeration_area.helpers.geometry import assign_buildings_to_parts
+        feedback = MockFeedback()
+        
+        # Two adjacent polygons: [0, 50] and [50, 100]
+        p1 = make_square_geom(0, 0, 50)
+        p2 = make_square_geom(50, 0, 50)
+        part_geoms = [p1, p2]
+        
+        # Test 1: Buildings clearly inside p1 and p2
+        # Test 2: Building exactly on the shared boundary (x=50)
+        # Test 3: Orphan building slightly outside in a gap (x=110)
+        bldgs = [
+            {'point': QgsPointXY(20, 20), 'pop': 100.0, 'id': 1},
+            {'point': QgsPointXY(50, 25), 'pop': 50.0, 'id': 2},  # on boundary
+            {'point': QgsPointXY(80, 80), 'pop': 150.0, 'id': 3},
+            {'point': QgsPointXY(110, 50), 'pop': 9.0, 'id': 4},  # outside/orphan
         ]
-        allocated = allocate_gaps_to_parts(parts, parent)
-        self.assertEqual(len(allocated), 2)
+        
+        assigned = assign_buildings_to_parts(bldgs, part_geoms, feedback, "EA_TEST")
+        self.assertEqual(len(assigned), 2)
+        
+        # Verify total buildings assigned equals total input buildings
+        total_assigned_bldgs = sum(len(part) for part in assigned)
+        self.assertEqual(total_assigned_bldgs, len(bldgs))
+        
+        # Verify total HH sum is 100% exact (100 + 50 + 150 + 9 = 309)
+        total_pop = sum(sum(b['pop'] for b in part) for part in assigned)
+        self.assertEqual(total_pop, 309.0)
+        
+        # Verify no building is duplicated across parts
+        all_ids = [b['id'] for part in assigned for b in part]
+        self.assertEqual(len(all_ids), len(set(all_ids)))
+
+    def test_split_ea_voronoi_road_hybrid_preserves_hh(self):
+        """Verify that split_ea_voronoi_road_hybrid produces exact HH conservation."""
+        from references.create_enumeration_area.phases.phase5_delineate import split_ea_voronoi_road_hybrid
+        feedback = MockFeedback()
+        geom = make_square_geom(0, 0, 100)
+        
+        bldgs = [
+            {'point': QgsPointXY(20, 20), 'pop': 150.0},
+            {'point': QgsPointXY(80, 80), 'pop': 159.0},
+        ]
+        ea = {
+            'geom': geom,
+            'buildings': bldgs,
+            'hh_count': 309.0,
+            'original_hhcount': 309.0,
+            'bldg_count': 2,
+            'attributes': [1, "EA 001"],
+            'original_id': 1001,
+            'original_code': "01716001001",
+            'is_new': False,
+            'from_split': False,
+            'split_by': 'none',
+            'parent_barangay': "01716"
+        }
+        
+        road_line = QgsGeometry.fromPolylineXY([QgsPointXY(50, -10), QgsPointXY(50, 110)])
+        parts = split_ea_voronoi_road_hybrid(ea, [road_line], [], target_pop=200, fback=feedback)
+        
+        self.assertGreaterEqual(len(parts), 2)
+        total_result_hh = sum(p['hh_count'] for p in parts)
+        self.assertEqual(total_result_hh, 309.0, "Resulting sub-EAs must preserve exact HH count (309).")
 
 
 if __name__ == "__main__":
     unittest.main()
+

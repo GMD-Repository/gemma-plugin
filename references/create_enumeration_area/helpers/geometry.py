@@ -124,7 +124,7 @@ def allocate_gaps_to_parts(parts: List[Dict[str, Any]], parent_geom: QgsGeometry
         # Fallback: assign to the nearest part by centroid distance
         if best_part is None:
             gap_centroid = gap_poly.centroid().asPoint()
-            best_part = min(parts, key=lambda p: gap_centroid.distance(p['geom'].centroid().asPoint()))
+            best_part = min(parts, key=lambda p: math.hypot(gap_centroid.x() - p['geom'].centroid().asPoint().x(), gap_centroid.y() - p['geom'].centroid().asPoint().y()))
             
         # Combine gap polygon with the selected part
         combined = best_part['geom'].combine(gap_poly).buffer(0.0, 3)
@@ -247,3 +247,100 @@ def weighted_kmeans(
                 centroids.append(random.choice(points))
                 
     return labels, centroids
+
+
+def assign_buildings_to_parts(
+    bldgs: List[Dict[str, Any]],
+    part_geoms: List[QgsGeometry],
+    fback: Any = None,
+    parent_code: str = ""
+) -> List[List[Dict[str, Any]]]:
+    """
+    Assign building points exclusively to sub-polygon geometries.
+    
+    Guarantees:
+    1. Every building is assigned to EXACTLY ONE sub-polygon (zero HH lost, zero HH duplicated).
+    2. Primary: Strict geometric containment (poly.contains).
+    3. Tie-breaker (boundary points): Assigned to the polygon whose centroid is closest.
+    4. Orphan recovery (points in geometric gaps/buffers): Assigned to the nearest polygon by centroid distance.
+    """
+    n_parts = len(part_geoms)
+    if n_parts == 0:
+        return []
+    if n_parts == 1:
+        return [list(bldgs)]
+
+    # Pre-calculate centroids and bounding boxes for fast spatial matching
+    centroids = []
+    bboxes = []
+    for g in part_geoms:
+        if g and not g.isEmpty():
+            c = g.centroid().asPoint()
+            centroids.append(c)
+            bboxes.append(g.boundingBox())
+        else:
+            centroids.append(QgsPointXY(0.0, 0.0))
+            bboxes.append(None)
+
+    assignments = [None] * len(bldgs)
+
+    for b_idx, b in enumerate(bldgs):
+        pt = b['point']
+        pt_xy = pt if isinstance(pt, QgsPointXY) else QgsPointXY(pt[0], pt[1])
+        pt_geom = QgsGeometry.fromPointXY(pt_xy)
+
+        # 1. Check strict containment
+        contained_parts = []
+        for p_idx, poly in enumerate(part_geoms):
+            if poly and not poly.isEmpty():
+                if bboxes[p_idx] and not bboxes[p_idx].contains(pt_xy):
+                    continue
+                if poly.contains(pt_geom):
+                    contained_parts.append(p_idx)
+
+        if len(contained_parts) == 1:
+            assignments[b_idx] = contained_parts[0]
+        elif len(contained_parts) > 1:
+            # Boundary case (shared edge / point in multiple parts) -> nearest centroid
+            assignments[b_idx] = min(
+                contained_parts,
+                key=lambda pi: math.hypot(pt_xy.x() - centroids[pi].x(), pt_xy.y() - centroids[pi].y())
+            )
+        else:
+            # 2. Not strictly contained -> check intersection (touching boundary)
+            intersected_parts = []
+            for p_idx, poly in enumerate(part_geoms):
+                if poly and not poly.isEmpty():
+                    if bboxes[p_idx] and not bboxes[p_idx].contains(pt_xy):
+                        continue
+                    if poly.intersects(pt_geom):
+                        intersected_parts.append(p_idx)
+
+            if len(intersected_parts) == 1:
+                assignments[b_idx] = intersected_parts[0]
+            elif len(intersected_parts) > 1:
+                assignments[b_idx] = min(
+                    intersected_parts,
+                    key=lambda pi: math.hypot(pt_xy.x() - centroids[pi].x(), pt_xy.y() - centroids[pi].y())
+                )
+            else:
+                # 3. Orphan recovery (point outside due to buffer/sliver elimination/snapping)
+                # Assign to nearest part by centroid distance
+                assignments[b_idx] = min(
+                    range(n_parts),
+                    key=lambda pi: math.hypot(pt_xy.x() - centroids[pi].x(), pt_xy.y() - centroids[pi].y())
+                )
+
+    part_buildings: List[List[Dict[str, Any]]] = [[] for _ in range(n_parts)]
+    for b_idx, p_idx in enumerate(assignments):
+        part_buildings[p_idx].append(bldgs[b_idx])
+
+    total_assigned = sum(len(pb) for pb in part_buildings)
+    if total_assigned != len(bldgs) and fback:
+        fback.pushWarning(
+            f"[EA {parent_code}] Building assignment count mismatch: "
+            f"{len(bldgs)} input buildings vs {total_assigned} assigned."
+        )
+
+    return part_buildings
+

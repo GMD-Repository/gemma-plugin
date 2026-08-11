@@ -21,6 +21,7 @@ from ..helpers.geometry import (
     collect_linear_features,
     merge_line_geometries,
     weighted_kmeans,
+    assign_buildings_to_parts,
 )
 
 
@@ -78,14 +79,9 @@ def force_geometric_split(ea_item, target_pop, fback, min_household=100, max_hou
         if len(strip_polys) < 2:
             break
 
+        assigned_bldgs_list = assign_buildings_to_parts(bldgs, strip_polys, fback, ea_item.get('original_code', ''))
         parts = []
-        for poly in strip_polys:
-            buildings_in_poly = []
-            for b in bldgs:
-                pt = b['point']
-                pt_geom = QgsGeometry.fromPointXY(pt) if isinstance(pt, QgsPointXY) else QgsGeometry.fromPointXY(QgsPointXY(pt[0], pt[1]))
-                if poly.contains(pt_geom) or poly.intersects(pt_geom):
-                    buildings_in_poly.append(b)
+        for poly, buildings_in_poly in zip(strip_polys, assigned_bldgs_list):
             sub_pop = sum(b['pop'] for b in buildings_in_poly)
             parts.append({
                 'geom': poly,
@@ -178,6 +174,318 @@ def force_geometric_split(ea_item, target_pop, fback, min_household=100, max_hou
     return final_parts
 
 
+def enforce_min_household_parts(parts, fback, min_household=100, max_household=300, ea_geom=None):
+    while len(parts) > 1:
+        under = [i for i, p in enumerate(parts) if p['hh_count'] <= min_household]
+        if not under:
+            break
+        under.sort(key=lambda i: parts[i]['hh_count'])
+        up_idx = under[0]
+        up = parts[up_idx]
+
+        best_idx = -1
+        best_overlap = -1.0
+        for j, nb in enumerate(parts):
+            if j == up_idx:
+                continue
+            if up['geom'].intersects(nb['geom']) or up['geom'].touches(nb['geom']):
+                inter = up['geom'].intersection(nb['geom'])
+                overlap = inter.length() if not inter.isEmpty() else 0.0
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best_idx = j
+
+        if best_idx == -1:
+            up_centroid = up['geom'].centroid().asPoint()
+            best_dist = float('inf')
+            best_dist_over = float('inf')
+            best_idx_over = -1
+            for j, nb in enumerate(parts):
+                if j == up_idx:
+                    continue
+                dist = math.hypot(up_centroid.x() - nb['geom'].centroid().asPoint().x(), up_centroid.y() - nb['geom'].centroid().asPoint().y())
+                combined = up['hh_count'] + nb['hh_count']
+                if combined <= max_household:
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_idx = j
+                else:
+                    if dist < best_dist_over:
+                        best_dist_over = dist
+                        best_idx_over = j
+            if best_idx == -1:
+                best_idx = best_idx_over
+
+        if best_idx == -1:
+            break
+
+        nb = parts[best_idx]
+        raw_combined = nb['geom'].combine(up['geom']).buffer(0.0, 3)
+        if ea_geom is not None:
+            clipped = raw_combined.intersection(ea_geom).buffer(0.0, 3)
+            nb['geom'] = clipped if not clipped.isEmpty() else raw_combined
+        else:
+            nb['geom'] = raw_combined
+        nb['buildings'].extend(up['buildings'])
+        nb['hh_count'] += up['hh_count']
+        nb['bldg_count'] = len(nb['buildings'])
+        parts.pop(up_idx)
+    return parts
+
+
+def split_ea_voronoi_road_hybrid(ea_item, road_lines, river_lines, target_pop, fback, min_household=100, max_household=300):
+    """
+    Hybrid Voronoi Population Clustering + Road/River Boundary Alignment:
+    1. Voronoi / Weighted K-Means determines population distribution (HH truth).
+    2. Road & River lines partition the EA into physical atomic blocks.
+    3. Blocks are assigned to Voronoi clusters by majority building population.
+    4. Blocks per cluster are dissolved to form field-surveyable sub-EAs with road/river boundaries.
+    5. Exact building assignment via assign_buildings_to_parts guarantees zero HH lost, zero HH duplicated.
+    """
+    if fback.isCanceled():
+        return [ea_item]
+
+    bldgs = ea_item.get('buildings', [])
+    if not bldgs:
+        return [ea_item]
+
+    parent_geom = ea_item['geom']
+    hh_cnt = sum(b['pop'] for b in bldgs)
+    target = target_pop if target_pop > 0 else 200
+    k_val = max(2, int(round(hh_cnt / float(target))))
+
+    coord_to_pt = {}
+    for b in bldgs:
+        pt = b['point']
+        pt_xy = pt if isinstance(pt, QgsPointXY) else QgsPointXY(pt[0], pt[1])
+        coord_to_pt[(pt_xy.x(), pt_xy.y())] = pt_xy
+    unique_pts = list(coord_to_pt.values())
+
+    if len(unique_pts) < 2:
+        return [ea_item]
+
+    k_val = min(k_val, len(unique_pts))
+    if k_val < 2:
+        k_val = 2
+
+    # ── Step 1: Population Clustering (Weighted K-Means) ──
+    pts = [(pt.x(), pt.y()) for pt in unique_pts]
+    pt_to_weight = {}
+    for b in bldgs:
+        pt = b['point']
+        pt_xy = pt if isinstance(pt, QgsPointXY) else QgsPointXY(pt[0], pt[1])
+        pt_key = (pt_xy.x(), pt_xy.y())
+        pt_to_weight[pt_key] = pt_to_weight.get(pt_key, 0.0) + b['pop']
+    wts = [pt_to_weight.get((pt.x(), pt.y()), 1.0) for pt in unique_pts]
+
+    labels, centroids = weighted_kmeans(pts, wts, k_val)
+    centroid_pts = [QgsPointXY(c[0], c[1]) for c in centroids]
+
+    # ── Step 2: Physical Road/River Mesh Slicing ──
+    all_input_lines = road_lines + river_lines
+    if not all_input_lines:
+        return [ea_item]
+
+    all_polylines = []
+    for lg in all_input_lines:
+        all_polylines.extend(get_polylines_from_geom(lg))
+
+    if not all_polylines:
+        return [ea_item]
+
+    bbox = parent_geom.boundingBox()
+    ext_len = max(100.0, max(bbox.width(), bbox.height()) * 3.0)
+
+    current_polys = [parent_geom]
+    used_split = False
+
+    for polyline in all_polylines:
+        if len(polyline) < 2:
+            continue
+
+        p0, p1 = polyline[0], polyline[1]
+        dx0, dy0 = p0.x() - p1.x(), p0.y() - p1.y()
+        len0 = math.hypot(dx0, dy0)
+        p0_ext = QgsPointXY(p0.x() + (dx0 / len0) * ext_len, p0.y() + (dy0 / len0) * ext_len) if len0 > 1e-7 else p0
+
+        pn, pn_prev = polyline[-1], polyline[-2]
+        dxn, dyn = pn.x() - pn_prev.x(), pn.y() - pn_prev.y()
+        lenn = math.hypot(dxn, dyn)
+        pn_ext = QgsPointXY(pn.x() + (dxn / lenn) * ext_len, pn.y() + (dyn / lenn) * ext_len) if lenn > 1e-7 else pn
+
+        extended_line = [p0_ext] + list(polyline) + [pn_ext]
+
+        next_polys = []
+        for poly in current_polys:
+            target_geom = QgsGeometry(poly)
+            res, new_geoms, _ = target_geom.splitGeometry(extended_line, False)
+            if res == 0 and len(new_geoms) > 0:
+                split_pieces = [target_geom] + new_geoms
+                valid_pieces = []
+                for sp in split_pieces:
+                    if sp and not sp.isEmpty() and sp.area() > 1e-6:
+                        clipped = sp.intersection(parent_geom).buffer(0.0, 3)
+                        if not clipped.isEmpty() and clipped.area() > 1e-6:
+                            valid_pieces.append(clipped)
+                if len(valid_pieces) >= 2:
+                    next_polys.extend(valid_pieces)
+                    used_split = True
+                else:
+                    next_polys.append(poly)
+            else:
+                next_polys.append(poly)
+        current_polys = next_polys
+
+    if not used_split or len(current_polys) < 2:
+        return [ea_item]
+
+    atomic_blocks = []
+    for cp in current_polys:
+        atomic_blocks.extend(get_polygons_from_geom(cp))
+
+    atomic_blocks = [ab for ab in atomic_blocks if ab and not ab.isEmpty() and ab.area() > 1e-6]
+    if len(atomic_blocks) < 2:
+        return [ea_item]
+
+    # ── Step 3: Assign Atomic Blocks to Voronoi Clusters (Majority Building Vote) ──
+    block_bldgs_assigned = assign_buildings_to_parts(bldgs, atomic_blocks, fback, ea_item.get('original_code', ''))
+
+    block_cluster_mapping = []
+    for blk_idx, (blk_geom, blk_bldgs) in enumerate(zip(atomic_blocks, block_bldgs_assigned)):
+        if blk_bldgs:
+            cluster_votes = [0.0] * len(centroid_pts)
+            for b in blk_bldgs:
+                b_pt = b['point']
+                b_xy = b_pt if isinstance(b_pt, QgsPointXY) else QgsPointXY(b_pt[0], b_pt[1])
+                closest_c = min(
+                    range(len(centroid_pts)),
+                    key=lambda ci: math.hypot(b_xy.x() - centroid_pts[ci].x(), b_xy.y() - centroid_pts[ci].y())
+                )
+                cluster_votes[closest_c] += b['pop']
+            best_cluster = max(range(len(centroid_pts)), key=lambda ci: cluster_votes[ci])
+            block_cluster_mapping.append(best_cluster)
+        else:
+            blk_centroid = blk_geom.centroid().asPoint()
+            best_cluster = min(
+                range(len(centroid_pts)),
+                key=lambda ci: math.hypot(blk_centroid.x() - centroid_pts[ci].x(), blk_centroid.y() - centroid_pts[ci].y())
+            )
+            block_cluster_mapping.append(best_cluster)
+
+    # ── Step 4: Dissolve Blocks by Cluster ──
+    cluster_geoms = {}
+    for blk_geom, c_id in zip(atomic_blocks, block_cluster_mapping):
+        if c_id not in cluster_geoms:
+            cluster_geoms[c_id] = blk_geom
+        else:
+            cluster_geoms[c_id] = cluster_geoms[c_id].combine(blk_geom).buffer(0.0, 3)
+
+    if len(cluster_geoms) < 2:
+        return [ea_item]
+
+    dissolved_parts = []
+    for c_id, c_geom in cluster_geoms.items():
+        clean_g = c_geom.intersection(parent_geom).buffer(0.0, 3)
+        if clean_g and not clean_g.isEmpty() and clean_g.area() > 1e-6:
+            polys = get_polygons_from_geom(clean_g)
+            for p in polys:
+                if p and not p.isEmpty() and p.area() > 1e-6:
+                    dissolved_parts.append(p)
+
+    if len(dissolved_parts) < 2:
+        return [ea_item]
+
+    split_by = 'road'
+    if road_lines and river_lines:
+        split_by = 'road+river'
+    elif river_lines:
+        split_by = 'river'
+
+    # ── Step 5: Assign Buildings & Build Part Dictionaries ──
+    part_bldgs_list = assign_buildings_to_parts(bldgs, dissolved_parts, fback, ea_item.get('original_code', ''))
+
+    parts = []
+    for poly, p_bldgs in zip(dissolved_parts, part_bldgs_list):
+        sub_pop = sum(b['pop'] for b in p_bldgs)
+        parts.append({
+            'geom': poly,
+            'buildings': p_bldgs,
+            'hh_count': sub_pop,
+            'original_hhcount': ea_item.get('original_hhcount', 0),
+            'bldg_count': len(p_bldgs),
+            'bldgpoints_value': sub_pop / len(p_bldgs) if len(p_bldgs) > 0 else 0.0,
+            'attributes': list(ea_item['attributes']),
+            'original_id': ea_item['original_id'],
+            'original_code': ea_item['original_code'],
+            'is_new': True,
+            'from_split': True,
+            'split_by': split_by,
+            'parent_barangay': ea_item['parent_barangay']
+        })
+
+    # ── Step 6: Merge Zero-Population Fragments into Adjacent Neighbor ──
+    zero_parts = [p for p in parts if p['hh_count'] == 0]
+    nonzero_parts = [p for p in parts if p['hh_count'] > 0]
+
+    if not nonzero_parts:
+        return [ea_item]
+
+    for zp in zero_parts:
+        best_nb = None
+        best_overlap = -1.0
+        for np in nonzero_parts:
+            if zp['geom'].intersects(np['geom']) or zp['geom'].touches(np['geom']):
+                inter = zp['geom'].intersection(np['geom'])
+                overlap = inter.length() if not inter.isEmpty() else 0.0
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best_nb = np
+        if best_nb is None:
+            zp_centroid = zp['geom'].centroid().asPoint()
+            best_nb = min(nonzero_parts, key=lambda np: math.hypot(zp_centroid.x() - np['geom'].centroid().asPoint().x(), zp_centroid.y() - np['geom'].centroid().asPoint().y()))
+
+        raw_combined = best_nb['geom'].combine(zp['geom']).buffer(0.0, 3)
+        clipped = raw_combined.intersection(parent_geom).buffer(0.0, 3)
+        best_nb['geom'] = clipped if not clipped.isEmpty() else raw_combined
+        best_nb['buildings'].extend(zp['buildings'])
+        best_nb['bldg_count'] = len(best_nb['buildings'])
+
+    parts = nonzero_parts
+    if len(parts) < 2:
+        return [ea_item]
+
+    # ── Step 7: Enforce Minimum Household Limit ──
+    parts = enforce_min_household_parts(parts, fback, min_household=min_household, max_household=max_household, ea_geom=parent_geom)
+    if len(parts) < 2:
+        return [ea_item]
+
+    orig_code_str = str(ea_item['original_code']).strip() if ea_item['original_code'] is not None else "000"
+    digits = "".join([c for c in orig_code_str if c.isdigit()])
+    orig_first3 = digits[:3] if len(digits) >= 3 else digits.zfill(3)
+    if orig_first3 != "000" and len(parts) > 0:
+        parts.sort(key=lambda x: x['hh_count'], reverse=True)
+        parts[0]['is_new'] = False
+
+    final_parts = allocate_gaps_to_parts(parts, parent_geom)
+
+    # Final pass: Guarantee exact building assignment with assign_buildings_to_parts
+    final_bldgs_list = assign_buildings_to_parts(bldgs, [p['geom'] for p in final_parts], fback, ea_item.get('original_code', ''))
+    for p, p_bldgs in zip(final_parts, final_bldgs_list):
+        clipped = p['geom'].intersection(parent_geom).buffer(0.0, 3)
+        if not clipped.isEmpty():
+            p['geom'] = clipped
+        p['buildings'] = p_bldgs
+        p['hh_count'] = sum(b['pop'] for b in p_bldgs)
+        p['bldg_count'] = len(p_bldgs)
+        p['bldgpoints_value'] = p['hh_count'] / p['bldg_count'] if p['bldg_count'] > 0 else 0.0
+        p['split_by'] = split_by
+
+    return final_parts
+
+
+split_polygon_by_linear_features = split_ea_voronoi_road_hybrid
+
+
 def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, p4):
     """
 
@@ -195,6 +503,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
     densify_dist = p1["densify_dist"]
     area_threshold = p1["area_threshold"]
     num_cores = p1.get("num_cores", QThread.idealThreadCount())
+    split_strategy = p1.get("split_strategy", 0)
 
     delineation_candidate_ids = p2["delineation_candidate_ids"]
     merge_candidate_ids = p2["merge_candidate_ids"]
@@ -234,13 +543,8 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         return (orig_id in merge_candidate_ids) or (ea_item['hh_count'] <= min_household)
 
     def enforce_min_household(parts, fback, ea_geom=None):
-        is_parent_delin = False
-        if parts:
-            is_parent_delin = is_parent_delineation_candidate(parts[0])
         while len(parts) > 1:
-            if is_parent_delin and len(parts) == 2:
-                break
-            under = [i for i, p in enumerate(parts) if p['hh_count'] <= min_household]
+            under = [i for i, p in enumerate(parts) if p['hh_count'] < min_household]
             if not under:
                 break
             under.sort(key=lambda i: parts[i]['hh_count'])
@@ -499,46 +803,35 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                     snapped_cells.append(cell_geom)
             cells = snapped_cells
 
-        split_parts = []
-        sliver_filtered_bldgs = 0
+        all_candidate_polys = []
         for cell_geom in cells:
             intersected = ea_item['geom'].intersection(cell_geom)
             if not intersected.isEmpty():
-                polys = get_polygons_from_geom(intersected)
-                for poly in polys:
-                    buildings_in_poly = []
-                    for b in bldgs:
-                        pt_geom = QgsGeometry.fromPointXY(b['point'])
-                        if poly.contains(pt_geom) or poly.intersects(pt_geom):
-                            buildings_in_poly.append(b)
-                    sub_pop = sum(b['pop'] for b in buildings_in_poly)
-                    split_parts.append({
-                        'geom': poly,
-                        'buildings': buildings_in_poly,
-                        'hh_count': sub_pop,
-                        'original_hhcount': ea_item.get('original_hhcount', 0),
-                        'bldg_count': len(buildings_in_poly),
-                        'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
-                        'attributes': list(ea_item['attributes']),
-                        'original_id': ea_item['original_id'],
-                        'original_code': ea_item['original_code'],
-                        'is_new': True,
-                        'from_split': True,
-                        'split_by': split_by,
-                        'parent_barangay': ea_item['parent_barangay']
-                    })
-            elif not intersected.isEmpty():
-                for b in bldgs:
-                    pt_geom = QgsGeometry.fromPointXY(b['point'])
-                    if intersected.contains(pt_geom) or intersected.intersects(pt_geom):
-                        sliver_filtered_bldgs += 1
+                all_candidate_polys.extend(get_polygons_from_geom(intersected))
 
-        if sliver_filtered_bldgs > 0:
-            fback.pushWarning(
-                f"[EA {ea_item['original_code']}] DIAGNOSTIC: Sliver threshold ({area_threshold:.2e}) caused {sliver_filtered_bldgs} building(s) "
-                f"to be discarded in filtered-out cells. These buildings will be reassigned to surviving neighbours but may cause "
-                f"a surviving part to exceed max_household ({max_household}). Consider lowering the sliver threshold."
-            )
+        if not all_candidate_polys:
+            ea_item['split_by'] = split_by
+            return [ea_item]
+
+        assigned_bldgs_list = assign_buildings_to_parts(bldgs, all_candidate_polys, fback, ea_item.get('original_code', ''))
+        split_parts = []
+        for poly, buildings_in_poly in zip(all_candidate_polys, assigned_bldgs_list):
+            sub_pop = sum(b['pop'] for b in buildings_in_poly)
+            split_parts.append({
+                'geom': poly,
+                'buildings': buildings_in_poly,
+                'hh_count': sub_pop,
+                'original_hhcount': ea_item.get('original_hhcount', 0),
+                'bldg_count': len(buildings_in_poly),
+                'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
+                'attributes': list(ea_item['attributes']),
+                'original_id': ea_item['original_id'],
+                'original_code': ea_item['original_code'],
+                'is_new': True,
+                'from_split': True,
+                'split_by': split_by,
+                'parent_barangay': ea_item['parent_barangay']
+            })
 
         zero_parts = [p for p in split_parts if p['hh_count'] == 0]
         nonzero_parts = [p for p in split_parts if p['hh_count'] > 0]
@@ -770,15 +1063,55 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         )
         return final_parts
 
-    def split_polygon_by_linear_features(ea_item, road_lines, river_lines, target_pop, fback):
+    def split_ea_voronoi_road_hybrid(ea_item, road_lines, river_lines, target_pop, fback):
+        """
+        Hybrid Voronoi Population Clustering + Road/River Boundary Alignment:
+        1. Voronoi / Weighted K-Means determines population distribution (HH truth).
+        2. Road & River lines partition the EA into physical atomic blocks.
+        3. Blocks are assigned to Voronoi clusters by majority building population.
+        4. Blocks per cluster are dissolved to form field-surveyable sub-EAs with road/river boundaries.
+        5. Exact building assignment via assign_buildings_to_parts guarantees zero HH lost, zero HH duplicated.
+        """
         if fback.isCanceled():
             return [ea_item]
 
         bldgs = ea_item.get('buildings', [])
-        parent_geom = ea_item['geom']
-        bbox = parent_geom.boundingBox()
-        ext_len = max(100.0, max(bbox.width(), bbox.height()) * 3.0)
+        if not bldgs:
+            return [ea_item]
 
+        parent_geom = ea_item['geom']
+        hh_cnt = sum(b['pop'] for b in bldgs)
+        target = target_pop if target_pop > 0 else 200
+        k_val = max(2, int(round(hh_cnt / float(target))))
+
+        coord_to_pt = {}
+        for b in bldgs:
+            pt = b['point']
+            pt_xy = pt if isinstance(pt, QgsPointXY) else QgsPointXY(pt[0], pt[1])
+            coord_to_pt[(pt_xy.x(), pt_xy.y())] = pt_xy
+        unique_pts = list(coord_to_pt.values())
+
+        if len(unique_pts) < 2:
+            return [ea_item]
+
+        k_val = min(k_val, len(unique_pts))
+        if k_val < 2:
+            k_val = 2
+
+        # ── Step 1: Population Clustering (Weighted K-Means) ──
+        pts = [(pt.x(), pt.y()) for pt in unique_pts]
+        pt_to_weight = {}
+        for b in bldgs:
+            pt = b['point']
+            pt_xy = pt if isinstance(pt, QgsPointXY) else QgsPointXY(pt[0], pt[1])
+            pt_key = (pt_xy.x(), pt_xy.y())
+            pt_to_weight[pt_key] = pt_to_weight.get(pt_key, 0.0) + b['pop']
+        wts = [pt_to_weight.get((pt.x(), pt.y()), 1.0) for pt in unique_pts]
+
+        labels, centroids = weighted_kmeans(pts, wts, k_val)
+        centroid_pts = [QgsPointXY(c[0], c[1]) for c in centroids]
+
+        # ── Step 2: Physical Road/River Mesh Slicing ──
         all_input_lines = road_lines + river_lines
         if not all_input_lines:
             return [ea_item]
@@ -789,6 +1122,9 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
 
         if not all_polylines:
             return [ea_item]
+
+        bbox = parent_geom.boundingBox()
+        ext_len = max(100.0, max(bbox.width(), bbox.height()) * 3.0)
 
         current_polys = [parent_geom]
         used_split = False
@@ -833,11 +1169,60 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         if not used_split or len(current_polys) < 2:
             return [ea_item]
 
-        extracted_polys = []
+        atomic_blocks = []
         for cp in current_polys:
-            extracted_polys.extend(get_polygons_from_geom(cp))
+            atomic_blocks.extend(get_polygons_from_geom(cp))
 
-        if len(extracted_polys) < 2:
+        atomic_blocks = [ab for ab in atomic_blocks if ab and not ab.isEmpty() and ab.area() > 1e-6]
+        if len(atomic_blocks) < 2:
+            return [ea_item]
+
+        # ── Step 3: Assign Atomic Blocks to Voronoi Clusters (Majority Building Vote) ──
+        block_bldgs_assigned = assign_buildings_to_parts(bldgs, atomic_blocks, fback, ea_item.get('original_code', ''))
+
+        block_cluster_mapping = []
+        for blk_idx, (blk_geom, blk_bldgs) in enumerate(zip(atomic_blocks, block_bldgs_assigned)):
+            if blk_bldgs:
+                cluster_votes = [0.0] * len(centroid_pts)
+                for b in blk_bldgs:
+                    b_pt = b['point']
+                    b_xy = b_pt if isinstance(b_pt, QgsPointXY) else QgsPointXY(b_pt[0], b_pt[1])
+                    closest_c = min(
+                        range(len(centroid_pts)),
+                        key=lambda ci: math.hypot(b_xy.x() - centroid_pts[ci].x(), b_xy.y() - centroid_pts[ci].y())
+                    )
+                    cluster_votes[closest_c] += b['pop']
+                best_cluster = max(range(len(centroid_pts)), key=lambda ci: cluster_votes[ci])
+                block_cluster_mapping.append(best_cluster)
+            else:
+                blk_centroid = blk_geom.centroid().asPoint()
+                best_cluster = min(
+                    range(len(centroid_pts)),
+                    key=lambda ci: math.hypot(blk_centroid.x() - centroid_pts[ci].x(), blk_centroid.y() - centroid_pts[ci].y())
+                )
+                block_cluster_mapping.append(best_cluster)
+
+        # ── Step 4: Dissolve Blocks by Cluster ──
+        cluster_geoms = {}
+        for blk_geom, c_id in zip(atomic_blocks, block_cluster_mapping):
+            if c_id not in cluster_geoms:
+                cluster_geoms[c_id] = blk_geom
+            else:
+                cluster_geoms[c_id] = cluster_geoms[c_id].combine(blk_geom).buffer(0.0, 3)
+
+        if len(cluster_geoms) < 2:
+            return [ea_item]
+
+        dissolved_parts = []
+        for c_id, c_geom in cluster_geoms.items():
+            clean_g = c_geom.intersection(parent_geom).buffer(0.0, 3)
+            if clean_g and not clean_g.isEmpty() and clean_g.area() > 1e-6:
+                polys = get_polygons_from_geom(clean_g)
+                for p in polys:
+                    if p and not p.isEmpty() and p.area() > 1e-6:
+                        dissolved_parts.append(p)
+
+        if len(dissolved_parts) < 2:
             return [ea_item]
 
         split_by = 'road'
@@ -846,21 +1231,19 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         elif river_lines:
             split_by = 'river'
 
+        # ── Step 5: Assign Buildings & Build Part Dictionaries ──
+        part_bldgs_list = assign_buildings_to_parts(bldgs, dissolved_parts, fback, ea_item.get('original_code', ''))
+
         parts = []
-        for poly in extracted_polys:
-            buildings_in_poly = []
-            for b in bldgs:
-                pt_geom = QgsGeometry.fromPointXY(b['point'])
-                if poly.contains(pt_geom) or poly.intersects(pt_geom):
-                    buildings_in_poly.append(b)
-            sub_pop = sum(b['pop'] for b in buildings_in_poly)
+        for poly, p_bldgs in zip(dissolved_parts, part_bldgs_list):
+            sub_pop = sum(b['pop'] for b in p_bldgs)
             parts.append({
                 'geom': poly,
-                'buildings': buildings_in_poly,
+                'buildings': p_bldgs,
                 'hh_count': sub_pop,
                 'original_hhcount': ea_item.get('original_hhcount', 0),
-                'bldg_count': len(buildings_in_poly),
-                'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
+                'bldg_count': len(p_bldgs),
+                'bldgpoints_value': sub_pop / len(p_bldgs) if len(p_bldgs) > 0 else 0.0,
                 'attributes': list(ea_item['attributes']),
                 'original_id': ea_item['original_id'],
                 'original_code': ea_item['original_code'],
@@ -870,6 +1253,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                 'parent_barangay': ea_item['parent_barangay']
             })
 
+        # ── Step 6: Merge Zero-Population Fragments into Adjacent Neighbor ──
         zero_parts = [p for p in parts if p['hh_count'] == 0]
         nonzero_parts = [p for p in parts if p['hh_count'] > 0]
 
@@ -888,7 +1272,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                         best_nb = np
             if best_nb is None:
                 zp_centroid = zp['geom'].centroid().asPoint()
-                best_nb = min(nonzero_parts, key=lambda np: zp_centroid.distance(np['geom'].centroid().asPoint()))
+                best_nb = min(nonzero_parts, key=lambda np: math.hypot(zp_centroid.x() - np['geom'].centroid().asPoint().x(), zp_centroid.y() - np['geom'].centroid().asPoint().y()))
 
             raw_combined = best_nb['geom'].combine(zp['geom']).buffer(0.0, 3)
             clipped = raw_combined.intersection(parent_geom).buffer(0.0, 3)
@@ -900,14 +1284,16 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         if len(parts) < 2:
             return [ea_item]
 
+        # ── Step 7: Enforce Minimum Household Limit ──
         parts = enforce_min_household(parts, fback, ea_geom=parent_geom)
         if len(parts) < 2:
             return [ea_item]
 
+        # ── Step 8: Handle Oversized Sub-parts ──
         final_parts = []
         for p in parts:
             if p['hh_count'] > max_household:
-                sub_parts = split_ea(p, target_pop, fback)
+                sub_parts = split_ea_by_building_clusters(p, target_pop, fback)
                 if len(sub_parts) > 1:
                     final_parts.extend(sub_parts)
                 else:
@@ -923,13 +1309,32 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             final_parts[0]['is_new'] = False
 
         final_parts = allocate_gaps_to_parts(final_parts, parent_geom)
-        for p in final_parts:
+
+        # Final pass: Guarantee exact building assignment with assign_buildings_to_parts
+        final_bldgs_list = assign_buildings_to_parts(bldgs, [p['geom'] for p in final_parts], fback, ea_item.get('original_code', ''))
+        for p, p_bldgs in zip(final_parts, final_bldgs_list):
             clipped = p['geom'].intersection(parent_geom).buffer(0.0, 3)
             if not clipped.isEmpty():
                 p['geom'] = clipped
+            p['buildings'] = p_bldgs
+            p['hh_count'] = sum(b['pop'] for b in p_bldgs)
+            p['bldg_count'] = len(p_bldgs)
+            p['bldgpoints_value'] = p['hh_count'] / p['bldg_count'] if p['bldg_count'] > 0 else 0.0
             p['split_by'] = split_by
 
+        # Reject the split if any resulting part falls below the min_household threshold
+        if any(p['hh_count'] < min_household for p in final_parts):
+            under_parts = [p for p in final_parts if p['hh_count'] < min_household]
+            fback.pushWarning(
+                f"[EA {ea_item['original_code']}] Hybrid split rejected: "
+                f"{len(under_parts)} sub-polygon(s) fall below min threshold "
+                f"({min_household} HH)."
+            )
+            return [ea_item]
+
         return final_parts
+
+    split_polygon_by_linear_features = split_ea_voronoi_road_hybrid
 
     def split_ea_by_building_clusters(ea_item, target_pop, fback):
         if fback.isCanceled():
@@ -990,33 +1395,34 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             return [ea_item]
 
         parent_geom = ea_item['geom']
-        split_parts = []
+        candidate_polys = []
         for cell in cells:
             intersected = parent_geom.intersection(cell)
             if not intersected.isEmpty():
-                polys = get_polygons_from_geom(intersected)
-                for poly in polys:
-                    buildings_in_poly = []
-                    for b in bldgs:
-                        pt_geom = QgsGeometry.fromPointXY(b['point'])
-                        if poly.contains(pt_geom) or poly.intersects(pt_geom):
-                            buildings_in_poly.append(b)
-                    sub_pop = sum(b['pop'] for b in buildings_in_poly)
-                    split_parts.append({
-                        'geom': poly,
-                        'buildings': buildings_in_poly,
-                        'hh_count': sub_pop,
-                        'original_hhcount': ea_item.get('original_hhcount', 0),
-                        'bldg_count': len(buildings_in_poly),
-                        'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
-                        'attributes': list(ea_item['attributes']),
-                        'original_id': ea_item['original_id'],
-                        'original_code': ea_item['original_code'],
-                        'is_new': True,
-                        'from_split': True,
-                        'split_by': 'point_based',
-                        'parent_barangay': ea_item['parent_barangay']
-                    })
+                candidate_polys.extend(get_polygons_from_geom(intersected))
+
+        if not candidate_polys:
+            return [ea_item]
+
+        assigned_bldgs_list = assign_buildings_to_parts(bldgs, candidate_polys, fback, ea_item.get('original_code', ''))
+        split_parts = []
+        for poly, buildings_in_poly in zip(candidate_polys, assigned_bldgs_list):
+            sub_pop = sum(b['pop'] for b in buildings_in_poly)
+            split_parts.append({
+                'geom': poly,
+                'buildings': buildings_in_poly,
+                'hh_count': sub_pop,
+                'original_hhcount': ea_item.get('original_hhcount', 0),
+                'bldg_count': len(buildings_in_poly),
+                'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
+                'attributes': list(ea_item['attributes']),
+                'original_id': ea_item['original_id'],
+                'original_code': ea_item['original_code'],
+                'is_new': True,
+                'from_split': True,
+                'split_by': 'point_based',
+                'parent_barangay': ea_item['parent_barangay']
+            })
 
         zero_parts = [p for p in split_parts if p['hh_count'] == 0]
         nonzero_parts = [p for p in split_parts if p['hh_count'] > 0]
@@ -1064,10 +1470,25 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             p['split_by'] = 'point_based'
 
         final_parts = allocate_gaps_to_parts(final_parts, parent_geom)
+
+        # Reject the split if any resulting part falls below the min_household threshold
+        if any(p['hh_count'] < min_household for p in final_parts):
+            under_parts = [p for p in final_parts if p['hh_count'] < min_household]
+            fback.pushWarning(
+                f"[EA {ea_item['original_code']}] Building-cluster split rejected: "
+                f"{len(under_parts)} sub-polygon(s) fall below min threshold "
+                f"({min_household} HH)."
+            )
+            return [ea_item]
+
         return final_parts
 
     def split_ea(ea_item, target_pop, fback):
         if fback.isCanceled():
+            return [ea_item]
+        if split_strategy == 2:
+            fback.pushInfo(f"[EA {ea_item['original_code']}] Strategy 'Keep Whole' selected. Preserving EA whole.")
+            ea_item['remarks'] = "Kept whole (no-split mode)"
             return [ea_item]
         bldgs = ea_item.get('buildings', [])
         if not bldgs:
@@ -1079,23 +1500,23 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         road_lines = collect_linear_features(ea_item['geom'], road_index, road_geoms)
         river_lines = collect_linear_features(ea_item['geom'], river_index, river_geoms)
 
-        # ── Tier 1: Direct Physical Split along Road / River Lines ───────────────
+        # ── Tier 1: Voronoi Population Clustering + Road/River Physical Boundaries ──
         if road_lines or river_lines:
-            fback.pushInfo(f"[EA {ea_item['original_code']}] Attempting direct geometric split along road/river features...")
-            linear_parts = split_polygon_by_linear_features(ea_item, road_lines, river_lines, target_pop, fback)
-            if len(linear_parts) >= 2:
+            fback.pushInfo(f"[EA {ea_item['original_code']}] Partitioning with Voronoi clustering and road/river boundary alignment...")
+            hybrid_parts = split_ea_voronoi_road_hybrid(ea_item, road_lines, river_lines, target_pop, fback)
+            if len(hybrid_parts) >= 2:
                 fback.pushInfo(
-                    f"[EA {ea_item['original_code']}] Linear split succeeded: "
-                    f"{len(linear_parts)} sub-polygons created along {linear_parts[0].get('split_by', 'road/river')}."
+                    f"[EA {ea_item['original_code']}] Hybrid split succeeded: "
+                    f"{len(hybrid_parts)} surveyable sub-polygons created along {hybrid_parts[0].get('split_by', 'road/river')}."
                 )
-                return linear_parts
+                return hybrid_parts
 
-        # ── Tier 2: Building Point Cluster Partitioning (No road / river) ───────
-        fback.pushInfo(f"[EA {ea_item['original_code']}] Splitting by building point cluster distribution...")
+        # ── Tier 2: Voronoi Building Point Cluster Partitioning (Fallback / No roads) ──
+        fback.pushInfo(f"[EA {ea_item['original_code']}] Splitting by building point Voronoi cluster distribution...")
         cluster_parts = split_ea_by_building_clusters(ea_item, target_pop, fback)
         if len(cluster_parts) >= 2:
             fback.pushInfo(
-                f"[EA {ea_item['original_code']}] Building-point cluster split accepted: "
+                f"[EA {ea_item['original_code']}] Building-point Voronoi split accepted: "
                 f"{len(cluster_parts)} parts created."
             )
             return cluster_parts
@@ -1103,7 +1524,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         # ── Tier 3: Last Resort Forced Geometric Split ──────────────────────────
         if is_delineation_candidate(ea_item):
             fback.pushWarning(
-                f"[EA {ea_item['original_code']}] Linear and point-based splits could not partition EA. "
+                f"[EA {ea_item['original_code']}] Hybrid and Voronoi splits could not partition EA. "
                 f"Falling back to forced geometric split as last resort..."
             )
             return force_geometric_split(ea_item, target_pop, fback)

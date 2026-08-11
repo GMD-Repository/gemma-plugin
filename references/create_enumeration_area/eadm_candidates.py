@@ -66,6 +66,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
     GAP_INPUT = "GAP_INPUT"
     OVERLAP_INPUT = "OVERLAP_INPUT"
     SNAP_TOLERANCE = "SNAP_TOLERANCE"
+    SPLIT_STRATEGY = "SPLIT_STRATEGY"
     # Buffer tolerance (meters) for snapping splits to linear features
     LINE_BUFFER_TOLERANCE = 0.5
 
@@ -321,6 +322,19 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 type=QgsProcessingParameterNumber.Integer,
                 defaultValue=300,
                 minValue=1,
+            )
+        )
+        # Split strategy option for over-populated EAs
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                self.SPLIT_STRATEGY,
+                "Split Strategy for Over-Populated EAs",
+                options=[
+                    "Road + River Priority (Recommended - follow physical features)",
+                    "Strict Threshold (Reject road/river split if sub-EA < min_household)",
+                    "Keep Whole (Do not split over-populated EAs)",
+                ],
+                defaultValue=0,
             )
         )
 

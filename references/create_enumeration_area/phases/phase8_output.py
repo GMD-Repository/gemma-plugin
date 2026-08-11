@@ -577,17 +577,38 @@ def run_phase_8(
         if new_ea_idx != -1:
             out_feat.setAttribute(new_ea_idx, ea.get('new_ea_tracker'))
 
-        bldg_count_idx = out_fields.indexOf("bldg_count")
-        if bldg_count_idx != -1:
-            out_feat.setAttribute(bldg_count_idx, ea.get('bldg_count', 0))
+        name_idx = out_fields.indexOf("name")
+        if name_idx != -1:
+            out_feat.setAttribute(name_idx, f"EA {ea['new_ea_code']}")
+
+        geocode_idx = out_fields.indexOf("geocode")
+        if geocode_idx != -1:
+            orig_gc = str(out_feat.attribute(geocode_idx) or "").strip()
+            if orig_gc.endswith(".0"):
+                orig_gc = orig_gc[:-2]
+            new_code = str(ea['new_ea_code']).strip()
+            if len(orig_gc) >= 6:
+                new_gc = orig_gc[:-6] + new_code
+            elif orig_gc:
+                new_gc = orig_gc[:-len(new_code)] + new_code if len(orig_gc) > len(new_code) else new_code
+            else:
+                bar_code = str(ea.get('parent_barangay', ''))
+                new_gc = bar_code + new_code
+            out_feat.setAttribute(geocode_idx, new_gc)
+
+        for bldg_fname in ("bldgcount", "bldg_count", "bldg_cnt", "bldgpts_cnt"):
+            bldg_idx = out_fields.indexOf(bldg_fname)
+            if bldg_idx != -1:
+                out_feat.setAttribute(bldg_idx, ea.get('bldg_count', 0))
 
         hh_count_idx = out_fields.indexOf("hh_count")
         if hh_count_idx != -1:
             out_feat.setAttribute(hh_count_idx, final_pop)
 
-        hhcount_idx = out_fields.indexOf("hhcount")
-        if hhcount_idx != -1:
-            out_feat.setAttribute(hhcount_idx, final_pop)
+        for hh_fname in ("hhcount", "hh_cnt"):
+            hh_idx = out_fields.indexOf(hh_fname)
+            if hh_idx != -1:
+                out_feat.setAttribute(hh_idx, int(round(final_pop)))
 
         bldgpts_val_idx = out_fields.indexOf("bldgpoints_value")
         if bldgpts_val_idx != -1:
