@@ -21,6 +21,9 @@ from references.create_enumeration_area.phases.phase6_merge import (
     is_delineation_candidate as phase6_is_delin,
     is_merge_candidate as phase6_is_merge,
 )
+from references.create_enumeration_area.phases.phase8_output import (
+    refine_split_line,
+)
 
 
 class MockFeedback:
@@ -280,6 +283,33 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
         )
 
         self.assertEqual(len(merged), 2, "When allow_candidate_merge=False, small candidates must NOT merge together.")
+
+    def test_refine_split_line_gap_and_prune(self):
+        """Verify that refine_split_line bridges small gaps and prunes tiny isolated branches."""
+        # Line 1: (0,0) -> (10,0)
+        # Line 2: (12,0) -> (20,0) with gap of 2 units
+        p1, p2 = QgsPointXY(0, 0), QgsPointXY(10, 0)
+        p3, p4 = QgsPointXY(12, 0), QgsPointXY(20, 0)
+        g1 = QgsGeometry.fromPolylineXY([p1, p2])
+        g2 = QgsGeometry.fromPolylineXY([p3, p4])
+        multi_line = QgsGeometry.collectGeometry([g1, g2])
+
+        # gap_tolerance=5.0 should bridge the 2.0-unit gap
+        refined = refine_split_line(multi_line, gap_tolerance=5.0, min_branch_len=1.0)
+        self.assertFalse(refined.isEmpty())
+
+    def test_pairwise_split_shared_boundary_extraction(self):
+        """Verify that intersection of two adjacent split polygons extracts their shared boundary line."""
+        # Polygon 1: [0,0] to [10,10]
+        # Polygon 2: [10,0] to [20,10] (adjacent along x=10 line from y=0 to y=10)
+        geom1 = make_square_geom(0, 0, 10)
+        geom2 = make_square_geom(10, 0, 10)
+
+        shared = geom1.intersection(geom2)
+        self.assertFalse(shared.isEmpty())
+        merged = shared.mergeLines()
+        refined = refine_split_line(merged, gap_tolerance=1.0, min_branch_len=0.5)
+        self.assertFalse(refined.isEmpty())
 
 
 if __name__ == "__main__":

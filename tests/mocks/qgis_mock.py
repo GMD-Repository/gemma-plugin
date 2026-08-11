@@ -107,21 +107,59 @@ class QgsGeometry:
     def fromWkt(wkt):
         return QgsGeometry("Polygon")
 
+    @staticmethod
+    def collectGeometry(geoms):
+        return QgsGeometry("MultiLineString")
+
+    @staticmethod
+    def unaryUnion(geoms):
+        return QgsGeometry("LineString")
+
+    @staticmethod
+    def fromMultiPolygonXY(multipoly):
+        return QgsGeometry("MultiPolygon")
+
+    @staticmethod
+    def fromMultiPolylineXY(multipoly):
+        return QgsGeometry("MultiLineString")
+
     def type(self):
         if self.geom_type == "Point": return 0
-        elif self.geom_type in ("LineString", "Line"): return 1
+        elif self.geom_type in ("LineString", "Line", "MultiLineString"): return 1
         return 2  # PolygonGeometry
 
-    def wkbType(self): return 3
+    def wkbType(self):
+        if self.geom_type in ("LineString", "Line"): return 2
+        elif self.geom_type == "MultiLineString": return 5
+        elif self.geom_type == "Point": return 1
+        elif self.geom_type == "MultiPolygon": return 6
+        return 3  # Polygon
+
     def isNull(self): return False
     def isEmpty(self): return False
     def isSimple(self): return True
     def isValid(self): return True
     def isGeosValid(self): return True
-    def isMultipart(self): return False
+    def isMultipart(self): return self.geom_type.startswith("Multi")
     def makeValid(self): return self
     def touches(self, other): return True
     def intersects(self, other): return True
+    def intersection(self, other): return QgsGeometry("LineString")
+    def difference(self, other): return QgsGeometry("Polygon")
+    def mergeLines(self): return QgsGeometry("LineString")
+    def simplify(self, tol): return self
+    def convertToMultiType(self): return True
+    def constParts(self): return [self]
+    def asGeometryCollection(self): return [self]
+    def asPolyline(self): return [QgsPointXY(0.0, 0.0), QgsPointXY(10.0, 0.0)]
+    def asPolygon(self):
+        if self.polygons: return self.polygons
+        return [[QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)]]
+    def asMultiPolygon(self):
+        if self.polygons: return [self.polygons]
+        return [[[QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)]]]
+    def clone(self): return QgsGeometry(self.geom_type, self.polygons)
+    def transform(self, ct): pass
     def combine(self, other): return QgsGeometry("Polygon")
     def buffer(self, distance, segments=3): return QgsGeometry("Polygon")
     def area(self): return 100.0
@@ -451,6 +489,7 @@ class QgsWkbTypes:
     MultiPoint = 4
     MultiLineString = 5
     MultiPolygon = 6
+    GeometryCollection = 7
 
     PointGeometry = 0
     LineGeometry = 1
@@ -460,13 +499,16 @@ class QgsWkbTypes:
     def displayString(wkb_type): return "Polygon"
 
     @staticmethod
-    def geometryType(wkb_type): return 2  # PolygonGeometry
+    def geometryType(wkb_type):
+        if wkb_type in (1, 4): return 0
+        elif wkb_type in (2, 5): return 1
+        return 2  # PolygonGeometry
 
     @staticmethod
     def multiType(wkb_type): return 6
 
     @staticmethod
-    def flatType(wkb_type): return 3
+    def flatType(wkb_type): return wkb_type
 
 
 class MockQVariant:
@@ -638,69 +680,69 @@ def setup_qgis_mock_if_needed():
         pass
 
     # Create dynamic mock modules for non-QGIS Python environment
-        qgis_mod = DynamicMockModule("qgis")
-        core_mod = DynamicMockModule("qgis.core")
-        gui_mod = DynamicMockModule("qgis.gui")
-        utils_mod = DynamicMockModule("qgis.utils")
-        analysis_mod = DynamicMockModule("qgis.analysis")
-        pyqt_mod = DynamicMockModule("qgis.PyQt")
-        qtcore_mod = DynamicMockModule("qgis.PyQt.QtCore")
-        qtgui_mod = DynamicMockModule("qgis.PyQt.QtWidgets")
-        qtwidgets_mod = DynamicMockModule("qgis.PyQt.QtGui")
+    qgis_mod = DynamicMockModule("qgis")
+    core_mod = DynamicMockModule("qgis.core")
+    gui_mod = DynamicMockModule("qgis.gui")
+    utils_mod = DynamicMockModule("qgis.utils")
+    analysis_mod = DynamicMockModule("qgis.analysis")
+    pyqt_mod = DynamicMockModule("qgis.PyQt")
+    qtcore_mod = DynamicMockModule("qgis.PyQt.QtCore")
+    qtgui_mod = DynamicMockModule("qgis.PyQt.QtWidgets")
+    qtwidgets_mod = DynamicMockModule("qgis.PyQt.QtGui")
 
-        # Explicit Core attributes
-        core_mod.QgsPointXY = QgsPointXY
-        core_mod.QgsPolygon = QgsPolygon
-        core_mod.QgsGeometry = QgsGeometry
-        core_mod.QgsField = QgsField
-        core_mod.QgsFields = QgsFields
-        core_mod.QgsFeature = QgsFeature
-        core_mod.QgsVectorLayer = QgsVectorLayer
-        core_mod.QgsSpatialIndex = QgsSpatialIndex
-        core_mod.QgsProcessingFeedback = QgsProcessingFeedback
-        core_mod.QgsProcessingContext = QgsProcessingContext
-        core_mod.QgsProcessingException = QgsProcessingException
-        core_mod.QgsProcessingAlgorithm = QgsProcessingAlgorithm
-        core_mod.QgsProcessingLayerPostProcessorInterface = MockGenericClass
-        core_mod.QgsProject = QgsProject
-        core_mod.QgsApplication = QgsApplication
-        core_mod.QgsWkbTypes = QgsWkbTypes
+    # Explicit Core attributes
+    core_mod.QgsPointXY = QgsPointXY
+    core_mod.QgsPolygon = QgsPolygon
+    core_mod.QgsGeometry = QgsGeometry
+    core_mod.QgsField = QgsField
+    core_mod.QgsFields = QgsFields
+    core_mod.QgsFeature = QgsFeature
+    core_mod.QgsVectorLayer = QgsVectorLayer
+    core_mod.QgsSpatialIndex = QgsSpatialIndex
+    core_mod.QgsProcessingFeedback = QgsProcessingFeedback
+    core_mod.QgsProcessingContext = QgsProcessingContext
+    core_mod.QgsProcessingException = QgsProcessingException
+    core_mod.QgsProcessingAlgorithm = QgsProcessingAlgorithm
+    core_mod.QgsProcessingLayerPostProcessorInterface = MockGenericClass
+    core_mod.QgsProject = QgsProject
+    core_mod.QgsApplication = QgsApplication
+    core_mod.QgsWkbTypes = QgsWkbTypes
 
-        # PyQt attributes
-        class MockSignal:
-            def emit(self, *args, **kwargs): pass
-            def connect(self, *args, **kwargs): pass
-            def disconnect(self, *args, **kwargs): pass
+    # PyQt attributes
+    class MockSignal:
+        def emit(self, *args, **kwargs): pass
+        def connect(self, *args, **kwargs): pass
+        def disconnect(self, *args, **kwargs): pass
 
-        qtcore_mod.QCoreApplication = MockQCoreApplication
-        qtcore_mod.QThread = MockQThread
-        qtcore_mod.QObject = MockQObject
-        qtcore_mod.QVariant = MockQVariant
-        qtcore_mod.Qt = MockQt
-        qtcore_mod.pyqtSignal = lambda *args, **kwargs: MockSignal()
+    qtcore_mod.QCoreApplication = MockQCoreApplication
+    qtcore_mod.QThread = MockQThread
+    qtcore_mod.QObject = MockQObject
+    qtcore_mod.QVariant = MockQVariant
+    qtcore_mod.Qt = MockQt
+    qtcore_mod.pyqtSignal = lambda *args, **kwargs: MockSignal()
 
-        qtgui_mod.QWidget = MockQWidget
-        qtgui_mod.QDialog = MockQDialog
+    qtgui_mod.QWidget = MockQWidget
+    qtgui_mod.QDialog = MockQDialog
 
-        pyqt_mod.QtCore = qtcore_mod
-        pyqt_mod.QtWidgets = qtgui_mod
-        pyqt_mod.QtGui = qtwidgets_mod
+    pyqt_mod.QtCore = qtcore_mod
+    pyqt_mod.QtWidgets = qtgui_mod
+    pyqt_mod.QtGui = qtwidgets_mod
 
-        qgis_mod.core = core_mod
-        qgis_mod.gui = gui_mod
-        qgis_mod.utils = utils_mod
-        qgis_mod.analysis = analysis_mod
-        qgis_mod.PyQt = pyqt_mod
+    qgis_mod.core = core_mod
+    qgis_mod.gui = gui_mod
+    qgis_mod.utils = utils_mod
+    qgis_mod.analysis = analysis_mod
+    qgis_mod.PyQt = pyqt_mod
 
-        sys.modules["qgis"] = qgis_mod
-        sys.modules["qgis.core"] = core_mod
-        sys.modules["qgis.gui"] = gui_mod
-        sys.modules["qgis.utils"] = utils_mod
-        sys.modules["qgis.analysis"] = analysis_mod
-        sys.modules["qgis.PyQt"] = pyqt_mod
-        sys.modules["qgis.PyQt.QtCore"] = qtcore_mod
-        sys.modules["qgis.PyQt.QtWidgets"] = qtgui_mod
-        sys.modules["qgis.PyQt.QtGui"] = qtwidgets_mod
+    sys.modules["qgis"] = qgis_mod
+    sys.modules["qgis.core"] = core_mod
+    sys.modules["qgis.gui"] = gui_mod
+    sys.modules["qgis.utils"] = utils_mod
+    sys.modules["qgis.analysis"] = analysis_mod
+    sys.modules["qgis.PyQt"] = pyqt_mod
+    sys.modules["qgis.PyQt.QtCore"] = qtcore_mod
+    sys.modules["qgis.PyQt.QtWidgets"] = qtgui_mod
+    sys.modules["qgis.PyQt.QtGui"] = qtwidgets_mod
 
     # 2. PyQt5 standalone fallback
     if "PyQt5" not in sys.modules:

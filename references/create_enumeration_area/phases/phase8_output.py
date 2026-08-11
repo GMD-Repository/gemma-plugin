@@ -18,10 +18,109 @@ from qgis.core import (
     QgsCoordinateTransform,
     QgsFields,
     QgsField,
+    QgsProject,
+    QgsVectorLayer,
+    QgsPointXY,
 )
 
 from ..helpers.constants import _PHASE_LABELS, yield_to_ui
 from ..helpers.geometry import get_polygons_from_geom
+
+
+def refine_split_line(geom: QgsGeometry, gap_tolerance: float, min_branch_len: float) -> QgsGeometry:
+    """Return a refined QgsGeometry with gaps bridged and tiny branches pruned."""
+    if geom is None or geom.isEmpty():
+        return geom
+
+    # Decompose into individual LineString parts
+    parts = []
+    flat = QgsWkbTypes.flatType(geom.wkbType())
+    if flat == QgsWkbTypes.LineString:
+        parts = [geom]
+    elif flat == QgsWkbTypes.MultiLineString:
+        parts = geom.asGeometryCollection()
+    elif flat == QgsWkbTypes.GeometryCollection or geom.isMultipart():
+        try:
+            for part in geom.constParts():
+                part_geom = QgsGeometry(part.clone())
+                part_flat = QgsWkbTypes.flatType(part_geom.wkbType())
+                if part_flat in (QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString):
+                    parts.append(part_geom)
+        except Exception:
+            pass
+    else:
+        return geom
+
+    if len(parts) <= 1:
+        return geom
+
+    def endpoints(line_geom):
+        pts = line_geom.asPolyline()
+        if not pts or len(pts) < 2:
+            return None, None
+        return pts[0], pts[-1]
+
+    def pt_dist(a, b):
+        return math.sqrt((a.x() - b.x()) ** 2 + (a.y() - b.y()) ** 2)
+
+    ep_map = {}
+    for idx, part in enumerate(parts):
+        s, e = endpoints(part)
+        if s:
+            ep_map[(idx, 0)] = s
+        if e:
+            ep_map[(idx, 1)] = e
+
+    keys = list(ep_map.keys())
+    connected = set()
+    for a in range(len(keys)):
+        for b in range(a + 1, len(keys)):
+            ka, kb = keys[a], keys[b]
+            if ka[0] == kb[0]:
+                continue
+            if pt_dist(ep_map[ka], ep_map[kb]) < 1e-8:
+                connected.add(ka)
+                connected.add(kb)
+
+    dangling = [k for k in keys if k not in connected]
+    bridge_segments = []
+    bridged = set()
+
+    for a in range(len(dangling)):
+        for b in range(a + 1, len(dangling)):
+            ka, kb = dangling[a], dangling[b]
+            if ka[0] == kb[0]:
+                continue
+            if ka in bridged or kb in bridged:
+                continue
+            dist = pt_dist(ep_map[ka], ep_map[kb])
+            if dist <= gap_tolerance:
+                pa, pb = ep_map[ka], ep_map[kb]
+                bridge = QgsGeometry.fromPolylineXY([pa, pb])
+                if not bridge.isEmpty():
+                    bridge_segments.append(bridge)
+                bridged.add(ka)
+                bridged.add(kb)
+
+    pruned_indices = set()
+    for idx, part in enumerate(parts):
+        k_start = (idx, 0)
+        k_end = (idx, 1)
+        both_dangling = (k_start in dangling or k_start not in ep_map) and \
+                        (k_end in dangling or k_end not in ep_map)
+        if both_dangling and part.length() < min_branch_len:
+            pruned_indices.add(idx)
+
+    kept = [p for idx, p in enumerate(parts) if idx not in pruned_indices]
+    all_geoms = kept + bridge_segments
+    if not all_geoms:
+        return geom
+
+    refined = QgsGeometry.unaryUnion(all_geoms)
+    if refined is None or refined.isEmpty():
+        return geom
+    result = refined.mergeLines()
+    return result if result and not result.isEmpty() else refined
 
 
 def clean_and_remove_holes(geometry: QgsGeometry, target_crs: Any, remove_holes: bool = True) -> QgsGeometry:
@@ -403,6 +502,8 @@ def run_phase_8(
             previous_ea_source.sourceCrs(), target_crs, context.transformContext()
         )
 
+    final_geom_by_candidate = {}
+
     for i, ea in enumerate(eas):
         if multi_feedback.isCanceled():
             raise QgsProcessingException("Algorithm cancelled by user.")
@@ -440,6 +541,10 @@ def run_phase_8(
         simp_tolerance = 1e-7 if target_crs.isGeographic() else 0.01
         geom = geom.simplify(simp_tolerance)
         geom = geom.makeValid()
+
+        _ea_id = ea.get('original_id')
+        if _ea_id in delineation_candidate_ids or ea.get('from_split', False):
+            final_geom_by_candidate.setdefault(_ea_id, []).append((QgsGeometry(geom), ea))
 
         out_feat = QgsFeature(out_fields)
         out_feat.setGeometry(geom)
@@ -668,6 +773,135 @@ def run_phase_8(
             )
 
     multi_feedback.setProgress(100)
+
+    # ── Output Splitting Lines Layer Per Barangay ───────────────────────
+    full_ea_by_id = {feat.id(): feat for feat in p1.get("all_ea_features", [])}
+    snap_tolerance = p1.get("snap_tolerance", 15.0)
+
+    src_fields = previous_ea_source.fields()
+    geocode_idx = src_fields.indexOf("geocode")
+    ean_idx = src_fields.indexOf(ea_id_field) if ea_id_field else src_fields.indexOf("ean")
+    region_idx = src_fields.indexOf("region")
+    province_idx = src_fields.indexOf("province")
+    city_mun_idx = src_fields.indexOf("city_mun")
+    barangay_idx_col = src_fields.indexOf("barangay")
+    if barangay_idx_col == -1:
+        barangay_idx_col = src_fields.indexOf("bgy")
+    eadel_indi_idx = src_fields.indexOf("eadel_indi")
+    remarks_idx = src_fields.indexOf("remarks")
+
+    lines_by_barangay = {}
+
+    for candidate_id, part_tuples in final_geom_by_candidate.items():
+        if len(part_tuples) < 2:
+            continue
+
+        if candidate_id not in full_ea_by_id:
+            continue
+        parent_feat = full_ea_by_id[candidate_id]
+
+        bar_code = part_tuples[0][1].get('parent_barangay')
+        if not bar_code:
+            continue
+
+        shared_edges = []
+        for p_i in range(len(part_tuples)):
+            for p_j in range(p_i + 1, len(part_tuples)):
+                geom_i = part_tuples[p_i][0]
+                geom_j = part_tuples[p_j][0]
+                if geom_i.isEmpty() or geom_j.isEmpty():
+                    continue
+                shared = geom_i.intersection(geom_j)
+                if shared is None or shared.isEmpty():
+                    continue
+                flat = QgsWkbTypes.flatType(shared.wkbType())
+                if flat in (QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString):
+                    shared_edges.append(shared)
+                elif flat == QgsWkbTypes.GeometryCollection or shared.isMultipart():
+                    try:
+                        for sub_part in shared.constParts():
+                            sub_geom = QgsGeometry(sub_part.clone())
+                            ptype = QgsWkbTypes.flatType(sub_geom.wkbType())
+                            if ptype in (QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString):
+                                shared_edges.append(sub_geom)
+                    except Exception:
+                        pass
+
+        if not shared_edges:
+            continue
+
+        all_shared = QgsGeometry.unaryUnion(shared_edges)
+        if all_shared is None or all_shared.isEmpty():
+            feedback.pushWarning(
+                f"[eadel_update] unaryUnion of shared edges produced empty geometry "
+                f"for candidate {candidate_id}; skipping."
+            )
+            continue
+
+        merged = all_shared.mergeLines()
+        if merged is None or merged.isEmpty():
+            merged = all_shared
+
+        _gap_tol = snap_tolerance * 4
+        _min_branch = snap_tolerance * 2
+        merged = refine_split_line(merged, _gap_tol, _min_branch)
+
+        attrs = {
+            'geocode': str(parent_feat.attribute(geocode_idx)) if geocode_idx != -1 and parent_feat.attribute(geocode_idx) is not None else "",
+            'ean': str(parent_feat.attribute(ean_idx)) if ean_idx != -1 and parent_feat.attribute(ean_idx) is not None else "",
+            'region': str(parent_feat.attribute(region_idx)) if region_idx != -1 and parent_feat.attribute(region_idx) is not None else "",
+            'province': str(parent_feat.attribute(province_idx)) if province_idx != -1 and parent_feat.attribute(province_idx) is not None else "",
+            'city_mun': str(parent_feat.attribute(city_mun_idx)) if city_mun_idx != -1 and parent_feat.attribute(city_mun_idx) is not None else "",
+            'barangay': str(parent_feat.attribute(barangay_idx_col)) if barangay_idx_col != -1 and parent_feat.attribute(barangay_idx_col) is not None else "",
+            'indicator': str(parent_feat.attribute(eadel_indi_idx)) if eadel_indi_idx != -1 and parent_feat.attribute(eadel_indi_idx) is not None else "",
+            'remarks': str(parent_feat.attribute(remarks_idx)) if remarks_idx != -1 and parent_feat.attribute(remarks_idx) is not None else "",
+        }
+
+        lines_by_barangay.setdefault(bar_code, []).append((merged, attrs))
+
+    for bar_code, bar_line_features in lines_by_barangay.items():
+        if bar_line_features:
+            cleaned_digits = "".join([c for c in str(bar_code) if c.isdigit()])
+            if len(cleaned_digits) > 9:
+                cleaned_digits = cleaned_digits[:9]
+            ppmmbbb = cleaned_digits.zfill(9)
+            layer_name = f"{ppmmbbb}_eadel_update"
+
+            crs_auth_id = target_crs.authid()
+            uri = f"MultiLineString?crs={crs_auth_id}&field=geocode:string&field=ean:string&field=region:string&field=province:string&field=city_mun:string&field=barangay:string&field=indicator:string&field=remarks:string"
+            line_layer = QgsVectorLayer(uri, layer_name, "memory")
+
+            if line_layer.isValid():
+                pr = line_layer.dataProvider()
+                features_to_add = []
+                for line_geom, attrs in bar_line_features:
+                    if not line_geom.isMultipart():
+                        line_geom.convertToMultiType()
+                    f = QgsFeature(line_layer.fields())
+                    f.setGeometry(line_geom)
+                    f.setAttribute("geocode", attrs.get('geocode', ''))
+                    f.setAttribute("ean", attrs.get('ean', ''))
+                    f.setAttribute("region", attrs.get('region', ''))
+                    f.setAttribute("province", attrs.get('province', ''))
+                    f.setAttribute("city_mun", attrs.get('city_mun', ''))
+                    f.setAttribute("barangay", attrs.get('barangay', ''))
+                    f.setAttribute("indicator", attrs.get('indicator', ''))
+                    f.setAttribute("remarks", attrs.get('remarks', ''))
+                    features_to_add.append(f)
+
+                pr.addFeatures(features_to_add)
+                line_layer.updateExtents()
+
+                project = QgsProject.instance()
+                if project:
+                    project.addMapLayer(line_layer)
+                feedback.pushInfo(
+                    f"Created line layer '{layer_name}' with {len(features_to_add)} "
+                    f"feature(s) ({len(final_geom_by_candidate)} candidate(s) processed)."
+                )
+            else:
+                feedback.reportError(f"Failed to create memory layer for {layer_name}")
+
     feedback.pushInfo("Successfully created and structured Enumeration Areas.")
 
     total_proc = getattr(alg, 'total_ea_processed', 0)
