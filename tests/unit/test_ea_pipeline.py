@@ -316,7 +316,14 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
 
     def test_output_schema_field_renaming_and_ordering(self):
         """Verify new_ean, bldgcount, hhcount, indicator, and remarks as the last field."""
-        from qgis.core import QgsFields, QgsField, QVariant, QgsVectorLayer
+        from qgis.core import QgsFields, QgsField, QgsVectorLayer
+        try:
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            try:
+                from PyQt5.QtCore import QVariant
+            except ImportError:
+                from qgis.core import QVariant  # headless mock fallback
         fields = QgsFields()
         fields.append(QgsField("geocode", QVariant.String))
         fields.append(QgsField("ean", QVariant.String))
