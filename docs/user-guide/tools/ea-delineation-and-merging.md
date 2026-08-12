@@ -30,6 +30,7 @@ The **EA Delineation and Merging** launcher dialog provides an interactive workf
 
 - **Dual-Tab Processing Launcher:** Switch seamlessly between **Pre-EA Processing** (Tab 1) and **EA Delineation & Merging** (Tab 2).
 - **Auto-Detect Project Layers:** Automatically scans open layers in the QGIS project and populates input dropdowns based on standard layer naming conventions (`_bgy`, `_ea`, `_bldgpts`, `road`, `river`).
+- **Auto Arrange Layers:** One-click utility inside **Input Layers** that restructures project layer tree nodes into `<PSGC>_<City_Mun>_MBI` and `<PSGC>_<City_Mun>_baselayers` groups, re-orders layers (Points → Lines → Polygons → Rasters), renames gaps/overlaps (`<PSGC>_gaps`, `<PSGC>_overlaps`), and applies official GEMMA QML style templates (`1. Base Layer Building Points.qml`, `2. Base Layer Landmark.qml`, etc.).
 - **Fill Missing Household Counts:** Built-in utility to compute missing household counts (`hhcount`) directly from building points within each EA polygon before running delineation algorithms.
 - **KPI Summary Cards & Candidate Preview:** Renders dynamic statistics and color-coded candidate tables for Delineation (>300 HH) and Merging (<=100 HH) candidates before execution.
 
