@@ -902,7 +902,7 @@ class EALauncherDialog(QDialog):
         tab_root_layout.setContentsMargins(6, 6, 6, 6)
         tab_root_layout.setSpacing(6)
         self._build_create_ea_content(tab_root_layout)
-        self.main_tabs.addTab(tab_widget, "EA Delineation and Merging")
+        self.main_tabs.addTab(tab_widget, "Create Enumeration Areas")
 
     def _build_create_ea_content(self, root):
         root.setContentsMargins(0, 0, 0, 0)
