@@ -131,6 +131,54 @@ class PreEAProcessor:
         )
     """
 
+    @staticmethod
+    def short_help_string() -> str:
+        """Returns the HTML description string for Pre-EA Processing."""
+        return (
+            "<h3>Pre-EA Processing</h3>"
+            "<p>Prepares an existing Enumeration Area (EA) layer for use in the Create Enumeration Areas "
+            "workflow by enforcing two fundamental spatial rules: clipping EAs extending outside their parent "
+            "Barangay and filling uncovered coverage gaps within the Barangay boundary.</p>"
+
+            "<h4>Inputs</h4>"
+            "<b>Required</b>"
+            "<ul>"
+            "<li><b>Barangay Layer</b> (polygon) — Administrative barangay polygon boundaries. "
+            "Must contain a <i>geocode</i> attribute field used to match EAs to their parent Barangay. "
+            "Auto-detected by <code>*_bgy</code> layer name pattern.</li>"
+            "<li><b>EA Layer</b> (polygon) — Starting EA polygon boundaries to be pre-processed. "
+            "Must contain a <i>geocode</i> attribute field. Auto-detected by <code>*_ea</code> or <code>*_ea2024</code> layer name pattern.</li>"
+            "<li><b>Gap Area Tolerance (m²)</b> — Minimum area threshold (default 1.0 m²) for a gap to be processed; "
+            "smaller gaps are treated as geometry precision slivers and skipped.</li>"
+            "<li><b>Clip EA to Barangay Boundary</b> — When enabled (default: True), clips any portion of an EA extending outside its parent Barangay boundary.</li>"
+            "<li><b>Detect Uncovered Barangay Areas</b> — When enabled (default: True), identifies uncovered gaps within each Barangay after clipping.</li>"
+            "<li><b>Assign Gaps to Contiguous EA</b> — When enabled (default: True), assigns each detected gap to the adjacent EA sharing the longest boundary.</li>"
+            "</ul>"
+
+            "<h4>Process</h4>"
+            "<ol>"
+            "<li>Validates input Barangay and EA vector layers and repairs invalid geometries.</li>"
+            "<li>Matches each EA to its parent Barangay using attribute geocode prefix matching, centroid containment, or largest spatial overlap.</li>"
+            "<li>Clips EAs extending beyond parent Barangay boundaries by computing spatial intersections.</li>"
+            "<li>Computes uncovered Barangay coverage gaps by taking the spatial difference between the Barangay polygon and the union of constituent EAs.</li>"
+            "<li>Decomposes gap geometries and assigns each gap polygon to the adjacent contiguous EA sharing the longest boundary (or nearest/largest EA).</li>"
+            "<li>Performs final topological validation to ensure zero EAs extend outside Barangays and no uncovered gaps remain.</li>"
+            "<li>Generates pre-processed output polygon features preserving original fields and adding process summary metadata.</li>"
+            "</ol>"
+
+            "<h4>Output</h4>"
+            "<ul>"
+            "<li><b>Pre-Processed EA Layer</b> (polygon, named <i>&lt;5-digit geocode&gt;_ea2026_preprocessed</i>) — "
+            "In-memory vector layer containing pre-processed EAs fully aligned with Barangay boundaries and gap-filled. "
+            "All fields from the original EA layer are preserved. Additional/updated fields:</li>"
+            "<li><i>original_area</i> — Original surface area of the EA polygon in square metres.</li>"
+            "<li><i>corrected_area</i> — Corrected surface area of the EA polygon after clipping and gap assignment.</li>"
+            "<li><i>area_change</i> — Net area change (square metres) after pre-processing.</li>"
+            "<li><i>pre_action</i> — Pre-processing action applied to the feature (e.g. <i>No Change</i>, <i>Clipped</i>, <i>Gap Assigned</i>).</li>"
+            "<li><i>pre_status</i> — Pre-processing validation status (e.g. <i>Valid</i>, <i>Corrected</i>, <i>Unresolved</i>).</li>"
+            "</ul>"
+        )
+
     def run(
         self,
         barangay_layer: QgsVectorLayer,
@@ -497,13 +545,30 @@ class PreEAProcessor:
         polygons: List[QgsGeometry] = []
         if geom is None or geom.isEmpty():
             return polygons
-        if QgsWkbTypes.isMultiType(geom.wkbType()):
-            for part in geom.asGeometryCollection():
-                if part and not part.isEmpty():
-                    if part.type() == QgsWkbTypes.PolygonGeometry:
-                        polygons.append(part)
+
+        flat_type = QgsWkbTypes.flatType(geom.wkbType())
+        if flat_type == QgsWkbTypes.Polygon:
+            polygons.append(geom)
+        elif flat_type == QgsWkbTypes.MultiPolygon:
+            for part in geom.constParts():
+                polygons.append(QgsGeometry(part.clone()))
+        elif flat_type == QgsWkbTypes.GeometryCollection or geom.isMultipart():
+            try:
+                for part in geom.constParts():
+                    part_geom = QgsGeometry(part.clone())
+                    part_flat = QgsWkbTypes.flatType(part_geom.wkbType())
+                    if part_flat == QgsWkbTypes.Polygon:
+                        polygons.append(part_geom)
+                    elif part_flat == QgsWkbTypes.MultiPolygon:
+                        for sub_part in part_geom.constParts():
+                            polygons.append(QgsGeometry(sub_part.clone()))
+                    elif part_flat == QgsWkbTypes.GeometryCollection:
+                        polygons.extend(self._explode_to_polygons(part_geom))
+            except Exception:
+                if flat_type in (QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon):
+                    polygons.append(geom)
         else:
-            if geom.type() == QgsWkbTypes.PolygonGeometry:
+            if flat_type in (QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon):
                 polygons.append(geom)
         return polygons
 
@@ -705,9 +770,9 @@ class PreEAProcessor:
 
             # Merge the gap into the chosen EA
             current_geom = corrected_geoms[best_ea_fid]
-            merged_geom = current_geom.combine(gap)
+            merged_geom = current_geom.combine(gap).buffer(0.0, 3)
             merged_geom = self._clean_geometry(merged_geom, log_fn, "Gap merged EA")
-            if merged_geom is None:
+            if merged_geom is None or merged_geom.isEmpty():
                 merged_geom = current_geom
 
             corrected_geoms[best_ea_fid] = merged_geom

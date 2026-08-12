@@ -92,14 +92,18 @@ def get_polygons_from_geom(geom: QgsGeometry) -> List[QgsGeometry]:
 
 def allocate_gaps_to_parts(parts: List[Dict[str, Any]], parent_geom: QgsGeometry) -> List[Dict[str, Any]]:
     """Allocate gaps/holes in the union of parts to their nearest parent part."""
-    if not parts:
+    if not parts or not parent_geom or parent_geom.isEmpty():
         return parts
     
+    valid_geoms = [p['geom'] for p in parts if p.get('geom') and not p['geom'].isEmpty()]
+    if not valid_geoms:
+        return parts
+
     # Compute union of parts
-    parts_union = parts[0]['geom']
-    for p in parts[1:]:
-        parts_union = parts_union.combine(p['geom'])
-        
+    parts_union = QgsGeometry.unaryUnion(valid_geoms)
+    if parts_union is None or parts_union.isEmpty():
+        return parts
+
     # Get gaps
     gaps = parent_geom.difference(parts_union).buffer(0.0, 3)
     if gaps.isEmpty():
@@ -114,7 +118,10 @@ def allocate_gaps_to_parts(parts: List[Dict[str, Any]], parent_geom: QgsGeometry
         best_part = None
         max_boundary_len = -1.0
         for p in parts:
-            shared = gap_poly.intersection(p['geom'])
+            p_geom = p.get('geom')
+            if not p_geom or p_geom.isEmpty():
+                continue
+            shared = gap_poly.intersection(p_geom)
             if not shared.isEmpty():
                 boundary_len = shared.length()
                 if boundary_len > max_boundary_len:
@@ -124,11 +131,20 @@ def allocate_gaps_to_parts(parts: List[Dict[str, Any]], parent_geom: QgsGeometry
         # Fallback: assign to the nearest part by centroid distance
         if best_part is None:
             gap_centroid = gap_poly.centroid().asPoint()
-            best_part = min(parts, key=lambda p: math.hypot(gap_centroid.x() - p['geom'].centroid().asPoint().x(), gap_centroid.y() - p['geom'].centroid().asPoint().y()))
+            candidates = [p for p in parts if p.get('geom') and not p['geom'].isEmpty()]
+            if candidates:
+                best_part = min(
+                    candidates,
+                    key=lambda p: math.hypot(
+                        gap_centroid.x() - p['geom'].centroid().asPoint().x(),
+                        gap_centroid.y() - p['geom'].centroid().asPoint().y()
+                    )
+                )
             
-        # Combine gap polygon with the selected part
-        combined = best_part['geom'].combine(gap_poly).buffer(0.0, 3)
-        best_part['geom'] = combined
+        if best_part is not None:
+            # Combine gap polygon with the selected part
+            combined = best_part['geom'].combine(gap_poly).buffer(0.0, 3)
+            best_part['geom'] = combined
     return parts
 
 

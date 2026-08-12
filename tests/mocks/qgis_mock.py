@@ -138,11 +138,18 @@ class QgsGeometry:
 
     @staticmethod
     def unaryUnion(geoms):
-        return QgsGeometry("LineString")
+        if not geoms:
+            return QgsGeometry("Polygon", [])
+        polys = []
+        for g in geoms:
+            if hasattr(g, 'polygons') and g.polygons:
+                polys.extend(g.polygons)
+        return QgsGeometry("Polygon", polys if polys else [[QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)]])
 
     @staticmethod
     def fromMultiPolygonXY(multipoly):
-        return QgsGeometry("MultiPolygon")
+        polys = [p[0] for p in multipoly if p]
+        return QgsGeometry("MultiPolygon", polys)
 
     @staticmethod
     def fromMultiPolylineXY(multipoly):
@@ -165,9 +172,15 @@ class QgsGeometry:
     def isSimple(self): return True
     def isValid(self): return True
     def isGeosValid(self): return True
-    def isMultipart(self): return self.geom_type.startswith("Multi")
+    def isMultipart(self): return self.geom_type.startswith("Multi") or (len(self.polygons or []) > 1)
     def makeValid(self): return self
     def touches(self, other): return True
+    def distance(self, other):
+        b1 = self.boundingBox()
+        b2 = other.boundingBox()
+        dx = max(0.0, max(b1.xMinimum() - b2.xMaximum(), b2.xMinimum() - b1.xMaximum()))
+        dy = max(0.0, max(b1.yMinimum() - b2.yMaximum(), b2.yMinimum() - b1.yMaximum()))
+        return math.hypot(dx, dy)
     def contains(self, other):
         if hasattr(other, 'geom_type') and other.geom_type == "Point":
             pt = other.asPoint()
@@ -190,11 +203,22 @@ class QgsGeometry:
             area2 = b2.width() * b2.height()
             return QgsGeometry("Polygon", p1 if area1 <= area2 else p2)
         return QgsGeometry("LineString")
-    def difference(self, other): return QgsGeometry("Polygon", [])
+    def difference(self, other):
+        if hasattr(self, 'polygons') and self.polygons:
+            other_polys = getattr(other, 'polygons', [])
+            diff_rings = [p for p in self.polygons if p not in other_polys]
+            if diff_rings:
+                gtype = "MultiPolygon" if len(diff_rings) > 1 else "Polygon"
+                return QgsGeometry(gtype, diff_rings)
+        return QgsGeometry("Polygon", [[QgsPointXY(80, 0), QgsPointXY(120, 0), QgsPointXY(120, 100), QgsPointXY(80, 100), QgsPointXY(80, 0)]])
     def mergeLines(self): return QgsGeometry("LineString")
     def simplify(self, tol): return self
+    def convertToType(self, dest_type, destructively=False): return QgsGeometry("LineString")
     def convertToMultiType(self): return True
-    def constParts(self): return [self]
+    def constParts(self):
+        if self.polygons:
+            return [QgsGeometry("Polygon", [p]) for p in self.polygons]
+        return [self]
     def asGeometryCollection(self): return [self]
     def asPolyline(self): return getattr(self, '_polyline', [QgsPointXY(0.0, 0.0), QgsPointXY(10.0, 0.0)])
     def asPolygon(self):
@@ -205,7 +229,12 @@ class QgsGeometry:
         return [[[QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)]]]
     def clone(self): return QgsGeometry(self.geom_type, self.polygons)
     def transform(self, ct): pass
-    def combine(self, other): return QgsGeometry("Polygon", (self.polygons or []) + (getattr(other, 'polygons', []) or []))
+    def combine(self, other):
+        p1 = self.polygons or []
+        p2 = getattr(other, 'polygons', []) or []
+        combined = p1 + p2
+        gtype = "MultiPolygon" if len(combined) > 1 else "Polygon"
+        return QgsGeometry(gtype, combined)
     def buffer(self, distance, segments=3): return QgsGeometry("Polygon", self.polygons)
     def area(self): return 100.0
     def length(self): return 40.0
@@ -359,6 +388,19 @@ class QgsFeature:
                 while len(self._attributes) <= idx:
                     self._attributes.append(None)
                 self._attributes[idx] = value
+
+    def attribute(self, field):
+        if isinstance(field, int):
+            if 0 <= field < len(self._attributes):
+                return self._attributes[field]
+            return None
+        elif isinstance(field, str):
+            if self._fields and hasattr(self._fields, "indexOf"):
+                idx = self._fields.indexOf(field)
+                if idx != -1 and 0 <= idx < len(self._attributes):
+                    return self._attributes[idx]
+            return None
+        return None
 
     def setGeometry(self, geom):
         self._geometry = geom

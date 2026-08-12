@@ -51,7 +51,7 @@ After installation, verify that everything is working:
 
 1. Check the **Gemma** menu in the menu bar — you should see submenus for **Updating of Boundaries**, **EA Delineation**, and **Others**.
 2. Open the **Processing Toolbox** (`Ctrl+Alt+T`) and look for the **GMD Pipeline** group — you should see all the tools listed there.
-3. The **Gemma Toolbar** should display icons for **Check and Update**, **Create Enumeration Areas**, and **Package for QField**.
+3. The **Gemma Toolbar** should display icons for **Check and Update**, **EA Delineation and Merging**, and **Package for QField**.
 
 ## Plugin Structure
 
@@ -84,7 +84,7 @@ These tools are accessible from the **QGIS Processing Toolbox** under the **GMD 
 
 | Tool | Access |
 |------|--------|
-| [Create Enumeration Areas](/tools/create-enumeration-areas) | Gemma → EA Delineation → Create Enumeration Areas |
+| [EA Delineation and Merging](/tools/ea-delineation-and-merging) | Gemma → EA Delineation → EA Delineation and Merging |
 
 ### Gemma Menu — Others
 
