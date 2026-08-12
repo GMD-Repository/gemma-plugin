@@ -645,6 +645,21 @@ class EALauncherDialog(QDialog):
 
         self._pre_ea_validate_inputs()
 
+    def _pre_ea_auto_arrange_and_detect_layers(self):
+        """Auto-arrange project layer tree, apply QML styles, and auto-detect Pre-EA input layers."""
+        try:
+            from ...gmd_scripts.auto_arrange import auto_arrange_layers
+            res = auto_arrange_layers(iface=getattr(self, 'iface', None))
+            self._pre_ea_auto_detect_layers()
+            if hasattr(self, 'pre_ea_log_console'):
+                self.pre_ea_log_console.append(
+                    f"<span style='color: #0969da; font-weight: bold;'>[INFO]</span> "
+                    f"Auto Arrange completed: {res['total']} layers processed ({res['styled']} styled, {res['reordered']} reordered)."
+                )
+        except Exception as e:
+            QgsMessageLog.logMessage(f"Auto Arrange error: {e}", "GEMMA", Qgis.Warning)
+            self._pre_ea_auto_detect_layers()
+
     def _pre_ea_validate_inputs(self):
         """Validate selected layers and update status labels."""
         bgy_layer = self.pre_ea_bgy_combo.currentLayer()
@@ -932,7 +947,13 @@ class EALauncherDialog(QDialog):
         inputs_layout.setContentsMargins(8, 8, 8, 8)
         inputs_layout.setSpacing(8)
 
-        # Action buttons sub-row inside Input Layers group box
+        # Row 1: Dedicated Auto Arrange action button
+        self.auto_arrange_btn = QPushButton("Auto Arrange")
+        self.auto_arrange_btn.setToolTip("Auto-arrange project layer ordering, apply QML styles, and auto-detect matching layers.")
+        self.auto_arrange_btn.clicked.connect(self.auto_arrange_and_detect_layers)
+        inputs_layout.addWidget(self.auto_arrange_btn)
+
+        # Row 2: Sub-row for Auto-detect Layers and Fill missing hhcount
         inputs_btn_layout = QHBoxLayout()
         self.detect_btn = QPushButton("Auto-detect Layers")
         self.detect_btn.setToolTip("Scan current QGIS project layers and auto-select matching layers.")
@@ -1652,10 +1673,22 @@ class EALauncherDialog(QDialog):
             self._safe_set_layer(self.river_combo, candidates["river"])
         if candidates["gap"]:
             self._safe_set_layer(self.gap_combo, candidates["gap"])
-        if candidates["overlap"]:
-            self._safe_set_layer(self.overlap_combo, candidates["overlap"])
-
         self.validate_layer_inputs()
+
+    def auto_arrange_and_detect_layers(self):
+        """Auto-arrange project layer tree, apply QML styles, and auto-detect input layers."""
+        try:
+            from .auto_arrange import auto_arrange_layers
+            res = auto_arrange_layers(iface=getattr(self, 'iface', None))
+            self.auto_detect_layers()
+            if hasattr(self, 'log_console'):
+                self.log_console.append(
+                    f"<span style='color: #0969da; font-weight: bold;'>[INFO]</span> "
+                    f"Auto Arrange completed: {res['total']} layers processed ({res['styled']} styled, {res['reordered']} reordered)."
+                )
+        except Exception as e:
+            QgsMessageLog.logMessage(f"Auto Arrange error: {e}", "GEMMA", Qgis.Warning)
+            self.auto_detect_layers()
 
     def validate_layer_inputs(self):
         """Perform validation on selected layers and show dynamic status subtitles."""
