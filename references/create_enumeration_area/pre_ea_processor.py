@@ -1073,6 +1073,15 @@ class PreEAProcessor:
                     merged = final_geoms[best_fid].combine(r_part)
                     merged = self._clean_geometry(merged, log_fn, "Reconciliation EA")
                     if merged and not merged.isEmpty():
+                        # Hard-clip the merged result to the Barangay boundary so
+                        # the output geometry never crosses the Barangay line.
+                        if not bgy_geom.contains(merged):
+                            clipped_merged = merged.intersection(bgy_geom)
+                            clipped_merged = self._clean_geometry(
+                                clipped_merged, log_fn, "Reconciliation EA (clipped)"
+                            )
+                            if clipped_merged and not clipped_merged.isEmpty():
+                                merged = clipped_merged
                         final_geoms[best_fid] = merged
                         log_fn(
                             f"[INFO] Reconciliation: residual {r_part.area():.4f} m² in Barangay "
@@ -1080,12 +1089,31 @@ class PreEAProcessor:
                         )
 
         # ── Pass 3: write output features ──────────────────────────────────────
+        # Build ea_fid → bgy_geom lookup for the final per-feature safety clip.
+        ea_fid_to_bgy_geom: Dict[int, QgsGeometry] = {}
+        for _fid, _bgy_fid in ea_to_bgy.items():
+            _bgy_feat = bgy_by_fid.get(_bgy_fid)
+            if _bgy_feat is not None:
+                ea_fid_to_bgy_geom[_fid] = _bgy_feat.geometry()
+
         new_features: List[QgsFeature] = []
         for ea_feat in ea_features:
             ea_fid = ea_feat.id()
             geom = final_geoms.get(ea_fid)
             if geom is None or geom.isEmpty():
                 continue
+
+            # Final safety clip: guarantee every output feature strictly follows
+            # the Barangay boundary, catching any floating-point slivers that
+            # slipped through earlier phases.
+            bgy_geom_final = ea_fid_to_bgy_geom.get(ea_fid)
+            if bgy_geom_final is not None and not bgy_geom_final.contains(geom):
+                clipped_final = geom.intersection(bgy_geom_final)
+                clipped_final = self._clean_geometry(
+                    clipped_final, log_fn, f"EA fid={ea_fid} (final clip)"
+                )
+                if clipped_final and not clipped_final.isEmpty():
+                    geom = clipped_final
 
             new_feat = QgsFeature(output_layer.fields())
             new_feat.setGeometry(geom)
