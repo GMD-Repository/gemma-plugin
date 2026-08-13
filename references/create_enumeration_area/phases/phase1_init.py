@@ -416,14 +416,14 @@ def run_phase_1(
     output_layer_name = f"{geocode_prefix}_ea2026"
     feedback.pushInfo(f"Calculated output layer name: {output_layer_name}")
 
-    if target_crs.isGeographic():
+    source_crs = previous_ea_source.sourceCrs()
+    if source_crs.isGeographic():
         snap_tolerance = snap_tolerance_m / 111320.0
         densify_dist = 10.0 / 111320.0
     else:
         snap_tolerance = snap_tolerance_m
         densify_dist = 10.0
 
-    source_crs = previous_ea_source.sourceCrs()
     building_crs = building_source.sourceCrs()
     transform = None
     if source_crs != building_crs:

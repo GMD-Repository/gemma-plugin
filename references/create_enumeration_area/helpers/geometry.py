@@ -118,7 +118,15 @@ def collect_linear_features(
         if geom and not geom.isEmpty() and ea_geom.intersects(geom):
             clipped = geom.intersection(ea_geom)
             if not clipped.isEmpty():
-                lines.append(clipped)
+                flat_type = QgsWkbTypes.flatType(clipped.wkbType())
+                if flat_type in (QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString):
+                    lines.append(clipped)
+                elif flat_type == QgsWkbTypes.GeometryCollection or clipped.isMultipart():
+                    for part in clipped.constParts():
+                        p_geom = QgsGeometry(part.clone())
+                        p_flat = QgsWkbTypes.flatType(p_geom.wkbType())
+                        if p_flat in (QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString):
+                            lines.append(p_geom)
     return lines
 
 
