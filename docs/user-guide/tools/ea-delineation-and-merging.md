@@ -58,6 +58,8 @@ The **Pre-EA Processing** tab prepares starting EA boundaries before running del
 | Output / Field Name | Type | Description |
 |---------------------|------|-------------|
 | **Pre-Processed EA Layer** | Vector (Polygon) | In-memory polygon layer (`<5-digit geocode>_ea2026_preprocessed`) containing aligned and gap-filled EAs. |
+| **hhcount** | Double | Household count for the EA polygon. |
+| **bldgcount** | Integer | Building count for the EA polygon. |
 | **original_area** | Double | Original surface area of the starting EA polygon in square metres. |
 | **corrected_area** | Double | Corrected surface area of the EA polygon after boundary clipping and gap assignment in square metres. |
 | **area_change** | Double | Net area change (square metres) computed as `corrected_area - original_area`. |
