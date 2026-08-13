@@ -156,6 +156,18 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             target_crs,
         )
 
+    special_ea_sink = None
+    special_ea_dest_id = None
+    if alg.SPECIAL_EA_OUTPUT in parameters and parameters[alg.SPECIAL_EA_OUTPUT] is not None:
+        (special_ea_sink, special_ea_dest_id) = alg.parameterAsSink(
+            parameters,
+            alg.SPECIAL_EA_OUTPUT,
+            context,
+            out_fields,
+            out_wkb_type,
+            target_crs,
+        )
+
     extracted_buildings_sink = None
     extracted_buildings_dest_id = None
     if alg.EXTRACTED_BUILDINGS_OUTPUT in parameters and parameters[alg.EXTRACTED_BUILDINGS_OUTPUT] is not None:
@@ -240,6 +252,8 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         outputs[alg.MERGE_CANDIDATE_OUTPUT] = merge_candidate_dest_id
     if extracted_buildings_dest_id is not None:
         outputs[alg.EXTRACTED_BUILDINGS_OUTPUT] = extracted_buildings_dest_id
+    if special_ea_dest_id is not None:
+        outputs[alg.SPECIAL_EA_OUTPUT] = special_ea_dest_id
 
     delineated_feat_count = 0
     merged_feat_count = 0
@@ -286,6 +300,14 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             feedback.pushInfo(f"Set completion layer name to: {geocode_prefix}_extracted_buildings_ea2026")
     except Exception as e:
         feedback.pushInfo(f"Could not set extracted buildings layer completion name: {str(e)}")
+
+    try:
+        if special_ea_dest_id and context.willLoadLayerOnCompletion(special_ea_dest_id):
+            details = context.layerToLoadOnCompletionDetails(special_ea_dest_id)
+            details.name = f"{geocode_prefix}_special_ea"
+            feedback.pushInfo(f"Set completion layer name to: {geocode_prefix}_special_ea")
+    except Exception as e:
+        feedback.pushInfo(f"Could not set special EA layer completion name: {str(e)}")
 
     # Transform target for output/candidates
     barangay_to_target = None
@@ -903,6 +925,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         "out_wkb_type": out_wkb_type,
         "delineated_sink": delineated_sink,
         "merged_sink": merged_sink,
+        "special_ea_sink": special_ea_sink,
         "extracted_buildings_sink": extracted_buildings_sink,
         "delin_candidate_sink": delin_candidate_sink,
         "merge_candidate_sink": merge_candidate_sink,

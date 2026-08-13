@@ -1,6 +1,9 @@
 from qgis.core import (
     QgsSpatialIndex,
     QgsProcessingException,
+    QgsFeature,
+    QgsGeometry,
+    QgsCoordinateTransform,
 )
 from ..helpers.constants import _PHASE_LABELS, yield_to_ui
 
@@ -28,29 +31,54 @@ def run_phase_3(alg, parameters, context, feedback, multi_feedback, p1, p2):
     ea_index = temp_ea_index
     ea_by_id = temp_ea_by_id
 
+    previous_ea_source = p1["previous_ea_source"]
+    ea_crs = previous_ea_source.sourceCrs()
+
     road_index = None
     road_geoms = {}
     if road_source is not None:
         feedback.pushInfo("Building spatial index of Road Layer...")
+        road_crs = road_source.sourceCrs()
+        road_transform = None
+        if road_crs != ea_crs:
+            feedback.pushInfo(f"Transforming Road Layer from {road_crs.authid()} to {ea_crs.authid()}...")
+            road_transform = QgsCoordinateTransform(road_crs, ea_crs, context.transformContext())
         road_index = QgsSpatialIndex()
         for idx, feat in enumerate(road_source.getFeatures()):
             if multi_feedback.isCanceled():
                 raise QgsProcessingException("Algorithm cancelled by user.")
             yield_to_ui(idx)
-            road_index.insertFeature(feat)
-            road_geoms[feat.id()] = feat.geometry()
+            g = feat.geometry()
+            if road_transform and g and not g.isEmpty():
+                g = QgsGeometry(g)
+                g.transform(road_transform)
+            f_copy = QgsFeature(feat.id())
+            f_copy.setGeometry(g)
+            road_index.insertFeature(f_copy)
+            road_geoms[feat.id()] = g
 
     river_index = None
     river_geoms = {}
     if river_source is not None:
         feedback.pushInfo("Building spatial index of River Layer...")
+        river_crs = river_source.sourceCrs()
+        river_transform = None
+        if river_crs != ea_crs:
+            feedback.pushInfo(f"Transforming River Layer from {river_crs.authid()} to {ea_crs.authid()}...")
+            river_transform = QgsCoordinateTransform(river_crs, ea_crs, context.transformContext())
         river_index = QgsSpatialIndex()
         for idx, feat in enumerate(river_source.getFeatures()):
             if multi_feedback.isCanceled():
                 raise QgsProcessingException("Algorithm cancelled by user.")
             yield_to_ui(idx)
-            river_index.insertFeature(feat)
-            river_geoms[feat.id()] = feat.geometry()
+            g = feat.geometry()
+            if river_transform and g and not g.isEmpty():
+                g = QgsGeometry(g)
+                g.transform(river_transform)
+            f_copy = QgsFeature(feat.id())
+            f_copy.setGeometry(g)
+            river_index.insertFeature(f_copy)
+            river_geoms[feat.id()] = g
 
     multi_feedback.setProgress(100)
 
