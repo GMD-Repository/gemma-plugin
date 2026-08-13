@@ -40,8 +40,10 @@ from qgis.core import (
     QgsDistanceArea,
     QgsFeature,
     QgsFeatureRequest,
+    QgsField,
     QgsFields,
     QgsGeometry,
+    QgsPointXY,
     QgsProject,
     QgsSpatialIndex,
     QgsVectorLayer,
@@ -173,6 +175,8 @@ class PreEAProcessor:
             "<li><b>Pre-Processed EA Layer</b> (polygon, named <i>&lt;5-digit geocode&gt;_ea2026_preprocessed</i>) — "
             "In-memory vector layer containing pre-processed EAs fully aligned with Barangay boundaries and gap-filled. "
             "All fields from the original EA layer are preserved. Additional/updated fields:</li>"
+            "<li><i>hhcount</i> — Household count for the EA polygon.</li>"
+            "<li><i>bldgcount</i> — Building count for the EA polygon.</li>"
             "<li><i>original_area</i> — Original surface area of the EA polygon in square metres.</li>"
             "<li><i>corrected_area</i> — Corrected surface area of the EA polygon after clipping and gap assignment.</li>"
             "<li><i>area_change</i> — Net area change (square metres) after pre-processing.</li>"
@@ -186,6 +190,7 @@ class PreEAProcessor:
         barangay_layer: QgsVectorLayer,
         ea_layer: QgsVectorLayer,
         gap_tolerance: float = 1.0,
+        snap_tolerance: float = 25.0,
         clip_to_bgy: bool = True,
         detect_gaps: bool = True,
         assign_gaps: bool = True,
@@ -199,6 +204,7 @@ class PreEAProcessor:
         :param barangay_layer: Polygon vector layer of Barangays.
         :param ea_layer: Polygon vector layer of EAs.
         :param gap_tolerance: Minimum area (m²) for a gap to be considered meaningful.
+        :param snap_tolerance: Distance (m) to snap boundary vertices onto Barangay & adjacent EA edges.
         :param clip_to_bgy: Whether to clip EAs extending outside their parent Barangay.
         :param detect_gaps: Whether to detect uncovered areas within each Barangay.
         :param assign_gaps: Whether to assign detected gaps to contiguous EAs.
@@ -415,7 +421,8 @@ class PreEAProcessor:
 
             output_layer = self._build_output_layer(
                 ea_layer, ea_features, corrected_geoms, ea_to_bgy, bgy_by_fid, output_name, _log,
-                crs=barangay_layer.crs()
+                crs=barangay_layer.crs(),
+                snap_tolerance=snap_tolerance,
             )
 
             if output_layer is None:
@@ -605,6 +612,155 @@ class PreEAProcessor:
             pass
         return 0.0
 
+    def _get_effective_snap_tolerance(
+        self,
+        crs: Optional[QgsCoordinateReferenceSystem],
+        snap_tolerance: float = 25.0,
+    ) -> float:
+        """
+        Compute effective snapping tolerance in native CRS map units.
+        For Projected CRS: snap_tolerance in metres (default 25.0 m).
+        For Geographic CRS (EPSG:4326): converts metres to degrees (~1m ≈ 0.000009 deg).
+        """
+        is_geo = bool(crs and crs.isValid() and crs.isGeographic())
+        if is_geo:
+            return max(snap_tolerance * 0.000009, 0.0003)
+        return max(snap_tolerance, 25.0)
+
+    def _snap_ring_vertices_to_line(
+        self,
+        ring: List[QgsPointXY],
+        ref_line: QgsGeometry,
+        snap_tolerance: float,
+    ) -> List[QgsPointXY]:
+        """
+        Snap vertices of a closed polygon ring to ref_line if distance <= snap_tolerance.
+        """
+        if not ring:
+            return ring
+        snapped_ring: List[QgsPointXY] = []
+        is_closed = (len(ring) > 1 and ring[0] == ring[-1])
+        unique_pts = ring[:-1] if is_closed else ring
+
+        for pt in unique_pts:
+            pt_geom = QgsGeometry.fromPointXY(pt)
+            dist = ref_line.distance(pt_geom)
+            if 0 < dist <= snap_tolerance:
+                nearest = ref_line.nearestPoint(pt_geom)
+                if nearest and not nearest.isEmpty():
+                    try:
+                        snapped_pt = nearest.asPoint()
+                        snapped_ring.append(snapped_pt)
+                    except Exception:
+                        snapped_ring.append(pt)
+                else:
+                    snapped_ring.append(pt)
+            else:
+                snapped_ring.append(pt)
+
+        if is_closed and snapped_ring:
+            snapped_ring.append(snapped_ring[0])
+        return snapped_ring
+
+    def _snap_geometry_to_line(
+        self,
+        geom: QgsGeometry,
+        ref_line: QgsGeometry,
+        snap_tolerance: float,
+    ) -> QgsGeometry:
+        """
+        Snap all vertices of geom that lie within snap_tolerance of ref_line
+        directly onto ref_line so boundary segments snap into 1 line.
+        """
+        if geom is None or geom.isEmpty() or ref_line is None or ref_line.isEmpty():
+            return geom
+
+        flat_type = QgsWkbTypes.flatType(geom.wkbType())
+
+        try:
+            if flat_type == QgsWkbTypes.Polygon:
+                poly_xy = geom.asPolygon()
+                snapped_poly = []
+                for ring in poly_xy:
+                    snapped_ring = self._snap_ring_vertices_to_line(ring, ref_line, snap_tolerance)
+                    snapped_poly.append(snapped_ring)
+                snapped = QgsGeometry.fromPolygonXY(snapped_poly)
+                return snapped if snapped and not snapped.isEmpty() else geom
+
+            elif flat_type == QgsWkbTypes.MultiPolygon:
+                mpoly_xy = geom.asMultiPolygon()
+                snapped_mpoly = []
+                for poly in mpoly_xy:
+                    snapped_poly = []
+                    for ring in poly:
+                        snapped_ring = self._snap_ring_vertices_to_line(ring, ref_line, snap_tolerance)
+                        snapped_poly.append(snapped_ring)
+                    snapped_mpoly.append(snapped_poly)
+                snapped = QgsGeometry.fromMultiPolygonXY(snapped_mpoly)
+                return snapped if snapped and not snapped.isEmpty() else geom
+        except Exception:
+            return geom
+
+        return geom
+
+    def _snap_geometry_to_barangay_boundary(
+        self,
+        geom: QgsGeometry,
+        bgy_geom: QgsGeometry,
+        snap_tolerance: float,
+    ) -> QgsGeometry:
+        """
+        Snap vertices of geom to parent Barangay boundary line.
+        """
+        if bgy_geom is None or bgy_geom.isEmpty():
+            return geom
+        bgy_boundary = bgy_geom.convertToType(QgsWkbTypes.LineGeometry)
+        if bgy_boundary is None or bgy_boundary.isEmpty():
+            bgy_boundary = bgy_geom
+        return self._snap_geometry_to_line(geom, bgy_boundary, snap_tolerance)
+
+    def _snap_eas_to_each_other(
+        self,
+        ea_fids: List[int],
+        final_geoms: Dict[int, QgsGeometry],
+        snap_tolerance: float,
+    ) -> None:
+        """
+        Snap vertices of adjacent EA geometries to each other so that shared internal
+        boundaries between EAs match vertex-for-vertex and render as 1 single line.
+        """
+        if len(ea_fids) <= 1:
+            return
+
+        for pass_num in range(2):
+            for target_fid in ea_fids:
+                target_geom = final_geoms.get(target_fid)
+                if target_geom is None or target_geom.isEmpty():
+                    continue
+
+                other_geoms = [
+                    final_geoms[other_fid]
+                    for other_fid in ea_fids
+                    if other_fid != target_fid
+                    and final_geoms.get(other_fid)
+                    and not final_geoms[other_fid].isEmpty()
+                ]
+
+                if not other_geoms:
+                    continue
+
+                other_union = QgsGeometry.unaryUnion(other_geoms)
+                if other_union is None or other_union.isEmpty():
+                    continue
+
+                other_boundary = other_union.convertToType(QgsWkbTypes.LineGeometry)
+                if other_boundary is None or other_boundary.isEmpty():
+                    other_boundary = other_union
+
+                snapped_geom = self._snap_geometry_to_line(target_geom, other_boundary, snap_tolerance)
+                if snapped_geom and not snapped_geom.isEmpty():
+                    final_geoms[target_fid] = snapped_geom
+
     # -------------------------------------------------------------------------
     # EA-to-Barangay matching
     # -------------------------------------------------------------------------
@@ -697,6 +853,25 @@ class PreEAProcessor:
                         return digits[:5]
                     break
         # Fallback: try layer name digits
+        return None
+
+    def _extract_numeric_attribute(
+        self, feat: QgsFeature, field_candidates: Tuple[str, ...]
+    ) -> Optional[float]:
+        """
+        Case-insensitively search for an attribute among field_candidates in feat.
+        Return float value if found and valid, otherwise None.
+        """
+        feat_fields = feat.fields()
+        for candidate in field_candidates:
+            for i in range(feat_fields.count()):
+                if feat_fields.at(i).name().lower() == candidate.lower():
+                    val = feat.attribute(i)
+                    if val is not None and val != "":
+                        try:
+                            return float(val)
+                        except (ValueError, TypeError):
+                            pass
         return None
 
     # -------------------------------------------------------------------------
@@ -875,8 +1050,7 @@ class PreEAProcessor:
 
         :returns: (best_ea_fid, best_shared_length_or_score) or (None, 0.0)
         """
-        is_geographic = crs.isGeographic() if crs else False
-        search_radius = 0.001 if is_geographic else 10.0  # 10 meters buffer search
+        search_radius = self._get_effective_snap_tolerance(crs, 25.0)
 
         gap_buffered = gap.buffer(search_radius, 5)
 
@@ -1020,6 +1194,7 @@ class PreEAProcessor:
         output_name: str,
         log_fn: Callable[[str], None],
         crs: Optional[QgsCoordinateReferenceSystem] = None,
+        snap_tolerance: float = 25.0,
     ) -> Optional[QgsVectorLayer]:
         """
         Construct the output in-memory polygon layer.
@@ -1044,10 +1219,18 @@ class PreEAProcessor:
             log_fn("[ERROR] Failed to create output memory layer.")
             return None
 
-        # Copy field schema from input EA layer
+        # Copy field schema from input EA layer and ensure hhcount & bldgcount exist
         dp = output_layer.dataProvider()
         ea_fields: QgsFields = ea_layer.fields()
-        dp.addAttributes(ea_fields)
+        fields_to_add = QgsFields(ea_fields)
+
+        existing_names = [fields_to_add.at(i).name().lower() for i in range(fields_to_add.count())]
+        if "hhcount" not in existing_names:
+            fields_to_add.append(QgsField("hhcount", QVariant.Double))
+        if "bldgcount" not in existing_names:
+            fields_to_add.append(QgsField("bldgcount", QVariant.Int))
+
+        dp.addAttributes(fields_to_add)
         output_layer.updateFields()
 
         # ── Pass 1: build a mutable geometry dict with the final clip applied ──
@@ -1142,7 +1325,23 @@ class PreEAProcessor:
                 if not merged_any:
                     break
 
+        # ── Pass 2.5: mutual EA-to-EA vertex snapping for clean internal shared borders ─
+        snap_tol = self._get_effective_snap_tolerance(crs, snap_tolerance)
+        for bgy_fid, ea_fids in bgy_to_ea_fids.items():
+            if len(ea_fids) > 1:
+                self._snap_eas_to_each_other(ea_fids, final_geoms, snap_tol)
+
         # ── Pass 3: write output features ──────────────────────────────────────
+        out_fields = output_layer.fields()
+        hhcount_idx = -1
+        bldgcount_idx = -1
+        for i in range(out_fields.count()):
+            name_lower = out_fields.at(i).name().lower()
+            if name_lower == "hhcount":
+                hhcount_idx = i
+            elif name_lower == "bldgcount":
+                bldgcount_idx = i
+
         new_features: List[QgsFeature] = []
         for ea_feat in ea_features:
             ea_fid = ea_feat.id()
@@ -1150,10 +1349,33 @@ class PreEAProcessor:
             if geom is None or geom.isEmpty():
                 continue
 
-            new_feat = QgsFeature(output_layer.fields())
+            # Snap EA boundary vertices to parent Barangay boundary line so they render as 1 single shared line
+            bgy_fid = ea_to_bgy.get(ea_fid)
+            if bgy_fid is not None and bgy_fid in bgy_by_fid:
+                bgy_geom = bgy_by_fid[bgy_fid].geometry()
+                geom = self._snap_geometry_to_barangay_boundary(geom, bgy_geom, snap_tol)
+
+            new_feat = QgsFeature(out_fields)
             new_feat.setGeometry(geom)
+
+            # Copy existing fields from input EA
             for i in range(ea_fields.count()):
                 new_feat.setAttribute(i, ea_feat.attribute(i))
+
+            # Ensure hhcount field is populated
+            if hhcount_idx != -1:
+                hh_val = self._extract_numeric_attribute(
+                    ea_feat, ("hhcount", "new_hhcount", "hh_count", "hh_cnt", "household", "household_count", "pop", "population")
+                )
+                new_feat.setAttribute(hhcount_idx, float(hh_val) if hh_val is not None else 0.0)
+
+            # Ensure bldgcount field is populated
+            if bldgcount_idx != -1:
+                bldg_val = self._extract_numeric_attribute(
+                    ea_feat, ("bldgcount", "new_bldgcount", "bldg_count", "bldg_cnt", "bldgpts_cnt", "bldg_points")
+                )
+                new_feat.setAttribute(bldgcount_idx, int(round(bldg_val)) if bldg_val is not None else 0)
+
             new_features.append(new_feat)
 
         dp.addFeatures(new_features)
