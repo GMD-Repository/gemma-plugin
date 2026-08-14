@@ -40,8 +40,13 @@ def resolve_ea_parent_barangay(
             val_str = str(val).strip()
             if val_str.endswith(".0"):
                 val_str = val_str[:-2]
+            digits = "".join([c for c in val_str if c.isdigit()])
+            if len(digits) >= 8:
+                return digits[:8]
+            elif len(digits) > 0:
+                return digits.zfill(8)
             if val_str:
-                return val_str
+                return val_str[:8]
 
     # 2. Fallback: Attribute from EA layer
     if dc_geo_idx != -1:
