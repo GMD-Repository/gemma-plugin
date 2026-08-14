@@ -101,7 +101,30 @@ The **EA Delineation & Merging** tab executes spatial aggregation, single-pass s
 | **Boundary Update Lines Layer** | Vector (Line) | `eadel_update_lines.qml` | Line layer (`<geocode>_eadel_update`) representing new boundary cuts generated from road/river splits. |
 | **Candidate for Delineation Layer** | Vector (Polygon) | `delineation_candidates.qml` | Layer containing EAs identified as candidates for delineation (>300 HH). Styled with amber highlight. |
 | **Candidate for Merging Layer** | Vector (Polygon) | `merge_candidates.qml` | Layer containing under-threshold initiator EAs (<=100 HH) and reference neighbor EAs evaluated for intra-barangay merging. |
-| **Extracted Building Points Layer** | Vector (Point) | `building.qml` | Point layer containing building points tagged with assigned EA identifiers. |
+### Final Output Attribute Schema (`delineated_ea2026`, `merge_ea2026`, `special_ea`)
+
+The output layers `<geocode>_delineated_ea2026`, `<geocode>_merged_ea2026`, and `<geocode>_special_ea` share the following 18 standard attributes:
+
+| Field Name | Type | Description |
+|------------|------|-------------|
+| **fid** | Integer | Feature Identifier (primary key). |
+| **map_uuid** | String | Unique UUID assigned to the map sheet or starting EA polygon. |
+| **geocode** | String | Full 9–14 digit PSGC administrative geocode for the EA polygon. |
+| **region** | String | Region administrative code or name. |
+| **province** | String | Province administrative code or name. |
+| **city_mun** | String | City / Municipality administrative code or name. |
+| **barangay** | String | Barangay administrative code or name. |
+| **code** | String | PSGC administrative code / reference suffix. |
+| **name** | String | Formatted Enumeration Area display label (e.g. `EA 001000`). |
+| **ean** | String | Original starting Enumeration Area Number prior to processing. |
+| **hhcount** | Double | Original household count from the starting EA input layer. |
+| **bldgcount** | Integer | Original building count from the starting EA input layer. |
+| **sy** | String / Integer | Survey Year / Census round identifier (e.g. `2026`). |
+| **new_ean** | String | Newly assigned post-delineation 6-digit EA sequence number code (e.g. `001000`). |
+| **hh_count** | Integer | New total household count aggregated from building points assigned to this polygon (whole number). |
+| **bldg_count** | Integer | New total building point count contained in this polygon. |
+| **ea_type** | String | EA classification type (`STANDARD` or `SPECIAL`). |
+| **remarks** | String | Processing note detailing action or split strategy (e.g. `Split along road network`, `Merged EA`, `Generated from Gap layer`). |
 
 ---
 

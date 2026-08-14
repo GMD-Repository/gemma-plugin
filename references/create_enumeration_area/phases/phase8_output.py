@@ -403,6 +403,39 @@ def run_phase_8(
     special_ea_sink = p2.get("special_ea_sink") or p1.get("special_ea_sink")
     extracted_buildings_sink = p2.get("extracted_buildings_sink") or p1.get("extracted_buildings_sink")
 
+    export_fields = p2.get("export_fields")
+    if not export_fields:
+        export_field_names = [
+            "fid", "map_uuid", "geocode", "region", "province",
+            "city_mun", "barangay", "code", "name", "ean",
+            "hhcount", "bldgcount", "sy", "new_ean", "hh_count",
+            "bldg_count", "ea_type", "remarks"
+        ]
+        export_fields = QgsFields()
+        for fname in export_field_names:
+            idx = out_fields.indexOf(fname)
+            if idx != -1:
+                export_fields.append(out_fields.at(idx))
+            else:
+                ftype = QVariant.String
+                if fname == "fid":
+                    ftype = QVariant.Int
+                elif fname == "hhcount":
+                    ftype = QVariant.Double
+                elif fname in ("bldgcount", "bldg_count", "hh_count"):
+                    ftype = QVariant.Int
+                export_fields.append(QgsField(fname, ftype))
+
+    def make_export_feature(src_feat: QgsFeature, exp_fields: QgsFields) -> QgsFeature:
+        exp_feat = QgsFeature(exp_fields)
+        exp_feat.setGeometry(src_feat.geometry())
+        exp_attrs = []
+        for f in exp_fields:
+            val = src_feat.attribute(f.name())
+            exp_attrs.append(val if val is not None else None)
+        exp_feat.setAttributes(exp_attrs)
+        return exp_feat
+
     delineated_feat_count = 0
     merged_feat_count = 0
     special_ea_feat_count = 0
@@ -623,15 +656,34 @@ def run_phase_8(
                 new_gc = bar_code + new_code
             out_feat.setAttribute(geocode_idx, new_gc)
 
-        for bldg_fname in ("new_bldgcount", "bldgcount", "bldg_count", "bldg_cnt", "bldgpts_cnt"):
-            bldg_idx = out_fields.indexOf(bldg_fname)
-            if bldg_idx != -1:
-                out_feat.setAttribute(bldg_idx, ea.get('bldg_count', 0))
+        # Set hhcount (input EA layer original count) vs hh_count (building point new total count)
+        hhcount_idx = out_fields.indexOf("hhcount")
+        if hhcount_idx != -1:
+            orig_hh = ea.get('original_hhcount')
+            if orig_hh is None:
+                orig_hh = out_feat.attribute(hhcount_idx)
+            out_feat.setAttribute(hhcount_idx, float(orig_hh) if orig_hh is not None else 0.0)
 
-        for hh_fname in ("new_hhcount", "hh_count", "hhcount", "hh_cnt"):
-            hh_idx = out_fields.indexOf(hh_fname)
-            if hh_idx != -1:
-                out_feat.setAttribute(hh_idx, final_pop if hh_fname in ("new_hhcount", "hh_count") else int(round(final_pop)))
+        hh_count_idx = out_fields.indexOf("hh_count")
+        if hh_count_idx != -1:
+            val_hh = ea.get('hh_count', 0.0)
+            try:
+                hh_int = int(round(float(val_hh)))
+            except (TypeError, ValueError):
+                hh_int = 0
+            out_feat.setAttribute(hh_count_idx, hh_int)
+
+        # Set bldgcount (input EA layer original count) vs bldg_count (building point new total count)
+        bldgcount_idx = out_fields.indexOf("bldgcount")
+        if bldgcount_idx != -1:
+            orig_bldg = ea.get('original_bldgcount')
+            if orig_bldg is None:
+                orig_bldg = out_feat.attribute(bldgcount_idx)
+            out_feat.setAttribute(bldgcount_idx, int(orig_bldg) if orig_bldg is not None else 0)
+
+        bldg_count_idx = out_fields.indexOf("bldg_count")
+        if bldg_count_idx != -1:
+            out_feat.setAttribute(bldg_count_idx, int(ea.get('bldg_count', 0)))
 
         bldgpts_val_idx = out_fields.indexOf("bldgpoints_value")
         if bldgpts_val_idx != -1:
@@ -727,10 +779,11 @@ def run_phase_8(
             feedback.pushWarning(f"[Output] Skipped writing blank EA feature to output layer (code={ea.get('original_code', '?')}).")
         else:
             _ea_id = ea.get('original_id')
+            exp_feat = make_export_feature(out_feat, export_fields)
             # Add to Special EAs sink if it is a Special EA (Gap/Overlap)
             if ea.get('is_special_ea', False):
                 if special_ea_sink is not None:
-                    if special_ea_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
+                    if special_ea_sink.addFeature(exp_feat, QgsFeatureSink.Flag.FastInsert):
                         special_ea_feat_count += 1
                     else:
                         feedback.reportError(f"Failed to add Special EA {i} to special EA sink.")
@@ -739,7 +792,7 @@ def run_phase_8(
                 sb = ea.get('split_by', 'point_based')
                 split_by_counts[sb] = split_by_counts.get(sb, 0) + 1
                 if delineated_sink is not None:
-                    if delineated_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
+                    if delineated_sink.addFeature(exp_feat, QgsFeatureSink.Flag.FastInsert):
                         delineated_feat_count += 1
                     else:
                         feedback.reportError(f"Failed to add EA {i} to delineated sink.")
@@ -750,7 +803,7 @@ def run_phase_8(
                     _m_hh = ea.get('hh_count', 0.0)
                     _m_bldg = ea.get('bldg_count', 0)
                     if _m_hh > 0 and _m_bldg > 0:
-                        if merged_sink.addFeature(out_feat, QgsFeatureSink.Flag.FastInsert):
+                        if merged_sink.addFeature(exp_feat, QgsFeatureSink.Flag.FastInsert):
                             merged_feat_count += 1
                         else:
                             feedback.reportError(f"Failed to add EA {i} to merged sink.")
