@@ -4,7 +4,7 @@ The **EA Delineation and Merging** module automates the pre-processing, spatial 
 
 It combines two core processing tabs in a single integrated launcher dialog:
 
-1. **Tab 1: Pre-EA Processing** &mdash; Enforces spatial coverage rules, clips EAs extending outside Barangay boundaries, and fills uncovered coverage gaps within parent Barangays.
+1. **Tab 1: EA Preprocessing** &mdash; Enforces spatial coverage rules, clips EAs extending outside Barangay boundaries, and fills uncovered coverage gaps within parent Barangays.
 2. **Tab 2: EA Delineation & Merging** &mdash; Executes building point household aggregation, candidate classification, single-pass splitting for overpopulated EAs (>300 HH), and iterative spatial merging for underpopulated EAs (<=100 HH).
 
 ## Access
@@ -28,7 +28,7 @@ Use this module when:
 
 The **EA Delineation and Merging** launcher dialog provides an interactive workflow prior to executing processing routines:
 
-- **Dual-Tab Processing Launcher:** Switch seamlessly between **Pre-EA Processing** (Tab 1) and **EA Delineation & Merging** (Tab 2).
+- **Dual-Tab Processing Launcher:** Switch seamlessly between **EA Preprocessing** (Tab 1) and **EA Delineation & Merging** (Tab 2).
 - **Auto-Detect Project Layers:** Automatically scans open layers in the QGIS project and populates input dropdowns based on standard layer naming conventions (`_bgy`, `_ea`, `_bldgpts`, `road`, `river`).
 - **Auto Arrange Layers:** One-click utility inside **Input Layers** that restructures project layer tree nodes into `<PSGC>_<City_Mun>_MBI` and `<PSGC>_<City_Mun>_baselayers` groups, re-orders layers (Points → Lines → Polygons → Rasters), renames gaps/overlaps (`<PSGC>_gaps`, `<PSGC>_overlaps`), and applies official GEMMA QML style templates (`1. Base Layer Building Points.qml`, `2. Base Layer Landmark.qml`, etc.).
 - **Fill Missing Household Counts:** Built-in utility to compute missing household counts (`hhcount`) directly from building points within each EA polygon before running delineation algorithms.
@@ -36,9 +36,9 @@ The **EA Delineation and Merging** launcher dialog provides an interactive workf
 
 ---
 
-## Tab 1 — Pre-EA Processing
+## Tab 1 — EA Preprocessing
 
-The **Pre-EA Processing** tab prepares starting EA boundaries before running delineation algorithms by enforcing two fundamental spatial rules:
+The **EA Preprocessing** tab prepares starting EA boundaries before running delineation algorithms by enforcing two fundamental spatial rules:
 
 1. **Rule 1 (Clip to Barangay)**: Every EA polygon must be completely within its parent Barangay boundary.
 2. **Rule 2 (Gap Filling)**: Every Barangay must be fully covered by its constituent EAs with zero uncovered coverage gaps remaining.
@@ -54,7 +54,7 @@ The **Pre-EA Processing** tab prepares starting EA boundaries before running del
 | **Detect Uncovered Barangay Areas** | Boolean | When enabled (default: `True`), identifies uncovered gaps within each Barangay after clipping. |
 | **Assign Gaps to Contiguous EA** | Boolean | When enabled (default: `True`), assigns each detected gap to the adjacent EA sharing the longest boundary edge. |
 
-### Pre-EA Output & Attribute Fields
+### EA Preprocessing Output & Attribute Fields
 
 | Output / Field Name | Type | Description |
 |---------------------|------|-------------|
@@ -157,7 +157,7 @@ The output layers `<geocode>_delineated_ea2026`, `<geocode>_merged_ea2026`, and 
 
 ::: tip Complete Module Workflow
 In the **EA Delineation and Merging** launcher dialog:
-1. Run **Tab 1: Pre-EA Processing** first to create the `<pppmm>_ea2026_preprocessed` layer.
+1. Run **Tab 1: EA Preprocessing** first to create the `<pppmm>_ea2026_preprocessed` layer.
 2. Switch to **Tab 2: EA Delineation & Merging** and select `<pppmm>_ea2026_preprocessed` as the **Previous EA Layer**.
 3. Execute the algorithm to produce 100% gap-free, household-balanced Enumeration Areas.
 :::

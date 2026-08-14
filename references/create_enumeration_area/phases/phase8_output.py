@@ -673,6 +673,11 @@ def run_phase_8(
                 hh_int = 0
             out_feat.setAttribute(hh_count_idx, hh_int)
 
+        # For Special EAs, ensure bldg_count gets the total building point count within its geometry
+        if ea.get('is_special_ea', False):
+            special_bldgs = ea.get('buildings', [])
+            ea['bldg_count'] = len(special_bldgs)
+
         # Set bldgcount (input EA layer original count) vs bldg_count (building point new total count)
         bldgcount_idx = out_fields.indexOf("bldgcount")
         if bldgcount_idx != -1:
@@ -683,7 +688,7 @@ def run_phase_8(
 
         bldg_count_idx = out_fields.indexOf("bldg_count")
         if bldg_count_idx != -1:
-            out_feat.setAttribute(bldg_count_idx, int(ea.get('bldg_count', 0)))
+            out_feat.setAttribute(bldg_count_idx, int(ea.get('bldg_count', len(ea.get('buildings', [])))))
 
         bldgpts_val_idx = out_fields.indexOf("bldgpoints_value")
         if bldgpts_val_idx != -1:
