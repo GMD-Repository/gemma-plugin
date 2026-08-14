@@ -484,6 +484,130 @@ def run_phase_8(
         if parent_bgy_feat and parent_bgy_feat.geometry() and not parent_bgy_feat.geometry().isEmpty():
             allocate_gaps_to_parts(bar_eas, parent_bgy_feat.geometry())
 
+        # Determine maximum starting sequence number in this barangay
+        max_seq = max_ea_number.get(bar, 0)
+        for ea_item in bar_eas:
+            code_str = str(ea_item.get('original_code', '')).strip()
+            if code_str.endswith(".0"):
+                code_str = code_str[:-2]
+            digits = "".join([c for c in code_str if c.isdigit()])
+            if len(digits) >= 3:
+                try:
+                    seq_val = int(digits[:3])
+                    if seq_val > max_seq:
+                        max_seq = seq_val
+                except ValueError:
+                    pass
+
+        # Helper to extract parent 6-digit EA code and 3-digit prefix
+        def extract_parent_code_and_prefix(ea_item):
+            code_6 = ""
+
+            # 1. Priority 1: ean field (6-digit code e.g. 000000)
+            ean_idx = out_fields.indexOf("ean")
+            if ean_idx != -1 and ea_item['attributes'][ean_idx] is not None:
+                val_str = str(ea_item['attributes'][ean_idx]).strip()
+                if val_str not in ('', 'NULL', 'None'):
+                    if val_str.endswith(".0"):
+                        val_str = val_str[:-2]
+                    digits = "".join([c for c in val_str if c.isdigit()])
+                    if len(digits) >= 6:
+                        code_6 = digits[:6]
+                    elif len(digits) > 0:
+                        code_6 = digits.zfill(6)
+
+            # 2. Priority 2: name field (prefix "EA " + 6-digit code e.g. EA 000000)
+            if not code_6:
+                name_idx = out_fields.indexOf("name")
+                if name_idx != -1 and ea_item['attributes'][name_idx] is not None:
+                    val_str = str(ea_item['attributes'][name_idx]).strip()
+                    if val_str not in ('', 'NULL', 'None'):
+                        if val_str.upper().startswith("EA"):
+                            val_str = val_str[2:].strip()
+                        digits = "".join([c for c in val_str if c.isdigit()])
+                        if len(digits) >= 6:
+                            code_6 = digits[:6]
+                        elif len(digits) > 0:
+                            code_6 = digits.zfill(6)
+
+            # 3. Priority 3: geocode field (last 6 digits of 14-digit geocode e.g. 01801015000000 -> 000000)
+            if not code_6:
+                gc_idx = out_fields.indexOf("geocode")
+                if gc_idx != -1 and ea_item['attributes'][gc_idx] is not None:
+                    val_str = str(ea_item['attributes'][gc_idx]).strip()
+                    if val_str not in ('', 'NULL', 'None'):
+                        if val_str.endswith(".0"):
+                            val_str = val_str[:-2]
+                        digits = "".join([c for c in val_str if c.isdigit()])
+                        if len(digits) >= 6:
+                            code_6 = digits[-6:]
+                        elif len(digits) > 0:
+                            code_6 = digits.zfill(6)
+
+            if not code_6:
+                orig_code = str(ea_item.get('original_code', '000000')).strip()
+                if orig_code.endswith(".0"):
+                    orig_code = orig_code[:-2]
+                digits = "".join([c for c in orig_code if c.isdigit()])
+                if len(digits) >= 6:
+                    code_6 = digits[-6:]
+                elif len(digits) > 0:
+                    code_6 = digits.zfill(6)
+                else:
+                    code_6 = "000000"
+
+            prefix_3 = code_6[:3] if len(code_6) >= 3 else "000"
+            return code_6, prefix_3
+
+        # Group EAs in this barangay by original parent feature ID
+        parent_groups = {}
+        for ea_item in bar_eas:
+            pid = ea_item.get('original_id', id(ea_item))
+            parent_groups.setdefault(pid, []).append(ea_item)
+
+        for pid, group in parent_groups.items():
+            if len(group) == 1:
+                ea = group[0]
+                code_6, orig_last3 = extract_parent_code_and_prefix(ea)
+                if ea.get('is_new', False):
+                    max_seq += 1
+                    seq_str = f"{max_seq:03d}"
+                    ea['new_ea_code'] = (seq_str + "000") if orig_last3 == "000" else (orig_last3 + seq_str)
+                else:
+                    if orig_last3 == "000" or code_6 in ("000000", "000", "0"):
+                        ea['new_ea_code'] = "000000"
+                    elif len(code_6) == 6 and code_6.isdigit():
+                        ea['new_ea_code'] = code_6
+                    else:
+                        ea['new_ea_code'] = orig_last3 + "000"
+            else:
+                # Delineated / Split parent EA:
+                group.sort(key=lambda item: float(item.get('hh_count', 0.0)), reverse=True)
+                sample_code, sample_orig = extract_parent_code_and_prefix(group[0])
+
+                if sample_orig == "000" or sample_code in ("000000", "000", "0"):
+                    # Special Rule for parent EA 000000 / 000:
+                    # Largest hh_count gets 001000, 2nd largest gets 002000, 3rd gets 003000, etc.
+                    for g_idx, ea in enumerate(group):
+                        seq_num = g_idx + 1
+                        seq_str = f"{seq_num:03d}"
+                        ea['new_ea_code'] = seq_str + "000"
+                        if seq_num > max_seq:
+                            max_seq = seq_num
+                else:
+                    # Standard Rule for parent EA (e.g. 001 with existing 001, 002, 003):
+                    # 1. Largest hh_count sub-EA gets parent_code + "000" (e.g. 001000)
+                    # 2. Succeeding sub-EAs get parent_code + (max_seq + N) (e.g. 001004, 001005)
+                    for g_idx, ea in enumerate(group):
+                        _, orig_last3 = extract_parent_code_and_prefix(ea)
+                        if g_idx == 0:
+                            ea['new_ea_code'] = orig_last3 + "000"
+                        else:
+                            max_seq += 1
+                            seq_str = f"{max_seq:03d}"
+                            ea['new_ea_code'] = orig_last3 + seq_str
+
+        # Re-sort all EAs in barangay spatially for sort_index
         has_delin = any(ea.get('original_id') in delineation_candidate_ids for ea in bar_eas)
         if has_delin:
             bar_eas.sort(key=get_sort_key)
@@ -494,45 +618,7 @@ def run_phase_8(
                 return (orig_id, centroid.x())
             bar_eas.sort(key=get_original_order_key)
 
-        new_ea_counter = 0
         for i, ea in enumerate(bar_eas):
-            orig_last3 = "000"
-            name_idx = out_fields.indexOf("name")
-            if name_idx != -1 and ea['attributes'][name_idx] is not None:
-                name_val = str(ea['attributes'][name_idx]).strip()
-                digits = "".join([c for c in name_val if c.isdigit()])
-                if len(digits) >= 3:
-                    orig_last3 = digits[:3]
-                elif len(digits) > 0:
-                    orig_last3 = digits.zfill(3)
-
-            if orig_last3 == "000" or not orig_last3.isdigit():
-                orig_code_str = str(ea['original_code']).strip() if ea['original_code'] is not None else "000"
-                if orig_code_str.endswith(".0"):
-                    orig_code_str = orig_code_str[:-2]
-                if len(orig_code_str) > 9:
-                    suffix = orig_code_str[9:]
-                else:
-                    suffix = orig_code_str
-                orig_last3 = suffix.zfill(3)
-                if len(orig_last3) > 3:
-                    orig_last3 = orig_last3[:3]
-
-            if ea.get('is_new', False):
-                seq_num = max_ea_number.get(bar, 0) + 1 + new_ea_counter
-                seq_str = f"{seq_num:03d}"
-                new_ea_counter += 1
-
-                if orig_last3 == "000":
-                    ea['new_ea_code'] = seq_str + "000"
-                else:
-                    ea['new_ea_code'] = orig_last3 + seq_str
-            else:
-                orig_code_str = str(ea['original_code']).strip() if ea['original_code'] is not None else ""
-                if orig_code_str.endswith(".0"):
-                    orig_code_str = orig_code_str[:-2]
-                ea['new_ea_code'] = orig_code_str
-
             ea['new_ea_tracker'] = ea['new_ea_code']
             ea['sort_index'] = i
 
