@@ -423,6 +423,7 @@ class PreEAProcessor:
                 ea_layer, ea_features, corrected_geoms, ea_to_bgy, bgy_by_fid, output_name, _log,
                 crs=barangay_layer.crs(),
                 snap_tolerance=snap_tolerance,
+                gap_tolerance=gap_tolerance,
             )
 
             if output_layer is None:
@@ -548,6 +549,33 @@ class PreEAProcessor:
             log_fn(f"[WARNING] Could not repair geometry for {label}.")
             return None
         return geom
+
+    def _eliminate_sliver_parts(
+        self,
+        geom: Optional[QgsGeometry],
+        min_area: float,
+        crs: Optional[QgsCoordinateReferenceSystem] = None,
+    ) -> Optional[QgsGeometry]:
+        """
+        Decomposes geometry into polygon parts and filters out any sliver parts
+        whose area is below min_area (e.g. 1.0 m²). Returns unified cleaned geometry.
+        """
+        if geom is None or geom.isEmpty() or min_area <= 0:
+            return geom
+
+        parts = self._explode_to_polygons(geom)
+        valid_parts = [p for p in parts if self._measure_area(p, crs) >= min_area]
+
+        if not valid_parts:
+            # If all parts were slivers, keep the largest part to avoid dropping feature completely
+            if parts:
+                return max(parts, key=lambda p: self._measure_area(p, crs))
+            return None
+
+        if len(valid_parts) == 1:
+            return valid_parts[0]
+
+        return QgsGeometry.unaryUnion(valid_parts)
 
     def _explode_to_polygons(self, geom: QgsGeometry) -> List[QgsGeometry]:
         """Decompose a geometry into a list of single-part polygon geometries."""
@@ -710,13 +738,20 @@ class PreEAProcessor:
         snap_tolerance: float,
     ) -> QgsGeometry:
         """
-        Snap vertices of geom to parent Barangay boundary line.
+        Snap vertices of geom directly onto parent Barangay boundary line.
         """
         if bgy_geom is None or bgy_geom.isEmpty():
             return geom
-        bgy_boundary = bgy_geom.convertToType(QgsWkbTypes.LineGeometry)
+        try:
+            bgy_boundary = bgy_geom.boundary()
+            if bgy_boundary is None or bgy_boundary.isEmpty():
+                bgy_boundary = bgy_geom.convertToType(QgsWkbTypes.LineGeometry)
+        except Exception:
+            bgy_boundary = bgy_geom.convertToType(QgsWkbTypes.LineGeometry)
+
         if bgy_boundary is None or bgy_boundary.isEmpty():
             bgy_boundary = bgy_geom
+
         return self._snap_geometry_to_line(geom, bgy_boundary, snap_tolerance)
 
     def _snap_eas_to_each_other(
@@ -1195,6 +1230,7 @@ class PreEAProcessor:
         log_fn: Callable[[str], None],
         crs: Optional[QgsCoordinateReferenceSystem] = None,
         snap_tolerance: float = 25.0,
+        gap_tolerance: float = 1.0,
     ) -> Optional[QgsVectorLayer]:
         """
         Construct the output in-memory polygon layer.
@@ -1354,6 +1390,11 @@ class PreEAProcessor:
             if bgy_fid is not None and bgy_fid in bgy_by_fid:
                 bgy_geom = bgy_by_fid[bgy_fid].geometry()
                 geom = self._snap_geometry_to_barangay_boundary(geom, bgy_geom, snap_tol)
+
+            # Eliminate sliver polygon parts below gap_tolerance
+            geom = self._eliminate_sliver_parts(geom, gap_tolerance, crs)
+            if geom is None or geom.isEmpty():
+                continue
 
             new_feat = QgsFeature(out_fields)
             new_feat.setGeometry(geom)

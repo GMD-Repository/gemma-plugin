@@ -124,6 +124,19 @@ class TestPreEAProcessor(unittest.TestCase):
         for p in parts:
             self.assertFalse(p.isEmpty())
 
+    def test_eliminate_sliver_parts(self):
+        """Test that _eliminate_sliver_parts filters out micro-sliver parts."""
+        processor = PreEAProcessor()
+
+        poly1 = make_square(0, 0, 100) # larger part
+        poly2 = make_square(200, 200, 1) # tiny sliver part
+        multi_poly = poly1.combine(poly2)
+
+        # When min_area = 5.0, poly2 (area < 5) should be filtered out
+        cleaned = processor._eliminate_sliver_parts(multi_poly, min_area=5.0)
+        self.assertIsNotNone(cleaned)
+        self.assertFalse(cleaned.isEmpty())
+
 
 if __name__ == "__main__":
     unittest.main()
