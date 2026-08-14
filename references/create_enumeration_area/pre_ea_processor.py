@@ -2,7 +2,7 @@
 """
 Pre-EA Processor
 ----------------
-Implements the Pre-EA Processing workflow for the EA Delineation and Merging plugin.
+Implements the EA Preprocessing workflow for the EA Delineation and Merging plugin.
 
 Workflow:
   Phase 1 — EA-to-Barangay matching (attribute geocode prefix, spatial fallback)
@@ -137,9 +137,9 @@ class PreEAProcessor:
 
     @staticmethod
     def short_help_string() -> str:
-        """Returns the HTML description string for Pre-EA Processing."""
+        """Returns the HTML description string for EA Preprocessing."""
         return (
-            "<h3>Pre-EA Processing</h3>"
+            "<h3>EA Preprocessing</h3>"
             "<p>Prepares an existing Enumeration Area (EA) layer for use in the Create Enumeration Areas "
             "workflow by enforcing two fundamental spatial rules: clipping EAs extending outside their parent "
             "Barangay and filling uncovered coverage gaps within the Barangay boundary.</p>"
@@ -230,7 +230,7 @@ class PreEAProcessor:
             return bool(is_cancelled_fn and is_cancelled_fn())
 
         try:
-            _log("[INFO] Starting Pre-EA Processing...")
+            _log("[INFO] Starting EA Preprocessing...")
             _log(f"[INFO] Barangay Layer: {barangay_layer.name()}")
             _log(f"[INFO] EA Layer: {ea_layer.name()}")
             _log("[INFO] Validating input layers...")
@@ -453,7 +453,7 @@ class PreEAProcessor:
             )
 
         except Exception as exc:
-            error_msg = f"Unexpected error during Pre-EA Processing: {exc}"
+            error_msg = f"Unexpected error during EA Preprocessing: {exc}"
             _log(f"[ERROR] {error_msg}")
             summary.overall_status = "ERROR"
             return PreEAResult(
