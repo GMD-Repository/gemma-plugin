@@ -22,6 +22,7 @@ from qgis.core import (
     QgsProject,
     QgsVectorLayer,
     QgsPointXY,
+    NULL,
 )
 
 from ..helpers.constants import _PHASE_LABELS, yield_to_ui
@@ -426,6 +427,14 @@ def run_phase_8(
                     ftype = QVariant.Int
                 export_fields.append(QgsField(fname, ftype))
 
+    special_ea_export_fields = p2.get("special_ea_export_fields")
+    if not special_ea_export_fields:
+        special_ea_export_fields = QgsFields()
+        for f in export_fields:
+            if f.name() in ("hhcount", "bldgcount"):
+                continue
+            special_ea_export_fields.append(f)
+
     def make_export_feature(src_feat: QgsFeature, exp_fields: QgsFields) -> QgsFeature:
         exp_feat = QgsFeature(exp_fields)
         exp_feat.setGeometry(src_feat.geometry())
@@ -502,11 +511,12 @@ def run_phase_8(
         # Helper to extract parent 6-digit EA code and 3-digit prefix
         def extract_parent_code_and_prefix(ea_item):
             code_6 = ""
+            attrs = ea_item.get('attributes', [])
 
             # 1. Priority 1: ean field (6-digit code e.g. 000000)
             ean_idx = out_fields.indexOf("ean")
-            if ean_idx != -1 and ea_item['attributes'][ean_idx] is not None:
-                val_str = str(ea_item['attributes'][ean_idx]).strip()
+            if ean_idx != -1 and ean_idx < len(attrs) and attrs[ean_idx] is not None:
+                val_str = str(attrs[ean_idx]).strip()
                 if val_str not in ('', 'NULL', 'None'):
                     if val_str.endswith(".0"):
                         val_str = val_str[:-2]
@@ -519,8 +529,8 @@ def run_phase_8(
             # 2. Priority 2: name field (prefix "EA " + 6-digit code e.g. EA 000000)
             if not code_6:
                 name_idx = out_fields.indexOf("name")
-                if name_idx != -1 and ea_item['attributes'][name_idx] is not None:
-                    val_str = str(ea_item['attributes'][name_idx]).strip()
+                if name_idx != -1 and name_idx < len(attrs) and attrs[name_idx] is not None:
+                    val_str = str(attrs[name_idx]).strip()
                     if val_str not in ('', 'NULL', 'None'):
                         if val_str.upper().startswith("EA"):
                             val_str = val_str[2:].strip()
@@ -533,8 +543,8 @@ def run_phase_8(
             # 3. Priority 3: geocode field (last 6 digits of 14-digit geocode e.g. 01801015000000 -> 000000)
             if not code_6:
                 gc_idx = out_fields.indexOf("geocode")
-                if gc_idx != -1 and ea_item['attributes'][gc_idx] is not None:
-                    val_str = str(ea_item['attributes'][gc_idx]).strip()
+                if gc_idx != -1 and gc_idx < len(attrs) and attrs[gc_idx] is not None:
+                    val_str = str(attrs[gc_idx]).strip()
                     if val_str not in ('', 'NULL', 'None'):
                         if val_str.endswith(".0"):
                             val_str = val_str[:-2]
@@ -742,22 +752,41 @@ def run_phase_8(
                 new_gc = bar_code + new_code
             out_feat.setAttribute(geocode_idx, new_gc)
 
+        def safe_float(val, default=0.0):
+            if val is None or val == NULL or str(val).strip() in ('', 'NULL', 'None'):
+                return default
+            if isinstance(val, QVariant):
+                if val.isNull():
+                    return default
+                val = val.value()
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                return default
+
+        def safe_int(val, default=0):
+            if val is None or val == NULL or str(val).strip() in ('', 'NULL', 'None'):
+                return default
+            if isinstance(val, QVariant):
+                if val.isNull():
+                    return default
+                val = val.value()
+            try:
+                return int(round(float(val)))
+            except (TypeError, ValueError):
+                return default
+
         # Set hhcount (input EA layer original count) vs hh_count (building point new total count)
         hhcount_idx = out_fields.indexOf("hhcount")
         if hhcount_idx != -1:
             orig_hh = ea.get('original_hhcount')
             if orig_hh is None:
                 orig_hh = out_feat.attribute(hhcount_idx)
-            out_feat.setAttribute(hhcount_idx, float(orig_hh) if orig_hh is not None else 0.0)
+            out_feat.setAttribute(hhcount_idx, safe_float(orig_hh, 0.0))
 
         hh_count_idx = out_fields.indexOf("hh_count")
         if hh_count_idx != -1:
-            val_hh = ea.get('hh_count', 0.0)
-            try:
-                hh_int = int(round(float(val_hh)))
-            except (TypeError, ValueError):
-                hh_int = 0
-            out_feat.setAttribute(hh_count_idx, hh_int)
+            out_feat.setAttribute(hh_count_idx, safe_int(ea.get('hh_count', 0.0), 0))
 
         # For Special EAs, ensure bldg_count gets the total building point count within its geometry
         if ea.get('is_special_ea', False):
@@ -770,11 +799,11 @@ def run_phase_8(
             orig_bldg = ea.get('original_bldgcount')
             if orig_bldg is None:
                 orig_bldg = out_feat.attribute(bldgcount_idx)
-            out_feat.setAttribute(bldgcount_idx, int(orig_bldg) if orig_bldg is not None else 0)
+            out_feat.setAttribute(bldgcount_idx, safe_int(orig_bldg, 0))
 
         bldg_count_idx = out_fields.indexOf("bldg_count")
         if bldg_count_idx != -1:
-            out_feat.setAttribute(bldg_count_idx, int(ea.get('bldg_count', len(ea.get('buildings', [])))))
+            out_feat.setAttribute(bldg_count_idx, safe_int(ea.get('bldg_count', len(ea.get('buildings', []))), 0))
 
         bldgpts_val_idx = out_fields.indexOf("bldgpoints_value")
         if bldgpts_val_idx != -1:
@@ -858,51 +887,42 @@ def run_phase_8(
             is_delin_feat = (_ea_id_tmp in delineation_candidate_ids) or ea.get('from_split', False)
             out_feat.setAttribute(indicator_out_idx, "for_delineation" if is_delin_feat else "ea_reference")
 
-        # Check if EA feature is blank (empty geometry or missing geocode/ean identifiers)
-        _gc_val = out_feat.attribute(out_fields.indexOf("geocode")) if out_fields.indexOf("geocode") != -1 else None
-        _ean_val = out_feat.attribute(out_fields.indexOf(ea_id_field)) if out_fields.indexOf(ea_id_field) != -1 else None
-        _is_blank_feat = out_feat.geometry().isEmpty() or (
-            (_gc_val is None or (isinstance(_gc_val, QVariant) and _gc_val.isNull()) or str(_gc_val).strip() in ('', 'NULL', 'None'))
-            and (_ean_val is None or (isinstance(_ean_val, QVariant) and _ean_val.isNull()) or str(_ean_val).strip() in ('', 'NULL', 'None'))
-        )
+        # Check if EA feature geometry is empty
+        _is_blank_feat = out_feat.geometry().isEmpty()
 
         if _is_blank_feat:
-            feedback.pushWarning(f"[Output] Skipped writing blank EA feature to output layer (code={ea.get('original_code', '?')}).")
+            feedback.pushWarning(f"[Output] Skipped writing empty geometry EA feature to output layer (code={ea.get('original_code', '?')}).")
         else:
             _ea_id = ea.get('original_id')
             exp_feat = make_export_feature(out_feat, export_fields)
-            # Add to Special EAs sink if it is a Special EA (Gap/Overlap)
+
+            # 1. Add to Special EAs sink if it is a Special EA (Gap/Overlap)
             if ea.get('is_special_ea', False):
                 if special_ea_sink is not None:
-                    if special_ea_sink.addFeature(exp_feat, QgsFeatureSink.Flag.FastInsert):
+                    exp_feat_special = make_export_feature(out_feat, special_ea_export_fields)
+                    if special_ea_sink.addFeature(exp_feat_special, QgsFeatureSink.Flag.FastInsert):
                         special_ea_feat_count += 1
                     else:
                         feedback.reportError(f"Failed to add Special EA {i} to special EA sink.")
-            # Add to delineated sink if it was split and not a Special EA
-            elif ea.get('from_split', False):
-                sb = ea.get('split_by', 'point_based')
-                split_by_counts[sb] = split_by_counts.get(sb, 0) + 1
+
+            # 2. Add to Delineated EAs sink (main output layer containing all final EAs)
+            else:
+                if ea.get('from_split', False):
+                    sb = ea.get('split_by', 'point_based')
+                    split_by_counts[sb] = split_by_counts.get(sb, 0) + 1
                 if delineated_sink is not None:
                     if delineated_sink.addFeature(exp_feat, QgsFeatureSink.Flag.FastInsert):
                         delineated_feat_count += 1
                     else:
                         feedback.reportError(f"Failed to add EA {i} to delineated sink.")
 
-            # Add to merged sink if it was merged, not split, not Special EA, and has >0 hh_count and >0 bldg_count
-            if ea.get('from_merge', False) and not ea.get('from_split', False) and not ea.get('is_special_ea', False):
+            # 3. Add to Merged EAs sink if feature was generated from EA merging
+            if ea.get('from_merge', False) and not ea.get('is_special_ea', False):
                 if merged_sink is not None:
-                    _m_hh = ea.get('hh_count', 0.0)
-                    _m_bldg = ea.get('bldg_count', 0)
-                    if _m_hh > 0 and _m_bldg > 0:
-                        if merged_sink.addFeature(exp_feat, QgsFeatureSink.Flag.FastInsert):
-                            merged_feat_count += 1
-                        else:
-                            feedback.reportError(f"Failed to add EA {i} to merged sink.")
+                    if merged_sink.addFeature(exp_feat, QgsFeatureSink.Flag.FastInsert):
+                        merged_feat_count += 1
                     else:
-                        feedback.pushWarning(
-                            f"[Merged Output] Skipped writing zero-count merged EA (code={ea.get('original_code', '?')}, "
-                            f"hh_count={_m_hh}, bldg_count={_m_bldg}) to merged sink."
-                        )
+                        feedback.reportError(f"Failed to add EA {i} to merged sink.")
 
         # Add matched buildings to extracted buildings sink
         if extracted_buildings_sink is not None:
