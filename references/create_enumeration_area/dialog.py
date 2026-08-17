@@ -2224,7 +2224,10 @@ class EALauncherDialog(QDialog):
                 self.status_banner.setText(banner_text)
 
         except Exception as e:
+            import traceback
+            tb_str = traceback.format_exc()
             self.log_console.append(f"<span style='color:#cf222e; font-weight:bold;'>[FATAL] Error executing pipeline: {str(e)}</span>")
+            self.log_console.append(f"<pre style='color:#cf222e; font-size:11px; font-family:Consolas, monospace;'>{tb_str}</pre>")
             self.status_banner.setText(f"Error: Pipeline execution failed — {str(e)}")
         
         finally:

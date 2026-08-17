@@ -178,6 +178,12 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             target_crs,
         )
 
+    special_ea_export_fields = QgsFields()
+    for f in export_fields:
+        if f.name() in ("hhcount", "bldgcount"):
+            continue
+        special_ea_export_fields.append(f)
+
     special_ea_sink = None
     special_ea_dest_id = None
     if alg.SPECIAL_EA_OUTPUT in parameters and parameters[alg.SPECIAL_EA_OUTPUT] is not None:
@@ -185,7 +191,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             parameters,
             alg.SPECIAL_EA_OUTPUT,
             context,
-            export_fields,
+            special_ea_export_fields,
             out_wkb_type,
             target_crs,
         )
@@ -945,6 +951,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         "outputs": outputs,
         "out_fields": out_fields,
         "export_fields": export_fields,
+        "special_ea_export_fields": special_ea_export_fields,
         "out_wkb_type": out_wkb_type,
         "delineated_sink": delineated_sink,
         "merged_sink": merged_sink,
