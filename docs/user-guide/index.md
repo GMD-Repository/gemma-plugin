@@ -23,6 +23,11 @@ features:
     details: Detect overlaps and gaps between barangay polygon boundaries with building point validation. Supports exporting styled MBI layers as GPKG.
     link: /tools/mbi-checker
   - icon:
+      src: /icons/mbi_validator.svg
+    title: MBI Validator
+    details: Cross-check Reference MBI layers against Checker GAP/OVERLAP layers to flag status mismatches and audit boundary resolutions.
+    link: /tools/mbi-validator
+  - icon:
       src: /icons/fill.svg
     title: Fill Polygon Gaps
     details: Automatically fill gaps between polygons by assigning them to the correct neighboring barangay with a preview-before-apply workflow.
