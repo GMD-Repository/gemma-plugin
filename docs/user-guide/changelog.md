@@ -2,6 +2,44 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.6
+<time>Aug 20, 2026</time>
+
+### ⚡ Improvements & Fixes
+- Enhanced changelog link generation to ensure accurate references ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### 🐛 Bug Fixes
+- Corrected HuggingFace Inference API endpoints to resolve connectivity issues ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#143](https://github.com/GMD-Repository/gemma-plugin/pull/143))
+
+<Contributors :contributors="['kentemman-gmd']" />
+
+## 1.0.5
+<time>Aug 20, 2026</time>
+
+### 🐛 Bug Fixes
+- Fixed HuggingFace Inference API endpoints and improved the model fallback chain  (#142) ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+<Contributors :contributors="['kentemman-gmd']" />
+
+## 1.0.4
+<time>Aug 20, 2026</time>
+
+### ✨ New Features
+- Implemented MBI validator tool for PMDR, enhancing data validation capabilities (@psacjperez) (#139)
+
+### ⚡ Improvements & Fixes
+- Added support for duplicate vertices fix in geometry repair toolkit (@psacjperez)
+- Modified update metadata and joined barangay attributes for improved data handling (@psacjperez) (#139)
+- Supported 'len' and 'length' keyword arguments in QgsField mock for better compatibility (@psacjperez) (#139)
+
+### 🐛 Bug Fixes
+- Fixed HuggingFace Inference API endpoints and model fallback chain to ensure stable performance (@kentemman-gmd) (#141)
+
+### 📚 Documentation
+- Added project documentation and utilities for geometry and attribute processing (@psacjperez) (#139)
+
+<Contributors :contributors="['psacjperez', 'kentemman-gmd']" />
+
 ## 1.0.3
 <time>Aug 20, 2026</time>
 

@@ -2,7 +2,7 @@
 """
 Pre-EA Processor
 ----------------
-Implements the Pre-EA Processing workflow for the EA Delineation and Merging plugin.
+Implements the EA Preprocessing workflow for the EA Delineation and Merging plugin.
 
 Workflow:
   Phase 1 — EA-to-Barangay matching (attribute geocode prefix, spatial fallback)
@@ -36,10 +36,14 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from qgis.core import (
+    QgsCoordinateReferenceSystem,
+    QgsDistanceArea,
     QgsFeature,
     QgsFeatureRequest,
+    QgsField,
     QgsFields,
     QgsGeometry,
+    QgsPointXY,
     QgsProject,
     QgsSpatialIndex,
     QgsVectorLayer,
@@ -133,9 +137,9 @@ class PreEAProcessor:
 
     @staticmethod
     def short_help_string() -> str:
-        """Returns the HTML description string for Pre-EA Processing."""
+        """Returns the HTML description string for EA Preprocessing."""
         return (
-            "<h3>Pre-EA Processing</h3>"
+            "<h3>EA Preprocessing</h3>"
             "<p>Prepares an existing Enumeration Area (EA) layer for use in the Create Enumeration Areas "
             "workflow by enforcing two fundamental spatial rules: clipping EAs extending outside their parent "
             "Barangay and filling uncovered coverage gaps within the Barangay boundary.</p>"
@@ -171,6 +175,8 @@ class PreEAProcessor:
             "<li><b>Pre-Processed EA Layer</b> (polygon, named <i>&lt;5-digit geocode&gt;_ea2026_preprocessed</i>) — "
             "In-memory vector layer containing pre-processed EAs fully aligned with Barangay boundaries and gap-filled. "
             "All fields from the original EA layer are preserved. Additional/updated fields:</li>"
+            "<li><i>hhcount</i> — Household count for the EA polygon.</li>"
+            "<li><i>bldgcount</i> — Building count for the EA polygon.</li>"
             "<li><i>original_area</i> — Original surface area of the EA polygon in square metres.</li>"
             "<li><i>corrected_area</i> — Corrected surface area of the EA polygon after clipping and gap assignment.</li>"
             "<li><i>area_change</i> — Net area change (square metres) after pre-processing.</li>"
@@ -184,6 +190,7 @@ class PreEAProcessor:
         barangay_layer: QgsVectorLayer,
         ea_layer: QgsVectorLayer,
         gap_tolerance: float = 1.0,
+        snap_tolerance: float = 25.0,
         clip_to_bgy: bool = True,
         detect_gaps: bool = True,
         assign_gaps: bool = True,
@@ -197,6 +204,7 @@ class PreEAProcessor:
         :param barangay_layer: Polygon vector layer of Barangays.
         :param ea_layer: Polygon vector layer of EAs.
         :param gap_tolerance: Minimum area (m²) for a gap to be considered meaningful.
+        :param snap_tolerance: Distance (m) to snap boundary vertices onto Barangay & adjacent EA edges.
         :param clip_to_bgy: Whether to clip EAs extending outside their parent Barangay.
         :param detect_gaps: Whether to detect uncovered areas within each Barangay.
         :param assign_gaps: Whether to assign detected gaps to contiguous EAs.
@@ -222,7 +230,7 @@ class PreEAProcessor:
             return bool(is_cancelled_fn and is_cancelled_fn())
 
         try:
-            _log("[INFO] Starting Pre-EA Processing...")
+            _log("[INFO] Starting EA Preprocessing...")
             _log(f"[INFO] Barangay Layer: {barangay_layer.name()}")
             _log(f"[INFO] EA Layer: {ea_layer.name()}")
             _log("[INFO] Validating input layers...")
@@ -401,7 +409,7 @@ class PreEAProcessor:
             # -- Phase 5: Final validation ----------------------------------------
             _log("[INFO] Performing final topology validation...")
             self._final_validation(
-                bgy_by_fid, bgy_to_eas, ea_to_bgy, corrected_geoms, summary, _log
+                bgy_by_fid, bgy_to_eas, ea_to_bgy, corrected_geoms, summary, _log, crs=barangay_layer.crs()
             )
 
             _progress(90)
@@ -413,7 +421,9 @@ class PreEAProcessor:
 
             output_layer = self._build_output_layer(
                 ea_layer, ea_features, corrected_geoms, ea_to_bgy, bgy_by_fid, output_name, _log,
-                crs=barangay_layer.crs()
+                crs=barangay_layer.crs(),
+                snap_tolerance=snap_tolerance,
+                gap_tolerance=gap_tolerance,
             )
 
             if output_layer is None:
@@ -443,7 +453,7 @@ class PreEAProcessor:
             )
 
         except Exception as exc:
-            error_msg = f"Unexpected error during Pre-EA Processing: {exc}"
+            error_msg = f"Unexpected error during EA Preprocessing: {exc}"
             _log(f"[ERROR] {error_msg}")
             summary.overall_status = "ERROR"
             return PreEAResult(
@@ -540,6 +550,33 @@ class PreEAProcessor:
             return None
         return geom
 
+    def _eliminate_sliver_parts(
+        self,
+        geom: Optional[QgsGeometry],
+        min_area: float,
+        crs: Optional[QgsCoordinateReferenceSystem] = None,
+    ) -> Optional[QgsGeometry]:
+        """
+        Decomposes geometry into polygon parts and filters out any sliver parts
+        whose area is below min_area (e.g. 1.0 m²). Returns unified cleaned geometry.
+        """
+        if geom is None or geom.isEmpty() or min_area <= 0:
+            return geom
+
+        parts = self._explode_to_polygons(geom)
+        valid_parts = [p for p in parts if self._measure_area(p, crs) >= min_area]
+
+        if not valid_parts:
+            # If all parts were slivers, keep the largest part to avoid dropping feature completely
+            if parts:
+                return max(parts, key=lambda p: self._measure_area(p, crs))
+            return None
+
+        if len(valid_parts) == 1:
+            return valid_parts[0]
+
+        return QgsGeometry.unaryUnion(valid_parts)
+
     def _explode_to_polygons(self, geom: QgsGeometry) -> List[QgsGeometry]:
         """Decompose a geometry into a list of single-part polygon geometries."""
         polygons: List[QgsGeometry] = []
@@ -571,6 +608,193 @@ class PreEAProcessor:
             if flat_type in (QgsWkbTypes.Polygon, QgsWkbTypes.MultiPolygon):
                 polygons.append(geom)
         return polygons
+
+    def _measure_area(
+        self,
+        geom: Optional[QgsGeometry],
+        crs: Optional[QgsCoordinateReferenceSystem] = None,
+    ) -> float:
+        """
+        Measure geometry surface area in square metres (m²).
+
+        Handles both Geographic (EPSG:4326 lat/lon) and Projected Coordinate Reference Systems
+        by leveraging QgsDistanceArea with WGS84 ellipsoid transformation context.
+        """
+        if geom is None or geom.isEmpty():
+            return 0.0
+        try:
+            if crs and crs.isValid():
+                da = QgsDistanceArea()
+                da.setSourceCrs(crs, QgsProject.instance().transformContext())
+                da.setEllipsoid("WGS84" if crs.isGeographic() else QgsProject.instance().ellipsoid() or "WGS84")
+                val = da.measureArea(geom)
+                if isinstance(val, (int, float)):
+                    return abs(float(val))
+        except Exception:
+            pass
+        try:
+            val = geom.area()
+            if isinstance(val, (int, float)):
+                return abs(float(val))
+        except Exception:
+            pass
+        return 0.0
+
+    def _get_effective_snap_tolerance(
+        self,
+        crs: Optional[QgsCoordinateReferenceSystem],
+        snap_tolerance: float = 25.0,
+    ) -> float:
+        """
+        Compute effective snapping tolerance in native CRS map units.
+        For Projected CRS: snap_tolerance in metres (default 25.0 m).
+        For Geographic CRS (EPSG:4326): converts metres to degrees (~1m ≈ 0.000009 deg).
+        """
+        is_geo = bool(crs and crs.isValid() and crs.isGeographic())
+        if is_geo:
+            return max(snap_tolerance * 0.000009, 0.0003)
+        return max(snap_tolerance, 25.0)
+
+    def _snap_ring_vertices_to_line(
+        self,
+        ring: List[QgsPointXY],
+        ref_line: QgsGeometry,
+        snap_tolerance: float,
+    ) -> List[QgsPointXY]:
+        """
+        Snap vertices of a closed polygon ring to ref_line if distance <= snap_tolerance.
+        """
+        if not ring:
+            return ring
+        snapped_ring: List[QgsPointXY] = []
+        is_closed = (len(ring) > 1 and ring[0] == ring[-1])
+        unique_pts = ring[:-1] if is_closed else ring
+
+        for pt in unique_pts:
+            pt_geom = QgsGeometry.fromPointXY(pt)
+            dist = ref_line.distance(pt_geom)
+            if 0 < dist <= snap_tolerance:
+                nearest = ref_line.nearestPoint(pt_geom)
+                if nearest and not nearest.isEmpty():
+                    try:
+                        snapped_pt = nearest.asPoint()
+                        snapped_ring.append(snapped_pt)
+                    except Exception:
+                        snapped_ring.append(pt)
+                else:
+                    snapped_ring.append(pt)
+            else:
+                snapped_ring.append(pt)
+
+        if is_closed and snapped_ring:
+            snapped_ring.append(snapped_ring[0])
+        return snapped_ring
+
+    def _snap_geometry_to_line(
+        self,
+        geom: QgsGeometry,
+        ref_line: QgsGeometry,
+        snap_tolerance: float,
+    ) -> QgsGeometry:
+        """
+        Snap all vertices of geom that lie within snap_tolerance of ref_line
+        directly onto ref_line so boundary segments snap into 1 line.
+        """
+        if geom is None or geom.isEmpty() or ref_line is None or ref_line.isEmpty():
+            return geom
+
+        flat_type = QgsWkbTypes.flatType(geom.wkbType())
+
+        try:
+            if flat_type == QgsWkbTypes.Polygon:
+                poly_xy = geom.asPolygon()
+                snapped_poly = []
+                for ring in poly_xy:
+                    snapped_ring = self._snap_ring_vertices_to_line(ring, ref_line, snap_tolerance)
+                    snapped_poly.append(snapped_ring)
+                snapped = QgsGeometry.fromPolygonXY(snapped_poly)
+                return snapped if snapped and not snapped.isEmpty() else geom
+
+            elif flat_type == QgsWkbTypes.MultiPolygon:
+                mpoly_xy = geom.asMultiPolygon()
+                snapped_mpoly = []
+                for poly in mpoly_xy:
+                    snapped_poly = []
+                    for ring in poly:
+                        snapped_ring = self._snap_ring_vertices_to_line(ring, ref_line, snap_tolerance)
+                        snapped_poly.append(snapped_ring)
+                    snapped_mpoly.append(snapped_poly)
+                snapped = QgsGeometry.fromMultiPolygonXY(snapped_mpoly)
+                return snapped if snapped and not snapped.isEmpty() else geom
+        except Exception:
+            return geom
+
+        return geom
+
+    def _snap_geometry_to_barangay_boundary(
+        self,
+        geom: QgsGeometry,
+        bgy_geom: QgsGeometry,
+        snap_tolerance: float,
+    ) -> QgsGeometry:
+        """
+        Snap vertices of geom directly onto parent Barangay boundary line.
+        """
+        if bgy_geom is None or bgy_geom.isEmpty():
+            return geom
+        try:
+            bgy_boundary = bgy_geom.boundary()
+            if bgy_boundary is None or bgy_boundary.isEmpty():
+                bgy_boundary = bgy_geom.convertToType(QgsWkbTypes.LineGeometry)
+        except Exception:
+            bgy_boundary = bgy_geom.convertToType(QgsWkbTypes.LineGeometry)
+
+        if bgy_boundary is None or bgy_boundary.isEmpty():
+            bgy_boundary = bgy_geom
+
+        return self._snap_geometry_to_line(geom, bgy_boundary, snap_tolerance)
+
+    def _snap_eas_to_each_other(
+        self,
+        ea_fids: List[int],
+        final_geoms: Dict[int, QgsGeometry],
+        snap_tolerance: float,
+    ) -> None:
+        """
+        Snap vertices of adjacent EA geometries to each other so that shared internal
+        boundaries between EAs match vertex-for-vertex and render as 1 single line.
+        """
+        if len(ea_fids) <= 1:
+            return
+
+        for pass_num in range(2):
+            for target_fid in ea_fids:
+                target_geom = final_geoms.get(target_fid)
+                if target_geom is None or target_geom.isEmpty():
+                    continue
+
+                other_geoms = [
+                    final_geoms[other_fid]
+                    for other_fid in ea_fids
+                    if other_fid != target_fid
+                    and final_geoms.get(other_fid)
+                    and not final_geoms[other_fid].isEmpty()
+                ]
+
+                if not other_geoms:
+                    continue
+
+                other_union = QgsGeometry.unaryUnion(other_geoms)
+                if other_union is None or other_union.isEmpty():
+                    continue
+
+                other_boundary = other_union.convertToType(QgsWkbTypes.LineGeometry)
+                if other_boundary is None or other_boundary.isEmpty():
+                    other_boundary = other_union
+
+                snapped_geom = self._snap_geometry_to_line(target_geom, other_boundary, snap_tolerance)
+                if snapped_geom and not snapped_geom.isEmpty():
+                    final_geoms[target_fid] = snapped_geom
 
     # -------------------------------------------------------------------------
     # EA-to-Barangay matching
@@ -666,6 +890,25 @@ class PreEAProcessor:
         # Fallback: try layer name digits
         return None
 
+    def _extract_numeric_attribute(
+        self, feat: QgsFeature, field_candidates: Tuple[str, ...]
+    ) -> Optional[float]:
+        """
+        Case-insensitively search for an attribute among field_candidates in feat.
+        Return float value if found and valid, otherwise None.
+        """
+        feat_fields = feat.fields()
+        for candidate in field_candidates:
+            for i in range(feat_fields.count()):
+                if feat_fields.at(i).name().lower() == candidate.lower():
+                    val = feat.attribute(i)
+                    if val is not None and val != "":
+                        try:
+                            return float(val)
+                        except (ValueError, TypeError):
+                            pass
+        return None
+
     # -------------------------------------------------------------------------
     # Gap assignment
     # -------------------------------------------------------------------------
@@ -714,6 +957,15 @@ class PreEAProcessor:
         if not ea_geoms_in_bgy:
             return
 
+        # Single EA shortcut: if only 1 EA in Barangay, assign the full Barangay geometry
+        if len(eas_in_bgy) == 1:
+            single_fid = eas_in_bgy[0].id()
+            ea_label_for_gap = self._ea_label(eas_in_bgy[0])
+            corrected_geoms[single_fid] = bgy_geom
+            summary.gaps_assigned += 1
+            log_fn(f"[INFO] Single EA {ea_label_for_gap} aligned to full Barangay {bgy_label} boundary.")
+            return
+
         # Compute total gap = Barangay polygon minus union of all EAs
         ea_union = QgsGeometry.unaryUnion(ea_geoms_in_bgy)
         if ea_union is None:
@@ -729,16 +981,18 @@ class PreEAProcessor:
         gap_parts = self._explode_to_polygons(gap_geom)
         
         # Sort gap parts by area descending so larger gaps are assigned first
-        gap_parts.sort(key=lambda g: g.area(), reverse=True)
+        gap_parts.sort(key=lambda g: self._measure_area(g, crs), reverse=True)
 
-        meaningful_count = sum(1 for g in gap_parts if g.area() >= gap_tolerance)
+        meaningful_count = sum(1 for g in gap_parts if self._measure_area(g, crs) >= gap_tolerance)
         if meaningful_count > 0:
             log_fn(f"[INFO] {meaningful_count} gap(s) detected in Barangay {bgy_label}.")
             summary.gaps_detected += meaningful_count
 
+        buf_dist = 0.000001 if (crs and crs.isValid() and crs.isGeographic()) else 0.01
+
         for gap in gap_parts:
-            gap_area = gap.area()
-            if gap_area < 1e-6:
+            gap_area_m2 = self._measure_area(gap, crs)
+            if gap_area_m2 < 0.01:
                 continue
 
             # Primary: EA with the longest shared boundary or nearest proximity
@@ -751,46 +1005,56 @@ class PreEAProcessor:
                 best_ea_fid = self._largest_ea_fid(eas_in_bgy, corrected_geoms)
 
             if best_ea_fid is None:
-                if gap_area >= gap_tolerance:
+                if gap_area_m2 >= gap_tolerance:
                     summary.unresolved_gaps += 1
                     log_fn(
                         f"[WARNING] Unresolved gap in Barangay {bgy_label} "
-                        f"({gap_area:.2f} m²). No EA available."
+                        f"({gap_area_m2:.2f} m²). No EA available."
                     )
                     result_rows.append(ResultRow(
                         barangay_id=bgy_label,
                         ea_id="(gap)",
-                        original_area=gap_area,
-                        corrected_area=gap_area,
+                        original_area=gap_area_m2,
+                        corrected_area=gap_area_m2,
                         area_change=0.0,
                         action="Unresolved",
                         status="Unresolved",
                     ))
                 continue
 
-            # Merge the gap into the chosen EA
+            # Merge the gap into the chosen EA with small buffer to seal edge gaps
             current_geom = corrected_geoms[best_ea_fid]
-            merged_geom = current_geom.combine(gap).buffer(0.0, 3)
+            gap_buffered = gap.buffer(buf_dist, 3)
+            merged_geom = current_geom.combine(gap_buffered)
             merged_geom = self._clean_geometry(merged_geom, log_fn, "Gap merged EA")
             if merged_geom is None or merged_geom.isEmpty():
                 merged_geom = current_geom
+            else:
+                # Keep merged EA bounded strictly inside parent Barangay polygon
+                if not bgy_geom.contains(merged_geom):
+                    clipped = merged_geom.intersection(bgy_geom)
+                    if clipped and not clipped.isEmpty():
+                        merged_geom = clipped
 
             corrected_geoms[best_ea_fid] = merged_geom
 
-            if gap_area >= gap_tolerance:
+            if gap_area_m2 >= gap_tolerance:
                 summary.gaps_assigned += 1
 
             ea_label_for_gap = self._ea_label_by_fid(best_ea_fid, eas_in_bgy)
             log_fn(
-                f"[INFO] Gap ({gap_area:.2f} m²) in Barangay {bgy_label} → "
+                f"[INFO] Gap ({gap_area_m2:.2f} m²) in Barangay {bgy_label} → "
                 f"EA {ea_label_for_gap} (shared edge: {best_shared_len:.2f} m)."
             )
+
+            curr_area_m2 = self._measure_area(current_geom, crs)
+            merged_area_m2 = self._measure_area(merged_geom, crs)
 
             # Update or create the result row for the receiving EA
             for row in result_rows:
                 if row.barangay_id == bgy_label and row.ea_id == ea_label_for_gap:
-                    row.corrected_area = merged_geom.area()
-                    row.area_change = merged_geom.area() - row.original_area
+                    row.corrected_area = merged_area_m2
+                    row.area_change = merged_area_m2 - row.original_area
                     if row.action in ("No Change", "Clipped"):
                         row.action = "Gap Assigned"
                         row.status = "Corrected"
@@ -799,9 +1063,9 @@ class PreEAProcessor:
                 result_rows.append(ResultRow(
                     barangay_id=bgy_label,
                     ea_id=ea_label_for_gap,
-                    original_area=current_geom.area(),
-                    corrected_area=merged_geom.area(),
-                    area_change=merged_geom.area() - current_geom.area(),
+                    original_area=curr_area_m2,
+                    corrected_area=merged_area_m2,
+                    area_change=merged_area_m2 - curr_area_m2,
                     action="Gap Assigned",
                     status="Corrected",
                 ))
@@ -821,16 +1085,13 @@ class PreEAProcessor:
 
         :returns: (best_ea_fid, best_shared_length_or_score) or (None, 0.0)
         """
-        is_geographic = crs.isGeographic() if crs else False
-        search_radius = 0.0005 if is_geographic else 5.0  # 5 meters buffer search
+        search_radius = self._get_effective_snap_tolerance(crs, 25.0)
 
         gap_buffered = gap.buffer(search_radius, 5)
 
-        best_touching_fid: Optional[int] = None
-        best_touching_len: float = -1.0
-
-        best_near_fid: Optional[int] = None
-        best_near_dist: float = float("inf")
+        best_fid: Optional[int] = None
+        best_shared_len: float = -1.0
+        best_dist: float = float("inf")
 
         for ea_feat in eas_in_bgy:
             ea_fid = ea_feat.id()
@@ -840,32 +1101,17 @@ class PreEAProcessor:
 
             dist = gap.distance(ea_geom)
 
-            # Check for direct touching or near-touching
-            dist_threshold = 0.00005 if is_geographic else 0.5
-            if dist <= dist_threshold:
-                # Measure shared boundary length
-                ea_boundary = ea_geom.convertToType(QgsWkbTypes.LineGeometry)
-                if ea_boundary is not None and not ea_boundary.isEmpty():
-                    shared = gap_buffered.intersection(ea_boundary)
-                    shared_len = shared.length() if shared else 0.0
-                else:
-                    shared = gap_buffered.intersection(ea_geom)
-                    shared_len = shared.length() if shared else 0.0
+            # Measure shared boundary length
+            shared = gap_buffered.intersection(ea_geom)
+            shared_len = shared.length() if shared else 0.0
 
-                if shared_len > best_touching_len:
-                    best_touching_len = shared_len
-                    best_touching_fid = ea_fid
+            if shared_len > best_shared_len or (shared_len == best_shared_len and dist < best_dist):
+                best_shared_len = shared_len
+                best_dist = dist
+                best_fid = ea_fid
 
-            # Keep track of nearest EA as fallback if no touching EA matches
-            if dist < best_near_dist:
-                best_near_dist = dist
-                best_near_fid = ea_fid
-
-        if best_touching_fid is not None:
-            return best_touching_fid, max(best_touching_len, 0.0)
-
-        if best_near_fid is not None:
-            return best_near_fid, 0.0
+        if best_fid is not None:
+            return best_fid, max(best_shared_len, 0.0)
 
         return None, 0.0
 
@@ -910,6 +1156,7 @@ class PreEAProcessor:
         corrected_geoms: Dict[int, QgsGeometry],
         summary: PreEASummary,
         log_fn: Callable[[str], None],
+        crs: Optional[QgsCoordinateReferenceSystem] = None,
     ) -> None:
         """Run post-processing spatial validation checks."""
         outside_count = 0
@@ -935,11 +1182,12 @@ class PreEAProcessor:
                 if not bgy_geom.contains(ea_geom):
                     # Allow a very small tolerance (floating point slivers)
                     outside_area = ea_geom.difference(bgy_geom)
-                    if outside_area and not outside_area.isEmpty() and outside_area.area() > 0.01:
+                    outside_area_m2 = self._measure_area(outside_area, crs)
+                    if outside_area and not outside_area.isEmpty() and outside_area_m2 > 0.01:
                         outside_count += 1
                         log_fn(
                             f"[WARNING] Validation: EA {self._ea_label(ea_feat)} still extends "
-                            f"outside Barangay {bgy_label} (area={outside_area.area():.4f} m²)."
+                            f"outside Barangay {bgy_label} (area={outside_area_m2:.4f} m²)."
                         )
 
             # Validation 2: No meaningful uncovered Barangay area
@@ -948,7 +1196,7 @@ class PreEAProcessor:
                 if ea_union:
                     residual_gap = bgy_geom.difference(ea_union)
                     if residual_gap and not residual_gap.isEmpty():
-                        gap_area = residual_gap.area()
+                        gap_area = self._measure_area(residual_gap, crs)
                         if gap_area > 1.0:
                             uncovered_total += gap_area
                             log_fn(
@@ -981,6 +1229,8 @@ class PreEAProcessor:
         output_name: str,
         log_fn: Callable[[str], None],
         crs: Optional[QgsCoordinateReferenceSystem] = None,
+        snap_tolerance: float = 25.0,
+        gap_tolerance: float = 1.0,
     ) -> Optional[QgsVectorLayer]:
         """
         Construct the output in-memory polygon layer.
@@ -1005,10 +1255,18 @@ class PreEAProcessor:
             log_fn("[ERROR] Failed to create output memory layer.")
             return None
 
-        # Copy field schema from input EA layer
+        # Copy field schema from input EA layer and ensure hhcount & bldgcount exist
         dp = output_layer.dataProvider()
         ea_fields: QgsFields = ea_layer.fields()
-        dp.addAttributes(ea_fields)
+        fields_to_add = QgsFields(ea_fields)
+
+        existing_names = [fields_to_add.at(i).name().lower() for i in range(fields_to_add.count())]
+        if "hhcount" not in existing_names:
+            fields_to_add.append(QgsField("hhcount", QVariant.Double))
+        if "bldgcount" not in existing_names:
+            fields_to_add.append(QgsField("bldgcount", QVariant.Int))
+
+        dp.addAttributes(fields_to_add)
         output_layer.updateFields()
 
         # ── Pass 1: build a mutable geometry dict with the final clip applied ──
@@ -1045,41 +1303,81 @@ class PreEAProcessor:
                 continue
             bgy_geom = bgy_feat.geometry()
 
-            # Union of all output EA geometries for this Barangay
-            ea_union = QgsGeometry.unaryUnion(
-                [final_geoms[fid] for fid in ea_fids if not final_geoms[fid].isEmpty()]
-            )
-
-            if ea_union is None:
-                ea_union = QgsGeometry()
-
-            residual = bgy_geom.difference(ea_union)
-            if residual is None or residual.isEmpty() or residual.area() < 1e-6:
+            # Single EA in Barangay: assign 100% of Barangay geometry directly
+            if len(ea_fids) == 1:
+                final_geoms[ea_fids[0]] = bgy_geom
                 continue
 
-            # Explode residual into individual gap polygon parts
-            residual_parts = self._explode_to_polygons(residual)
-            eas_in_bgy_subset = [f for f in ea_features if f.id() in ea_fids]
+            buf_dist = 0.000001 if (crs and crs.isValid() and crs.isGeographic()) else 0.01
 
-            for r_part in residual_parts:
-                if r_part is None or r_part.isEmpty() or r_part.area() < 1e-6:
-                    continue
+            # Multi-EA Barangay: run up to 3 iterative reconciliation passes
+            for iteration in range(3):
+                valid_geoms = [
+                    final_geoms[fid] for fid in ea_fids
+                    if final_geoms.get(fid) and not final_geoms[fid].isEmpty()
+                ]
+                if not valid_geoms:
+                    break
 
-                best_fid, _ = self._find_best_ea_for_gap(r_part, eas_in_bgy_subset, final_geoms, crs)
-                if best_fid is None:
-                    best_fid = self._largest_ea_fid(eas_in_bgy_subset, final_geoms)
+                ea_union = QgsGeometry.unaryUnion(valid_geoms)
+                if ea_union is None or ea_union.isEmpty():
+                    residual = bgy_geom
+                else:
+                    residual = bgy_geom.difference(ea_union)
 
-                if best_fid is not None:
-                    merged = final_geoms[best_fid].combine(r_part)
-                    merged = self._clean_geometry(merged, log_fn, "Reconciliation EA")
-                    if merged and not merged.isEmpty():
-                        final_geoms[best_fid] = merged
-                        log_fn(
-                            f"[INFO] Reconciliation: residual {r_part.area():.4f} m² in Barangay "
-                            f"{self._bgy_label(bgy_feat)} merged into EA fid={best_fid}."
-                        )
+                residual_area_m2 = self._measure_area(residual, crs)
+                if residual is None or residual.isEmpty() or residual_area_m2 < 0.1:
+                    break  # Fully covered (less than 0.1 m² gap remaining)
+
+                residual_parts = self._explode_to_polygons(residual)
+                eas_in_bgy_subset = [f for f in ea_features if f.id() in ea_fids]
+
+                merged_any = False
+                for r_part in residual_parts:
+                    r_part_m2 = self._measure_area(r_part, crs)
+                    if r_part is None or r_part.isEmpty() or r_part_m2 < 0.01:
+                        continue
+
+                    best_fid, _ = self._find_best_ea_for_gap(r_part, eas_in_bgy_subset, final_geoms, crs)
+                    if best_fid is None:
+                        best_fid = self._largest_ea_fid(eas_in_bgy_subset, final_geoms)
+
+                    if best_fid is not None:
+                        r_part_buf = r_part.buffer(buf_dist, 3)
+                        merged = final_geoms[best_fid].combine(r_part_buf)
+                        merged = self._clean_geometry(merged, log_fn, "Reconciliation EA")
+                        if merged and not merged.isEmpty():
+                            if not bgy_geom.contains(merged):
+                                clipped = merged.intersection(bgy_geom)
+                                if clipped and not clipped.isEmpty():
+                                    merged = clipped
+                            final_geoms[best_fid] = merged
+                            merged_any = True
+                            log_fn(
+                                f"[INFO] Reconciliation (iter {iteration+1}): residual {r_part_m2:.2f} m² "
+                                f"in Barangay {self._bgy_label(bgy_feat)} merged into EA fid={best_fid}."
+                            )
+
+                if not merged_any:
+                    break
+
+        # ── Pass 2.5: mutual EA-to-EA vertex snapping for clean internal shared borders ─
+        snap_tol = self._get_effective_snap_tolerance(crs, snap_tolerance)
+        for bgy_fid, ea_fids in bgy_to_ea_fids.items():
+            if len(ea_fids) > 1:
+                self._snap_eas_to_each_other(ea_fids, final_geoms, snap_tol)
 
         # ── Pass 3: write output features ──────────────────────────────────────
+        out_fields = output_layer.fields()
+        hhcount_idx = -1
+        bldgcount_idx = -1
+        for i in range(out_fields.count()):
+            name_lower = out_fields.at(i).name().lower()
+            if name_lower == "hhcount":
+                hhcount_idx = i
+            elif name_lower == "bldgcount":
+                bldgcount_idx = i
+
         new_features: List[QgsFeature] = []
         for ea_feat in ea_features:
             ea_fid = ea_feat.id()
@@ -1087,10 +1385,38 @@ class PreEAProcessor:
             if geom is None or geom.isEmpty():
                 continue
 
-            new_feat = QgsFeature(output_layer.fields())
+            # Snap EA boundary vertices to parent Barangay boundary line so they render as 1 single shared line
+            bgy_fid = ea_to_bgy.get(ea_fid)
+            if bgy_fid is not None and bgy_fid in bgy_by_fid:
+                bgy_geom = bgy_by_fid[bgy_fid].geometry()
+                geom = self._snap_geometry_to_barangay_boundary(geom, bgy_geom, snap_tol)
+
+            # Eliminate sliver polygon parts below gap_tolerance
+            geom = self._eliminate_sliver_parts(geom, gap_tolerance, crs)
+            if geom is None or geom.isEmpty():
+                continue
+
+            new_feat = QgsFeature(out_fields)
             new_feat.setGeometry(geom)
+
+            # Copy existing fields from input EA
             for i in range(ea_fields.count()):
                 new_feat.setAttribute(i, ea_feat.attribute(i))
+
+            # Ensure hhcount field is populated
+            if hhcount_idx != -1:
+                hh_val = self._extract_numeric_attribute(
+                    ea_feat, ("hhcount", "new_hhcount", "hh_count", "hh_cnt", "household", "household_count", "pop", "population")
+                )
+                new_feat.setAttribute(hhcount_idx, float(hh_val) if hh_val is not None else 0.0)
+
+            # Ensure bldgcount field is populated
+            if bldgcount_idx != -1:
+                bldg_val = self._extract_numeric_attribute(
+                    ea_feat, ("bldgcount", "new_bldgcount", "bldg_count", "bldg_cnt", "bldgpts_cnt", "bldg_points")
+                )
+                new_feat.setAttribute(bldgcount_idx, int(round(bldg_val)) if bldg_val is not None else 0)
+
             new_features.append(new_feat)
 
         dp.addFeatures(new_features)

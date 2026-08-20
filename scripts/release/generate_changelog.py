@@ -138,11 +138,11 @@ def _generate_hf_changelog(
     hf_token: str,
 ) -> ChangelogResult | None:
     """Attempt to summarize release changes using Hugging Face Inference API."""
-    primary_model = os.environ.get("HF_MODEL", "deepseek-ai/DeepSeek-V4-Flash-0731")
+    primary_model = os.environ.get("HF_MODEL", "Qwen/Qwen2.5-Coder-32B-Instruct")
     candidate_models = [
         primary_model,
-        "Qwen/Qwen2.5-Coder-32B-Instruct",
-        "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
+        "meta-llama/Llama-3.3-70B-Instruct",
+        "deepseek-ai/DeepSeek-V4-Flash-0731",
     ]
 
     raw_text = "\n".join(f"- {line}" for line in raw_lines[:30])
@@ -186,10 +186,17 @@ def _generate_hf_changelog(
                 resp = client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    max_tokens=512,
+                    max_tokens=2048,
                     temperature=0.2,
                 )
                 if resp.choices and resp.choices[0].message:
+                    # Skip truncated responses — incomplete JSON is unusable
+                    if resp.choices[0].finish_reason == "length":
+                        logger.warning(
+                            "⚠️ Response truncated (finish_reason=length) for %s, trying next model",
+                            model,
+                        )
+                        continue
                     generated_text = resp.choices[0].message.content or ""
                     if generated_text:
                         logger.info("✅ Received AI response from %s", model)
@@ -201,50 +208,53 @@ def _generate_hf_changelog(
     except Exception as err:
         logger.warning("⚠️ InferenceClient initialization failed: %s", err)
 
-    # Method 2: HTTP requests fallback
+    # Method 2: HTTP requests fallback — use the general Inference Providers
+    # router which auto-selects from all available providers (DeepInfra,
+    # Novita, etc.) instead of pinning to `hf-inference` (HF's own
+    # small-model backend that does NOT support large LLMs).
     if not generated_text:
         headers = {
             "Authorization": f"Bearer {hf_token}",
             "Content-Type": "application/json",
         }
+        # General router auto-routes to the best available provider
+        ROUTER_URL = "https://router.huggingface.co/v1/chat/completions"
+
         for model in candidate_models:
-            endpoints = [
-                ("https://router.huggingface.co/hf-inference/v1/chat/completions", {
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "max_tokens": 512,
-                    "temperature": 0.2,
-                }),
-                (f"https://api-inference.huggingface.co/models/{model}", {
-                    "inputs": f"{system_prompt}\n\n{user_prompt}",
-                    "parameters": {"max_new_tokens": 512, "temperature": 0.2, "return_full_text": False},
-                }),
-            ]
-            for url, payload in endpoints:
-                try:
-                    logger.info("🤖 Trying HTTP endpoint (%s)...", url)
-                    resp = requests.post(url, headers=headers, json=payload, timeout=15)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        if isinstance(data, dict):
-                            if "choices" in data and len(data["choices"]) > 0:
-                                generated_text = data["choices"][0].get("message", {}).get("content", "")
-                            else:
-                                generated_text = data.get("generated_text", "")
-                        elif isinstance(data, list) and len(data) > 0:
-                            generated_text = data[0].get("generated_text", "")
-                        
-                        if generated_text:
-                            break
-                    else:
-                        logger.warning("⚠️ HTTP %d from %s: %s", resp.status_code, url, resp.text[:100])
-                except Exception as err:
-                    logger.warning("⚠️ HTTP request failed for %s: %s", url, err)
-            if generated_text:
-                break
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "max_tokens": 2048,
+                "temperature": 0.2,
+            }
+            try:
+                logger.info("🤖 Trying router endpoint for %s ...", model)
+                resp = requests.post(ROUTER_URL, headers=headers, json=payload, timeout=30)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, dict) and "choices" in data and len(data["choices"]) > 0:
+                        choice = data["choices"][0]
+                        # Skip truncated responses — incomplete JSON is unusable
+                        if choice.get("finish_reason") == "length":
+                            logger.warning(
+                                "⚠️ Response truncated (finish_reason=length) for %s, trying next model",
+                                model,
+                            )
+                            continue
+                        generated_text = choice.get("message", {}).get("content", "")
+                    if generated_text:
+                        logger.info("✅ Received AI response from router (%s)", model)
+                        break
+                else:
+                    logger.warning(
+                        "⚠️ HTTP %d from router (%s): %s",
+                        resp.status_code, model, resp.text[:200],
+                    )
+            except Exception as err:
+                logger.warning("⚠️ Router request failed for %s: %s", model, err)
 
     try:
         json_match = re.search(r"\{.*\}", generated_text, re.DOTALL)
@@ -279,7 +289,14 @@ def _generate_hf_changelog(
 def _enrich_with_author_and_pr_tags(
     changes: dict[str, list[str]], raw_lines: list[str]
 ) -> dict[str, list[str]]:
-    """Ensure every line in changes retains the author tag and PR link from the raw commits if missing."""
+    """Ensure every line in changes retains the *linked* author tag and PR link from the raw commits.
+
+    The AI often rewrites ``([@user](https://github.com/user))`` into plain
+    ``(@user)`` and ``([#123](url))`` into ``(#123)``.  This function detects
+    those plain-text references and replaces them with the proper markdown
+    linked versions extracted from the original raw commit lines.
+    """
+    # ── Build a lookup from keywords → linked references ──────────────────
     ref_map: dict[str, tuple[str, str]] = {}
     for line in raw_lines:
         author_match = re.search(r"(\[\s*@[\w-]+\s*\]\([^)]+\)|\(@[\w-]+\))", line)
@@ -293,26 +310,47 @@ def _enrich_with_author_and_pr_tags(
             if len(w) > 4 and (author_tag or pr_tag):
                 ref_map[w] = (author_tag, pr_tag)
 
+    # Patterns for *linked* markdown format (the format we want to keep)
+    _LINKED_AUTHOR = re.compile(r"\[@[\w-]+\]\([^)]+\)")
+    _LINKED_PR = re.compile(r"\[#\d+\]\([^)]+\)")
+
+    # Patterns for *plain* text format (the format the AI often produces)
+    _PLAIN_AUTHOR = re.compile(r"\(\s*@[\w-]+\s*\)")
+    _PLAIN_PR = re.compile(r"\(\s*#\d+\s*\)")
+
     enriched_changes: dict[str, list[str]] = {}
     for category, items in changes.items():
         new_items: list[str] = []
         for item in items:
-            has_author = bool(re.search(r"(@[\w-]+)", item))
-            has_pr = bool(re.search(r"(#\d+)", item))
+            has_linked_author = bool(_LINKED_AUTHOR.search(item))
+            has_linked_pr = bool(_LINKED_PR.search(item))
 
-            author_tag, pr_tag = "", ""
+            # Find the linked references from the raw lines via keyword matching
+            linked_author, linked_pr = "", ""
             item_words = re.sub(r"[^\w\s]", "", item.lower()).split()
             for w in item_words:
                 if w in ref_map:
-                    author_tag, pr_tag = ref_map[w]
-                    if author_tag or pr_tag:
+                    linked_author, linked_pr = ref_map[w]
+                    if linked_author or linked_pr:
                         break
 
+            # If the AI produced plain (@user) but the raw data has a linked
+            # version, strip the plain tag and use the linked one instead.
+            if not has_linked_author and linked_author:
+                item = _PLAIN_AUTHOR.sub("", item).rstrip()
+
+            if not has_linked_pr and linked_pr:
+                item = _PLAIN_PR.sub("", item).rstrip()
+
+            # Append linked references that are missing
             suffix: list[str] = []
-            if not has_author and author_tag:
-                suffix.append(author_tag)
-            if not has_pr and pr_tag:
-                suffix.append(pr_tag)
+            if not has_linked_author and linked_author:
+                # Wrap bare markdown link in parentheses if it isn't already
+                tag = linked_author if linked_author.startswith("(") else f"({linked_author})"
+                suffix.append(tag)
+            if not has_linked_pr and linked_pr:
+                tag = linked_pr if linked_pr.startswith("(") else f"({linked_pr})"
+                suffix.append(tag)
 
             if suffix:
                 item = f"{item} {' '.join(suffix)}"

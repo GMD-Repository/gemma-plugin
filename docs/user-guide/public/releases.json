@@ -1,6 +1,96 @@
 {
-  "latest": "1.0.3",
+  "latest": "1.0.6",
   "releases": [
+    {
+      "version": "1.0.6",
+      "date": "2026-08-20",
+      "tag": "v1.0.6",
+      "prerelease": false,
+      "contributors": [
+        "kentemman-gmd"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.6/gemma-plugin-v1.0.6.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.6",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [],
+        "improvements": [
+          "Enhanced changelog link generation to ensure accurate references ([@kentemman-gmd](https://github.com/kentemman-gmd))"
+        ],
+        "changes": [],
+        "fixes": [
+          "Corrected HuggingFace Inference API endpoints to resolve connectivity issues ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#143](https://github.com/GMD-Repository/gemma-plugin/pull/143))"
+        ],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
+    {
+      "version": "1.0.5",
+      "date": "2026-08-20",
+      "tag": "v1.0.5",
+      "prerelease": false,
+      "contributors": [
+        "kentemman-gmd"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.5/gemma-plugin-v1.0.5.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.5",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [],
+        "improvements": [],
+        "changes": [],
+        "fixes": [
+          "Fixed HuggingFace Inference API endpoints and improved the model fallback chain  (#142) ([@kentemman-gmd](https://github.com/kentemman-gmd))"
+        ],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
+    {
+      "version": "1.0.4",
+      "date": "2026-08-20",
+      "tag": "v1.0.4",
+      "prerelease": false,
+      "contributors": [
+        "psacjperez",
+        "kentemman-gmd"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.4/gemma-plugin-v1.0.4.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.4",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "Implemented MBI validator tool for PMDR, enhancing data validation capabilities (@psacjperez) (#139)"
+        ],
+        "improvements": [
+          "Added support for duplicate vertices fix in geometry repair toolkit (@psacjperez)",
+          "Modified update metadata and joined barangay attributes for improved data handling (@psacjperez) (#139)",
+          "Supported 'len' and 'length' keyword arguments in QgsField mock for better compatibility (@psacjperez) (#139)"
+        ],
+        "changes": [],
+        "fixes": [
+          "Fixed HuggingFace Inference API endpoints and model fallback chain to ensure stable performance (@kentemman-gmd) (#141)"
+        ],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
     {
       "version": "1.0.3",
       "date": "2026-08-20",

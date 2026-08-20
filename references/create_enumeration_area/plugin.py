@@ -74,7 +74,7 @@ class EADelineationPlugin:
             "Open the EA Delineation and Merging dialog"
         )
         self.action.setStatusTip(
-            "EA Delineation and Merging -- Pre-EA Processing and EA splits/merges to meet household thresholds"
+            "EA Delineation and Merging -- EA Preprocessing and EA splits/merges to meet household thresholds"
         )
         self.action.triggered.connect(self._open_dialog)
 
