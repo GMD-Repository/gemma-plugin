@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>482</width>
-    <height>989</height>
+    <height>1173</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -22,14 +22,23 @@
   <layout class="QVBoxLayout" name="verticalLayout_3">
    <item>
     <widget class="QLabel" name="photo">
+     <property name="enabled">
+      <bool>true</bool>
+     </property>
      <property name="text">
       <string/>
      </property>
      <property name="pixmap">
-      <pixmap>../resources/qfield.svg</pixmap>
+      <pixmap>../resources/qfield.png</pixmap>
+     </property>
+     <property name="scaledContents">
+      <bool>false</bool>
      </property>
      <property name="alignment">
       <set>Qt::AlignCenter</set>
+     </property>
+     <property name="wordWrap">
+      <bool>false</bool>
      </property>
     </widget>
    </item>
@@ -228,7 +237,7 @@
          <property name="flat">
           <bool>false</bool>
          </property>
-         <layout class="QGridLayout" name="gridLayout_2" rowminimumheight="0,0,0,0,0,0,0">
+         <layout class="QGridLayout" name="gridLayout_2" rowminimumheight="0,0,0,0,0,0,0,0">
           <property name="sizeConstraint">
            <enum>QLayout::SetDefaultConstraint</enum>
           </property>
