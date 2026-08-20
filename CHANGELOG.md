@@ -5,6 +5,22 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] - 2026-08-20
+
+### Added
+- Implemented MBI validator tool for PMDR, enhancing data validation capabilities (@psacjperez) (#139)
+
+### Changed
+- Added support for duplicate vertices fix in geometry repair toolkit (@psacjperez)
+- Modified update metadata and joined barangay attributes for improved data handling (@psacjperez) (#139)
+- Supported 'len' and 'length' keyword arguments in QgsField mock for better compatibility (@psacjperez) (#139)
+
+### Fixed
+- Fixed HuggingFace Inference API endpoints and model fallback chain to ensure stable performance (@kentemman-gmd) (#141)
+
+### Documentation
+- Added project documentation and utilities for geometry and attribute processing (@psacjperez) (#139)
+
 ## [1.0.3] - 2026-08-20
 
 ### Added
