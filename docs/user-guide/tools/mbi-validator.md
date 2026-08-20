@@ -1,6 +1,6 @@
 # <img src="/icons/mbi_validator.svg" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> MBI Validator
 
-The **MBI Validator** (Map-Based Inventory Validator) cross-checks a combined Reference MBI layer (containing Gap and Overlap cases distinguished by the `mbi_type` field) against separate Checker GAP and OVERLAP polygon layers to audit and identify status mismatches, new unrecorded boundary issues, and resolved cases.
+The **MBI Validator** (Map Boundary Issues Validator) cross-checks a combined Reference MBI layer (containing Gap and Overlap cases distinguished by the `mbi_type` field) against separate Checker GAP and OVERLAP polygon layers to audit and identify status mismatches, new unrecorded boundary issues, and confirmed resolved cases.
 
 ## Access
 
@@ -10,7 +10,7 @@ The **MBI Validator** (Map-Based Inventory Validator) cross-checks a combined Re
 ## When to Use
 
 Use this tool when you need to:
-- Audit and cross-verify Map-Based Inventory (MBI) status reports submitted by LGUs or processing teams.
+- Audit and cross-verify Map Boundary Issues (MBI) status reports submitted by LGUs or processing teams.
 - Detect status discrepancies where a case is marked `1_Updated` (resolved) but still physically detected by the topological checker.
 - Identify `2_Pending` cases that lack justification remarks or have zero intersecting building points.
 - Isolate new boundary gaps or overlaps that were not previously present in the Reference dataset.

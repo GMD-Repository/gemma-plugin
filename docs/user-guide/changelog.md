@@ -25,7 +25,7 @@ Changelogs of all GEMMA Plugin stable releases, which are also available [on Git
 <time>Aug 20, 2026</time>
 
 ### ✨ New Features
-- Implemented MBI validator tool for PMDR, enhancing data validation capabilities (@psacjperez) (#139)
+- Implemented MBI validator tool, enhancing data validation capabilities (@psacjperez) (#139)
 
 ### ⚡ Improvements & Fixes
 - Added support for duplicate vertices fix in geometry repair toolkit (@psacjperez)

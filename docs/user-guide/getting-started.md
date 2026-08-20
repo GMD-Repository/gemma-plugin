@@ -67,7 +67,7 @@ These tools are accessible from the **QGIS Processing Toolbox** under the **GMD 
 | [MBI Validator](/tools/mbi-validator) | Cross-check Reference MBI layers against Checker GAP/OVERLAP layers to audit status mismatches |
 | [Fill Polygon Gaps](/tools/fill-polygon-gaps) | Fill gaps between polygon boundaries |
 | [Export Preliminary Polygons](/tools/export-preliminary-polygons) | Merge and export resolved boundary layers |
-| [Update LGU PSGC Metadata](/tools/update-metadata) | Auto-populate PSGC metadata fields |
+| [Update Metadata](/tools/update-metadata) | Enrich LGU boundary layers with PSGC metadata and export consolidated GeoPackages |
 | [Update Metadata (by Geocode)](/tools/update-metadata-by-geocode) | Perform PSGC left-join on LGU boundary layers using geocodes |
 | [Fix LGU CRS](/tools/fix-lgu-crs) | Batch-correct local grid coordinates (~0 to ~100,000) to EPSG:4326 |
 | [Join Barangay Attributes](/tools/join-barangay-attributes) | Match vector attributes with official PSGC tables via fuzzy matching and Roman numeral normalization |
