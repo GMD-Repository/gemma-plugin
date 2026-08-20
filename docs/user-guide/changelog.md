@@ -2,6 +2,14 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.5
+<time>Aug 20, 2026</time>
+
+### 🐛 Bug Fixes
+- Fixed HuggingFace Inference API endpoints and improved the model fallback chain  (#142) ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+<Contributors :contributors="['kentemman-gmd']" />
+
 ## 1.0.4
 <time>Aug 20, 2026</time>
 
