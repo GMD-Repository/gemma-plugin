@@ -1,10 +1,10 @@
-# <img src="/icons/mbi_validator.svg" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> MBI Validator
+# <img src="/icons/mbi_validator.svg" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> MBI Validator for PMDR
 
-The **MBI Validator** (Map-Based Inventory Validator) cross-checks a combined Reference MBI layer (containing Gap and Overlap cases distinguished by the `mbi_type` field) against separate Checker GAP and OVERLAP polygon layers to audit and identify status mismatches, new unrecorded boundary issues, and resolved cases.
+The **MBI Validator for PMDR** (Map-Based Inventory Validator) cross-checks a combined Reference MBI layer (containing Gap and Overlap cases distinguished by the `mbi_type` field) against separate Checker GAP and OVERLAP polygon layers to audit and identify status mismatches, new unrecorded boundary issues, and confirmed resolved cases.
 
 ## Access
 
-- **Processing Toolbox:** GMD Pipeline → 1Map → MBI Validator
+- **Processing Toolbox:** GMD Pipeline → 1Map → MBI Validator for PMDR
 - **Algorithm ID:** `gmd_pipeline:mbi_validator`
 
 ## When to Use
