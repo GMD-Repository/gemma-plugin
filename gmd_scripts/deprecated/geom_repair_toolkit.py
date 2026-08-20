@@ -1,4 +1,3 @@
-
 from qgis.PyQt.QtCore import QVariant, QThread, QObject, pyqtSignal, Qt, QRect, QEvent
 from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -188,6 +187,7 @@ class TopologyError:
     INVALID_GEOMETRY   = "Invalid Geometry"
     DANGLE             = "Dangle (Loose End)"
     WRONG_TYPE_GEOMETRY = "Wrong-type Geometry"
+    DUPLICATE_VERTEX   = "Duplicate Vertex"
     NULL_GEOMETRY      = "Null Geometry"
 
     def __init__(self, error_type, fid, layer_name, geometry, description=""):
@@ -224,18 +224,54 @@ ERROR_TYPE_DESCRIPTIONS = {
     TopologyError.WRONG_TYPE_GEOMETRY: "The feature's geometry type does not match the layer's declared geometry type (e.g. a line or GeometryCollection stored in a polygon layer).",
     TopologyError.DUPLICATE_GEOMETRY: "This feature's geometry is an exact duplicate of another feature's.",
     TopologyError.DANGLE: "A line endpoint doesn't connect to any other line (a loose end).",
+    TopologyError.DUPLICATE_VERTEX: "GEOS considers this geometry technically valid, but QGIS's stricter "
+                                     "internal validator flagged something — commonly caused by an accidental "
+                                     "self-snap while manually editing a gap or overlap (a duplicate/near-"
+                                     "duplicate vertex or a zero-length segment). Repaired by removing the "
+                                     "duplicate/near-duplicate vertex.",
 }
 
 
 def _precise_invalidity_point(geom):
+    # validateGeometry() uses QGIS's own internal validator by default, which
+    # doesn't always agree with the GEOS-based isGeosValid()/isSimple() check
+    # that flagged this geometry in the first place — so it can come back
+    # empty even for a genuinely GEOS-invalid geometry. Guard against that,
+    # and also against a degenerate (0,0) result, which shows up as the
+    # marker/zoom landing in open ocean far from the actual feature.
     try:
         errors = geom.validateGeometry()
         if errors:
             pt = errors[0].where()
-            return QgsGeometry.fromPointXY(pt)
+            if pt is not None and not (pt.x() == 0 and pt.y() == 0):
+                return QgsGeometry.fromPointXY(pt)
     except Exception:
         pass
-    return geom.centroid()
+
+    # centroid() can fall outside a concave or self-intersecting shape (or
+    # even collapse toward (0,0) for certain "bowtie" self-intersections,
+    # since it's an area-weighted calculation and the positive/negative
+    # sub-areas can partially cancel out). pointOnSurface() is guaranteed to
+    # return a point that actually lies on/within the geometry, so prefer it.
+    try:
+        pos = geom.pointOnSurface()
+        if pos is not None and not pos.isEmpty():
+            return pos
+    except Exception:
+        pass
+
+    try:
+        c = geom.centroid()
+        if c is not None and not c.isEmpty():
+            return c
+    except Exception:
+        pass
+
+    # Absolute last resort: the geometry's own bounding-box center is always
+    # well-defined for any non-empty geometry, guaranteeing we never zoom to
+    # an unrelated location like (0,0).
+    bb = geom.boundingBox()
+    return QgsGeometry.fromPointXY(bb.center())
 
 
 def _self_intersection_point(geom):
@@ -250,12 +286,12 @@ class TopologyEngine(QObject):
     CHECKS_POLYGON = [
         TopologyError.INVALID_GEOMETRY, TopologyError.NULL_GEOMETRY,
         TopologyError.DUPLICATE_GEOMETRY, TopologyError.SELF_INTERSECTION,
-        TopologyError.WRONG_TYPE_GEOMETRY,
+        TopologyError.WRONG_TYPE_GEOMETRY, TopologyError.DUPLICATE_VERTEX,
     ]
     CHECKS_LINE = [
         TopologyError.INVALID_GEOMETRY, TopologyError.NULL_GEOMETRY,
         TopologyError.DUPLICATE_GEOMETRY, TopologyError.SELF_INTERSECTION,
-        TopologyError.DANGLE, TopologyError.WRONG_TYPE_GEOMETRY,
+        TopologyError.DANGLE, TopologyError.WRONG_TYPE_GEOMETRY, TopologyError.DUPLICATE_VERTEX,
     ]
     CHECKS_POINT = [
         TopologyError.INVALID_GEOMETRY, TopologyError.NULL_GEOMETRY,
@@ -310,8 +346,11 @@ class TopologyEngine(QObject):
                         feat_map[fid] = feat
                     continue
 
+            geos_valid = geom.isGeosValid()
+            geos_simple = geom.isSimple()
+
             if TopologyError.INVALID_GEOMETRY in enabled_checks:
-                if not geom.isGeosValid():
+                if not geos_valid:
                     precise_pt = _precise_invalidity_point(geom)
                     err = TopologyError(TopologyError.INVALID_GEOMETRY, fid,
                                         layer_name, precise_pt,
@@ -319,11 +358,45 @@ class TopologyEngine(QObject):
                     errors.append(err); self.error_found.emit(err)
 
             if TopologyError.SELF_INTERSECTION in enabled_checks:
-                if not geom.isSimple():
+                if not geos_simple:
                     precise_pt = _self_intersection_point(geom)
                     err = TopologyError(TopologyError.SELF_INTERSECTION, fid,
                                         layer_name, precise_pt,
                                         "Geometry self-intersects")
+                    errors.append(err); self.error_found.emit(err)
+
+            if (TopologyError.DUPLICATE_VERTEX in enabled_checks
+                    and geom_type in (QgsWkbTypes.PolygonGeometry, QgsWkbTypes.LineGeometry)
+                    and not geom.isNull() and not geom.isEmpty()
+                    and geos_valid and geos_simple):
+                # GEOS considers this geometry fine — but GEOS is deliberately
+                # tolerant of things like a duplicate/near-duplicate vertex or
+                # a zero-length segment, which is exactly what an accidental
+                # self-snap during manual gap/overlap digitizing produces.
+                # QGIS's own internal validator (used here, not GEOS) is far
+                # more literal about these and often catches what GEOS lets
+                # through. Auto-fixable: repaired by simply removing the
+                # duplicate/near-duplicate vertex (see PolygonFixerWorker's
+                # removeDuplicateNodes() fast path).
+                try:
+                    qgis_errors = geom.validateGeometry()
+                except Exception:
+                    qgis_errors = []
+                if qgis_errors:
+                    first = qgis_errors[0]
+                    try:
+                        pt = first.where()
+                        loc = QgsGeometry.fromPointXY(pt) if pt else geom.centroid()
+                    except Exception:
+                        loc = geom.centroid()
+                    try:
+                        detail = first.what()
+                    except Exception:
+                        detail = "flagged by QGIS's internal validator"
+                    err = TopologyError(TopologyError.DUPLICATE_VERTEX, fid,
+                                        layer_name, loc,
+                                        "Duplicate/near-duplicate vertex (e.g. from an accidental "
+                                        "self-snap): {}".format(detail))
                     errors.append(err); self.error_found.emit(err)
 
             if TopologyError.WRONG_TYPE_GEOMETRY in enabled_checks:
@@ -448,6 +521,7 @@ class CheckWorker(QThread):
             enabled |= {
                 TopologyError.SELF_INTERSECTION, TopologyError.DUPLICATE_GEOMETRY,
                 TopologyError.WRONG_TYPE_GEOMETRY, TopologyError.DANGLE,
+                TopologyError.DUPLICATE_VERTEX,
             }
             if geom_type == QgsWkbTypes.PolygonGeometry:
                 enabled &= set(TopologyEngine.CHECKS_POLYGON)
@@ -572,19 +646,58 @@ class PluginStyleFixerWorker(QThread):
 # TAB 1 — GEOMETRY CHECKER UI
 # =============================================================================
 
+def _purge_stale_geometry_toolkit_markers():
+    """Remove any red error outline/marker left on the map canvas by a
+    PREVIOUS run of this script.
+
+    QgsRubberBand/QgsVertexMarker items are parented to the canvas at the
+    C++/Qt level, so losing the Python reference to them (e.g. because the
+    QGIS Python console re-ran this whole script, replacing the old `dlg`
+    variable, or the console session was reset) does NOT remove them from
+    the canvas — they stay visible forever with nothing left in Python that
+    can find them again via the normal per-instance cleanup. Tracking them
+    in a list attached directly to the canvas object itself (which is the
+    same long-lived QGIS object across script re-runs, unlike our own
+    dialog/tab instances) lets a fresh run find and clean up orphans left
+    by any earlier one.
+    """
+    canvas = iface.mapCanvas()
+    stale = getattr(canvas, "_geom_toolkit_markers", None)
+    if stale:
+        for item in stale:
+            try:
+                canvas.scene().removeItem(item)
+            except Exception:
+                pass
+    canvas._geom_toolkit_markers = []
+
+
+def _track_canvas_marker(item):
+    """Register a rubber band / vertex marker into the canvas-persistent
+    list so a future run of this script can find and remove it even if
+    this run's own cleanup never fires (dialog force-closed, console
+    session reset, etc.)."""
+    canvas = iface.mapCanvas()
+    if not hasattr(canvas, "_geom_toolkit_markers"):
+        canvas._geom_toolkit_markers = []
+    canvas._geom_toolkit_markers.append(item)
+
+
 class CheckerTab(QWidget):
 
     # Which TopologyError / issue-type strings each internal repair mechanism
     # handles. "Repair Selected Features" is the single user-facing action;
     # under the hood it dispatches each checked row to the right mechanism
     # automatically based on its error type.
-    REPAIR_TYPES = {"Invalid Geometry", "Wrong-type Geometry", TopologyError.SELF_INTERSECTION}  # -> PolygonFixerWorker (temp layer)
-    NULL_TYPES   = {"Null Geometry", "Empty/Missing Geometry"}          # -> NullFixerWorker (temp layer)
+    REPAIR_TYPES = {"Invalid Geometry", "Wrong-type Geometry", TopologyError.SELF_INTERSECTION,
+                     TopologyError.DUPLICATE_VERTEX}   # -> PolygonFixerWorker (edits source layer in place)
+    NULL_TYPES   = {"Null Geometry", "Empty/Missing Geometry"}          # -> NullFixerWorker (edits source layer in place)
     QUICK_TYPES  = set()                                                # -> PluginStyleFixerWorker (in-place) — none routed here anymore
     FIXABLE_TYPES = REPAIR_TYPES | NULL_TYPES | QUICK_TYPES
 
     def __init__(self):
         super().__init__()
+        _purge_stale_geometry_toolkit_markers()
         self.issues = []
         self.worker = None
         self.fix_queue = []
@@ -688,25 +801,17 @@ class CheckerTab(QWidget):
         gf.setContentsMargins(10, 24, 10, 10)
         gf.setSpacing(7)
 
-        repair_note = QLabel(
-            "Note: the scan above is an initial reference to locate errors, not a "
-            "final diagnosis — some issues may need closer review. Repair Selected "
-            "Features will not resolve every error automatically, and its output "
-            "still needs to be reviewed: for example, a single feature can explode "
-            "into multiple parts during repair, changing the feature count. Always "
-            "check the repaired output before treating it as final."
-        )
-        repair_note.setWordWrap(True)
-        repair_note.setStyleSheet("font-size:11px; color:#8a6d3b; padding:2px 0 4px 0;")
-        gf.addWidget(repair_note)
-
         self.fix_btn = QPushButton("Repair Selected Features")
         self.fix_btn.setFixedHeight(32); self.fix_btn.setStyleSheet(BTN_EXPORT)
         self.fix_btn.setEnabled(False)
         self.fix_btn.setToolTip(
-            "Repairs every checked row using the appropriate fixer automatically:\n"
-            "- Invalid Geometry / Wrong-type Geometry / Self Intersection -> thorough repair (new temporary layer)\n"
-            "- Null / Empty Geometry -> recovery from surrounding polygons (new temporary layer)")
+            "Repairs every checked row directly on the ORIGINAL layer using the appropriate "
+            "fixer automatically:\n"
+            "- Invalid Geometry / Wrong-type Geometry / Self Intersection -> thorough polygon reconstruction\n"
+            "- Duplicate Vertex -> removes the duplicate/near-duplicate vertex directly\n"
+            "- Null / Empty Geometry -> recovery from surrounding polygons\n\n"
+            "Changes are left UNSAVED (the layer enters edit mode) — use QGIS's Save Edits to "
+            "keep them, or Cancel Edits to discard and revert.")
         gf.addWidget(self.fix_btn)
 
         self.repair_group.setEnabled(False)
@@ -814,9 +919,29 @@ class CheckerTab(QWidget):
         self._apply_fix_type_filter()
 
     def _add_row(self, data):
+        issue = data["issue_type"]
+
+        # Self Intersection on a polygon almost always also fails the
+        # general GEOS validity test, so it's reported alongside Invalid
+        # Geometry for the same feature — and both route through the same
+        # repair mechanism anyway. Merge them into a single row instead of
+        # two duplicate-looking entries for the same Feature ID.
+        MERGE_PAIR = {TopologyError.INVALID_GEOMETRY, TopologyError.SELF_INTERSECTION}
+        if issue in MERGE_PAIR:
+            for i, existing in enumerate(self.issues):
+                if (existing["layer_name"] == data["layer_name"]
+                        and existing["feature_id"] == data["feature_id"]
+                        and existing["issue_type"] in MERGE_PAIR
+                        and issue not in existing.get("merged_types", [existing["issue_type"]])):
+                    existing.setdefault("merged_types", [existing["issue_type"]])
+                    existing["merged_types"].append(issue)
+                    merged_label = " + ".join(existing["merged_types"])
+                    self.table.setItem(i, 3, colored_item(merged_label, existing["issue_type"]))
+                    self._apply_fix_type_filter()
+                    return
+
         self.issues.append(data)
         row = self.table.rowCount(); self.table.insertRow(row)
-        issue = data["issue_type"]
         self._updating_error_checks = True
         chk = QTableWidgetItem("")
         chk.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable)
@@ -858,7 +983,11 @@ class CheckerTab(QWidget):
             issue = self.issues[row]["issue_type"] if row < len(self.issues) else ""
             chk = self.table.item(row, 0)
 
-            desc = ERROR_TYPE_DESCRIPTIONS.get(issue, "")
+            merged_types = self.issues[row].get("merged_types", [issue]) if row < len(self.issues) else [issue]
+            if len(merged_types) > 1:
+                desc = "\n".join(f"• {t}: {ERROR_TYPE_DESCRIPTIONS.get(t, t)}" for t in merged_types)
+            else:
+                desc = ERROR_TYPE_DESCRIPTIONS.get(issue, "")
 
             if status == "fixable":
                 fixable_count += 1
@@ -1003,8 +1132,8 @@ class CheckerTab(QWidget):
         self.fix_queue = list(jobs.values())
         self.fix_total_jobs = len(self.fix_queue)
         self.fix_done_jobs = 0
-        self.fix_layer_outputs = {}   # source layer id -> canonical "_FIXED" output layer for this run
-        self.fix_touched_attrs = {}   # source layer id -> set of attribute tuples this run actually modified
+        self.fix_edited_layers = {}   # source layer id -> the layer itself, now in an uncommitted edit session
+        self.fix_touched_fids = {}    # source layer id -> set of FIDs this run actually modified
         self.run_btn.setEnabled(False); self.fix_btn.setEnabled(False); self.repair_group.setEnabled(False); self.cancel_btn.setEnabled(True)
         self.progress.setValue(0)
         self.summary.setText("Repairing selected features…")
@@ -1014,194 +1143,73 @@ class CheckerTab(QWidget):
         """Run once after all repair jobs in this run finish.
 
         The polygon reconstruction pipeline (Polygons-to-Lines -> Polygonize
-        -> pick candidate faces -> unaryUnion) can occasionally produce a
-        multipart result for what was originally a single-part feature, e.g.
-        when the rebuild picks up two disjoint candidate faces for one fid.
-        For any feature this run actually modified, this explodes the
-        result with "Multipart to singleparts" and removes fragments that
-        are clearly reconstruction artifacts rather than real features: a
-        part that is empty, or negligibly small compared to another part
-        sharing the exact same original attributes (the "same fid, one part
-        zooms in fine, the other doesn't" case).
+        -> pick candidate faces -> unaryUnion) can occasionally leave a
+        feature multipart even though it started as a single part — e.g.
+        resolving a self-intersecting "bowtie" ring can legitimately produce
+        two simple polygons, or the rebuild can pick up a stray sliver
+        fragment alongside the real result.
 
-        Only rows this run's fixer jobs actually changed (tracked via
-        touched_attrs on each worker) are ever considered here. Pre-existing
-        multipart features that were simply copied through unchanged — e.g.
-        a barangay that legitimately includes an offshore island — are left
-        completely alone, even if this whole output layer contains other
-        multipart geometry elsewhere.
+        Since repairs now edit the ORIGINAL layer's features directly (one
+        row stays one row — nothing is copied into a separate output layer),
+        there's no risk of this ever creating duplicate rows. This just
+        cleans up the geometry itself: fragments that are empty or
+        negligibly small next to the feature's largest part are dropped,
+        and the feature's own geometry is replaced with the union of
+        whatever real part(s) remain — still the same one feature, still
+        uncommitted.
+
+        Only FIDs this run's fixer jobs actually changed (touched_fids) are
+        ever considered — pre-existing multipart features that were never
+        touched (e.g. a barangay that legitimately includes an offshore
+        island) are left completely alone.
         """
-        AREA_ISH_RATIO = 1e-4  # a fragment under this fraction of its largest same-attribute sibling is treated as a sliver artifact, not a real feature
+        AREA_ISH_RATIO = 1e-4  # a fragment under this fraction of the feature's largest part is treated as a sliver artifact, not a real part
 
-        for key, out_lyr in list(self.fix_layer_outputs.items()):
-            if out_lyr is None:
+        for key, layer in list(self.fix_edited_layers.items()):
+            if layer is None:
                 continue
-
-            touched = self.fix_touched_attrs.get(key, set())
+            touched = self.fix_touched_fids.get(key, set())
             if not touched:
                 continue
 
-            try:
-                touched_multipart = any(
-                    f.hasGeometry() and f.geometry().isMultipart()
-                    and tuple(f.attributes()) in touched
-                    for f in out_lyr.getFeatures()
-                )
-            except Exception:
-                touched_multipart = False
-            if not touched_multipart:
-                continue
-
-            self._log(f"\n{out_lyr.name()}: multipart geometry found in a repaired feature — "
-                       f"running Multipart to Singleparts on the affected row(s)...")
-
-            # Split into "rows this run touched" (candidates for exploding /
-            # sliver cleanup / merge-back) and "everything else" (left
-            # completely untouched, copied straight through as-is).
-            touched_lyr = QgsVectorLayer(
-                f"{QgsWkbTypes.displayString(out_lyr.wkbType())}?crs={out_lyr.crs().authid()}",
-                "_touched_subset", "memory")
-            touched_lyr.setCrs(out_lyr.crs())  # authid() can be empty for custom/undefined CRS — set explicitly so the layer never silently ends up with no CRS
-            touched_lyr.dataProvider().addAttributes(out_lyr.fields()); touched_lyr.updateFields()
-            touched_lyr.startEditing()
-            rest_feats = []
-            for f in out_lyr.getFeatures():
-                if tuple(f.attributes()) in touched:
-                    nf = QgsFeature(touched_lyr.fields())
-                    nf.setGeometry(f.geometry()); nf.setAttributes(f.attributes())
-                    touched_lyr.addFeature(nf)
-                else:
-                    rest_feats.append(f)
-            touched_lyr.commitChanges(); touched_lyr.updateExtents()
-
-            try:
-                res = processing.run("native:multiparttosingleparts",
-                                      {"INPUT": touched_lyr, "OUTPUT": "TEMPORARY_OUTPUT"})
-                split_lyr = res["OUTPUT"]
-            except Exception as e:
-                self._log(f"  Could not explode multipart output: {e}")
-                continue
-
-            # native:multiparttosingleparts always declares its output layer
-            # as single-part — even though the merge-back step below can
-            # write MultiPolygon geometry into it for genuine multi-part
-            # survivors. changeGeometry() lets that happen silently, but the
-            # layer's declared type stays single-part, which is exactly what
-            # QGIS's native "Merge Selected Features" checks and rejects
-            # later ("geometry type (multipart) is incompatible with layer
-            # type (singlepart)"). Promote to the Multi-type variant now,
-            # before any further edits, so the layer stays fully compatible.
-            multi_wkb = QgsWkbTypes.multiType(split_lyr.wkbType())
-            if multi_wkb != split_lyr.wkbType():
-                promoted = QgsVectorLayer(
-                    f"{QgsWkbTypes.displayString(multi_wkb)}?crs={split_lyr.crs().authid()}",
-                    split_lyr.name(), "memory")
-                promoted.setCrs(split_lyr.crs())
-                promoted.dataProvider().addAttributes(split_lyr.fields()); promoted.updateFields()
-                promoted.startEditing()
-                for f in split_lyr.getFeatures():
-                    nf = QgsFeature(promoted.fields())
-                    nf.setGeometry(f.geometry()); nf.setAttributes(f.attributes())
-                    promoted.addFeature(nf)
-                promoted.commitChanges(); promoted.updateExtents()
-                split_lyr = promoted
-
-            # Group parts by their original attributes to find same-fid siblings,
-            # and size each part (area for polygons, length for lines).
-            sizes_by_attrs = {}
-            for f in split_lyr.getFeatures():
-                geom = f.geometry()
-                if geom is None or geom.isEmpty():
-                    size = 0.0
-                else:
-                    gt = QgsWkbTypes.geometryType(geom.wkbType())
-                    if gt == QgsWkbTypes.PolygonGeometry:
-                        size = geom.area()
-                    elif gt == QgsWkbTypes.LineGeometry:
-                        size = geom.length()
-                    else:
-                        size = 1.0
-                sizes_by_attrs.setdefault(tuple(f.attributes()), []).append((f.id(), size))
-
-            removed = []
-            for attrs, parts in sizes_by_attrs.items():
+            cleaned = 0
+            for fid in touched:
+                feat = layer.getFeature(fid)
+                if feat is None or not feat.hasGeometry():
+                    continue
+                geom = feat.geometry()
+                if not geom.isMultipart():
+                    continue
+                try:
+                    parts = [p for p in geom.asGeometryCollection() if p and not p.isEmpty()]
+                except Exception:
+                    continue
                 if len(parts) < 2:
                     continue
-                max_size = max(sz for _, sz in parts)
+
+                sizes = []
+                for p in parts:
+                    gt = QgsWkbTypes.geometryType(p.wkbType())
+                    sz = (p.area() if gt == QgsWkbTypes.PolygonGeometry else
+                          p.length() if gt == QgsWkbTypes.LineGeometry else 1.0)
+                    sizes.append(sz)
+                max_size = max(sizes) if sizes else 0
                 if max_size <= 0:
                     continue
-                for fid, sz in parts:
-                    if sz <= 0 or (sz / max_size) < AREA_ISH_RATIO:
-                        removed.append(fid)
 
-            if removed:
-                split_lyr.startEditing()
-                for fid in removed:
-                    split_lyr.deleteFeature(fid)
-                split_lyr.commitChanges(); split_lyr.updateExtents()
-                self._log(f"  Removed {len(removed)} sliver/artifact fragment(s) "
-                          f"produced by the explode step (empty or negligible in "
-                          f"size next to a same-feature sibling).")
-            else:
-                self._log("  No sliver fragments found after exploding.")
+                real_parts = [p for p, sz in zip(parts, sizes)
+                              if sz > 0 and (sz / max_size) >= AREA_ISH_RATIO]
+                if not real_parts or len(real_parts) == len(parts):
+                    continue  # nothing to clean up — every part is legitimate, or nothing survived
 
-            # Re-merge any genuine multi-part survivors (2+ real parts sharing
-            # the same original attributes) back into one multipart feature,
-            # instead of leaving them as separate duplicate-attribute rows.
-            removed_set = set(removed)
-            survivor_groups = {}
-            for attrs, parts in sizes_by_attrs.items():
-                survivors = [fid for fid, sz in parts if fid not in removed_set]
-                if len(survivors) > 1:
-                    survivor_groups[attrs] = survivors
+                new_geom = real_parts[0] if len(real_parts) == 1 else QgsGeometry.unaryUnion(real_parts)
+                layer.changeGeometry(fid, new_geom)
+                cleaned += 1
+                self._log(f"  FID {fid} in {layer.name()}: dropped {len(parts) - len(real_parts)} "
+                          f"sliver fragment(s) left over from repair.")
 
-            merged_count = 0
-            if survivor_groups:
-                split_lyr.startEditing()
-                for attrs, fids in survivor_groups.items():
-                    geoms = []
-                    for fid in fids:
-                        feat = split_lyr.getFeature(fid)
-                        if feat and feat.hasGeometry():
-                            geoms.append(feat.geometry())
-                    if len(geoms) < 2:
-                        continue
-                    merged_geom = QgsGeometry.unaryUnion(geoms)
-                    keep_fid, drop_fids = fids[0], fids[1:]
-                    split_lyr.changeGeometry(keep_fid, merged_geom)
-                    for fid in drop_fids:
-                        split_lyr.deleteFeature(fid)
-                    merged_count += 1
-                split_lyr.commitChanges(); split_lyr.updateExtents()
-                self._log(f"  Merged {merged_count} feature(s) that resolved into "
-                          f"multiple real parts back into a single multipart "
-                          f"feature (kept as one row instead of duplicating attributes).")
-
-            # Rebuild the final output layer: the untouched rows exactly as
-            # they were, plus the cleaned/merged touched rows. Everything
-            # this run never selected for repair — including pre-existing
-            # legitimate multipart features like islands — passes through
-            # completely unchanged.
-            final_wkb = QgsWkbTypes.multiType(out_lyr.wkbType())
-            final_lyr = QgsVectorLayer(
-                f"{QgsWkbTypes.displayString(final_wkb)}?crs={out_lyr.crs().authid()}",
-                out_lyr.name(), "memory")
-            final_lyr.setCrs(out_lyr.crs())
-            final_lyr.dataProvider().addAttributes(out_lyr.fields()); final_lyr.updateFields()
-            final_lyr.startEditing()
-            for f in rest_feats:
-                nf = QgsFeature(final_lyr.fields())
-                nf.setGeometry(f.geometry()); nf.setAttributes(f.attributes())
-                final_lyr.addFeature(nf)
-            for f in split_lyr.getFeatures():
-                nf = QgsFeature(final_lyr.fields())
-                nf.setGeometry(f.geometry()); nf.setAttributes(f.attributes())
-                final_lyr.addFeature(nf)
-            final_lyr.commitChanges(); final_lyr.updateExtents()
-
-            QgsProject.instance().removeMapLayer(out_lyr.id())
-            QgsProject.instance().addMapLayer(final_lyr)
-            self.fix_layer_outputs[key] = final_lyr
+            if cleaned:
+                self._log(f"{layer.name()}: cleaned up sliver fragments on {cleaned} repaired feature(s).")
 
     def _start_next_fix_job(self):
         if not self.fix_queue:
@@ -1209,6 +1217,12 @@ class CheckerTab(QWidget):
             self.run_btn.setEnabled(True); self.fix_btn.setEnabled(bool(self.issues)); self.repair_group.setEnabled(bool(self.issues)); self.cancel_btn.setEnabled(False)
             self.progress.setValue(100)
             self.summary.setText(f"Repair complete - {self.fix_done_jobs}/{self.fix_total_jobs} job(s) processed.")
+            edited = [lyr for lyr in self.fix_edited_layers.values() if lyr is not None]
+            if edited:
+                names = ", ".join(sorted({lyr.name() for lyr in edited}))
+                self._log(f"\nRepairs were applied directly to the original layer(s) — {names} — "
+                          f"and are NOT saved yet. Use Layer > Toggle Editing > Save Edits to keep "
+                          f"them, or Cancel Edits to discard and revert.")
             self._apply_fix_type_filter()
             return
 
@@ -1220,7 +1234,7 @@ class CheckerTab(QWidget):
 
         if kind == "polygon":
             ids = sorted(job["ids"])
-            self._log(f"\n=== Repair job {self.fix_done_jobs + 1}/{self.fix_total_jobs}: {layer.name()} | Invalid / Wrong-type / Self-Intersection Geometry | features: {len(ids)} ===")
+            self._log(f"\n=== Repair job {self.fix_done_jobs + 1}/{self.fix_total_jobs}: {layer.name()} | Invalid / Wrong-type / Self-Intersection / Duplicate Vertex | features: {len(ids)} ===")
             self.worker = PolygonFixerWorker(layer, True, selected_ids=ids)
             self.worker.finished.connect(self._done_fixer)
         elif kind == "null":
@@ -1246,61 +1260,22 @@ class CheckerTab(QWidget):
             span = int(value / self.fix_total_jobs)
             self.progress.setValue(min(100, base + span))
 
-    def _merge_fix_output(self, source_layer, new_lyr, target_fids):
-        """Merge a fixer job's output into the single canonical "_FIXED" layer
-        for this source layer, so multiple fixer jobs on the same layer (e.g.
-        Wrong-type Geometry + Null Geometry) don't each create their own
-        separate "_FIXED"/"_RECOVERED" output layer.
-
-        The first job for a given source layer becomes the canonical output.
-        Every later job for that same source layer copies over only the
-        geometries it fixed (target_fids) into the canonical layer, then its
-        own (now-redundant) output layer is removed from the project.
-        """
-        if new_lyr is None:
-            return
-        key = source_layer.id()
-        canonical = self.fix_layer_outputs.get(key)
-
-        if canonical is None:
-            self.fix_layer_outputs[key] = new_lyr
-            return
-
-        req = QgsFeatureRequest().setInvalidGeometryCheck(QgsFeatureRequest.GeometryNoCheck)
-        src_fids_in_order = [f.id() for f in source_layer.getFeatures(req)]
-        c_feats = list(canonical.getFeatures())
-        n_feats = list(new_lyr.getFeatures())
-
-        if len(c_feats) == len(n_feats) == len(src_fids_in_order):
-            canonical.startEditing()
-            merged = 0
-            for pos, src_fid in enumerate(src_fids_in_order):
-                if src_fid in target_fids:
-                    canonical.changeGeometry(c_feats[pos].id(), n_feats[pos].geometry())
-                    merged += 1
-            canonical.commitChanges(); canonical.updateExtents()
-            QgsProject.instance().removeMapLayer(new_lyr.id())
-            self._log(f"Merged {merged} repaired feature(s) into {canonical.name()}.")
-        else:
-            # Feature counts don't line up (e.g. a job was cancelled partway) —
-            # keep both outputs rather than risk merging the wrong geometries.
-            self._log("Could not merge repair outputs (feature count mismatch) — "
-                       f"kept {new_lyr.name()} as a separate layer.")
-
     def _done_fixer(self, fixed, copied):
         self.fix_done_jobs += 1
-        self._log(f"Output created. Fixed: {fixed}   Copied: {copied}")
-        self._merge_fix_output(self.current_job_layer, self.worker.output_layer, self.current_job_ids)
+        self._log(f"Fixed: {fixed}   Left unchanged: {copied}")
         key = self.current_job_layer.id()
-        self.fix_touched_attrs.setdefault(key, set()).update(getattr(self.worker, "touched_attrs", set()))
+        if self.worker.output_layer is not None:
+            self.fix_edited_layers[key] = self.worker.output_layer
+        self.fix_touched_fids.setdefault(key, set()).update(getattr(self.worker, "touched_fids", set()))
         self._start_next_fix_job()
 
     def _done_null(self, recovered, copied, manual):
         self.fix_done_jobs += 1
-        self._log(f"Output created. Recovered: {recovered}   Manual review: {manual}   Copied: {copied}")
-        self._merge_fix_output(self.current_job_layer, self.worker.output_layer, self.current_job_ids)
+        self._log(f"Recovered: {recovered}   Manual review: {manual}")
         key = self.current_job_layer.id()
-        self.fix_touched_attrs.setdefault(key, set()).update(getattr(self.worker, "touched_attrs", set()))
+        if self.worker.output_layer is not None:
+            self.fix_edited_layers[key] = self.worker.output_layer
+        self.fix_touched_fids.setdefault(key, set()).update(getattr(self.worker, "touched_fids", set()))
         self._start_next_fix_job()
 
     def _done_quick(self, fixed, skipped):
@@ -1311,17 +1286,22 @@ class CheckerTab(QWidget):
     def _clear_error_highlight(self):
         """Remove any previously drawn error marker/outline from the canvas."""
         canvas = iface.mapCanvas()
+        tracked = getattr(canvas, "_geom_toolkit_markers", None)
         if self._error_marker is not None:
             try:
                 canvas.scene().removeItem(self._error_marker)
             except Exception:
                 pass
+            if tracked is not None and self._error_marker in tracked:
+                tracked.remove(self._error_marker)
             self._error_marker = None
         if self._error_rubber is not None:
             try:
                 canvas.scene().removeItem(self._error_rubber)
             except Exception:
                 pass
+            if tracked is not None and self._error_rubber in tracked:
+                tracked.remove(self._error_rubber)
             self._error_rubber = None
 
     def _zoom(self, row, _):
@@ -1412,6 +1392,7 @@ class CheckerTab(QWidget):
                     rb.setWidth(3)
                     rb.setToGeometry(rb_geom, None)
                     self._error_rubber = rb
+                    _track_canvas_marker(rb)
 
             if has_precise_point:
                 pt_geom = QgsGeometry(err_geom)
@@ -1428,6 +1409,7 @@ class CheckerTab(QWidget):
                     marker.setIconSize(14)
                     marker.setPenWidth(3)
                     self._error_marker = marker
+                    _track_canvas_marker(marker)
 
             self._log(f"Zoomed to error: FID {d['feature_id']} ({d.get('issue_type', '')}) in {d['layer_name']}")
         except Exception as e:
@@ -1453,8 +1435,8 @@ class PolygonFixerWorker(QThread):
     def __init__(self, layer, selected_only, selected_ids=None):
         super().__init__()
         self.layer = layer; self.selected_only = selected_only; self.forced_selected_ids = set(selected_ids or []); self._cancel = False
-        self.output_layer = None   # set to the created "_FIXED" memory layer once run() builds it
-        self.touched_attrs = set()  # attribute tuples of rows this worker actually changed (not copied through)
+        self.output_layer = None   # set to the source layer itself once run() starts editing it in place
+        self.touched_fids = set()  # attribute tuples of rows this worker actually changed (not copied through)
 
     def cancel(self): self._cancel = True
 
@@ -1817,35 +1799,58 @@ class PolygonFixerWorker(QThread):
                 layer.selectByIds(old_selection)
             self.log.emit("No valid polygonized geometry."); self.finished.emit(0, 0); return
 
-        self.log.emit("Creating temporary output layer…"); self.progress.emit(60)
+        # Edit the ORIGINAL layer's geometries directly instead of building a
+        # separate "_FIXED" output layer. Changes are left UNCOMMITTED — the
+        # layer enters QGIS's normal editing mode (edit-pencil icon, asterisk
+        # in the legend). Nothing is written to disk here; use QGIS's own
+        # Save/Cancel Edits to keep or discard the repair.
+        if not layer.isEditable():
+            if not layer.startEditing():
+                self.log.emit(f"Could not start editing on {layer.name()} — it may be read-only "
+                              f"or a joined/virtual layer. No changes were made.")
+                if self.selected_only:
+                    layer.selectByIds(old_selection)
+                self.finished.emit(0, 0); return
+            self.log.emit(f"{layer.name()} is now in edit mode (unsaved). Use QGIS's Save/Cancel "
+                          f"Edits to keep or discard these changes.")
+        self.output_layer = layer
 
-        # Always build the output as the Multi-type variant of the layer's
-        # geometry type (preserving Z/M), regardless of whether the source
-        # layer is declared single-part. The reconstruction (unaryUnion of
-        # candidate faces) can legitimately produce a MultiPolygon result
-        # even for a single feature — writing that into a strictly
-        # single-part memory layer fails the ENTIRE commit ("N feature(s)
-        # not added — geometry type is not compatible"), not just that one
-        # feature. Multi-typed layers safely accept single-part geometries
-        # too, so this is always compatible either way.
-        out_wkb = QgsWkbTypes.multiType(layer.wkbType())
-        out_uri = QgsWkbTypes.displayString(out_wkb) + f"?crs={layer.crs().authid()}"
-        out_lyr = QgsVectorLayer(out_uri, layer.name() + "_FIXED", "memory")
-        out_lyr.setCrs(layer.crs())  # authid() can be empty for custom/undefined CRS — set explicitly so the output never silently ends up with no CRS
-        out_lyr.dataProvider().addAttributes(layer.fields()); out_lyr.updateFields()
-        out_lyr.startEditing()
+        self.log.emit("Applying repaired geometries to the original layer…"); self.progress.emit(60)
 
-        fixed = 0; copied = 0; sel_set = set(sel_ids); total = layer.featureCount()
-        req = QgsFeatureRequest().setInvalidGeometryCheck(QgsFeatureRequest.GeometryNoCheck)
+        fixed = 0; copied = 0; sel_set = set(sel_ids); total = len(sel_ids)
+        req = QgsFeatureRequest().setInvalidGeometryCheck(QgsFeatureRequest.GeometryNoCheck).setFilterFids(sel_ids)
 
         for i, feat in enumerate(layer.getFeatures(req)):
             if self._cancel: break
             if total: self.progress.emit(60 + int((i / total) * 35))
-            out = QgsFeature(out_lyr.fields()); out.setAttributes(feat.attributes())
             orig = feat.geometry()
+            new_geom = None  # left None means "no change needed / could not fix"
 
-            if feat.id() not in sel_set:
-                out.setGeometry(orig); out_lyr.addFeature(out); copied += 1; continue
+            # Cheap path for features that are already GEOS-valid and simple
+            # (this is exactly what a "Duplicate Vertex" row is, by
+            # definition — that check only fires when GEOS already
+            # considers the geometry fine). No need to run the full
+            # polygonize reconstruction below; just strip the
+            # duplicate/near-duplicate vertex directly with the
+            # purpose-built QGIS method for it.
+            if orig is not None and not orig.isEmpty() and orig.isGeosValid() and orig.isSimple():
+                deduped = QgsGeometry(orig)
+                try:
+                    had_dupes = deduped.removeDuplicateNodes()
+                except Exception:
+                    had_dupes = False
+                if had_dupes:
+                    new_geom = deduped
+                    fixed += 1
+                    self.log.emit(f"   FID {feat.id()} repaired by removing duplicate/near-duplicate vertex(es).")
+                else:
+                    copied += 1
+                    self.log.emit(f"   FID {feat.id()} was already valid with no duplicate vertices found — left unchanged.")
+
+                if new_geom is not None:
+                    layer.changeGeometry(feat.id(), new_geom)
+                    self.touched_fids.add(feat.id())
+                continue
 
             co = self._clean(orig)
             if co is None or co.isEmpty():
@@ -1855,116 +1860,111 @@ class PolygonFixerWorker(QThread):
             if co is None or co.isEmpty():
                 qfix = self._qgis_fix_single_feature_fallback(layer, feat, ctx, fb)
                 if qfix and not qfix.isEmpty():
-                    out.setGeometry(qfix); self.touched_attrs.add(tuple(out.attributes())); out_lyr.addFeature(out); fixed += 1
+                    new_geom = qfix; fixed += 1
                     self.log.emit(f"   FID {feat.id()} repaired using QGIS Fix Geometries fallback.")
-                    continue
-
-                raw_fit = self._raw_makevalid_last_resort(orig, layer.wkbType())
-                if raw_fit:
-                    out.setGeometry(raw_fit); self.touched_attrs.add(tuple(out.attributes())); out_lyr.addFeature(out); fixed += 1
-                    self.log.emit(f"   FID {feat.id()} repaired using raw makeValid() last-resort fallback.")
-                    continue
-
-                out.setGeometry(orig); self.touched_attrs.add(tuple(out.attributes())); out_lyr.addFeature(out); copied += 1
-                self.log.emit(f"   FID {feat.id()} couldn't be cleaned — copied original."); continue
-
-            cands = []
-            for cid in p_idx.intersects(co.boundingBox()):
-                pf = p_lookup.get(cid)
-                if not pf: continue
-                pg = pf.geometry()
-                if pg is None or pg.isEmpty(): continue
-                try:
-                    if pg.intersects(co):
-                        inter = pg.intersection(co)
-                        if inter and not inter.isEmpty() and inter.area() > 0:
-                            # Use the clipped intersection, not the whole polygonize
-                            # face — polygonize runs over ALL selected features'
-                            # boundaries at once, so a face can extend beyond this
-                            # feature's own footprint into a neighbor's area. Taking
-                            # the raw face here would union that extra area in and
-                            # create a new overlap with the neighbor.
-                            cands.append(inter)
-                except:
-                    if pg.boundingBox().intersects(co.boundingBox()):
-                        try:
-                            clipped = pg.intersection(co)
-                            cands.append(clipped if clipped and not clipped.isEmpty() else pg)
-                        except:
-                            cands.append(pg)
-
-            if cands:
-                ng = QgsGeometry.unaryUnion(cands)
-                ng = self._finalize_fixed_geom(ng, layer.wkbType())
-                if ng and not ng.isEmpty():
-                    out.setGeometry(ng); fixed += 1
                 else:
-                    # Fallback: use the cleaned original geometry instead of copying the invalid original.
+                    raw_fit = self._raw_makevalid_last_resort(orig, layer.wkbType())
+                    if raw_fit:
+                        new_geom = raw_fit; fixed += 1
+                        self.log.emit(f"   FID {feat.id()} repaired using raw makeValid() last-resort fallback.")
+                    else:
+                        copied += 1
+                        self.log.emit(f"   FID {feat.id()} couldn't be cleaned — left unchanged.")
+            else:
+                cands = []
+                for cid in p_idx.intersects(co.boundingBox()):
+                    pf = p_lookup.get(cid)
+                    if not pf: continue
+                    pg = pf.geometry()
+                    if pg is None or pg.isEmpty(): continue
+                    try:
+                        if pg.intersects(co):
+                            inter = pg.intersection(co)
+                            if inter and not inter.isEmpty() and inter.area() > 0:
+                                # Use the clipped intersection, not the whole polygonize
+                                # face — polygonize runs over ALL selected features'
+                                # boundaries at once, so a face can extend beyond this
+                                # feature's own footprint into a neighbor's area. Taking
+                                # the raw face here would union that extra area in and
+                                # create a new overlap with the neighbor.
+                                cands.append(inter)
+                    except:
+                        if pg.boundingBox().intersects(co.boundingBox()):
+                            try:
+                                clipped = pg.intersection(co)
+                                cands.append(clipped if clipped and not clipped.isEmpty() else pg)
+                            except:
+                                cands.append(pg)
+
+                if cands:
+                    ng = QgsGeometry.unaryUnion(cands)
+                    ng = self._finalize_fixed_geom(ng, layer.wkbType())
+                    if ng and not ng.isEmpty():
+                        new_geom = ng; fixed += 1
+                    else:
+                        # Fallback: use the cleaned original geometry instead of leaving the invalid original.
+                        fallback = self._finalize_fixed_geom(co, layer.wkbType())
+                        if fallback and not fallback.isEmpty():
+                            new_geom = fallback; fixed += 1
+                            self.log.emit(f"   FID {feat.id()} polygonized union still invalid — used makeValid fallback.")
+                        else:
+                            qfix = self._qgis_fix_single_feature_fallback(layer, feat, ctx, fb)
+                            if qfix and not qfix.isEmpty():
+                                new_geom = qfix; fixed += 1
+                                self.log.emit(f"   FID {feat.id()} repaired using QGIS Fix Geometries fallback.")
+                            else:
+                                raw_fit = self._raw_makevalid_last_resort(orig, layer.wkbType())
+                                if raw_fit:
+                                    new_geom = raw_fit; fixed += 1
+                                    self.log.emit(f"   FID {feat.id()} repaired using raw makeValid() last-resort fallback.")
+                                else:
+                                    copied += 1
+                else:
+                    # For stubborn self-intersections, polygonize may produce no matching face.
+                    # Do not immediately give up on the bad geometry; first try the cleaned original.
                     fallback = self._finalize_fixed_geom(co, layer.wkbType())
                     if fallback and not fallback.isEmpty():
-                        out.setGeometry(fallback); fixed += 1
-                        self.log.emit(f"   FID {feat.id()} polygonized union still invalid — used makeValid fallback.")
+                        new_geom = fallback; fixed += 1
+                        self.log.emit(f"   FID {feat.id()} no polygonized match — used makeValid fallback.")
                     else:
                         qfix = self._qgis_fix_single_feature_fallback(layer, feat, ctx, fb)
                         if qfix and not qfix.isEmpty():
-                            out.setGeometry(qfix); fixed += 1
+                            new_geom = qfix; fixed += 1
                             self.log.emit(f"   FID {feat.id()} repaired using QGIS Fix Geometries fallback.")
                         else:
                             raw_fit = self._raw_makevalid_last_resort(orig, layer.wkbType())
                             if raw_fit:
-                                out.setGeometry(raw_fit); fixed += 1
+                                new_geom = raw_fit; fixed += 1
                                 self.log.emit(f"   FID {feat.id()} repaired using raw makeValid() last-resort fallback.")
                             else:
-                                out.setGeometry(orig); copied += 1
-            else:
-                # For stubborn self-intersections, polygonize may produce no matching face.
-                # Do not immediately copy the bad geometry; first try the cleaned original.
-                fallback = self._finalize_fixed_geom(co, layer.wkbType())
-                if fallback and not fallback.isEmpty():
-                    out.setGeometry(fallback); fixed += 1
-                    self.log.emit(f"   FID {feat.id()} no polygonized match — used makeValid fallback.")
-                else:
-                    qfix = self._qgis_fix_single_feature_fallback(layer, feat, ctx, fb)
-                    if qfix and not qfix.isEmpty():
-                        out.setGeometry(qfix); fixed += 1
-                        self.log.emit(f"   FID {feat.id()} repaired using QGIS Fix Geometries fallback.")
-                    else:
-                        raw_fit = self._raw_makevalid_last_resort(orig, layer.wkbType())
-                        if raw_fit:
-                            out.setGeometry(raw_fit); fixed += 1
-                            self.log.emit(f"   FID {feat.id()} repaired using raw makeValid() last-resort fallback.")
-                        else:
-                            out.setGeometry(orig); copied += 1
-                            self.log.emit(f"   FID {feat.id()} no polygonized match — copied original.")
+                                copied += 1
+                                self.log.emit(f"   FID {feat.id()} no polygonized match — left unchanged.")
 
             # Final selected-feature guard: do not knowingly write an invalid selected geometry
             # when a QGIS Fix Geometries fallback can repair it.
-            if feat.id() in sel_set:
+            if new_geom is not None:
                 try:
-                    og = out.geometry()
-                    if og and not og.isEmpty() and not og.isGeosValid():
-                        spikefix = self._repair_micro_self_intersection_spike(og, layer.wkbType())
+                    if not new_geom.isEmpty() and not new_geom.isGeosValid():
+                        spikefix = self._repair_micro_self_intersection_spike(new_geom, layer.wkbType())
                         if spikefix and not spikefix.isEmpty() and spikefix.isGeosValid():
-                            out.setGeometry(spikefix)
+                            new_geom = spikefix
                             self.log.emit(f"   FID {feat.id()} final validation repaired by micro-spike/self-intersection fallback.")
                         else:
                             qfix = self._qgis_fix_single_feature_fallback(layer, feat, ctx, fb)
                             if qfix and not qfix.isEmpty() and qfix.isGeosValid():
-                                out.setGeometry(qfix)
+                                new_geom = qfix
                                 self.log.emit(f"   FID {feat.id()} final validation repaired by QGIS Fix Geometries fallback.")
                 except Exception:
                     pass
 
-            self.touched_attrs.add(tuple(out.attributes()))
-            out_lyr.addFeature(out)
+                layer.changeGeometry(feat.id(), new_geom)
+                self.touched_fids.add(feat.id())
 
-        out_lyr.commitChanges(); out_lyr.updateExtents()
-        self.output_layer = out_lyr
-        QgsProject.instance().addMapLayer(out_lyr)
         if self.selected_only:
             layer.selectByIds(old_selection)
         self.progress.emit(100)
-        self.log.emit(f"\nFinished.Fixed: {fixed}   Copied: {copied}")
+        self.log.emit(f"\nFinished.Fixed: {fixed}   Left unchanged: {copied}   "
+                      f"(unsaved — edit {layer.name()} to keep, or Cancel Edits to discard)")
         self.finished.emit(fixed, copied)
 
 
@@ -1977,8 +1977,8 @@ class NullFixerWorker(QThread):
     def __init__(self, layer, selected_only, selected_ids=None):
         super().__init__()
         self.layer = layer; self.selected_only = selected_only; self.forced_selected_ids = set(selected_ids or []); self._cancel = False
-        self.output_layer = None   # set to the created "_FIXED" memory layer once run() builds it
-        self.touched_attrs = set()  # attribute tuples of rows this worker actually changed (not copied through)
+        self.output_layer = None   # set to the source layer itself once run() starts editing it in place
+        self.touched_fids = set()  # attribute tuples of rows this worker actually changed (not copied through)
 
     def cancel(self): self._cancel = True
 
@@ -2126,65 +2126,35 @@ class NullFixerWorker(QThread):
             note_txt = f"Missing: {len(missing_ids)}, candidates: {len(cand_gaps)}. Safe auto-match not possible."
             self.log.emit("Auto-recovery not applied — " + note_txt)
 
-        # Output keeps the same attribute fields as the original layer.
-        # Recovery details are written to the log only, so PSO users can export
-        # the temporary layer without manually deleting extra fields.
-        out_fields = QgsFields()
-        for fld in layer.fields(): out_fields.append(fld)
+        # Edit the ORIGINAL layer's geometries directly instead of building a
+        # separate "_FIXED" output layer. Changes are left UNCOMMITTED — the
+        # layer enters QGIS's normal editing mode. Nothing is written to disk
+        # here; use QGIS's own Save/Cancel Edits to keep or discard the repair.
+        if not layer.isEditable():
+            if not layer.startEditing():
+                self.log.emit(f"Could not start editing on {layer.name()} — it may be read-only "
+                              f"or a joined/virtual layer. No changes were made.")
+                self.finished.emit(0, 0, 0); return
+            self.log.emit(f"{layer.name()} is now in edit mode (unsaved). Use QGIS's Save/Cancel "
+                          f"Edits to keep or discard these changes.")
+        self.output_layer = layer
 
-        # Use the flat 2D polygon/multipolygon type for the temporary output layer.
-        # This avoids commit errors when the source layer is Z/M but recovered
-        # polygonized faces are returned by QGIS as 2D geometries. Also force
-        # the Multi-type variant — a recovered/largest-polygonized-face
-        # geometry can come back as MultiPolygon even for a single-part
-        # layer, and a strictly single-part memory layer would reject the
-        # ENTIRE batch on commit rather than just that one feature.
-        out_wkb = QgsWkbTypes.multiType(QgsWkbTypes.flatType(layer.wkbType()))
-        out_lyr = QgsVectorLayer(
-            f"{QgsWkbTypes.displayString(out_wkb)}?crs={layer.crs().authid()}",
-            layer.name() + "_FIXED", "memory")
-        out_lyr.setCrs(layer.crs())  # authid() can be empty for custom/undefined CRS — set explicitly so the output never silently ends up with no CRS
-        out_lyr.dataProvider().addAttributes(out_fields); out_lyr.updateFields(); out_lyr.startEditing()
-
-        recovered = 0; copied = 0; manual = 0; total = layer.featureCount()
-        for i, feat in enumerate(layer.getFeatures(req)):
+        recovered = 0; copied = 0; manual = 0; total = len(missing_ids)
+        for i, fid in enumerate(missing_ids):
             if self._cancel: break
             if total: self.progress.emit(80 + int((i / total) * 18))
-            geom = feat.geometry()
-            is_miss = (geom is None or geom.isNull() or geom.isEmpty())
-            if self.selected_only and feat.id() not in sel_ids: is_miss = False
-
-            of = QgsFeature(out_fields); attrs = list(feat.attributes())
-            if feat.id() in recover_map:
-                of.setGeometry(recover_map[feat.id()])
+            if fid in recover_map:
+                layer.changeGeometry(fid, recover_map[fid])
                 recovered += 1
-                self.touched_attrs.add(tuple(attrs))
-                self.log.emit(f"FID {feat.id()}: Recovered. Method: {method_txt}. Note: {note_txt}")
-            elif is_miss:
-                manual += 1
-                self.log.emit(f"FID {feat.id()}: Manual review required. Method: Not recovered. Note: {note_txt}")
+                self.touched_fids.add(fid)
+                self.log.emit(f"FID {fid}: Recovered. Method: {method_txt}. Note: {note_txt}")
             else:
-                # Copy non-missing features, but first make sure their geometry is
-                # compatible with the temporary polygon output layer. This prevents
-                # QGIS commit errors when the original layer also contains
-                # GeometryCollection / wrong-type geometries while running the
-                # Null / Empty fix.
-                copy_geom = self._clean(geom)
-                copy_geom = self._match_type(copy_geom, layer.wkbType()) if copy_geom else None
-                if copy_geom and not copy_geom.isEmpty():
-                    of.setGeometry(copy_geom)
-                elif self.selected_only and feat.id() in sel_ids:
-                    self.log.emit(f"FID {feat.id()}: Copied without geometry. Note: original geometry is not compatible with polygon output.")
-                copied += 1
-            of.setAttributes(attrs); out_lyr.addFeature(of)
+                manual += 1
+                self.log.emit(f"FID {fid}: Manual review required. Method: Not recovered. Note: {note_txt}")
 
-        if not out_lyr.commitChanges():
-            self.log.emit(" Commit warning: " + "; ".join(out_lyr.commitErrors()))
-        out_lyr.updateExtents()
-        self.output_layer = out_lyr
-        QgsProject.instance().addMapLayer(out_lyr)
         self.progress.emit(100)
-        self.log.emit(f"\nFinished.  Recovered: {recovered}   Manual: {manual}   Copied: {copied}")
+        self.log.emit(f"\nFinished.  Recovered: {recovered}   Manual: {manual}   "
+                      f"(unsaved — edit {layer.name()} to keep, or Cancel Edits to discard)")
         self.finished.emit(recovered, copied, manual)
 
 
@@ -2377,9 +2347,11 @@ class HelpInfoTab(QWidget):
         self.text.setHtml("""
         <h2>Geometry Repair Toolkit</h2>
         <p>
-        This tool checks polygon layers for geometry errors and creates temporary repaired output layers.
-        The original input layer is never edited by any of the repair fixers — Invalid, Wrong-type,
-        Self Intersection, and Null/Empty are all repaired into a new temporary output layer.
+        This tool checks polygon layers for geometry errors and repairs them directly on the
+        ORIGINAL layer — Invalid, Wrong-type, Self Intersection, Duplicate Vertex, and Null/Empty
+        are all fixed by editing that layer's own features. Nothing is written to disk automatically: the layer
+        enters QGIS's normal editing mode (unsaved), so you can review the result and choose to
+        Save Edits or Cancel Edits (discard and revert) using QGIS's own editing tools.
         </p>
 
         <h3>How to Use</h3>
@@ -2388,8 +2360,8 @@ class HelpInfoTab(QWidget):
             <li>Click <b>Scan Layers</b>.</li>
             <li>Review the detected errors in the table. White rows are auto-fixable; grey rows need manual review.</li>
             <li>Check the errors to repair. You may also click the checkbox in the first column header to select or clear all auto-fixable errors.</li>
-            <li>Click <b>Repair Selected Features</b>. It automatically applies the right fixer to each checked row (Invalid, Wrong-type, Self-Intersection, or Null/Empty).</li>
-            <li>Review the resulting temporary output layer(s) before saving or replacing any source data.</li>
+            <li>Click <b>Repair Selected Features</b>. It automatically applies the right fixer to each checked row (Invalid, Wrong-type, Self-Intersection, or Null/Empty) directly on the source layer.</li>
+            <li>Review the changes, then use QGIS's Save Edits to keep them, or Cancel Edits to discard and revert to the original geometry.</li>
         </ol>
 
         <h3>Error Types</h3>
@@ -2415,53 +2387,85 @@ class HelpInfoTab(QWidget):
                 <td><b>Wrong-type Geometry</b></td>
                 <td>The feature's geometry type does not match the layer's declared geometry type (e.g. a line or GeometryCollection stored in a polygon layer).</td>
             </tr>
+            <tr>
+                <td><b>Duplicate Vertex</b></td>
+                <td>Commonly an accidental self-snap made while manually digitizing a polygon
+                    (a duplicate or near-duplicate vertex, or a zero-length segment). Repaired by removing the
+                    duplicate/near-duplicate vertex.</td>
+            </tr>
         </table>
 
         <h3>Repair Selected Features</h3>
         <p>
         This is the single action used to fix any checked, auto-fixable row. It inspects each checked
-        row's error type and automatically routes it to the correct mechanism:
+        row's error type and automatically routes it to the correct mechanism — editing the ORIGINAL
+        layer's own features directly:
         </p>
         <ul>
-            <li><b>Invalid Geometry / Wrong-type Geometry / Self Intersection</b> — thorough polygon reconstruction, written to a new temporary output layer.</li>
-            <li><b>Null / Empty / Missing Geometry</b> — recovery from surrounding polygons, written to a new temporary output layer.</li>
+            <li><b>Invalid Geometry / Wrong-type Geometry / Self Intersection</b> — thorough polygon reconstruction.</li>
+            <li><b>Duplicate Vertex</b> — removes the duplicate/near-duplicate vertex directly (no full reconstruction needed, since the geometry is already GEOS-valid).</li>
+            <li><b>Null / Empty / Missing Geometry</b> — recovery from surrounding polygons.</li>
         </ul>
         <p>
+        Nothing is saved to disk automatically. The layer enters QGIS's normal editing mode (its icon
+        shows a pencil, an asterisk marks it as modified) and stays that way until you explicitly choose
+        Save Edits or Cancel Edits from QGIS's own editing tools — so a repair you're not happy with can
+        always be discarded cleanly.
+        </p>
+        <p>
         The polygon reconstruction can occasionally leave a feature multipart even though it started as a
-        single part. When that happens on a feature this run actually repaired, the toolkit automatically
-        runs <b>Multipart to Singleparts</b> on just that row, then drops any resulting fragment that is
-        empty or negligibly small next to another part sharing the same original attributes — those are
-        reconstruction artifacts, not real features. If two or more parts survive with real, comparable
-        size, they're merged back into a single multipart feature instead of being left as duplicate rows.
-        This only ever applies to rows the repair touched — a pre-existing multipart feature that was
-        simply copied through unchanged (e.g. a barangay with a legitimate offshore island) is left
-        completely alone, even elsewhere in the same output layer. All of this is logged.
+        single part — e.g. resolving a self-intersecting "bowtie" ring can legitimately produce two simple
+        polygons, or pick up a stray sliver fragment. Since the fix is written back onto the same feature
+        (no separate output layer, so no risk of duplicate rows), the toolkit simply drops any fragment
+        that's empty or negligibly small next to the feature's largest part, and keeps the feature's
+        geometry as the union of whatever real part(s) remain. This only ever applies to features the
+        repair actually touched — a pre-existing multipart feature that was never touched (e.g. a
+        barangay with a legitimate offshore island) is left completely alone. All of this is logged.
         </p>
 
         <h3>If One Feature Has Multiple Error Types</h3>
         <p>
         Some features may have more than one geometry problem. In this case, after Repair Selected Features
-        finishes, scan the resulting temporary output layer(s) again with <b>Scan Layers</b> to check for
-        any remaining errors, and repeat the repair as needed.
+        finishes, scan the layer(s) again with <b>Scan Layers</b> to check for any remaining errors on the
+        now-edited (still unsaved) geometry, and repeat the repair as needed.
+        </p>
+        <p>
+        <b>Invalid Geometry</b> and <b>Self Intersection</b> are shown as one merged row ("Invalid Geometry
+        + Self Intersection") when both are found on the same feature — a self-intersecting polygon
+        boundary is one of the standard reasons a polygon fails general geometry validity too, so the two
+        checks are reporting the same underlying problem, and both are repaired by the same fixer anyway.
         </p>
 
-        <h3>Output Layers</h3>
+        <h3>Editing the Original Layer</h3>
         <p>
-        Invalid, Wrong-type, Self Intersection, and Null/Empty repairs all create temporary memory layers;
-        the source layer is never modified.
-        The temporary output keeps the same original attribute fields so it can be exported more easily.
-        Recovery status, method, and notes are shown in the log instead of being added as extra fields.
-        Re-run Scan Layers on the temporary output afterward to confirm no errors remain.
+        Invalid, Wrong-type, Self Intersection, Duplicate Vertex, and Null/Empty repairs all edit the
+        ORIGINAL layer's own features directly — no separate output layer is created. The layer enters
+        QGIS's normal editing mode and the changes stay UNSAVED until you choose to keep or discard them:
+        </p>
+        <ul>
+            <li><b>Save Edits</b> (Layer menu, or the toolbar save icon while editing) writes the repaired geometry to disk.</li>
+            <li><b>Cancel Edits</b> discards every change made during the repair and reverts the layer to exactly what it was before.</li>
+        </ul>
+        <p>
+        Recovery status, method, and notes for Null/Empty fixes are shown in the log rather than added
+        as extra fields, so the layer's schema is never changed. Re-run Scan Layers afterward (on the
+        same, still-unsaved layer) to confirm no errors remain before deciding to save.
         </p>
 
         <h3>Review and Limitations</h3>
         <ul>
-            <li>Always visually inspect the temporary output layer.</li>
-            <li>Try to run Check Validity again on the temporary output layer.</li>
+            <li>Always visually inspect the repaired features before saving.</li>
+            <li>Try to run Check Validity again on the layer while it's still in edit mode, before saving.</li>
             <li>Deleted feature records cannot be recovered by this tool.</li>
             <li>Edge polygons cannot be safely reconstructed when the outer boundary is unknown.</li>
             <li>If a missing edge polygon cannot be recovered, return it to the LGU for corrected boundary geometry.</li>
             <li>Some complex errors may still require manual review (Duplicate Geometry, Dangle).</li>
+            <li>Validity is checked using each feature's geometry exactly as stored, in the layer's current CRS —
+                it is not re-evaluated in any other CRS. A geometry that scans as valid can become invalid (or
+                vice versa) after reprojecting to a different CRS, since reprojection shifts vertices by
+                slightly different amounts and can turn an almost-self-touching boundary into one that
+                genuinely crosses itself. If you reproject a layer, re-run Scan Layers on the reprojected
+                version rather than assuming the original scan still applies.</li>
         </ul>
 
         <h3>Log Information</h3>
@@ -2474,8 +2478,10 @@ class HelpInfoTab(QWidget):
 
         <p align="center">
         <b>Geometry Repair Toolkit</b><br>
-        Version 1.2.1<br>
-        Build 2026.07 <br><br>
+        Version 1.5.1<br>
+        Build 2026.08 — added "Duplicate Vertex"
+        now auto-fixable via Repair Selected Features, removing the duplicate/
+        near-duplicate vertex directly<br><br>
         PSA – Geospatial Management Division<br>
         Project 1MAP
         </p>
