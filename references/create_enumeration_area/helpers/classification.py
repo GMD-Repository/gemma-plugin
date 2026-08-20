@@ -29,12 +29,16 @@ def is_delineation_candidate(
     """Check if EA item is a candidate for delineation."""
     if ea_item.get('from_split', False) or ea_item.get('from_merge', False):
         return False
+    if ea_item.get('is_special_ea', False):
+        return False
     orig_id = ea_item.get('original_id')
     is_explicit = False
-    if eadel_indi_col_idx != -1 and orig_id in full_ea_by_id:
+    if eadel_indi_col_idx != -1 and full_ea_by_id and orig_id in full_ea_by_id:
         val = full_ea_by_id[orig_id].attribute(eadel_indi_col_idx)
         is_explicit = (val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"))
-    return is_explicit or (orig_id in delineation_candidate_ids) or (ea_item['hh_count'] >= max_household)
+    if is_explicit:
+        return True
+    return ea_item['hh_count'] >= max_household
 
 
 def is_merge_candidate(

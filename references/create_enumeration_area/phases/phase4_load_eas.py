@@ -136,6 +136,17 @@ def run_phase_4(alg, parameters, context, feedback, multi_feedback, p1, p2, prev
         else:
             _orig_hhcount = 0.0
 
+        _orig_bldgcount = 0
+        bldg_idx = feat.fields().indexOf("bldgcount")
+        if bldg_idx == -1:
+            bldg_idx = feat.fields().indexOf("bldg_count")
+        if bldg_idx != -1:
+            val_b = feat.attribute(bldg_idx)
+            try:
+                _orig_bldgcount = int(val_b) if val_b is not None else 0
+            except (TypeError, ValueError):
+                _orig_bldgcount = 0
+
         _ean = feat.attribute(ea_id_field)
         _ean_str = str(_ean).strip() if _ean is not None else ""
         _bldg_pt_count = len(assigned_bldgs)
@@ -171,6 +182,7 @@ def run_phase_4(alg, parameters, context, feedback, multi_feedback, p1, p2, prev
             'buildings': assigned_bldgs,
             'hh_count': _ea_hh_count,
             'original_hhcount': _orig_hhcount,
+            'original_bldgcount': _orig_bldgcount,
             'bldg_count': _bldg_pt_count,
             'bldgpoints_value': _bldgpoints_value,
             'attributes': feat.attributes(),

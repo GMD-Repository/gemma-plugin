@@ -57,18 +57,20 @@ class TestPreEAProcessor(unittest.TestCase):
         ea_pr.addAttributes([
             QgsField("geocode", QVariant.String),
             QgsField("ean", QVariant.String),
+            QgsField("hh_count", QVariant.Double),
+            QgsField("bldg_count", QVariant.Int),
         ])
         self.ea_layer.updateFields()
 
         # EA 1 covers 0,0 to 80,100 (leaving 80 to 200 as gap inside Barangay)
         ea1 = QgsFeature(self.ea_layer.fields())
         ea1.setGeometry(make_square(0, 0, 80))
-        ea1.setAttributes(["137401001", "001"])
+        ea1.setAttributes(["137401001", "001", 120.0, 15])
 
         # EA 2 covers 120,0 to 200,100
         ea2 = QgsFeature(self.ea_layer.fields())
         ea2.setGeometry(make_square(120, 0, 80))
-        ea2.setAttributes(["137401001", "002"])
+        ea2.setAttributes(["137401001", "002", 85.0, 10])
 
         ea_pr.addFeatures([ea1, ea2])
         self.ea_layer.updateExtents()
@@ -95,9 +97,19 @@ class TestPreEAProcessor(unittest.TestCase):
         self.assertIsNotNone(result.output_layer)
         self.assertTrue(result.output_layer.isValid())
 
+        # Verify hhcount and bldgcount fields exist in output layer
+        out_field_names = [f.name() for f in result.output_layer.fields()]
+        self.assertIn("hhcount", out_field_names)
+        self.assertIn("bldgcount", out_field_names)
+
         # Output features count should match input EAs (2)
         output_features = list(result.output_layer.getFeatures())
         self.assertEqual(len(output_features), 2)
+        
+        # Verify feature attribute values
+        feat1 = next(f for f in output_features if f.attribute("ean") == "001")
+        self.assertEqual(float(feat1.attribute("hhcount")), 120.0)
+        self.assertEqual(int(feat1.attribute("bldgcount")), 15)
 
     def test_explode_to_polygons_handles_multipolygon(self):
         """Test that _explode_to_polygons correctly handles MultiPolygon WKB types."""
@@ -111,6 +123,19 @@ class TestPreEAProcessor(unittest.TestCase):
         self.assertEqual(len(parts), 2)
         for p in parts:
             self.assertFalse(p.isEmpty())
+
+    def test_eliminate_sliver_parts(self):
+        """Test that _eliminate_sliver_parts filters out micro-sliver parts."""
+        processor = PreEAProcessor()
+
+        poly1 = make_square(0, 0, 100) # larger part
+        poly2 = make_square(200, 200, 1) # tiny sliver part
+        multi_poly = poly1.combine(poly2)
+
+        # When min_area = 5.0, poly2 (area < 5) should be filtered out
+        cleaned = processor._eliminate_sliver_parts(multi_poly, min_area=5.0)
+        self.assertIsNotNone(cleaned)
+        self.assertFalse(cleaned.isEmpty())
 
 
 if __name__ == "__main__":
