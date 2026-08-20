@@ -64,7 +64,7 @@ These tools are accessible from the **QGIS Processing Toolbox** under the **GMD 
 | Tool | Description |
 |------|-------------|
 | [MBI Checker](/tools/mbi-checker) | Detect gaps and overlaps in barangay boundaries |
-| [MBI Validator for PMDR](/tools/mbi-validator) | Cross-check Reference MBI layers against Checker GAP/OVERLAP layers to audit status mismatches |
+| [MBI Validator](/tools/mbi-validator) | Cross-check Reference MBI layers against Checker GAP/OVERLAP layers to audit status mismatches |
 | [Fill Polygon Gaps](/tools/fill-polygon-gaps) | Fill gaps between polygon boundaries |
 | [Export Preliminary Polygons](/tools/export-preliminary-polygons) | Merge and export resolved boundary layers |
 | [Update Metadata](/tools/update-metadata) | Enrich LGU boundary layers with PSGC metadata and export consolidated GeoPackages |
