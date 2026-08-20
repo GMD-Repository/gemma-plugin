@@ -138,11 +138,11 @@ def _generate_hf_changelog(
     hf_token: str,
 ) -> ChangelogResult | None:
     """Attempt to summarize release changes using Hugging Face Inference API."""
-    primary_model = os.environ.get("HF_MODEL", "deepseek-ai/DeepSeek-V4-Flash-0731")
+    primary_model = os.environ.get("HF_MODEL", "Qwen/Qwen2.5-Coder-32B-Instruct")
     candidate_models = [
         primary_model,
-        "Qwen/Qwen2.5-Coder-32B-Instruct",
-        "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
+        "meta-llama/Llama-3.3-70B-Instruct",
+        "deepseek-ai/DeepSeek-V4-Flash-0731",
     ]
 
     raw_text = "\n".join(f"- {line}" for line in raw_lines[:30])
@@ -186,10 +186,17 @@ def _generate_hf_changelog(
                 resp = client.chat.completions.create(
                     model=model,
                     messages=messages,
-                    max_tokens=512,
+                    max_tokens=2048,
                     temperature=0.2,
                 )
                 if resp.choices and resp.choices[0].message:
+                    # Skip truncated responses — incomplete JSON is unusable
+                    if resp.choices[0].finish_reason == "length":
+                        logger.warning(
+                            "⚠️ Response truncated (finish_reason=length) for %s, trying next model",
+                            model,
+                        )
+                        continue
                     generated_text = resp.choices[0].message.content or ""
                     if generated_text:
                         logger.info("✅ Received AI response from %s", model)
@@ -201,50 +208,53 @@ def _generate_hf_changelog(
     except Exception as err:
         logger.warning("⚠️ InferenceClient initialization failed: %s", err)
 
-    # Method 2: HTTP requests fallback
+    # Method 2: HTTP requests fallback — use the general Inference Providers
+    # router which auto-selects from all available providers (DeepInfra,
+    # Novita, etc.) instead of pinning to `hf-inference` (HF's own
+    # small-model backend that does NOT support large LLMs).
     if not generated_text:
         headers = {
             "Authorization": f"Bearer {hf_token}",
             "Content-Type": "application/json",
         }
+        # General router auto-routes to the best available provider
+        ROUTER_URL = "https://router.huggingface.co/v1/chat/completions"
+
         for model in candidate_models:
-            endpoints = [
-                ("https://router.huggingface.co/hf-inference/v1/chat/completions", {
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "max_tokens": 512,
-                    "temperature": 0.2,
-                }),
-                (f"https://api-inference.huggingface.co/models/{model}", {
-                    "inputs": f"{system_prompt}\n\n{user_prompt}",
-                    "parameters": {"max_new_tokens": 512, "temperature": 0.2, "return_full_text": False},
-                }),
-            ]
-            for url, payload in endpoints:
-                try:
-                    logger.info("🤖 Trying HTTP endpoint (%s)...", url)
-                    resp = requests.post(url, headers=headers, json=payload, timeout=15)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        if isinstance(data, dict):
-                            if "choices" in data and len(data["choices"]) > 0:
-                                generated_text = data["choices"][0].get("message", {}).get("content", "")
-                            else:
-                                generated_text = data.get("generated_text", "")
-                        elif isinstance(data, list) and len(data) > 0:
-                            generated_text = data[0].get("generated_text", "")
-                        
-                        if generated_text:
-                            break
-                    else:
-                        logger.warning("⚠️ HTTP %d from %s: %s", resp.status_code, url, resp.text[:100])
-                except Exception as err:
-                    logger.warning("⚠️ HTTP request failed for %s: %s", url, err)
-            if generated_text:
-                break
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "max_tokens": 2048,
+                "temperature": 0.2,
+            }
+            try:
+                logger.info("🤖 Trying router endpoint for %s ...", model)
+                resp = requests.post(ROUTER_URL, headers=headers, json=payload, timeout=30)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, dict) and "choices" in data and len(data["choices"]) > 0:
+                        choice = data["choices"][0]
+                        # Skip truncated responses — incomplete JSON is unusable
+                        if choice.get("finish_reason") == "length":
+                            logger.warning(
+                                "⚠️ Response truncated (finish_reason=length) for %s, trying next model",
+                                model,
+                            )
+                            continue
+                        generated_text = choice.get("message", {}).get("content", "")
+                    if generated_text:
+                        logger.info("✅ Received AI response from router (%s)", model)
+                        break
+                else:
+                    logger.warning(
+                        "⚠️ HTTP %d from router (%s): %s",
+                        resp.status_code, model, resp.text[:200],
+                    )
+            except Exception as err:
+                logger.warning("⚠️ Router request failed for %s: %s", model, err)
 
     try:
         json_match = re.search(r"\{.*\}", generated_text, re.DOTALL)
