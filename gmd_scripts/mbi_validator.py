@@ -157,7 +157,7 @@ def evaluate_reference_case(rf, spatially_confirmed):
 
     # Rule C: 1_Updated but still has building points
     if status == "1_Updated" and bp != 0:
-        reasons.append(f"Status='1_Updated' but num_bldg_pts={bp} (should be 0 if resolved).")
+        reasons.append(f"For Review of Remarks: Status='1_Updated' but has {bp} building point(s) remaining.")
 
     if reasons:
         return "status_mismatch", "; ".join(reasons)
@@ -396,31 +396,31 @@ class MBIStatusAuditAlgorithm(QgsProcessingAlgorithm):
 
             for cf, rf, reason in result["status_mismatch"]:
                 geom = cf.geometry() if cf is not None else rf.geometry()
-                remarks = f"STATUS_MISMATCH: {reason}"
+                remarks = reason
                 collected["status_mismatch"].append((geom, case_type, "STATUS_MISMATCH", remarks, "", rf))
 
             for cf in result["new_cases"]:
-                remarks = "NEW_CASE: No matching reference case found."
+                remarks = "No matching reference case found."
                 chk_uuid = safe_get(cf, CASE_UUID_FIELD)
                 collected["new_cases"].append((cf.geometry(), case_type, "NEW_CASE", remarks, chk_uuid, None))
 
             for cf, rf, reason in result["still_active"]:
                 geom = cf.geometry() if cf is not None else rf.geometry()
-                remarks = f"REMAINING_CASE: {reason}"
+                remarks = reason
                 collected["still_active"].append((geom, case_type, "REMAINING_CASE", remarks, "", rf))
 
             for cf, rf, reason in result["no_status"]:
                 geom = cf.geometry() if cf is not None else rf.geometry()
-                remarks = f"NO_STATUS: {reason}"
+                remarks = reason
                 collected["no_status"].append((geom, case_type, "NO_STATUS", remarks, "", rf))
 
             for rf, reason in result["confirmed_resolved"]:
-                remarks = f"CONFIRMED_RESOLVED: {reason}"
+                remarks = reason
                 collected["confirmed_resolved"].append((rf.geometry(), case_type, "CONFIRMED_RESOLVED", remarks, "", rf))
 
             for cf, matched_refs in result["ambiguous"]:
                 uuids = ", ".join(safe_get(rf, CASE_UUID_FIELD) or str(rf.id()) for rf in matched_refs)
-                remarks = f"MANUAL_REVIEW: Matches {len(matched_refs)} reference cases ({uuids}). Review manually."
+                remarks = f"Matches {len(matched_refs)} reference cases ({uuids}). Review manually."
                 chk_uuid = safe_get(cf, CASE_UUID_FIELD)
                 collected["ambiguous"].append((cf.geometry(), case_type, "MANUAL_REVIEW", remarks, chk_uuid, None))
 
@@ -433,16 +433,16 @@ class MBIStatusAuditAlgorithm(QgsProcessingAlgorithm):
                 for rf in get_reference_subset(ref_layer, case_type):
                     category, reason = evaluate_reference_case(rf, spatially_confirmed=False)
                     if category == "status_mismatch":
-                        remarks = f"STATUS_MISMATCH: {reason}"
+                        remarks = reason
                         collected["status_mismatch"].append((rf.geometry(), case_type, "STATUS_MISMATCH", remarks, "", rf))
                     elif category == "confirmed_resolved":
-                        remarks = f"CONFIRMED_RESOLVED: {reason} (no Checker layer provided.)"
+                        remarks = reason
                         collected["confirmed_resolved"].append((rf.geometry(), case_type, "CONFIRMED_RESOLVED", remarks, "", rf))
                     elif category == "no_status":
-                        remarks = f"NO_STATUS: {reason}"
+                        remarks = reason
                         collected["no_status"].append((rf.geometry(), case_type, "NO_STATUS", remarks, "", rf))
                     else:
-                        remarks = f"REMAINING_CASE: {reason}"
+                        remarks = reason
                         collected["still_active"].append((rf.geometry(), case_type, "REMAINING_CASE", remarks, "", rf))
 
         # --- only create sinks / outputs for categories with at least 1 feature ---
@@ -488,5 +488,6 @@ class MBIStatusAuditAlgorithm(QgsProcessingAlgorithm):
         return results
 
 
-# Alias for naming consistency
+# Aliases for naming and provider consistency
 MbiValidatorAlgorithm = MBIStatusAuditAlgorithm
+MBIValidatorAlgorithm = MBIStatusAuditAlgorithm
