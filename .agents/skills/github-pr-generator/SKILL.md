@@ -1,6 +1,6 @@
 ---
 name: github-pr-generator
-description: Standard operating procedure and protocol for conventional commits, pushing changes, and generating Markdown-formatted PR titles and descriptions with PR/issue numbers and author attributions for user copy-pasting into GitHub. Always triggers automatically whenever asked to create a PR or format repository changes for submission.
+description: Standard operating procedure and protocol for conventional commits, pushing changes, and generating Markdown-formatted PR titles and descriptions for user copy-pasting into GitHub. Always triggers automatically whenever asked to create a PR or format repository changes for submission.
 ---
 
 # GitHub Pull Request Generator Skill
@@ -69,8 +69,8 @@ Format the **PR Title** and **PR Description** inside separate Markdown code blo
 2. **Summary:** 1–3 sentence high-level overview of what the PR accomplishes.
 3. **Problem / Rationale:** Explanation of why the bug occurred or why the feature was needed.
 4. **Key Changes:** Grouped list of changes per component using repository relative file paths (e.g., `scripts/utils/changelog.py`).
-5. **Issue & PR Attributions:** Include linked issue/PR numbers (e.g. `(#433)` or `([#91](https://github.com/owner/repo/pull/91))`) and author mentions (`(@username)`).
-6. **Verification:** Steps taken and empirical commands executed to verify the fix.
+5. **Verification:** Steps taken and empirical commands executed to verify the fix.
+
 
 
 
