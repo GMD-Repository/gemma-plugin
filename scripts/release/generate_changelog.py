@@ -289,7 +289,14 @@ def _generate_hf_changelog(
 def _enrich_with_author_and_pr_tags(
     changes: dict[str, list[str]], raw_lines: list[str]
 ) -> dict[str, list[str]]:
-    """Ensure every line in changes retains the author tag and PR link from the raw commits if missing."""
+    """Ensure every line in changes retains the *linked* author tag and PR link from the raw commits.
+
+    The AI often rewrites ``([@user](https://github.com/user))`` into plain
+    ``(@user)`` and ``([#123](url))`` into ``(#123)``.  This function detects
+    those plain-text references and replaces them with the proper markdown
+    linked versions extracted from the original raw commit lines.
+    """
+    # ── Build a lookup from keywords → linked references ──────────────────
     ref_map: dict[str, tuple[str, str]] = {}
     for line in raw_lines:
         author_match = re.search(r"(\[\s*@[\w-]+\s*\]\([^)]+\)|\(@[\w-]+\))", line)
@@ -303,26 +310,47 @@ def _enrich_with_author_and_pr_tags(
             if len(w) > 4 and (author_tag or pr_tag):
                 ref_map[w] = (author_tag, pr_tag)
 
+    # Patterns for *linked* markdown format (the format we want to keep)
+    _LINKED_AUTHOR = re.compile(r"\[@[\w-]+\]\([^)]+\)")
+    _LINKED_PR = re.compile(r"\[#\d+\]\([^)]+\)")
+
+    # Patterns for *plain* text format (the format the AI often produces)
+    _PLAIN_AUTHOR = re.compile(r"\(\s*@[\w-]+\s*\)")
+    _PLAIN_PR = re.compile(r"\(\s*#\d+\s*\)")
+
     enriched_changes: dict[str, list[str]] = {}
     for category, items in changes.items():
         new_items: list[str] = []
         for item in items:
-            has_author = bool(re.search(r"(@[\w-]+)", item))
-            has_pr = bool(re.search(r"(#\d+)", item))
+            has_linked_author = bool(_LINKED_AUTHOR.search(item))
+            has_linked_pr = bool(_LINKED_PR.search(item))
 
-            author_tag, pr_tag = "", ""
+            # Find the linked references from the raw lines via keyword matching
+            linked_author, linked_pr = "", ""
             item_words = re.sub(r"[^\w\s]", "", item.lower()).split()
             for w in item_words:
                 if w in ref_map:
-                    author_tag, pr_tag = ref_map[w]
-                    if author_tag or pr_tag:
+                    linked_author, linked_pr = ref_map[w]
+                    if linked_author or linked_pr:
                         break
 
+            # If the AI produced plain (@user) but the raw data has a linked
+            # version, strip the plain tag and use the linked one instead.
+            if not has_linked_author and linked_author:
+                item = _PLAIN_AUTHOR.sub("", item).rstrip()
+
+            if not has_linked_pr and linked_pr:
+                item = _PLAIN_PR.sub("", item).rstrip()
+
+            # Append linked references that are missing
             suffix: list[str] = []
-            if not has_author and author_tag:
-                suffix.append(author_tag)
-            if not has_pr and pr_tag:
-                suffix.append(pr_tag)
+            if not has_linked_author and linked_author:
+                # Wrap bare markdown link in parentheses if it isn't already
+                tag = linked_author if linked_author.startswith("(") else f"({linked_author})"
+                suffix.append(tag)
+            if not has_linked_pr and linked_pr:
+                tag = linked_pr if linked_pr.startswith("(") else f"({linked_pr})"
+                suffix.append(tag)
 
             if suffix:
                 item = f"{item} {' '.join(suffix)}"
