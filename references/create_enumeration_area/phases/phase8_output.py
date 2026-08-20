@@ -28,6 +28,7 @@ from qgis.core import (
 from ..helpers.constants import _PHASE_LABELS, yield_to_ui
 from ..helpers.geometry import get_polygons_from_geom, allocate_gaps_to_parts
 from ..helpers.style import apply_qml_to_layer
+from ..helpers.spatial import get_parent_barangay
 
 
 def refine_split_line(geom: QgsGeometry, gap_tolerance: float, min_branch_len: float) -> QgsGeometry:
@@ -659,6 +660,37 @@ def run_phase_8(
             previous_ea_source.sourceCrs(), target_crs, context.transformContext()
         )
 
+    barangay_index = p1.get("barangay_index")
+    full_ea_by_id = {feat.id(): feat for feat in p1.get("all_ea_features", [])}
+
+    def get_text_attr(feat: QgsFeature, candidate_names: list, prefer_text: bool = True):
+        if not feat or not feat.isValid():
+            return None
+        fields = feat.fields()
+        best_val = None
+        for name in candidate_names:
+            idx = fields.indexOf(name)
+            if idx == -1:
+                for j in range(fields.count()):
+                    if fields.at(j).name().lower() == name.lower():
+                        idx = j
+                        break
+            if idx != -1:
+                val = feat.attribute(idx)
+                if val is not None and val != NULL and not (isinstance(val, QVariant) and val.isNull()):
+                    val_str = str(val).strip()
+                    if val_str not in ('', 'NULL', 'None'):
+                        if val_str.endswith(".0"):
+                            val_str = val_str[:-2]
+                        if prefer_text:
+                            if not val_str.isdigit():
+                                return val_str
+                            elif best_val is None:
+                                best_val = val_str
+                        else:
+                            return val_str
+        return best_val
+
     final_geom_by_candidate = {}
 
     for i, ea in enumerate(eas):
@@ -705,17 +737,36 @@ def run_phase_8(
 
         out_feat = QgsFeature(out_fields)
         out_feat.setGeometry(geom)
+        attrs = list(ea.get('attributes') or [])
+        if len(attrs) < out_fields.count():
+            attrs.extend([None] * (out_fields.count() - len(attrs)))
+        out_feat.setAttributes(attrs)
 
-        src_fields = previous_ea_source.fields()
-        src_attrs = ea['attributes']
-        mapped_attrs = []
-        for f in out_fields:
-            src_idx = src_fields.indexOf(f.name())
-            if src_idx != -1 and src_idx < len(src_attrs):
-                mapped_attrs.append(src_attrs[src_idx])
-            else:
-                mapped_attrs.append(None)
-        out_feat.setAttributes(mapped_attrs)
+        parent_feat = full_ea_by_id.get(_ea_id)
+
+        # 1. Primary: Spatial overlay with Barangay Layer
+        parent_bgy_feat = None
+        if barangay_index is not None:
+            parent_bgy_feat = get_parent_barangay(ea.get('geom', geom), barangay_index, barangay_by_id)
+
+        # 2. Secondary fallback: Attribute / Geocode match
+        if parent_bgy_feat is None:
+            bar = ea.get('parent_barangay')
+            if bar is not None:
+                bar_str = str(bar).strip()
+                if bar_str.endswith(".0"):
+                    bar_str = bar_str[:-2]
+                for b_feat in barangay_by_id.values():
+                    val = b_feat.attribute(bar_geocode_field)
+                    if val is not None:
+                        val_str = str(val).strip()
+                        if val_str.endswith(".0"):
+                            val_str = val_str[:-2]
+                        if val_str == bar_str or (len(val_str) >= 9 and len(bar_str) >= 9 and val_str[:9] == bar_str[:9]):
+                            parent_bgy_feat = b_feat
+                            break
+                if parent_bgy_feat is None and isinstance(bar, int) and bar in barangay_by_id:
+                    parent_bgy_feat = barangay_by_id[bar]
 
         final_pop = ea['original_hhcount'] if is_unchanged_retain else ea['hh_count']
 
@@ -776,12 +827,77 @@ def run_phase_8(
             except (TypeError, ValueError):
                 return default
 
+        # Inherit & enrich standard fields: map_uuid, region, province, city_mun, barangay, code
+        map_uuid_idx = out_fields.indexOf("map_uuid")
+        if map_uuid_idx != -1:
+            cur_uuid = out_feat.attribute(map_uuid_idx)
+            if cur_uuid is None or cur_uuid == NULL or str(cur_uuid).strip() in ('', 'NULL', 'None'):
+                inh_uuid = get_text_attr(parent_feat, ["map_uuid", "mapuuid", "uuid", "map_id"], prefer_text=False)
+                if inh_uuid:
+                    out_feat.setAttribute(map_uuid_idx, inh_uuid)
+
+        region_idx = out_fields.indexOf("region")
+        if region_idx != -1:
+            cur_reg = out_feat.attribute(region_idx)
+            if cur_reg is None or cur_reg == NULL or str(cur_reg).strip() in ('', 'NULL', 'None') or str(cur_reg).strip().isdigit():
+                reg_val = (
+                    get_text_attr(parent_bgy_feat, ["region", "reg_name", "region_name", "reg_desc", "adm1_en", "reg", "region_n", "reg_n"])
+                    or get_text_attr(parent_feat, ["region", "reg_name", "region_name", "reg_desc", "adm1_en", "reg", "region_n", "reg_n"])
+                )
+                if reg_val:
+                    out_feat.setAttribute(region_idx, reg_val)
+
+        province_idx = out_fields.indexOf("province")
+        if province_idx != -1:
+            cur_prov = out_feat.attribute(province_idx)
+            if cur_prov is None or cur_prov == NULL or str(cur_prov).strip() in ('', 'NULL', 'None') or str(cur_prov).strip().isdigit():
+                prov_val = (
+                    get_text_attr(parent_bgy_feat, ["province", "prov_name", "province_name", "prov_desc", "adm2_en", "prov", "province_n", "prov_n"])
+                    or get_text_attr(parent_feat, ["province", "prov_name", "province_name", "prov_desc", "adm2_en", "prov", "province_n", "prov_n"])
+                )
+                if prov_val:
+                    out_feat.setAttribute(province_idx, prov_val)
+
+        city_mun_idx = out_fields.indexOf("city_mun")
+        if city_mun_idx != -1:
+            cur_cm = out_feat.attribute(city_mun_idx)
+            if cur_cm is None or cur_cm == NULL or str(cur_cm).strip() in ('', 'NULL', 'None') or str(cur_cm).strip().isdigit():
+                cm_val = (
+                    get_text_attr(parent_bgy_feat, ["city_mun", "citymun", "city_mun_name", "citymun_name", "municipality", "city_name", "mun_name", "city", "mun", "adm3_en", "mun_desc", "city_n", "mun_n"])
+                    or get_text_attr(parent_feat, ["city_mun", "citymun", "city_mun_name", "citymun_name", "municipality", "city_name", "mun_name", "city", "mun", "adm3_en", "mun_desc", "city_n", "mun_n"])
+                )
+                if cm_val:
+                    out_feat.setAttribute(city_mun_idx, cm_val)
+
+        barangay_idx = out_fields.indexOf("barangay")
+        if barangay_idx != -1:
+            cur_bgy = out_feat.attribute(barangay_idx)
+            if cur_bgy is None or cur_bgy == NULL or str(cur_bgy).strip() in ('', 'NULL', 'None') or str(cur_bgy).strip().isdigit():
+                bgy_val = (
+                    get_text_attr(parent_bgy_feat, ["barangay", "bgy_name", "brgy_name", "barangay_name", "bgy_desc", "brgy_desc", "adm4_en", "name", "bgy", "brgy", "barangay_n", "bgy_n", "brgy_n"])
+                    or get_text_attr(parent_feat, ["barangay", "bgy_name", "brgy_name", "barangay_name", "bgy_desc", "brgy_desc", "adm4_en", "name", "bgy", "brgy", "barangay_n", "bgy_n", "brgy_n"])
+                )
+                if bgy_val:
+                    out_feat.setAttribute(barangay_idx, bgy_val)
+
+        code_idx = out_fields.indexOf("code")
+        if code_idx != -1:
+            cur_code = out_feat.attribute(code_idx)
+            if cur_code is None or cur_code == NULL or str(cur_code).strip() in ('', 'NULL', 'None'):
+                c_val = get_text_attr(parent_feat, ["code", "ea_code", "eacode"], prefer_text=False)
+                if not c_val:
+                    c_val = ea.get('new_ea_code') or ea.get('original_code')
+                if c_val:
+                    out_feat.setAttribute(code_idx, str(c_val))
+
         # Set hhcount (input EA layer original count) vs hh_count (building point new total count)
         hhcount_idx = out_fields.indexOf("hhcount")
         if hhcount_idx != -1:
             orig_hh = ea.get('original_hhcount')
             if orig_hh is None:
                 orig_hh = out_feat.attribute(hhcount_idx)
+            if (orig_hh is None or orig_hh == NULL or str(orig_hh).strip() in ('', 'NULL', 'None')) and parent_feat:
+                orig_hh = get_text_attr(parent_feat, ["hhcount", "household", "new_hhcount", "hh_count", "population"], prefer_text=False)
             out_feat.setAttribute(hhcount_idx, safe_float(orig_hh, 0.0))
 
         hh_count_idx = out_fields.indexOf("hh_count")
@@ -799,6 +915,8 @@ def run_phase_8(
             orig_bldg = ea.get('original_bldgcount')
             if orig_bldg is None:
                 orig_bldg = out_feat.attribute(bldgcount_idx)
+            if (orig_bldg is None or orig_bldg == NULL or str(orig_bldg).strip() in ('', 'NULL', 'None')) and parent_feat:
+                orig_bldg = get_text_attr(parent_feat, ["bldgcount", "bldg_count", "new_bldgcount", "building_count"], prefer_text=False)
             out_feat.setAttribute(bldgcount_idx, safe_int(orig_bldg, 0))
 
         bldg_count_idx = out_fields.indexOf("bldg_count")
@@ -1063,13 +1181,52 @@ def run_phase_8(
         _min_branch = snap_tolerance * 2
         merged = refine_split_line(merged, _gap_tol, _min_branch)
 
+        # Resolve parent barangay for split line
+        line_bgy_feat = None
+        if barangay_index is not None and parent_feat.hasGeometry():
+            line_bgy_feat = get_parent_barangay(parent_feat.geometry(), barangay_index, barangay_by_id)
+
+        line_gc = str(parent_feat.attribute(geocode_idx) or "") if geocode_idx != -1 else ""
+        if line_bgy_feat is None and line_gc:
+            for b_feat in barangay_by_id.values():
+                val = b_feat.attribute(bar_geocode_field)
+                if val is not None:
+                    val_str = str(val).strip()
+                    if val_str.endswith(".0"):
+                        val_str = val_str[:-2]
+                    if val_str and line_gc.startswith(val_str):
+                        line_bgy_feat = b_feat
+                        break
+
+        line_reg = (
+            get_text_attr(line_bgy_feat, ["region", "reg_name", "region_name", "reg_desc", "adm1_en", "reg", "region_n", "reg_n"])
+            or get_text_attr(parent_feat, ["region", "reg_name", "region_name", "reg_desc", "adm1_en", "reg", "region_n", "reg_n"])
+            or ""
+        )
+        line_prov = (
+            get_text_attr(line_bgy_feat, ["province", "prov_name", "province_name", "prov_desc", "adm2_en", "prov", "province_n", "prov_n"])
+            or get_text_attr(parent_feat, ["province", "prov_name", "province_name", "prov_desc", "adm2_en", "prov", "province_n", "prov_n"])
+            or ""
+        )
+        line_cm = (
+            get_text_attr(line_bgy_feat, ["city_mun", "citymun", "city_mun_name", "citymun_name", "municipality", "city_name", "mun_name", "city", "mun", "adm3_en", "mun_desc", "city_n", "mun_n"])
+            or get_text_attr(parent_feat, ["city_mun", "citymun", "city_mun_name", "citymun_name", "municipality", "city_name", "mun_name", "city", "mun", "adm3_en", "mun_desc", "city_n", "mun_n"])
+            or ""
+        )
+        line_bgy = (
+            get_text_attr(line_bgy_feat, ["barangay", "bgy_name", "brgy_name", "barangay_name", "bgy_desc", "brgy_desc", "adm4_en", "name", "bgy", "brgy", "barangay_n", "bgy_n", "brgy_n"])
+            or get_text_attr(parent_feat, ["barangay", "bgy_name", "brgy_name", "barangay_name", "bgy_desc", "brgy_desc", "adm4_en", "name", "bgy", "brgy", "barangay_n", "bgy_n", "brgy_n"])
+            or ""
+        )
+        line_ean = get_text_attr(parent_feat, ["ean", "code", "ea_code"], prefer_text=False) or (str(parent_feat.attribute(ean_idx)) if ean_idx != -1 and parent_feat.attribute(ean_idx) is not None else "")
+
         attrs = {
-            'geocode': str(parent_feat.attribute(geocode_idx)) if geocode_idx != -1 and parent_feat.attribute(geocode_idx) is not None else "",
-            'ean': str(parent_feat.attribute(ean_idx)) if ean_idx != -1 and parent_feat.attribute(ean_idx) is not None else "",
-            'region': str(parent_feat.attribute(region_idx)) if region_idx != -1 and parent_feat.attribute(region_idx) is not None else "",
-            'province': str(parent_feat.attribute(province_idx)) if province_idx != -1 and parent_feat.attribute(province_idx) is not None else "",
-            'city_mun': str(parent_feat.attribute(city_mun_idx)) if city_mun_idx != -1 and parent_feat.attribute(city_mun_idx) is not None else "",
-            'barangay': str(parent_feat.attribute(barangay_idx_col)) if barangay_idx_col != -1 and parent_feat.attribute(barangay_idx_col) is not None else "",
+            'geocode': line_gc,
+            'ean': line_ean,
+            'region': line_reg,
+            'province': line_prov,
+            'city_mun': line_cm,
+            'barangay': line_bgy,
             'indicator': str(parent_feat.attribute(eadel_indi_idx)) if eadel_indi_idx != -1 and parent_feat.attribute(eadel_indi_idx) is not None else "",
             'remarks': str(parent_feat.attribute(remarks_idx)) if remarks_idx != -1 and parent_feat.attribute(remarks_idx) is not None else "",
         }
