@@ -661,7 +661,11 @@ def _purge_stale_geometry_toolkit_markers():
     dialog/tab instances) lets a fresh run find and clean up orphans left
     by any earlier one.
     """
+    if not iface or not hasattr(iface, "mapCanvas"):
+        return
     canvas = iface.mapCanvas()
+    if not canvas:
+        return
     stale = getattr(canvas, "_geom_toolkit_markers", None)
     if stale:
         for item in stale:
@@ -677,7 +681,11 @@ def _track_canvas_marker(item):
     list so a future run of this script can find and remove it even if
     this run's own cleanup never fires (dialog force-closed, console
     session reset, etc.)."""
+    if not iface or not hasattr(iface, "mapCanvas"):
+        return
     canvas = iface.mapCanvas()
+    if not canvas:
+        return
     if not hasattr(canvas, "_geom_toolkit_markers"):
         canvas._geom_toolkit_markers = []
     canvas._geom_toolkit_markers.append(item)
@@ -1285,21 +1293,23 @@ class CheckerTab(QWidget):
 
     def _clear_error_highlight(self):
         """Remove any previously drawn error marker/outline from the canvas."""
-        canvas = iface.mapCanvas()
-        tracked = getattr(canvas, "_geom_toolkit_markers", None)
+        canvas = iface.mapCanvas() if (iface and hasattr(iface, "mapCanvas")) else None
+        tracked = getattr(canvas, "_geom_toolkit_markers", None) if canvas else None
         if self._error_marker is not None:
-            try:
-                canvas.scene().removeItem(self._error_marker)
-            except Exception:
-                pass
+            if canvas:
+                try:
+                    canvas.scene().removeItem(self._error_marker)
+                except Exception:
+                    pass
             if tracked is not None and self._error_marker in tracked:
                 tracked.remove(self._error_marker)
             self._error_marker = None
         if self._error_rubber is not None:
-            try:
-                canvas.scene().removeItem(self._error_rubber)
-            except Exception:
-                pass
+            if canvas:
+                try:
+                    canvas.scene().removeItem(self._error_rubber)
+                except Exception:
+                    pass
             if tracked is not None and self._error_rubber in tracked:
                 tracked.remove(self._error_rubber)
             self._error_rubber = None
@@ -1309,8 +1319,10 @@ class CheckerTab(QWidget):
         d = self.issues[row]
         try:
             layer = d.get("layer")
-            canvas = iface.mapCanvas()
+            canvas = iface.mapCanvas() if (iface and hasattr(iface, "mapCanvas")) else None
             self._clear_error_highlight()
+            if not canvas:
+                return
 
             # Fetch the full feature so we have a real reference size for
             # this feature, in its own native units. This is what fixes the
@@ -2541,5 +2553,9 @@ class GeometryToolkit(QDialog):
         root.addWidget(tabs, stretch=1)
 
 
-dlg = GeometryToolkit()
-dlg.show()
+if __name__ in ("__main__", "__console__"):
+    try:
+        dlg = GeometryToolkit()
+        dlg.show()
+    except Exception:
+        pass
