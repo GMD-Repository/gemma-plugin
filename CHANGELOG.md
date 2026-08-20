@@ -5,6 +5,41 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-08-20
+
+### Added
+- Modularize EA creation pipeline, refine processing UI, and add user documentation ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#127](https://github.com/GMD-Repository/gemma-plugin/pull/127))
+- Implement Create Enumeration Areas algorithm and automated QGIS testing pipeline ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#131](https://github.com/GMD-Repository/gemma-plugin/pull/131))
+- Add EA processing, geometry cleaning, and delineation tools ([@pacoleslaw](https://github.com/pacoleslaw)) ([#134](https://github.com/GMD-Repository/gemma-plugin/pull/134))
+- implement Auto Arrange tool with QML styling, single-symbol gap/overlap rendering, and PSGC grouping ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#136](https://github.com/GMD-Repository/gemma-plugin/pull/136))
+- add dependency_checker to automatically install and update required QGIS plugins ([@nbacquiano-ui](https://github.com/nbacquiano-ui))
+- implement custom QGIS dialog and processing algorithm for creating enumeration areas ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- add custom QGIS dialog for Create Enumeration Areas processing algorithm ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- add Custom Processing UI dialog and helper class for EA delineation workflow management ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- implement EA creation pipeline including delineation, merge, and output phases ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- add EA creation tool logic, spatial helpers, and user guide documentation ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- add documentation for Create Enumeration Areas tool ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- implement automated stable release pipeline with changelog generation and email notifications ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- implement robust dependency verification and conditional updates in plugin initialization ([@nlb-sketch](https://github.com/nlb-sketch))
+- implement comprehensive unit testing suite, CI pipeline, and mock infrastructure for plugin modules ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- implement comprehensive unit test suite and QGIS environment mocks for plugin modules ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- implement Check and Update tool with navigation, documentation, and geocode metadata support ([@velascojasper0](https://github.com/velascojasper0))
+
+### Changed
+- streamline LGU geocode metadata export, topology validation, and auto-numbered GPKG saving ([@velascojasper0](https://github.com/velascojasper0)) ([#125](https://github.com/GMD-Repository/gemma-plugin/pull/125))
+- Robust Dependency Verification & Conditional Updates in Plugin Initialization ([@nbacquiano-ui](https://github.com/nbacquiano-ui)) ([#124](https://github.com/GMD-Repository/gemma-plugin/pull/124))
+- Align Gemma Release bot identity in preview release workflow ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#138](https://github.com/GMD-Repository/gemma-plugin/pull/138))
+- render professional categorized release body with emoji section headers ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- remove unused module and its associated files ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### Fixed
+- extract legacy geometry check tool, replace Tab 2 with repair toolkit, and remove metadata placeholder ([@velascojasper0](https://github.com/velascojasper0)) ([#132](https://github.com/GMD-Repository/gemma-plugin/pull/132))
+
+### Documentation
+- replace discontinued GitHub Models AI changelog with rule-based categorizer ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#121](https://github.com/GMD-Repository/gemma-plugin/pull/121))
+- /changelog ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#130](https://github.com/GMD-Repository/gemma-plugin/pull/130))
+- replace discontinued GitHub Models AI changelog with rule-based categorizer ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
 ## [1.0.2] - 2026-08-07
 
 ### Added
