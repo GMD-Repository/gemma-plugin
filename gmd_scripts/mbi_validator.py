@@ -149,15 +149,15 @@ def evaluate_reference_case(rf, spatially_confirmed):
 
     # Rule A: claimed resolved, but checker still finds it
     if status in RESOLVED_STATUSES and spatially_confirmed:
-        reasons.append(f"Status='{status}' but case still detected by Checker.")
+        reasons.append(f"'{status}' but case still detected by Checker.")
 
     # Rule B: 2_Pending, zero building points, no justification remarks
     if status == "2_Pending" and bp == 0 and not meaningful(rem):
-        reasons.append("Status='2_Pending' with 0 num_bldg_pts and no justifying remarks.")
+        reasons.append("'2_Pending' with 0 num_bldg_pts and no justifying remarks.")
 
     # Rule C: 1_Updated but still has building points
     if status == "1_Updated" and bp != 0:
-        reasons.append(f"For Review of Remarks: Status='1_Updated' but has {bp} building point(s) remaining.")
+        reasons.append(f"For Review of Remarks: '1_Updated' but has {bp} building point(s) remaining.")
 
     if reasons:
         return "status_mismatch", "; ".join(reasons)
@@ -283,7 +283,7 @@ class MBIStatusAuditAlgorithm(QgsProcessingAlgorithm):
         return "mbi_validator"
 
     def displayName(self):
-        return self.tr("MBI Validator for PMDR")
+        return self.tr("MBI Validator")
 
     def group(self):
         return self.tr("1Map")

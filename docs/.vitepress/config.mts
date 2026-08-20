@@ -33,7 +33,7 @@ export default defineConfig({
             text: '1Map Tools',
             items: [
               { text: 'MBI Checker', link: '/tools/mbi-checker' },
-              { text: 'MBI Validator for PMDR', link: '/tools/mbi-validator' },
+              { text: 'MBI Validator', link: '/tools/mbi-validator' },
               { text: 'Fill Polygon Gaps', link: '/tools/fill-polygon-gaps' },
               { text: 'Export Preliminary Polygons', link: '/tools/export-preliminary-polygons' },
               { text: 'Update Metadata', link: '/tools/update-metadata' },
@@ -84,7 +84,7 @@ export default defineConfig({
         collapsed: false,
         items: [
           { text: 'MBI Checker', link: '/tools/mbi-checker' },
-          { text: 'MBI Validator for PMDR', link: '/tools/mbi-validator' },
+          { text: 'MBI Validator', link: '/tools/mbi-validator' },
           { text: 'Fill Polygon Gaps', link: '/tools/fill-polygon-gaps' },
           { text: 'Export Preliminary Polygons', link: '/tools/export-preliminary-polygons' },
           { text: 'Update Metadata', link: '/tools/update-metadata' },

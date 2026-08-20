@@ -24,7 +24,7 @@ features:
     link: /tools/mbi-checker
   - icon:
       src: /icons/mbi_validator.svg
-    title: MBI Validator for PMDR
+    title: MBI Validator
     details: Cross-check Reference MBI layers against Checker GAP/OVERLAP layers to flag status mismatches and audit boundary resolutions.
     link: /tools/mbi-validator
   - icon:
