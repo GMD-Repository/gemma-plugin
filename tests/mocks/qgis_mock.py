@@ -307,16 +307,20 @@ class QgsGeometry:
 
 
 class QgsField:
-    def __init__(self, name="", field_type=None, comment="", length=0, precision=0):
+    def __init__(self, name="", field_type=None, typeName="", len=0, prec=0, comment="", subType=None, length=0, precision=0, **kwargs):
         self._name = name
         self._type = field_type
-        self._length = length
-        self._precision = precision
+        self._typeName = typeName
+        self._length = len or length
+        self._precision = prec or precision
+        self._comment = comment
 
     def name(self): return self._name
     def type(self): return self._type
+    def typeName(self): return self._typeName
     def length(self): return self._length
     def precision(self): return self._precision
+    def comment(self): return self._comment
 
 
 class QgsFields:
