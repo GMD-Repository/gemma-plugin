@@ -33,7 +33,7 @@ class CollectedChanges:
     previous_tag: str | None = None
 
 
-def _clean_line(line: str, author_login: str | None = None) -> str:
+def _clean_line(line: str, author_login: str | None = None, owner: str = "", repo: str = "") -> str:
     """Clean a single change line by removing noise and attaching author mention link and PR/issue links.
 
     Strips:
@@ -58,6 +58,9 @@ def _clean_line(line: str, author_login: str | None = None) -> str:
         num_match = re.search(r"\(#(\d+)\)", line)
         if num_match:
             pr_num = num_match.group(1)
+            # Construct the full GitHub PR URL when only a bare number is found
+            if owner and repo:
+                pr_url = f"https://github.com/{owner}/{repo}/pull/{pr_num}"
 
     cleaned = line.strip()
     cleaned = re.sub(r"^\*\s+", "", cleaned)
@@ -169,7 +172,7 @@ def collect_changes(
             if line.startswith("* "):
                 raw_pr = line[2:].strip()
                 if not _is_noise(raw_pr):
-                    pr_lines.append(_clean_line(line))
+                    pr_lines.append(_clean_line(line, owner=owner, repo=repo))
         result.pr_count = len(pr_lines)
         logger.info("PR lines collected: %d", result.pr_count)
     except Exception as e:
@@ -199,7 +202,7 @@ def collect_changes(
                 if "bot" in author_login.lower() or "github-actions" in author_login.lower():
                     continue
                 if not _is_noise(msg):
-                    cleaned = _clean_line(msg, author_login=author_login if author_login else None)
+                    cleaned = _clean_line(msg, author_login=author_login if author_login else None, owner=owner, repo=repo)
                     commit_lines.append(cleaned)
             result.commit_count = len(commit_lines)
             logger.info("Commit lines collected: %d", result.commit_count)
