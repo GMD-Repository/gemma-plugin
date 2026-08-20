@@ -440,8 +440,13 @@ def run_phase_8(
         exp_feat = QgsFeature(exp_fields)
         exp_feat.setGeometry(src_feat.geometry())
         exp_attrs = []
+        src_flds = src_feat.fields()
         for f in exp_fields:
-            val = src_feat.attribute(f.name())
+            idx = src_flds.indexOf(f.name())
+            if idx != -1:
+                val = src_feat.attribute(idx)
+            else:
+                val = src_feat.attribute(f.name())
             exp_attrs.append(val if val is not None else None)
         exp_feat.setAttributes(exp_attrs)
         return exp_feat
@@ -691,6 +696,25 @@ def run_phase_8(
                             return val_str
         return best_val
 
+    def get_field_val(f: QgsFeature, fname: str, default=0):
+        if not f or not f.isValid():
+            return default
+        flds = f.fields()
+        idx = flds.indexOf(fname)
+        if idx == -1:
+            for j in range(flds.count()):
+                if flds.at(j).name().lower() == fname.lower():
+                    idx = j
+                    break
+        if idx != -1:
+            val = f.attribute(idx)
+            if val is not None and val != NULL and not (isinstance(val, QVariant) and val.isNull()):
+                try:
+                    return float(val) if isinstance(default, float) else int(round(float(val)))
+                except (TypeError, ValueError):
+                    return val
+        return default
+
     final_geom_by_candidate = {}
 
     for i, ea in enumerate(eas):
@@ -776,7 +800,20 @@ def run_phase_8(
 
         fid_idx = out_fields.indexOf("fid")
         if fid_idx != -1:
-            out_feat.setAttribute(fid_idx, None)
+            cur_fid = out_feat.attribute(fid_idx)
+            if cur_fid is None or cur_fid == NULL or str(cur_fid).strip() in ('', 'NULL', 'None'):
+                if parent_feat and parent_feat.isValid():
+                    p_fid = parent_feat.attribute("fid") if parent_feat.fields().indexOf("fid") != -1 else None
+                    if p_fid is None or p_fid == NULL or str(p_fid).strip() in ('', 'NULL', 'None'):
+                        p_fid = parent_feat.id()
+                    try:
+                        cur_fid = int(p_fid)
+                    except (ValueError, TypeError):
+                        cur_fid = p_fid
+                elif _ea_id is not None and isinstance(_ea_id, int) and _ea_id > 0:
+                    cur_fid = _ea_id
+            if cur_fid is not None and cur_fid != NULL and str(cur_fid).strip() not in ('', 'NULL', 'None'):
+                out_feat.setAttribute(fid_idx, cur_fid)
 
         new_ea_idx = out_fields.indexOf("new_ean")
         if new_ea_idx == -1:
@@ -832,7 +869,10 @@ def run_phase_8(
         if map_uuid_idx != -1:
             cur_uuid = out_feat.attribute(map_uuid_idx)
             if cur_uuid is None or cur_uuid == NULL or str(cur_uuid).strip() in ('', 'NULL', 'None'):
-                inh_uuid = get_text_attr(parent_feat, ["map_uuid", "mapuuid", "uuid", "map_id"], prefer_text=False)
+                inh_uuid = (
+                    get_text_attr(parent_bgy_feat, ["map_uuid", "mapuuid", "uuid", "map_id"], prefer_text=False)
+                    or get_text_attr(parent_feat, ["map_uuid", "mapuuid", "uuid", "map_id"], prefer_text=False)
+                )
                 if inh_uuid:
                     out_feat.setAttribute(map_uuid_idx, inh_uuid)
 
@@ -893,11 +933,11 @@ def run_phase_8(
         # Set hhcount (input EA layer original count) vs hh_count (building point new total count)
         hhcount_idx = out_fields.indexOf("hhcount")
         if hhcount_idx != -1:
-            orig_hh = ea.get('original_hhcount')
-            if orig_hh is None:
-                orig_hh = out_feat.attribute(hhcount_idx)
-            if (orig_hh is None or orig_hh == NULL or str(orig_hh).strip() in ('', 'NULL', 'None')) and parent_feat:
-                orig_hh = get_text_attr(parent_feat, ["hhcount", "household", "new_hhcount", "hh_count", "population"], prefer_text=False)
+            orig_hh = safe_float(ea.get('original_hhcount'), 0.0)
+            if orig_hh <= 0 and parent_feat:
+                orig_hh = safe_float(get_field_val(parent_feat, "hhcount", 0.0), 0.0)
+            if orig_hh <= 0:
+                orig_hh = safe_float(ea.get('hh_count', 0.0), 0.0)
             out_feat.setAttribute(hhcount_idx, safe_float(orig_hh, 0.0))
 
         hh_count_idx = out_fields.indexOf("hh_count")
@@ -912,11 +952,11 @@ def run_phase_8(
         # Set bldgcount (input EA layer original count) vs bldg_count (building point new total count)
         bldgcount_idx = out_fields.indexOf("bldgcount")
         if bldgcount_idx != -1:
-            orig_bldg = ea.get('original_bldgcount')
-            if orig_bldg is None:
-                orig_bldg = out_feat.attribute(bldgcount_idx)
-            if (orig_bldg is None or orig_bldg == NULL or str(orig_bldg).strip() in ('', 'NULL', 'None')) and parent_feat:
-                orig_bldg = get_text_attr(parent_feat, ["bldgcount", "bldg_count", "new_bldgcount", "building_count"], prefer_text=False)
+            orig_bldg = safe_int(ea.get('original_bldgcount'), 0)
+            if orig_bldg <= 0 and parent_feat:
+                orig_bldg = safe_int(get_field_val(parent_feat, "bldgcount", 0), 0)
+            if orig_bldg <= 0:
+                orig_bldg = safe_int(ea.get('bldg_count', len(ea.get('buildings', []))), 0)
             out_feat.setAttribute(bldgcount_idx, safe_int(orig_bldg, 0))
 
         bldg_count_idx = out_fields.indexOf("bldg_count")

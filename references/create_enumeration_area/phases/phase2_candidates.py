@@ -236,11 +236,10 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     delin_candidate_dest_id = None
     if alg.DELINEATION_CANDIDATE_OUTPUT in parameters and parameters[alg.DELINEATION_CANDIDATE_OUTPUT] is not None:
         delin_cand_fields = QgsFields(out_fields)
-        for fname in [output_hh_field, "new_hhcount", "hh_count", "hhcount"]:
-            if fname.lower() != household_field.lower():
-                idx = delin_cand_fields.indexOf(fname)
-                if idx != -1:
-                    delin_cand_fields.remove(idx)
+        if delin_cand_fields.indexOf("hhcount") == -1:
+            delin_cand_fields.append(QgsField("hhcount", QVariant.Double))
+        if delin_cand_fields.indexOf("bldgcount") == -1:
+            delin_cand_fields.append(QgsField("bldgcount", QVariant.Int))
         if delin_cand_fields.indexOf("indicator") == -1 and delin_cand_fields.indexOf("eadel_indi") == -1:
             delin_cand_fields.append(QgsField("indicator", QVariant.String))
         (delin_candidate_sink, delin_candidate_dest_id) = alg.parameterAsSink(
@@ -257,12 +256,11 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     merge_cand_fields_filtered = None
     if alg.MERGE_CANDIDATE_OUTPUT in parameters and parameters[alg.MERGE_CANDIDATE_OUTPUT] is not None:
         merge_cand_fields_filtered = QgsFields(out_fields)
-        for fname in [output_hh_field, "new_hhcount", "hh_count", "hhcount"]:
-            if fname.lower() != household_field.lower():
-                idx = merge_cand_fields_filtered.indexOf(fname)
-                if idx != -1:
-                    merge_cand_fields_filtered.remove(idx)
-        for fname in ["merge_partner", "split_by", "new_ea", "new_ean", "bldg_count", "new_bldgcount", "bldgpoints_value", "bldgpts_val", "bldgpoint_value"]:
+        if merge_cand_fields_filtered.indexOf("hhcount") == -1:
+            merge_cand_fields_filtered.append(QgsField("hhcount", QVariant.Double))
+        if merge_cand_fields_filtered.indexOf("bldgcount") == -1:
+            merge_cand_fields_filtered.append(QgsField("bldgcount", QVariant.Int))
+        for fname in ["merge_partner", "split_by", "new_ea", "new_ean", "bldgpoints_value", "bldgpts_val", "bldgpoint_value"]:
             idx = merge_cand_fields_filtered.indexOf(fname)
             if idx != -1:
                 merge_cand_fields_filtered.remove(idx)
@@ -630,6 +628,49 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                             return val_str
         return best_val
 
+    def get_field_val(f: QgsFeature, fname: str, default=0):
+        if not f or not f.isValid():
+            return default
+        flds = f.fields()
+        idx = flds.indexOf(fname)
+        if idx == -1:
+            for j in range(flds.count()):
+                if flds.at(j).name().lower() == fname.lower():
+                    idx = j
+                    break
+        if idx != -1:
+            val = f.attribute(idx)
+            if val is not None and val != NULL and not (isinstance(val, QVariant) and val.isNull()):
+                try:
+                    return float(val) if isinstance(default, float) else int(round(float(val)))
+                except (TypeError, ValueError):
+                    return val
+        return default
+
+    def safe_float(val, default=0.0):
+        if val is None or val == NULL or str(val).strip() in ('', 'NULL', 'None'):
+            return default
+        if isinstance(val, QVariant):
+            if val.isNull():
+                return default
+            val = val.value()
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return default
+
+    def safe_int(val, default=0):
+        if val is None or val == NULL or str(val).strip() in ('', 'NULL', 'None'):
+            return default
+        if isinstance(val, QVariant):
+            if val.isNull():
+                return default
+            val = val.value()
+        try:
+            return int(round(float(val)))
+        except (TypeError, ValueError):
+            return default
+
     if delin_candidate_sink is not None:
         for feat in previous_ea_source.getFeatures():
             if multi_feedback.isCanceled():
@@ -677,7 +718,10 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             if map_uuid_idx != -1:
                 cur_uuid = out_feat.attribute(map_uuid_idx)
                 if cur_uuid is None or cur_uuid == NULL or str(cur_uuid).strip() in ('', 'NULL', 'None'):
-                    inh_uuid = get_text_attr(feat, ["map_uuid", "mapuuid", "uuid", "map_id"], prefer_text=False)
+                    inh_uuid = (
+                        get_text_attr(parent_bgy_feat, ["map_uuid", "mapuuid", "uuid", "map_id"], prefer_text=False)
+                        or get_text_attr(feat, ["map_uuid", "mapuuid", "uuid", "map_id"], prefer_text=False)
+                    )
                     if inh_uuid:
                         out_feat.setAttribute(map_uuid_idx, inh_uuid)
 
@@ -733,6 +777,16 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                     if c_val:
                         out_feat.setAttribute(code_idx, str(c_val))
 
+            hhcount_idx = delin_cand_fields.indexOf("hhcount")
+            if hhcount_idx != -1:
+                val_hh = get_field_val(feat, "hhcount", 0.0)
+                out_feat.setAttribute(hhcount_idx, safe_float(val_hh, 0.0))
+
+            bldgcount_idx = delin_cand_fields.indexOf("bldgcount")
+            if bldgcount_idx != -1:
+                val_bldg = get_field_val(feat, "bldgcount", 0)
+                out_feat.setAttribute(bldgcount_idx, safe_int(val_bldg, 0))
+
             corr_ea_geo_idx = delin_cand_fields.indexOf("correspondence_ea_geocode")
             if corr_ea_geo_idx != -1:
                 map_uuid_idx = delin_cand_fields.indexOf("map_uuid")
@@ -757,7 +811,13 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
 
             fid_idx = delin_cand_fields.indexOf("fid")
             if fid_idx != -1:
-                out_feat.setAttribute(fid_idx, None)
+                orig_fid = feat.attribute(fid_idx) if feat.fields().indexOf("fid") != -1 else None
+                if orig_fid is None or orig_fid == NULL or str(orig_fid).strip() in ('', 'NULL', 'None'):
+                    orig_fid = feat.id()
+                try:
+                    out_feat.setAttribute(fid_idx, int(orig_fid))
+                except (ValueError, TypeError):
+                    out_feat.setAttribute(fid_idx, orig_fid)
 
             if delin_candidate_sink.addFeature(out_feat):
                 delin_candidate_feat_count += 1
@@ -889,7 +949,10 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                 if map_uuid_idx != -1:
                     cur_uuid = out_feat.attribute(map_uuid_idx)
                     if cur_uuid is None or cur_uuid == NULL or str(cur_uuid).strip() in ('', 'NULL', 'None'):
-                        inh_uuid = get_text_attr(feat, ["map_uuid", "mapuuid", "uuid", "map_id"], prefer_text=False)
+                        inh_uuid = (
+                            get_text_attr(parent_bgy_feat, ["map_uuid", "mapuuid", "uuid", "map_id"], prefer_text=False)
+                            or get_text_attr(feat, ["map_uuid", "mapuuid", "uuid", "map_id"], prefer_text=False)
+                        )
                         if inh_uuid:
                             out_feat.setAttribute(map_uuid_idx, inh_uuid)
 
@@ -945,6 +1008,16 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                         if c_val:
                             out_feat.setAttribute(code_idx, str(c_val))
 
+                hhcount_idx = merge_cand_fields_filtered.indexOf("hhcount")
+                if hhcount_idx != -1:
+                    val_hh = get_field_val(feat, "hhcount", 0.0)
+                    out_feat.setAttribute(hhcount_idx, safe_float(val_hh, 0.0))
+
+                bldgcount_idx = merge_cand_fields_filtered.indexOf("bldgcount")
+                if bldgcount_idx != -1:
+                    val_bldg = get_field_val(feat, "bldgcount", 0)
+                    out_feat.setAttribute(bldgcount_idx, safe_int(val_bldg, 0))
+
                 corr_ea_geo_idx = merge_cand_fields_filtered.indexOf("correspondence_ea_geocode")
                 if corr_ea_geo_idx != -1:
                     map_uuid_idx = merge_cand_fields_filtered.indexOf("map_uuid")
@@ -971,7 +1044,13 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
 
                 fid_idx = merge_cand_fields_filtered.indexOf("fid")
                 if fid_idx != -1:
-                    out_feat.setAttribute(fid_idx, None)
+                    orig_fid = feat.attribute(fid_idx) if feat.fields().indexOf("fid") != -1 else None
+                    if orig_fid is None or orig_fid == NULL or str(orig_fid).strip() in ('', 'NULL', 'None'):
+                        orig_fid = feat.id()
+                    try:
+                        out_feat.setAttribute(fid_idx, int(orig_fid))
+                    except (ValueError, TypeError):
+                        out_feat.setAttribute(fid_idx, orig_fid)
 
                 if merge_candidate_sink.addFeature(out_feat):
                     merge_candidate_feat_count += 1

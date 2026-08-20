@@ -87,7 +87,8 @@ def force_geometric_split(ea_item, target_pop, fback, min_household=100, max_hou
                 'geom': poly,
                 'buildings': buildings_in_poly,
                 'hh_count': sub_pop,
-                'original_hhcount': ea_item.get('original_hhcount', 0),
+                'original_hhcount': ea_item.get('original_hhcount') or ea_item.get('hh_count', 0.0),
+                'original_bldgcount': ea_item.get('original_bldgcount') or ea_item.get('bldg_count') or len(ea_item.get('buildings', [])),
                 'bldg_count': len(buildings_in_poly),
                 'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
                 'attributes': list(ea_item['attributes']),
@@ -411,7 +412,8 @@ def split_ea_voronoi_road_hybrid(ea_item, road_lines, river_lines, target_pop, f
             'geom': poly,
             'buildings': p_bldgs,
             'hh_count': sub_pop,
-            'original_hhcount': ea_item.get('original_hhcount', 0),
+            'original_hhcount': ea_item.get('original_hhcount') or ea_item.get('hh_count', 0.0),
+            'original_bldgcount': ea_item.get('original_bldgcount') or ea_item.get('bldg_count') or len(ea_item.get('buildings', [])),
             'bldg_count': len(p_bldgs),
             'bldgpoints_value': sub_pop / len(p_bldgs) if len(p_bldgs) > 0 else 0.0,
             'attributes': list(ea_item['attributes']),
@@ -522,8 +524,10 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         if orig_id is not None and eadel_indi_col_idx != -1 and orig_id in full_ea_by_id:
             val = full_ea_by_id[orig_id].attribute(eadel_indi_col_idx)
             if val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"):
+                if orig_id not in delineation_candidate_ids and ea_item.get('hh_count', 0) < max_household:
+                    return False
                 return True
-        return (orig_id in delineation_candidate_ids) or (ea_item.get('original_hhcount', ea_item.get('hh_count', 0)) >= max_household)
+        return (orig_id in delineation_candidate_ids) or (ea_item.get('original_hhcount', ea_item.get('hh_count', 0)) >= max_household and orig_id in delineation_candidate_ids)
 
     def is_delineation_candidate(ea_item):
         if ea_item.get('from_split', False) or ea_item.get('from_merge', False):
@@ -536,6 +540,8 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             val = full_ea_by_id[orig_id].attribute(eadel_indi_col_idx)
             is_explicit = (val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"))
         if is_explicit:
+            if orig_id is not None and orig_id not in delineation_candidate_ids and ea_item['hh_count'] < max_household:
+                return False
             return True
         return ea_item['hh_count'] >= max_household
 
@@ -828,7 +834,8 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                 'geom': poly,
                 'buildings': buildings_in_poly,
                 'hh_count': sub_pop,
-                'original_hhcount': ea_item.get('original_hhcount', 0),
+                'original_hhcount': ea_item.get('original_hhcount') or ea_item.get('hh_count', 0.0),
+                'original_bldgcount': ea_item.get('original_bldgcount') or ea_item.get('bldg_count') or len(ea_item.get('buildings', [])),
                 'bldg_count': len(buildings_in_poly),
                 'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
                 'attributes': list(ea_item['attributes']),
@@ -976,7 +983,8 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                     'geom': poly,
                     'buildings': buildings_in_poly,
                     'hh_count': sub_pop,
-                    'original_hhcount': ea_item.get('original_hhcount', 0),
+                    'original_hhcount': ea_item.get('original_hhcount') or ea_item.get('hh_count', 0.0),
+                    'original_bldgcount': ea_item.get('original_bldgcount') or ea_item.get('bldg_count') or len(ea_item.get('buildings', [])),
                     'bldg_count': len(buildings_in_poly),
                     'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
                     'attributes': list(ea_item['attributes']),
@@ -1283,7 +1291,8 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                 'geom': poly,
                 'buildings': p_bldgs,
                 'hh_count': sub_pop,
-                'original_hhcount': ea_item.get('original_hhcount', 0),
+                'original_hhcount': ea_item.get('original_hhcount') or ea_item.get('hh_count', 0.0),
+                'original_bldgcount': ea_item.get('original_bldgcount') or ea_item.get('bldg_count') or len(ea_item.get('buildings', [])),
                 'bldg_count': len(p_bldgs),
                 'bldgpoints_value': sub_pop / len(p_bldgs) if len(p_bldgs) > 0 else 0.0,
                 'attributes': list(ea_item['attributes']),
@@ -1466,7 +1475,8 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                 'geom': poly,
                 'buildings': buildings_in_poly,
                 'hh_count': sub_pop,
-                'original_hhcount': ea_item.get('original_hhcount', 0),
+                'original_hhcount': ea_item.get('original_hhcount') or ea_item.get('hh_count', 0.0),
+                'original_bldgcount': ea_item.get('original_bldgcount') or ea_item.get('bldg_count') or len(ea_item.get('buildings', [])),
                 'bldg_count': len(buildings_in_poly),
                 'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
                 'attributes': list(ea_item['attributes']),

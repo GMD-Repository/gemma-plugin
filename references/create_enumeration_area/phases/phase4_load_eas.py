@@ -1,7 +1,9 @@
 from qgis.core import (
+    QgsFeature,
     QgsGeometry,
     QgsSpatialIndex,
     QgsProcessingException,
+    NULL,
 )
 from qgis.PyQt.QtCore import QVariant
 
@@ -51,7 +53,78 @@ def run_phase_4(alg, parameters, context, feedback, multi_feedback, p1, p2, prev
     multi_feedback.setProgressText(f"{_PHASE_LABELS[3]} [0/{previous_ea_count:,}]...")
     feedback.pushInfo("Recalculating household counts...")
 
+    def get_field_val(f: QgsFeature, fname: str, default=0):
+        if not f or not f.isValid():
+            return default
+        flds = f.fields()
+        idx = flds.indexOf(fname)
+        if idx == -1:
+            for j in range(flds.count()):
+                if flds.at(j).name().lower() == fname.lower():
+                    idx = j
+                    break
+        if idx != -1:
+            val = f.attribute(idx)
+            if val is not None and val != NULL and not (isinstance(val, QVariant) and val.isNull()):
+                try:
+                    return float(val) if isinstance(default, float) else int(round(float(val)))
+                except (TypeError, ValueError):
+                    return val
+        return default
+
     prev_ea_pop_idx = previous_ea_source.fields().indexOf(household_field)
+
+    # ── Pre-calculate Special EA HH counts (especially OVERLAP Special EAs) ───────────
+    special_ea_hh = {}
+    for feat in all_ea_features:
+        if feat.id() in special_ea_ids:
+            bldgs = ea_id_to_buildings.get(feat.id(), [])
+            hh_val = get_field_val(feat, "hhcount", 0.0)
+            if hh_val > 0.0:
+                special_ea_hh[feat.id()] = hh_val
+            elif bldgs:
+                special_ea_hh[feat.id()] = sum(b['pop'] for b in bldgs)
+            else:
+                special_ea_hh[feat.id()] = 0.0
+
+    ea_to_overlap_hh = {}
+    for spec_id, spec_info in special_ea_info.items():
+        if spec_info.get('special_type') == 'OVERLAP':
+            spec_hh = special_ea_hh.get(spec_id, 0.0)
+            for p_id in spec_info.get('parent_ea_ids', []):
+                ea_to_overlap_hh[p_id] = ea_to_overlap_hh.get(p_id, 0.0) + spec_hh
+
+    # Adjust delineation candidates affected by overlaps
+    for feat in all_ea_features:
+        if feat.id() in special_ea_ids:
+            continue
+        if feat.id() in ea_to_overlap_hh:
+            overlap_hh = ea_to_overlap_hh[feat.id()]
+            if overlap_hh > 0:
+                orig_hh = get_field_val(feat, "hhcount", 0.0)
+                if orig_hh <= 0.0 and feat.id() in ea_id_to_buildings:
+                    orig_hh = sum(b['pop'] for b in ea_id_to_buildings[feat.id()])
+                effective_hh = max(0.0, orig_hh - overlap_hh)
+                _ean = feat.attribute(ea_id_field)
+                _ean_str = str(_ean).strip() if _ean is not None else ""
+
+                if feat.id() in delineation_candidate_ids or orig_hh >= max_household:
+                    if effective_hh < max_household:
+                        if feat.id() in delineation_candidate_ids:
+                            delineation_candidate_ids.remove(feat.id())
+                        feedback.pushInfo(
+                            f"[EA {_ean_str}] Overlap Special EA detected (-{overlap_hh:.0f} HH). "
+                            f"Adjusted HH ({effective_hh:.0f}) is below max threshold ({max_household}). "
+                            f"Bypassing delineation."
+                        )
+                        if effective_hh <= min_household:
+                            merge_candidate_ids.add(feat.id())
+                    else:
+                        feedback.pushInfo(
+                            f"[EA {_ean_str}] Overlap Special EA detected (-{overlap_hh:.0f} HH). "
+                            f"Adjusted HH ({effective_hh:.0f}) still exceeds max threshold ({max_household}). "
+                            f"Proceeding with delineation."
+                        )
 
     needed_ea_ids = set()
     active_barangays = set()
@@ -66,13 +139,9 @@ def run_phase_4(alg, parameters, context, feedback, multi_feedback, p1, p2, prev
         _ean = feat.attribute(ea_id_field)
         _ean_str = str(_ean).strip() if _ean is not None else ""
 
-        _orig_hhcount = 0.0
-        if prev_ea_pop_idx != -1:
-            val = feat.attribute(prev_ea_pop_idx)
-            try:
-                _orig_hhcount = float(val) if val is not None else 0.0
-            except (TypeError, ValueError):
-                _orig_hhcount = 0.0
+        _orig_hhcount = get_field_val(feat, "hhcount", 0.0)
+        if feat.id() in ea_to_overlap_hh and feat.id() not in special_ea_ids:
+            _orig_hhcount = max(0.0, _orig_hhcount - ea_to_overlap_hh[feat.id()])
 
         is_delineation = feat.id() in delineation_candidate_ids
         is_merge = feat.id() in merge_candidate_ids or _orig_hhcount == 0.0
@@ -126,26 +195,13 @@ def run_phase_4(alg, parameters, context, feedback, multi_feedback, p1, p2, prev
         bar_geo = _resolve_bar(feat)
         clean_geom = QgsGeometry(feat.geometry())
         assigned_bldgs = ea_id_to_buildings.get(feat.id(), [])
-        _orig_hhcount = 0.0
-        if prev_ea_pop_idx != -1:
-            val = feat.attribute(prev_ea_pop_idx)
-            try:
-                _orig_hhcount = float(val) if val is not None else 0.0
-            except (TypeError, ValueError):
-                _orig_hhcount = 0.0
-        else:
-            _orig_hhcount = 0.0
+        _orig_hhcount = get_field_val(feat, "hhcount", 0.0)
+        if feat.id() in ea_to_overlap_hh and feat.id() not in special_ea_ids:
+            _orig_hhcount = max(0.0, _orig_hhcount - ea_to_overlap_hh[feat.id()])
 
-        _orig_bldgcount = 0
-        bldg_idx = feat.fields().indexOf("bldgcount")
-        if bldg_idx == -1:
-            bldg_idx = feat.fields().indexOf("bldg_count")
-        if bldg_idx != -1:
-            val_b = feat.attribute(bldg_idx)
-            try:
-                _orig_bldgcount = int(val_b) if val_b is not None else 0
-            except (TypeError, ValueError):
-                _orig_bldgcount = 0
+        _orig_bldgcount = get_field_val(feat, "bldgcount", 0)
+        if _orig_bldgcount <= 0 and assigned_bldgs:
+            _orig_bldgcount = len(assigned_bldgs)
 
         _ean = feat.attribute(ea_id_field)
         _ean_str = str(_ean).strip() if _ean is not None else ""
@@ -163,7 +219,7 @@ def run_phase_4(alg, parameters, context, feedback, multi_feedback, p1, p2, prev
                     for b in assigned_bldgs:
                         b['pop'] = per_bldg
         else:
-            _ea_hh_count = sum(b['pop'] for b in assigned_bldgs)
+            _ea_hh_count = sum(b['pop'] for b in assigned_bldgs) if assigned_bldgs else 0.0
             _orig_hhcount = _ea_hh_count
 
         _bldgpoints_value = _ea_hh_count / _bldg_pt_count if _bldg_pt_count > 0 else 0.0
