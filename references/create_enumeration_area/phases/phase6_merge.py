@@ -31,13 +31,16 @@ def run_phase_6(alg, parameters, context, feedback, multi_feedback, p1, p2, p5):
 def is_delineation_candidate(ea_item, max_household, eadel_indi_col_idx=-1, full_ea_by_id=None, delineation_candidate_ids=None):
     if ea_item.get('from_split', False) or ea_item.get('from_merge', False):
         return False
+    if ea_item.get('is_special_ea', False):
+        return False
     orig_id = ea_item.get('original_id')
     is_explicit = False
     if eadel_indi_col_idx != -1 and full_ea_by_id and orig_id in full_ea_by_id:
         val = full_ea_by_id[orig_id].attribute(eadel_indi_col_idx)
         is_explicit = (val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"))
-    delin_set = delineation_candidate_ids or set()
-    return is_explicit or (orig_id in delin_set) or (ea_item['hh_count'] >= max_household)
+    if is_explicit:
+        return True
+    return ea_item['hh_count'] >= max_household
 
 
 def is_merge_candidate(ea_item, min_household, merge_candidate_ids=None):
@@ -156,7 +159,7 @@ def process_barangay_merge(
 
             if is_merge_candidate(ea, min_household, merge_candidate_ids):
                 best_neighbor_idx = -1
-                best_neighbor_score = float('inf')
+                best_neighbor_score = (float('inf'), float('inf'))
 
                 for j in range(len(bar_eas)):
                     if idx == j or j in merged_indices:
@@ -182,7 +185,7 @@ def process_barangay_merge(
                     if is_adjacent:
                         combined_hh = ea['hh_count'] + neighbor['hh_count']
                         if combined_hh <= max_household:
-                            score = abs(combined_hh - (max_household - 1))
+                            score = (float(neighbor.get('hh_count', 0.0)), neighbor['geom'].area())
                             if score < best_neighbor_score:
                                 best_neighbor_score = score
                                 best_neighbor_idx = j
@@ -209,7 +212,7 @@ def process_barangay_merge(
                         if is_adjacent:
                             combined_hh = ea['hh_count'] + neighbor['hh_count']
                             if combined_hh <= max_household:
-                                score = abs(combined_hh - (max_household - 1))
+                                score = (float(neighbor.get('hh_count', 0.0)), neighbor['geom'].area())
                                 if score < best_neighbor_score:
                                     best_neighbor_score = score
                                     best_neighbor_idx = j

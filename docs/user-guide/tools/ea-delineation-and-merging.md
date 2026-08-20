@@ -4,7 +4,7 @@ The **EA Delineation and Merging** module automates the pre-processing, spatial 
 
 It combines two core processing tabs in a single integrated launcher dialog:
 
-1. **Tab 1: Pre-EA Processing** &mdash; Enforces spatial coverage rules, clips EAs extending outside Barangay boundaries, and fills uncovered coverage gaps within parent Barangays.
+1. **Tab 1: EA Preprocessing** &mdash; Enforces spatial coverage rules, clips EAs extending outside Barangay boundaries, and fills uncovered coverage gaps within parent Barangays.
 2. **Tab 2: EA Delineation & Merging** &mdash; Executes building point household aggregation, candidate classification, single-pass splitting for overpopulated EAs (>300 HH), and iterative spatial merging for underpopulated EAs (<=100 HH).
 
 ## Access
@@ -28,7 +28,7 @@ Use this module when:
 
 The **EA Delineation and Merging** launcher dialog provides an interactive workflow prior to executing processing routines:
 
-- **Dual-Tab Processing Launcher:** Switch seamlessly between **Pre-EA Processing** (Tab 1) and **EA Delineation & Merging** (Tab 2).
+- **Dual-Tab Processing Launcher:** Switch seamlessly between **EA Preprocessing** (Tab 1) and **EA Delineation & Merging** (Tab 2).
 - **Auto-Detect Project Layers:** Automatically scans open layers in the QGIS project and populates input dropdowns based on standard layer naming conventions (`_bgy`, `_ea`, `_bldgpts`, `road`, `river`).
 - **Auto Arrange Layers:** One-click utility inside **Input Layers** that restructures project layer tree nodes into `<PSGC>_<City_Mun>_MBI` and `<PSGC>_<City_Mun>_baselayers` groups, re-orders layers (Points → Lines → Polygons → Rasters), renames gaps/overlaps (`<PSGC>_gaps`, `<PSGC>_overlaps`), and applies official GEMMA QML style templates (`1. Base Layer Building Points.qml`, `2. Base Layer Landmark.qml`, etc.).
 - **Fill Missing Household Counts:** Built-in utility to compute missing household counts (`hhcount`) directly from building points within each EA polygon before running delineation algorithms.
@@ -36,9 +36,9 @@ The **EA Delineation and Merging** launcher dialog provides an interactive workf
 
 ---
 
-## Tab 1 — Pre-EA Processing
+## Tab 1 — EA Preprocessing
 
-The **Pre-EA Processing** tab prepares starting EA boundaries before running delineation algorithms by enforcing two fundamental spatial rules:
+The **EA Preprocessing** tab prepares starting EA boundaries before running delineation algorithms by enforcing two fundamental spatial rules:
 
 1. **Rule 1 (Clip to Barangay)**: Every EA polygon must be completely within its parent Barangay boundary.
 2. **Rule 2 (Gap Filling)**: Every Barangay must be fully covered by its constituent EAs with zero uncovered coverage gaps remaining.
@@ -54,11 +54,13 @@ The **Pre-EA Processing** tab prepares starting EA boundaries before running del
 | **Detect Uncovered Barangay Areas** | Boolean | When enabled (default: `True`), identifies uncovered gaps within each Barangay after clipping. |
 | **Assign Gaps to Contiguous EA** | Boolean | When enabled (default: `True`), assigns each detected gap to the adjacent EA sharing the longest boundary edge. |
 
-### Pre-EA Output & Attribute Fields
+### EA Preprocessing Output & Attribute Fields
 
 | Output / Field Name | Type | Description |
 |---------------------|------|-------------|
 | **Pre-Processed EA Layer** | Vector (Polygon) | In-memory polygon layer (`<5-digit geocode>_ea2026_preprocessed`) containing aligned and gap-filled EAs. |
+| **hhcount** | Double | Household count for the EA polygon. |
+| **bldgcount** | Integer | Building count for the EA polygon. |
 | **original_area** | Double | Original surface area of the starting EA polygon in square metres. |
 | **corrected_area** | Double | Corrected surface area of the EA polygon after boundary clipping and gap assignment in square metres. |
 | **area_change** | Double | Net area change (square metres) computed as `corrected_area - original_area`. |
@@ -100,7 +102,30 @@ The **EA Delineation & Merging** tab executes spatial aggregation, single-pass s
 | **Boundary Update Lines Layer** | Vector (Line) | `eadel_update_lines.qml` | Line layer (`<geocode>_eadel_update`) representing new boundary cuts generated from road/river splits. |
 | **Candidate for Delineation Layer** | Vector (Polygon) | `delineation_candidates.qml` | Layer containing EAs identified as candidates for delineation (>300 HH). Styled with amber highlight. |
 | **Candidate for Merging Layer** | Vector (Polygon) | `merge_candidates.qml` | Layer containing under-threshold initiator EAs (<=100 HH) and reference neighbor EAs evaluated for intra-barangay merging. |
-| **Extracted Building Points Layer** | Vector (Point) | `building.qml` | Point layer containing building points tagged with assigned EA identifiers. |
+### Final Output Attribute Schema (`delineated_ea2026`, `merge_ea2026`, `special_ea`)
+
+The output layers `<geocode>_delineated_ea2026`, `<geocode>_merged_ea2026`, and `<geocode>_special_ea` share the following 18 standard attributes:
+
+| Field Name | Type | Description |
+|------------|------|-------------|
+| **fid** | Integer | Feature Identifier (primary key). |
+| **map_uuid** | String | Unique UUID assigned to the map sheet or starting EA polygon. |
+| **geocode** | String | Full 9–14 digit PSGC administrative geocode for the EA polygon. |
+| **region** | String | Region administrative code or name. |
+| **province** | String | Province administrative code or name. |
+| **city_mun** | String | City / Municipality administrative code or name. |
+| **barangay** | String | Barangay administrative code or name. |
+| **code** | String | PSGC administrative code / reference suffix. |
+| **name** | String | Formatted Enumeration Area display label (e.g. `EA 001000`). |
+| **ean** | String | Original starting Enumeration Area Number prior to processing. |
+| **hhcount** | Double | Original household count from the starting EA input layer. |
+| **bldgcount** | Integer | Original building count from the starting EA input layer. |
+| **sy** | String / Integer | Survey Year / Census round identifier (e.g. `2026`). |
+| **new_ean** | String | Newly assigned post-delineation 6-digit EA sequence number code (e.g. `001000`). |
+| **hh_count** | Integer | New total household count aggregated from building points assigned to this polygon (whole number). |
+| **bldg_count** | Integer | New total building point count contained in this polygon. |
+| **ea_type** | String | EA classification type (`STANDARD` or `SPECIAL`). |
+| **remarks** | String | Processing note detailing action or split strategy (e.g. `Split along road network`, `Merged EA`, `Generated from Gap layer`). |
 
 ---
 
@@ -132,7 +157,7 @@ The **EA Delineation & Merging** tab executes spatial aggregation, single-pass s
 
 ::: tip Complete Module Workflow
 In the **EA Delineation and Merging** launcher dialog:
-1. Run **Tab 1: Pre-EA Processing** first to create the `<pppmm>_ea2026_preprocessed` layer.
+1. Run **Tab 1: EA Preprocessing** first to create the `<pppmm>_ea2026_preprocessed` layer.
 2. Switch to **Tab 2: EA Delineation & Merging** and select `<pppmm>_ea2026_preprocessed` as the **Previous EA Layer**.
 3. Execute the algorithm to produce 100% gap-free, household-balanced Enumeration Areas.
 :::
