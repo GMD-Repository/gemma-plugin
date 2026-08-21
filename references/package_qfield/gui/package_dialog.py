@@ -78,11 +78,25 @@ DialogUi, _ = loadUiType(
 
 BUILTIN_PRESETS = {
     "EA Delineation": [
+        # Top-level parent group
         {
-            "path": ["For Verification"],
+            "path": ["EA Field Verification"],
             "is_group": True,
             "checked": True
         },
+        # Sub-folder inside "For Verification"
+        {
+            "path": ["EA Field Verification", "Delineated EA"],
+            "is_group": True,
+            "checked": True
+        },
+        # Sub-folder inside "For Verification"
+        {
+            "path": ["EA Field Verification", "Merged EA"],
+            "is_group": True,
+            "checked": True
+        },
+        # Another top-level parent group
         {
             "path": ["Base Layers"],
             "is_group": True,
