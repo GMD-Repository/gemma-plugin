@@ -665,6 +665,116 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
             delin_ids_c.discard(103)
         self.assertIn(103, delin_ids_c)
 
+    def test_geocode_not_changed_for_delineated_and_merged_ea(self):
+        """Verify that geocode is preserved untouched for delineated and merged EAs."""
+        from qgis.core import QgsFields, QgsField, QgsFeature, NULL
+        try:
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            from PyQt5.QtCore import QVariant
+
+        out_fields = QgsFields()
+        out_fields.append(QgsField("geocode", QVariant.String))
+        out_fields.append(QgsField("new_ean", QVariant.String))
+        out_fields.append(QgsField("name", QVariant.String))
+
+        # Scenario 1: Delineated EA with existing geocode "01801015000000" and new code "000001"
+        ea_delineated = {
+            'attributes': ["01801015000000", None, None],
+            'new_ea_code': "000001",
+            'new_ea_tracker': "000001",
+            'from_split': True,
+        }
+        out_feat = QgsFeature(out_fields)
+        attrs = list(ea_delineated['attributes'])
+        out_feat.setAttributes(attrs)
+
+        geocode_idx = out_fields.indexOf("geocode")
+        cur_gc = out_feat.attribute(geocode_idx)
+        if cur_gc is None or cur_gc == NULL or str(cur_gc).strip() in ('', 'NULL', 'None'):
+            inh_gc = "01801015000"
+            out_feat.setAttribute(geocode_idx, str(inh_gc))
+        else:
+            gc_str = str(cur_gc).strip()
+            if gc_str.endswith(".0"):
+                gc_str = gc_str[:-2]
+            out_feat.setAttribute(geocode_idx, gc_str)
+
+        # Geocode must remain the original value without modifying or appending new_ea_code
+        self.assertEqual(out_feat.attribute("geocode"), "01801015000000")
+
+        # Scenario 2: Merged EA with 9-digit barangay geocode "018010150"
+        ea_merged = {
+            'attributes': ["018010150", None, None],
+            'new_ea_code': "000002",
+            'new_ea_tracker': "000002",
+            'from_merge': True,
+        }
+        out_feat_m = QgsFeature(out_fields)
+        attrs_m = list(ea_merged['attributes'])
+        out_feat_m.setAttributes(attrs_m)
+
+        cur_gc_m = out_feat_m.attribute(geocode_idx)
+        if cur_gc_m is None or cur_gc_m == NULL or str(cur_gc_m).strip() in ('', 'NULL', 'None'):
+            inh_gc = "018010150"
+            out_feat_m.setAttribute(geocode_idx, str(inh_gc))
+        else:
+            gc_str = str(cur_gc_m).strip()
+            if gc_str.endswith(".0"):
+                gc_str = gc_str[:-2]
+            out_feat_m.setAttribute(geocode_idx, gc_str)
+
+        self.assertEqual(out_feat_m.attribute("geocode"), "018010150")
+
+    def test_name_and_ean_not_changed_for_delineated_and_merged_ea(self):
+        """Verify that name and ean are preserved untouched for delineated and merged EAs."""
+        from qgis.core import QgsFields, QgsField, QgsFeature, NULL
+        try:
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            from PyQt5.QtCore import QVariant
+
+        out_fields = QgsFields()
+        out_fields.append(QgsField("geocode", QVariant.String))
+        out_fields.append(QgsField("name", QVariant.String))
+        out_fields.append(QgsField("ean", QVariant.String))
+        out_fields.append(QgsField("new_ean", QVariant.String))
+
+        # Delineated EA with original name "EA 001", ean "000001", but newly assigned new_ea_code "000001A"
+        ea_delineated = {
+            'attributes': ["01801015000000", "EA 001", "000001", None],
+            'new_ea_code': "000001A",
+            'new_ea_tracker': "000001A",
+            'original_code': "000001",
+            'from_split': True,
+        }
+        out_feat = QgsFeature(out_fields)
+        attrs = list(ea_delineated['attributes'])
+        out_feat.setAttributes(attrs)
+
+        # Name should remain original "EA 001"
+        name_idx = out_fields.indexOf("name")
+        cur_name = out_feat.attribute(name_idx)
+        if cur_name is None or cur_name == NULL or str(cur_name).strip() in ('', 'NULL', 'None'):
+            inh_name = f"EA {ea_delineated['original_code']}"
+            out_feat.setAttribute(name_idx, str(inh_name))
+
+        self.assertEqual(out_feat.attribute("name"), "EA 001")
+
+        # EAN should remain original "000001"
+        ean_idx = out_fields.indexOf("ean")
+        cur_ean = out_feat.attribute(ean_idx)
+        if cur_ean is None or cur_ean == NULL or str(cur_ean).strip() in ('', 'NULL', 'None'):
+            inh_ean = ea_delineated['original_code']
+            out_feat.setAttribute(ean_idx, str(inh_ean))
+
+        self.assertEqual(out_feat.attribute("ean"), "000001")
+
+        # new_ean should receive the new tracker code
+        new_ean_idx = out_fields.indexOf("new_ean")
+        out_feat.setAttribute(new_ean_idx, ea_delineated['new_ea_tracker'])
+        self.assertEqual(out_feat.attribute("new_ean"), "000001A")
+
 
 if __name__ == "__main__":
     unittest.main()

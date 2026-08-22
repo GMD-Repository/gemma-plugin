@@ -868,22 +868,34 @@ def run_phase_8(
 
         name_idx = out_fields.indexOf("name")
         if name_idx != -1:
-            out_feat.setAttribute(name_idx, f"EA {ea['new_ea_code']}")
+            cur_name = out_feat.attribute(name_idx)
+            if cur_name is None or cur_name == NULL or str(cur_name).strip() in ('', 'NULL', 'None'):
+                inh_name = (
+                    get_text_attr(parent_feat, ["name", "ean_name", "ea_name"], prefer_text=False)
+                    or (f"EA {ea.get('original_code')}" if ea.get('original_code') else None)
+                )
+                if inh_name:
+                    out_feat.setAttribute(name_idx, str(inh_name))
 
         geocode_idx = out_fields.indexOf("geocode")
         if geocode_idx != -1:
-            orig_gc = str(out_feat.attribute(geocode_idx) or "").strip()
-            if orig_gc.endswith(".0"):
-                orig_gc = orig_gc[:-2]
-            new_code = str(ea['new_ea_code']).strip()
-            if len(orig_gc) >= 6:
-                new_gc = orig_gc[:-6] + new_code
-            elif orig_gc:
-                new_gc = orig_gc[:-len(new_code)] + new_code if len(orig_gc) > len(new_code) else new_code
+            cur_gc = out_feat.attribute(geocode_idx)
+            if cur_gc is None or cur_gc == NULL or str(cur_gc).strip() in ('', 'NULL', 'None'):
+                inh_gc = (
+                    get_text_attr(parent_feat, ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code", "psgc"], prefer_text=False)
+                    or get_text_attr(parent_bgy_feat, ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code", "psgc"], prefer_text=False)
+                    or ea.get('parent_barangay')
+                )
+                if inh_gc:
+                    inh_gc_str = str(inh_gc).strip()
+                    if inh_gc_str.endswith(".0"):
+                        inh_gc_str = inh_gc_str[:-2]
+                    out_feat.setAttribute(geocode_idx, inh_gc_str)
             else:
-                bar_code = str(ea.get('parent_barangay', ''))
-                new_gc = bar_code + new_code
-            out_feat.setAttribute(geocode_idx, new_gc)
+                gc_str = str(cur_gc).strip()
+                if gc_str.endswith(".0"):
+                    gc_str = gc_str[:-2]
+                out_feat.setAttribute(geocode_idx, gc_str)
 
         def safe_float(val, default=0.0):
             if val is None or val == NULL or str(val).strip() in ('', 'NULL', 'None'):
@@ -1050,7 +1062,25 @@ def run_phase_8(
 
         ean_field_idx = out_fields.indexOf(ea_id_field)
         if ean_field_idx != -1 and ea_id_field.lower() != "geocode":
-            out_feat.setAttribute(ean_field_idx, ea['new_ea_code'])
+            cur_ean = out_feat.attribute(ean_field_idx)
+            if cur_ean is None or cur_ean == NULL or str(cur_ean).strip() in ('', 'NULL', 'None'):
+                inh_ean = (
+                    get_text_attr(parent_feat, [ea_id_field, "ean", "code", "ea_code", "ean_code"], prefer_text=False)
+                    or ea.get('original_code')
+                )
+                if inh_ean:
+                    out_feat.setAttribute(ean_field_idx, str(inh_ean))
+
+        ean_std_idx = out_fields.indexOf("ean")
+        if ean_std_idx != -1 and ean_std_idx != ean_field_idx:
+            cur_ean_std = out_feat.attribute(ean_std_idx)
+            if cur_ean_std is None or cur_ean_std == NULL or str(cur_ean_std).strip() in ('', 'NULL', 'None'):
+                inh_ean = (
+                    get_text_attr(parent_feat, ["ean", "code", "ea_code", "ean_code", ea_id_field], prefer_text=False)
+                    or ea.get('original_code')
+                )
+                if inh_ean:
+                    out_feat.setAttribute(ean_std_idx, str(inh_ean))
 
         ea_type_idx = out_fields.indexOf("ea_type")
         if ea_type_idx != -1:
