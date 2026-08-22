@@ -97,12 +97,16 @@ def run_phase_7(
             if i in removed:
                 continue
             ea = eas[i]
+            if ea.get("from_split", False):
+                continue
             bar = ea["parent_barangay"]
 
             best_j = -1
             best_score = float("inf")
             for j, nb in enumerate(eas):
                 if j == i or j in removed:
+                    continue
+                if nb.get("from_split", False):
                     continue
                 if nb["parent_barangay"] != bar:
                     continue
@@ -121,6 +125,8 @@ def run_phase_7(
             if best_j == -1:
                 for j, nb in enumerate(eas):
                     if j == i or j in removed:
+                        continue
+                    if nb.get("from_split", False):
                         continue
                     if nb["parent_barangay"] != bar:
                         continue
@@ -141,6 +147,8 @@ def run_phase_7(
                 best_dist = float("inf")
                 for j, nb in enumerate(eas):
                     if j == i or j in removed:
+                        continue
+                    if nb.get("from_split", False):
                         continue
                     if nb["parent_barangay"] != bar:
                         continue

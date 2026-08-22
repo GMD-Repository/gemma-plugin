@@ -540,17 +540,13 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         return True
 
     def is_merge_candidate(ea_item):
-        if ea_item.get('from_split', False):
-            return ea_item['hh_count'] <= min_household
-        if ea_item.get('from_merge', False):
+        if ea_item.get('from_split', False) or ea_item.get('from_merge', False):
             return False
         orig_id = ea_item.get('original_id')
         return (orig_id in merge_candidate_ids) or (ea_item['hh_count'] <= min_household)
 
     def enforce_min_household(parts, fback, ea_geom=None):
         while len(parts) > 1:
-            if split_strategy == 0 and len(parts) <= 2:
-                break
             under = [i for i, p in enumerate(parts) if p['hh_count'] < min_household]
             if not under:
                 break

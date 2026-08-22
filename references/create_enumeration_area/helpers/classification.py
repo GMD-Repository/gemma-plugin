@@ -51,9 +51,7 @@ def is_merge_candidate(
     merge_candidate_ids: Set[int]
 ) -> bool:
     """Check if EA item is a candidate for merging."""
-    if ea_item.get('from_split', False):
-        return ea_item['hh_count'] <= min_household
-    if ea_item.get('from_merge', False):
+    if ea_item.get('from_split', False) or ea_item.get('from_merge', False):
         return False
     orig_id = ea_item.get('original_id')
     return (orig_id in merge_candidate_ids) or (ea_item['hh_count'] <= min_household)
