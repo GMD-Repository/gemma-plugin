@@ -386,6 +386,8 @@ def run_phase_8(
     area_threshold = p1["area_threshold"]
     max_household = p1["max_household"]
     min_household = p1["min_household"]
+    household_field = p1.get("household_field") or p2.get("household_field")
+    bldgcount_field = p1.get("bldgcount_field")
     output_hh_field = p2.get("output_hh_field") or p1.get("output_hh_field", "household")
     bldg_hh_field = p1["bldg_hh_field"]
     ea_id_field = p1["ea_id_field"]
@@ -398,6 +400,9 @@ def run_phase_8(
 
     road_geoms = p3["road_geoms"]
     river_geoms = p3["river_geoms"]
+
+    # Memory-only registry of all EA codes per delineation-candidate barangay (from Phase 4)
+    barangay_sibling_ean_codes = p4.get("barangay_sibling_ean_codes", {})
 
     # Sinks & Count trackers from p2 (or p1)
     delineated_sink = p2.get("delineated_sink") or p1.get("delineated_sink")
@@ -443,6 +448,11 @@ def run_phase_8(
         src_flds = src_feat.fields()
         for f in exp_fields:
             idx = src_flds.indexOf(f.name())
+            if idx == -1:
+                for j in range(src_flds.count()):
+                    if src_flds.at(j).name().lower() == f.name().lower():
+                        idx = j
+                        break
             if idx != -1:
                 val = src_feat.attribute(idx)
             else:
@@ -499,8 +509,12 @@ def run_phase_8(
         if parent_bgy_feat and parent_bgy_feat.geometry() and not parent_bgy_feat.geometry().isEmpty():
             allocate_gaps_to_parts(bar_eas, parent_bgy_feat.geometry())
 
-        # Determine maximum starting sequence number in this barangay
+        # Determine maximum starting sequence (child YYY) already in use in this barangay.
+        # Scan both the in-memory loaded EAs AND all sibling EA codes collected from the
+        # full barangay in Phase 4 so new child numbers never collide with existing EAs.
         max_seq = max_ea_number.get(bar, 0)
+
+        # 1. Scan loaded in-memory EAs
         for ea_item in bar_eas:
             code_str = str(ea_item.get('original_code', '')).strip()
             if code_str.endswith(".0"):
@@ -509,6 +523,33 @@ def run_phase_8(
             if len(digits) >= 3:
                 try:
                     seq_val = int(digits[:3])
+                    if seq_val > max_seq:
+                        max_seq = seq_val
+                except ValueError:
+                    pass
+
+        # 2. Scan sibling EAs in the same barangay (loaded from whole-barangay registry)
+        bar_str_key = str(bar).strip() if bar is not None else ""
+        if bar_str_key.endswith(".0"):
+            bar_str_key = bar_str_key[:-2]
+        sibling_codes = barangay_sibling_ean_codes.get(bar_str_key, [])
+        for sib_code in sibling_codes:
+            sib_digits = "".join([c for c in sib_code if c.isdigit()])
+            # Each 6-digit EAN: last 3 digits are the child (YYY); first 3 are the parent (XXX)
+            if len(sib_digits) == 6:
+                try:
+                    child_num = int(sib_digits[3:])
+                    if child_num > max_seq:
+                        max_seq = child_num
+                    # Also track the parent (XXX) prefix max so new EAs don't reuse it
+                    parent_num = int(sib_digits[:3])
+                    if parent_num > max_seq:
+                        max_seq = parent_num
+                except ValueError:
+                    pass
+            elif len(sib_digits) >= 3:
+                try:
+                    seq_val = int(sib_digits[:3])
                     if seq_val > max_seq:
                         max_seq = seq_val
                 except ValueError:
@@ -696,23 +737,27 @@ def run_phase_8(
                             return val_str
         return best_val
 
-    def get_field_val(f: QgsFeature, fname: str, default=0):
+    def get_field_val(f: QgsFeature, fname, default=0):
         if not f or not f.isValid():
             return default
         flds = f.fields()
-        idx = flds.indexOf(fname)
-        if idx == -1:
-            for j in range(flds.count()):
-                if flds.at(j).name().lower() == fname.lower():
-                    idx = j
-                    break
-        if idx != -1:
-            val = f.attribute(idx)
-            if val is not None and val != NULL and not (isinstance(val, QVariant) and val.isNull()):
-                try:
-                    return float(val) if isinstance(default, float) else int(round(float(val)))
-                except (TypeError, ValueError):
-                    return val
+        fnames = [fname] if isinstance(fname, str) else list(fname)
+        for target in fnames:
+            idx = flds.indexOf(target)
+            if idx == -1:
+                for j in range(flds.count()):
+                    if flds.at(j).name().lower() == target.lower():
+                        idx = j
+                        break
+            if idx != -1:
+                val = f.attribute(idx)
+                if val is not None and val != NULL and not (isinstance(val, QVariant) and val.isNull()):
+                    val_str = str(val).strip()
+                    if val_str not in ('', 'NULL', 'None'):
+                        try:
+                            return float(val) if isinstance(default, float) or default is None else int(round(float(val)))
+                        except (TypeError, ValueError):
+                            return val
         return default
 
     final_geom_by_candidate = {}
@@ -795,7 +840,7 @@ def run_phase_8(
         final_pop = ea['original_hhcount'] if is_unchanged_retain else ea['hh_count']
 
         pop_idx = out_fields.indexOf(output_hh_field)
-        if pop_idx != -1:
+        if pop_idx != -1 and output_hh_field.lower() not in ("hhcount", "bldgcount"):
             out_feat.setAttribute(pop_idx, final_pop)
 
         fid_idx = out_fields.indexOf("fid")
@@ -930,38 +975,70 @@ def run_phase_8(
                 if c_val:
                     out_feat.setAttribute(code_idx, str(c_val))
 
-        # Set hhcount (input EA layer original count) vs hh_count (building point new total count)
-        hhcount_idx = out_fields.indexOf("hhcount")
-        if hhcount_idx != -1:
-            orig_hh = safe_float(ea.get('original_hhcount'), 0.0)
-            if orig_hh <= 0 and parent_feat:
-                orig_hh = safe_float(get_field_val(parent_feat, "hhcount", 0.0), 0.0)
-            if orig_hh <= 0:
-                orig_hh = safe_float(ea.get('hh_count', 0.0), 0.0)
-            out_feat.setAttribute(hhcount_idx, safe_float(orig_hh, 0.0))
+        # Delineated EA hhcount and bldgcount inherit directly from original_hhcount / parent feature
+        if ea.get('is_special_ea', False):
+            val_hh = safe_float(ea.get('hh_count', ea.get('original_hhcount', 0.0)), 0.0)
+        else:
+            val_hh = ea.get('original_hhcount')
+            if val_hh is None:
+                hh_names = ["hhcount", "new_hhcount", "hh_count", "hh_cnt", "household", "household_count", "pop", "population"]
+                if household_field and household_field not in hh_names:
+                    hh_names.insert(0, household_field)
+                val_hh = get_field_val(parent_feat, hh_names, default=None)
+            if val_hh is not None:
+                val_hh = safe_float(val_hh, 0.0)
+            else:
+                cur_hh = None
+                for j in range(out_fields.count()):
+                    if out_fields.at(j).name().lower() == "hhcount":
+                        cur_hh = out_feat.attribute(j)
+                        if cur_hh is not None and cur_hh != NULL and str(cur_hh).strip() not in ('', 'NULL', 'None'):
+                            break
+                val_hh = safe_float(cur_hh, 0.0) if cur_hh is not None and str(cur_hh).strip() not in ('', 'NULL', 'None') else 0.0
 
-        hh_count_idx = out_fields.indexOf("hh_count")
-        if hh_count_idx != -1:
-            out_feat.setAttribute(hh_count_idx, safe_int(ea.get('hh_count', 0.0), 0))
+        for j in range(out_fields.count()):
+            if out_fields.at(j).name().lower() == "hhcount":
+                out_feat.setAttribute(j, val_hh)
 
-        # For Special EAs, ensure bldg_count gets the total building point count within its geometry
+        # hh_count holds the new calculated household count
+        new_hh_val = safe_int(ea.get('hh_count', 0.0), 0)
+        for j in range(out_fields.count()):
+            if out_fields.at(j).name().lower() == "hh_count":
+                out_feat.setAttribute(j, new_hh_val)
+
+        # For Special EAs, ensure bldg_count and bldgcount get the total building point count within its geometry
         if ea.get('is_special_ea', False):
             special_bldgs = ea.get('buildings', [])
             ea['bldg_count'] = len(special_bldgs)
+            val_bldg = len(special_bldgs)
+        else:
+            # Delineated EA bldgcount inherits directly from original_bldgcount / parent feature
+            val_bldg = ea.get('original_bldgcount')
+            if val_bldg is None:
+                bldg_names = ["bldgcount", "new_bldgcount", "bldg_count", "bldg_cnt", "bldgpts_cnt", "bldg_points", "building_count", "bldg_total", "buildings", "bldgs", "total_bldg", "num_bldg"]
+                if bldgcount_field and bldgcount_field not in bldg_names:
+                    bldg_names.insert(0, bldgcount_field)
+                val_bldg = get_field_val(parent_feat, bldg_names, default=None)
+        if val_bldg is not None:
+            val_bldg = safe_int(val_bldg, 0)
+        else:
+            cur_bldg = None
+            for j in range(out_fields.count()):
+                if out_fields.at(j).name().lower() == "bldgcount":
+                    cur_bldg = out_feat.attribute(j)
+                    if cur_bldg is not None and cur_bldg != NULL and str(cur_bldg).strip() not in ('', 'NULL', 'None'):
+                        break
+            val_bldg = safe_int(cur_bldg, 0) if cur_bldg is not None and str(cur_bldg).strip() not in ('', 'NULL', 'None') else 0
 
-        # Set bldgcount (input EA layer original count) vs bldg_count (building point new total count)
-        bldgcount_idx = out_fields.indexOf("bldgcount")
-        if bldgcount_idx != -1:
-            orig_bldg = safe_int(ea.get('original_bldgcount'), 0)
-            if orig_bldg <= 0 and parent_feat:
-                orig_bldg = safe_int(get_field_val(parent_feat, "bldgcount", 0), 0)
-            if orig_bldg <= 0:
-                orig_bldg = safe_int(ea.get('bldg_count', len(ea.get('buildings', []))), 0)
-            out_feat.setAttribute(bldgcount_idx, safe_int(orig_bldg, 0))
+        for j in range(out_fields.count()):
+            if out_fields.at(j).name().lower() == "bldgcount":
+                out_feat.setAttribute(j, val_bldg)
 
-        bldg_count_idx = out_fields.indexOf("bldg_count")
-        if bldg_count_idx != -1:
-            out_feat.setAttribute(bldg_count_idx, safe_int(ea.get('bldg_count', len(ea.get('buildings', []))), 0))
+        # bldg_count holds the new calculated building count
+        new_bldg_val = safe_int(ea.get('bldg_count', len(ea.get('buildings', []))), 0)
+        for j in range(out_fields.count()):
+            if out_fields.at(j).name().lower() == "bldg_count":
+                out_feat.setAttribute(j, new_bldg_val)
 
         bldgpts_val_idx = out_fields.indexOf("bldgpoints_value")
         if bldgpts_val_idx != -1:
@@ -1063,11 +1140,11 @@ def run_phase_8(
                     else:
                         feedback.reportError(f"Failed to add Special EA {i} to special EA sink.")
 
-            # 2. Add to Delineated EAs sink (main output layer containing all final EAs)
-            else:
-                if ea.get('from_split', False):
-                    sb = ea.get('split_by', 'point_based')
-                    split_by_counts[sb] = split_by_counts.get(sb, 0) + 1
+            # 2. Add to Delineated EAs sink (specifically for features created from EA delineation / splitting)
+            is_delin_result = ea.get('from_split', False) or (ea.get('original_id') in delineation_candidate_ids and not ea.get('is_special_ea', False))
+            if is_delin_result:
+                sb = ea.get('split_by', 'point_based')
+                split_by_counts[sb] = split_by_counts.get(sb, 0) + 1
                 if delineated_sink is not None:
                     if delineated_sink.addFeature(exp_feat, QgsFeatureSink.Flag.FastInsert):
                         delineated_feat_count += 1

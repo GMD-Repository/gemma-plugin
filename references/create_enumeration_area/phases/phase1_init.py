@@ -9,11 +9,13 @@ from qgis.core import (
     QgsFeature,
     QgsGeometry,
     QgsCoordinateTransform,
+    QgsRectangle,
+    QgsFeatureRequest,
 )
 from PyQt5.QtCore import QVariant
 
 from ..helpers.constants import yield_to_ui
-from ..helpers.spatial import resolve_ea_parent_barangay
+from ..helpers.spatial import resolve_ea_parent_barangay, get_parent_barangay, normalize_to_8_digits
 
 
 def run_phase_1(
@@ -21,6 +23,7 @@ def run_phase_1(
     parameters: Dict[str, Any],
     context: QgsProcessingContext,
     feedback: QgsProcessingFeedback,
+    multi_feedback: Any = None,
 ) -> Dict[str, Any]:
     """Phase 1/8: Initializing — reading parameters, loading layers, processing Gap/Overlap, calculating sliver threshold."""
     # Retrieve input parameters
@@ -65,11 +68,22 @@ def run_phase_1(
     if not ea_id_field:
         ea_id_field = "ean"
 
-    household_field = "new_hhcount"
+    user_hh_field = alg.parameterAsString(parameters, getattr(alg, 'HOUSEHOLD_FIELD', 'HOUSEHOLD_FIELD'), context) if hasattr(alg, 'HOUSEHOLD_FIELD') and getattr(alg, 'HOUSEHOLD_FIELD') in parameters else ""
+    if user_hh_field and previous_ea_source.fields().indexOf(user_hh_field) != -1:
+        household_field = user_hh_field
+    else:
+        household_field = "new_hhcount"
+        for i in range(ea_fields.count()):
+            name_lower = ea_fields.at(i).name().lower()
+            if name_lower in ["new_hhcount", "hhcount", "hh_count", "hh_cnt", "household", "household_count", "pop", "population", "hh", "total_hh", "num_hh"]:
+                household_field = ea_fields.at(i).name()
+                break
+
+    bldgcount_field = "bldgcount"
     for i in range(ea_fields.count()):
         name_lower = ea_fields.at(i).name().lower()
-        if name_lower in ["new_hhcount", "hhcount", "hh_count", "household", "household_count"]:
-            household_field = ea_fields.at(i).name()
+        if name_lower in ["bldgcount", "new_bldgcount", "bldg_count", "bldg_cnt", "bldgpts_cnt", "bldg_points", "building_count", "bldg_total", "buildings", "bldgs", "total_bldg", "num_bldg"]:
+            bldgcount_field = ea_fields.at(i).name()
             break
 
     bldg_fields = building_source.fields()
@@ -115,14 +129,9 @@ def run_phase_1(
 
         if bar_geocode_idx != -1:
             val = feat.attribute(bar_geocode_idx)
-            if val is not None:
-                val_str = str(val).strip()
-                if val_str.endswith(".0"):
-                    val_str = val_str[:-2]
-                if val_str:
-                    if len(val_str) > 9:
-                        val_str = val_str[:9]
-                    active_barangay_geocodes.add(val_str)
+            geo_8 = normalize_to_8_digits(val)
+            if geo_8:
+                active_barangay_geocodes.add(geo_8)
 
     _dc_geo_idx = previous_ea_source.fields().indexOf(barangay_id_field)
     if _dc_geo_idx == -1:
@@ -137,14 +146,18 @@ def run_phase_1(
 
         geom = feat.geometry()
         if geom and not geom.isEmpty():
-            parent_bar = resolve_ea_parent_barangay(
-                feat, _dc_geo_idx, barangay_id_field, barangay_index, barangay_by_id
-            )
-            parent_bar_sub = parent_bar[:9] if len(parent_bar) >= 9 else parent_bar
-            if parent_bar and parent_bar != "Unknown" and (
-                parent_bar in active_barangay_geocodes or parent_bar_sub in active_barangay_geocodes
-            ):
+            # 1. Primary spatial overlap check with input barangays
+            parent_feat = get_parent_barangay(geom, barangay_index, barangay_by_id)
+            if parent_feat is not None:
                 all_ea_features.append(feat)
+            else:
+                # 2. Attribute geocode fallback check
+                parent_bar = resolve_ea_parent_barangay(
+                    feat, _dc_geo_idx, barangay_id_field, barangay_index, barangay_by_id
+                )
+                if parent_bar and parent_bar != "Unknown":
+                    if parent_bar in active_barangay_geocodes:
+                        all_ea_features.append(feat)
         _ea_load_cnt += 1
         yield_to_ui(_ea_load_cnt, 1000)
 
@@ -202,9 +215,7 @@ def run_phase_1(
                 if go_geom.isEmpty():
                     continue
 
-                parent_bar_geo = str(best_bar_feat.attribute(bar_geocode_field)).strip()
-                if parent_bar_geo.endswith(".0"):
-                    parent_bar_geo = parent_bar_geo[:-2]
+                parent_bar_geo = normalize_to_8_digits(best_bar_feat.attribute(bar_geocode_field))
 
                 special_type = "GAP"
                 gaps_count += 1
@@ -307,9 +318,7 @@ def run_phase_1(
                 if go_geom.isEmpty():
                     continue
 
-                parent_bar_geo = str(best_bar_feat.attribute(bar_geocode_field)).strip()
-                if parent_bar_geo.endswith(".0"):
-                    parent_bar_geo = parent_bar_geo[:-2]
+                parent_bar_geo = normalize_to_8_digits(best_bar_feat.attribute(bar_geocode_field))
 
                 special_type = "OVERLAP"
                 overlaps_count += 1
@@ -379,6 +388,96 @@ def run_phase_1(
         feedback.pushInfo(f"Creating {special_ea_counter} Special EAs...")
 
         all_ea_features.extend(special_ea_features)
+
+        if special_ea_features:
+            feedback.pushInfo(f"Calculating household counts for {len(special_ea_features)} Special EA(s) from building points...")
+            combined_spec_bbox = QgsRectangle()
+            for s_feat in special_ea_features:
+                if s_feat.geometry() and not s_feat.geometry().isEmpty():
+                    combined_spec_bbox.combineExtentWith(s_feat.geometry().boundingBox())
+
+            if not combined_spec_bbox.isEmpty():
+                spec_bldg_req = QgsFeatureRequest()
+                bldg_tr = None
+                if building_source.sourceCrs() != previous_ea_source.sourceCrs():
+                    bldg_to_ea_tr = QgsCoordinateTransform(previous_ea_source.sourceCrs(), building_source.sourceCrs(), context.transformContext())
+                    spec_bldg_req.setFilterRect(bldg_to_ea_tr.transformBoundingBox(combined_spec_bbox))
+                    bldg_tr = QgsCoordinateTransform(building_source.sourceCrs(), previous_ea_source.sourceCrs(), context.transformContext())
+                else:
+                    spec_bldg_req.setFilterRect(combined_spec_bbox)
+
+                spec_bldg_idx = QgsSpatialIndex()
+                spec_bldg_map = {}
+                _spec_bldg_hh_idx = building_source.fields().indexOf(bldg_hh_field)
+                if _spec_bldg_hh_idx == -1:
+                    for _cname in ["hhcount", "hh_count", "household", "household_count", "pop", "population"]:
+                        if building_source.fields().indexOf(_cname) != -1:
+                            _spec_bldg_hh_idx = building_source.fields().indexOf(_cname)
+                            break
+
+                for _bfeat in building_source.getFeatures(spec_bldg_req):
+                    _bgeom = _bfeat.geometry()
+                    if not _bgeom or _bgeom.isEmpty():
+                        continue
+                    if bldg_tr:
+                        _bgeom = QgsGeometry(_bgeom)
+                        _bgeom.transform(bldg_tr)
+                    _bpt = _bgeom.asPoint()
+                    _bpop_val = _bfeat.attribute(_spec_bldg_hh_idx) if _spec_bldg_hh_idx != -1 else None
+                    try:
+                        _bpop = float(_bpop_val) if _bpop_val is not None else 1.0
+                        if _bpop <= 0:
+                            _bpop = 1.0
+                    except (TypeError, ValueError):
+                        _bpop = 1.0
+
+                    _bindex_feat = QgsFeature(_bfeat.id())
+                    _bindex_feat.setGeometry(_bgeom)
+                    spec_bldg_idx.insertFeature(_bindex_feat)
+                    spec_bldg_map[_bfeat.id()] = (_bpt, _bpop)
+
+                _hhcount_field_idx = previous_ea_source.fields().indexOf(household_field)
+                _hh_count_field_idx = -1
+                for j in range(previous_ea_source.fields().count()):
+                    if previous_ea_source.fields().at(j).name().lower() == "hh_count":
+                        _hh_count_field_idx = j
+                        break
+
+                _bldgcount_field_idx = previous_ea_source.fields().indexOf(bldgcount_field)
+                _bldg_count_field_idx = -1
+                for j in range(previous_ea_source.fields().count()):
+                    if previous_ea_source.fields().at(j).name().lower() == "bldg_count":
+                        _bldg_count_field_idx = j
+                        break
+
+                for s_feat in special_ea_features:
+                    _s_geom = s_feat.geometry()
+                    _s_nearby = spec_bldg_idx.intersects(_s_geom.boundingBox())
+                    _s_hh_sum = 0.0
+                    _s_bldg_count = 0
+                    for _bid in _s_nearby:
+                        if _bid not in spec_bldg_map:
+                            continue
+                        _bpt, _bpop = spec_bldg_map[_bid]
+                        _bpt_geom = QgsGeometry.fromPointXY(_bpt)
+                        if _s_geom.contains(_bpt_geom) or _s_geom.intersects(_bpt_geom):
+                            _s_hh_sum += _bpop
+                            _s_bldg_count += 1
+
+                    special_ea_info[s_feat.id()]['hh_count'] = _s_hh_sum
+                    special_ea_info[s_feat.id()]['bldg_count'] = _s_bldg_count
+
+                    # Set hhcount and hh_count fields on the feature
+                    if _hhcount_field_idx != -1 and _hhcount_field_idx < len(s_feat.attributes()):
+                        s_feat.setAttribute(_hhcount_field_idx, _s_hh_sum)
+                    if _hh_count_field_idx != -1 and _hh_count_field_idx < len(s_feat.attributes()):
+                        s_feat.setAttribute(_hh_count_field_idx, _s_hh_sum)
+                    if _bldgcount_field_idx != -1 and _bldgcount_field_idx < len(s_feat.attributes()):
+                        s_feat.setAttribute(_bldgcount_field_idx, _s_bldg_count)
+                    if _bldg_count_field_idx != -1 and _bldg_count_field_idx < len(s_feat.attributes()):
+                        s_feat.setAttribute(_bldg_count_field_idx, _s_bldg_count)
+
+                    feedback.pushInfo(f"  Special EA (FID={s_feat.id()}) calculated {_s_hh_sum:.0f} HH from {_s_bldg_count} building points.")
 
     # Extract 5-digit geocode prefix
     geocode_prefix = ""
@@ -556,6 +655,7 @@ def run_phase_1(
         "merge_indi_col_idx": merge_indi_col_idx,
         "ea_id_field": ea_id_field,
         "household_field": household_field,
+        "bldgcount_field": bldgcount_field,
         "bldg_hh_field": bldg_hh_field,
         "barangay_id_field": barangay_id_field,
         "bar_geocode_field": bar_geocode_field,
