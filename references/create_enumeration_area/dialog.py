@@ -1833,7 +1833,7 @@ class EALauncherDialog(QDialog):
         merge_indi_idx = -1
         for i in range(fields.count()):
             name_lower = fields.at(i).name().lower()
-            if name_lower == "eadel_indi":
+            if name_lower in ("eadel_indi", "indicator"):
                 eadel_indi_idx = i
             elif name_lower == "merge_indi":
                 merge_indi_idx = i
@@ -1880,9 +1880,14 @@ class EALauncherDialog(QDialog):
 
             # Classify candidates:
             #   HH >= max_hh  → Delineation candidate (over-populated EA)
+            #   Explicit field indicator ("for delineation") → Delineation candidate
             #   HH <= min_hh  → Merge candidate (under-populated EA)
             #   Explicit field indicator ("for merging") → Merge candidate
             is_delin = (hh >= max_hh)
+            if not is_delin and eadel_indi_idx != -1:
+                val = feat.attribute(eadel_indi_idx)
+                if val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"):
+                    is_delin = True
 
             is_merge = False
             if not is_delin and merge_indi_idx != -1:

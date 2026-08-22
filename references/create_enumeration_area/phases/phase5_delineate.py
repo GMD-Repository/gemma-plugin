@@ -87,8 +87,8 @@ def force_geometric_split(ea_item, target_pop, fback, min_household=100, max_hou
                 'geom': poly,
                 'buildings': buildings_in_poly,
                 'hh_count': sub_pop,
-                'original_hhcount': ea_item.get('original_hhcount') or ea_item.get('hh_count', 0.0),
-                'original_bldgcount': ea_item.get('original_bldgcount') or ea_item.get('bldg_count') or len(ea_item.get('buildings', [])),
+                'original_hhcount': ea_item.get('original_hhcount') if ea_item.get('original_hhcount') is not None else ea_item.get('hh_count', 0.0),
+                'original_bldgcount': ea_item.get('original_bldgcount') if ea_item.get('original_bldgcount') is not None else ea_item.get('bldg_count', 0),
                 'bldg_count': len(buildings_in_poly),
                 'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
                 'attributes': list(ea_item['attributes']),
@@ -412,8 +412,8 @@ def split_ea_voronoi_road_hybrid(ea_item, road_lines, river_lines, target_pop, f
             'geom': poly,
             'buildings': p_bldgs,
             'hh_count': sub_pop,
-            'original_hhcount': ea_item.get('original_hhcount') or ea_item.get('hh_count', 0.0),
-            'original_bldgcount': ea_item.get('original_bldgcount') or ea_item.get('bldg_count') or len(ea_item.get('buildings', [])),
+            'original_hhcount': ea_item.get('original_hhcount') if ea_item.get('original_hhcount') is not None else ea_item.get('hh_count', 0.0),
+            'original_bldgcount': ea_item.get('original_bldgcount') if ea_item.get('original_bldgcount') is not None else ea_item.get('bldg_count', 0),
             'bldg_count': len(p_bldgs),
             'bldgpoints_value': sub_pop / len(p_bldgs) if len(p_bldgs) > 0 else 0.0,
             'attributes': list(ea_item['attributes']),
@@ -521,13 +521,13 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
 
     def is_parent_delineation_candidate(ea_item):
         orig_id = ea_item.get('original_id')
-        if orig_id is not None and eadel_indi_col_idx != -1 and orig_id in full_ea_by_id:
+        if orig_id is None or orig_id not in delineation_candidate_ids:
+            return False
+        if eadel_indi_col_idx != -1 and orig_id in full_ea_by_id:
             val = full_ea_by_id[orig_id].attribute(eadel_indi_col_idx)
             if val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"):
-                if orig_id not in delineation_candidate_ids and ea_item.get('hh_count', 0) < max_household:
-                    return False
                 return True
-        return (orig_id in delineation_candidate_ids) or (ea_item.get('original_hhcount', ea_item.get('hh_count', 0)) >= max_household and orig_id in delineation_candidate_ids)
+        return True
 
     def is_delineation_candidate(ea_item):
         if ea_item.get('from_split', False) or ea_item.get('from_merge', False):
@@ -535,15 +535,9 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         if ea_item.get('is_special_ea', False):
             return False
         orig_id = ea_item.get('original_id')
-        is_explicit = False
-        if eadel_indi_col_idx != -1 and orig_id in full_ea_by_id:
-            val = full_ea_by_id[orig_id].attribute(eadel_indi_col_idx)
-            is_explicit = (val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"))
-        if is_explicit:
-            if orig_id is not None and orig_id not in delineation_candidate_ids and ea_item['hh_count'] < max_household:
-                return False
-            return True
-        return ea_item['hh_count'] >= max_household
+        if orig_id is None or orig_id not in delineation_candidate_ids:
+            return False
+        return True
 
     def is_merge_candidate(ea_item):
         if ea_item.get('from_split', False):
@@ -834,8 +828,8 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                 'geom': poly,
                 'buildings': buildings_in_poly,
                 'hh_count': sub_pop,
-                'original_hhcount': ea_item.get('original_hhcount') or ea_item.get('hh_count', 0.0),
-                'original_bldgcount': ea_item.get('original_bldgcount') or ea_item.get('bldg_count') or len(ea_item.get('buildings', [])),
+                'original_hhcount': ea_item.get('original_hhcount') if ea_item.get('original_hhcount') is not None else ea_item.get('hh_count', 0.0),
+                'original_bldgcount': ea_item.get('original_bldgcount') if ea_item.get('original_bldgcount') is not None else ea_item.get('bldg_count', 0),
                 'bldg_count': len(buildings_in_poly),
                 'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
                 'attributes': list(ea_item['attributes']),
@@ -954,7 +948,9 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             return strips
 
         use_horizontal = bbox.height() >= bbox.width()
-        k_start = max(2, math.ceil(hh_cnt / float(target_pop)))
+        eff_target = float(target_pop) if target_pop and float(target_pop) > 0 else float(max_household if max_household > 0 else 200)
+        eff_hh_cnt = float(hh_cnt) if hh_cnt and float(hh_cnt) > 0 else float(len(bldgs) if bldgs else 200)
+        k_start = max(2, math.ceil(eff_hh_cnt / eff_target))
         k_max = k_start + 4
 
         accepted_parts = None
@@ -983,8 +979,8 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                     'geom': poly,
                     'buildings': buildings_in_poly,
                     'hh_count': sub_pop,
-                    'original_hhcount': ea_item.get('original_hhcount') or ea_item.get('hh_count', 0.0),
-                    'original_bldgcount': ea_item.get('original_bldgcount') or ea_item.get('bldg_count') or len(ea_item.get('buildings', [])),
+                    'original_hhcount': ea_item.get('original_hhcount') if ea_item.get('original_hhcount') is not None else ea_item.get('hh_count', 0.0),
+                    'original_bldgcount': ea_item.get('original_bldgcount') if ea_item.get('original_bldgcount') is not None else ea_item.get('bldg_count', 0),
                     'bldg_count': len(buildings_in_poly),
                     'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
                     'attributes': list(ea_item['attributes']),
@@ -1035,11 +1031,39 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                 break
 
         if accepted_parts is None:
-            fback.pushWarning(
-                f"[EA {ea_item['original_code']}] FORCED SPLIT: Could not produce >= 2 valid "
-                f"parts at any k ({k_start}–{k_max}). EA will remain over threshold."
-            )
-            return [ea_item]
+            # Absolute fail-safe: slice polygon directly into 2 halves
+            half_strips = make_strips(2, horizontal=use_horizontal)
+            if len(half_strips) < 2:
+                half_strips = make_strips(2, horizontal=not use_horizontal)
+            if len(half_strips) >= 2:
+                accepted_parts = []
+                for sp in half_strips:
+                    sp_bldgs = [b for b in bldgs if sp.contains(QgsGeometry.fromPointXY(b['point'])) or sp.intersects(QgsGeometry.fromPointXY(b['point']))]
+                    sp_pop = sum(b['pop'] for b in sp_bldgs)
+                    accepted_parts.append({
+                        'geom': sp,
+                        'buildings': sp_bldgs,
+                        'hh_count': sp_pop,
+                        'original_hhcount': ea_item.get('original_hhcount') if ea_item.get('original_hhcount') is not None else ea_item.get('hh_count', 0.0),
+                        'original_bldgcount': ea_item.get('original_bldgcount') if ea_item.get('original_bldgcount') is not None else ea_item.get('bldg_count', 0),
+                        'bldg_count': len(sp_bldgs),
+                        'bldgpoints_value': sp_pop / len(sp_bldgs) if len(sp_bldgs) > 0 else 0.0,
+                        'attributes': list(ea_item['attributes']),
+                        'original_id': ea_item['original_id'],
+                        'original_code': ea_item['original_code'],
+                        'is_new': True,
+                        'from_split': True,
+                        'split_by': 'forced_grid',
+                        'parent_barangay': ea_item['parent_barangay']
+                    })
+                accepted_k = 2
+                accepted_orientation = 'horizontal' if use_horizontal else 'vertical'
+            else:
+                fback.pushWarning(
+                    f"[EA {ea_item['original_code']}] FORCED SPLIT: Could not produce >= 2 valid "
+                    f"parts at any k ({k_start}–{k_max}). EA will remain over threshold."
+                )
+                return [ea_item]
 
         final_parts = []
         for part in accepted_parts:
@@ -1291,8 +1315,8 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                 'geom': poly,
                 'buildings': p_bldgs,
                 'hh_count': sub_pop,
-                'original_hhcount': ea_item.get('original_hhcount') or ea_item.get('hh_count', 0.0),
-                'original_bldgcount': ea_item.get('original_bldgcount') or ea_item.get('bldg_count') or len(ea_item.get('buildings', [])),
+                'original_hhcount': ea_item.get('original_hhcount') if ea_item.get('original_hhcount') is not None else ea_item.get('hh_count', 0.0),
+                'original_bldgcount': ea_item.get('original_bldgcount') if ea_item.get('original_bldgcount') is not None else ea_item.get('bldg_count', 0),
                 'bldg_count': len(p_bldgs),
                 'bldgpoints_value': sub_pop / len(p_bldgs) if len(p_bldgs) > 0 else 0.0,
                 'attributes': list(ea_item['attributes']),
@@ -1475,8 +1499,8 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                 'geom': poly,
                 'buildings': buildings_in_poly,
                 'hh_count': sub_pop,
-                'original_hhcount': ea_item.get('original_hhcount') or ea_item.get('hh_count', 0.0),
-                'original_bldgcount': ea_item.get('original_bldgcount') or ea_item.get('bldg_count') or len(ea_item.get('buildings', [])),
+                'original_hhcount': ea_item.get('original_hhcount') if ea_item.get('original_hhcount') is not None else ea_item.get('hh_count', 0.0),
+                'original_bldgcount': ea_item.get('original_bldgcount') if ea_item.get('original_bldgcount') is not None else ea_item.get('bldg_count', 0),
                 'bldg_count': len(buildings_in_poly),
                 'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
                 'attributes': list(ea_item['attributes']),
@@ -1549,6 +1573,11 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
 
     def split_ea(ea_item, target_pop, fback):
         if fback.isCanceled():
+            return [ea_item]
+
+        # Strict Candidate Gate: NEVER delineate EAs that are not in delineation_candidate_ids
+        if not is_delineation_candidate(ea_item):
+            fback.pushInfo(f"[EA {ea_item.get('original_code')}] Not in delineation candidates. Preserving whole.")
             return [ea_item]
 
         # Mode 4 or Strategy 2: Keep Whole (No Splitting)

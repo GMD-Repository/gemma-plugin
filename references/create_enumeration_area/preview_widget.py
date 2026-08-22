@@ -348,6 +348,16 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
                 bgy_name_idx = i
                 break
         
+        # Resolve eadel_indi and merge_indi field indices
+        eadel_indi_idx = -1
+        merge_indi_idx = -1
+        for i in range(fields.count()):
+            name_lower = fields.at(i).name().lower()
+            if name_lower in ("eadel_indi", "indicator"):
+                eadel_indi_idx = i
+            elif name_lower == "merge_indi":
+                merge_indi_idx = i
+
         if hh_idx == -1:
             self.stats_label.setText("Field 'hhcount' or 'household' not found in Previous EA layer.")
             self.stats_label.setStyleSheet("color: #d32f2f; font-weight: bold;")
@@ -388,12 +398,27 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
             except Exception:
                 hh = 0.0
 
-            # Classify purely by hhcount thresholds
-            if hh > max_hh:
+            # Classify by hhcount thresholds & explicit indicators
+            is_delin = (hh >= max_hh)
+            if not is_delin and eadel_indi_idx != -1:
+                val = feat.attribute(eadel_indi_idx)
+                if val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"):
+                    is_delin = True
+
+            is_merge = False
+            if not is_delin and merge_indi_idx != -1:
+                val = feat.attribute(merge_indi_idx)
+                if val is not None and str(val).strip().lower() in ("for merging", "for_merging"):
+                    is_merge = True
+
+            if not is_delin and not is_merge:
+                is_merge = (hh <= min_hh)
+
+            if is_delin:
                 delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, feat))
                 temp_ea_index.insertFeature(feat)
                 temp_ea_by_id[feat.id()] = (ean_str, ea_name_str, bgy_name_str, hh, feat)
-            elif hh < min_hh:
+            elif is_merge:
                 merge_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, feat))
                 temp_ea_index.insertFeature(feat)
                 temp_ea_by_id[feat.id()] = (ean_str, ea_name_str, bgy_name_str, hh, feat)

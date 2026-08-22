@@ -34,13 +34,15 @@ def is_delineation_candidate(ea_item, max_household, eadel_indi_col_idx=-1, full
     if ea_item.get('is_special_ea', False):
         return False
     orig_id = ea_item.get('original_id')
+    if orig_id is None:
+        return False
+    if delineation_candidate_ids is not None:
+        return orig_id in delineation_candidate_ids
     is_explicit = False
     if eadel_indi_col_idx != -1 and full_ea_by_id and orig_id in full_ea_by_id:
         val = full_ea_by_id[orig_id].attribute(eadel_indi_col_idx)
         is_explicit = (val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"))
     if is_explicit:
-        if orig_id is not None and delineation_candidate_ids is not None and orig_id not in delineation_candidate_ids and ea_item['hh_count'] < max_household:
-            return False
         return True
     return ea_item['hh_count'] >= max_household
 
@@ -123,16 +125,17 @@ def process_barangay_merge(
                     merged_geom = ea['geom'].combine(neighbor['geom'])
                     merged_geom = merged_geom.buffer(0.0, 3)
 
+                    dominant_is_ea = ea['hh_count'] >= neighbor['hh_count']
                     merged_ea = {
                         'geom': merged_geom,
                         'buildings': ea.get('buildings', []) + neighbor.get('buildings', []),
                         'hh_count': ea['hh_count'] + neighbor['hh_count'],
-                        'original_hhcount': ea.get('original_hhcount', 0) + neighbor.get('original_hhcount', 0),
-                        'original_bldgcount': ea.get('original_bldgcount', 0) + neighbor.get('original_bldgcount', 0),
+                        'original_hhcount': ea.get('original_hhcount', 0) if dominant_is_ea else neighbor.get('original_hhcount', 0),
+                        'original_bldgcount': ea.get('original_bldgcount', 0) if dominant_is_ea else neighbor.get('original_bldgcount', 0),
                         'bldg_count': ea.get('bldg_count', 0) + neighbor.get('bldg_count', 0),
-                        'attributes': list(ea['attributes']) if ea['hh_count'] >= neighbor['hh_count'] else list(neighbor['attributes']),
-                        'original_id': ea['original_id'] if ea['hh_count'] >= neighbor['hh_count'] else neighbor['original_id'],
-                        'original_code': ea['original_code'] if ea['hh_count'] >= neighbor['hh_count'] else neighbor['original_code'],
+                        'attributes': list(ea['attributes']) if dominant_is_ea else list(neighbor['attributes']),
+                        'original_id': ea['original_id'] if dominant_is_ea else neighbor['original_id'],
+                        'original_code': ea['original_code'] if dominant_is_ea else neighbor['original_code'],
                         'is_new': True,
                         'split_by': ea.get('split_by', 'none'),
                         'from_merge': True,
@@ -229,16 +232,17 @@ def process_barangay_merge(
                     merged_geom = ea['geom'].combine(neighbor['geom'])
                     merged_geom = merged_geom.buffer(0.0, 3)
 
+                    dominant_is_ea = ea['hh_count'] >= neighbor['hh_count']
                     merged_ea = {
                         'geom': merged_geom,
                         'buildings': ea.get('buildings', []) + neighbor.get('buildings', []),
                         'hh_count': ea['hh_count'] + neighbor['hh_count'],
-                        'original_hhcount': ea.get('original_hhcount', 0) + neighbor.get('original_hhcount', 0),
-                        'original_bldgcount': ea.get('original_bldgcount', 0) + neighbor.get('original_bldgcount', 0),
+                        'original_hhcount': ea.get('original_hhcount', 0) if dominant_is_ea else neighbor.get('original_hhcount', 0),
+                        'original_bldgcount': ea.get('original_bldgcount', 0) if dominant_is_ea else neighbor.get('original_bldgcount', 0),
                         'bldg_count': ea.get('bldg_count', 0) + neighbor.get('bldg_count', 0),
-                        'attributes': list(ea['attributes']) if ea['hh_count'] >= neighbor['hh_count'] else list(neighbor['attributes']),
-                        'original_id': ea['original_id'] if ea['hh_count'] >= neighbor['hh_count'] else neighbor['original_id'],
-                        'original_code': ea['original_code'] if ea['hh_count'] >= neighbor['hh_count'] else neighbor['original_code'],
+                        'attributes': list(ea['attributes']) if dominant_is_ea else list(neighbor['attributes']),
+                        'original_id': ea['original_id'] if dominant_is_ea else neighbor['original_id'],
+                        'original_code': ea['original_code'] if dominant_is_ea else neighbor['original_code'],
                         'is_new': True,
                         'split_by': ea.get('split_by', 'none'),
                         'from_merge': True,

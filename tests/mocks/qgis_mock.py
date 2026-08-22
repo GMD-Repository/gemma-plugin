@@ -369,6 +369,12 @@ class QgsFeature:
         self._id = 0
         self._fields = fields
 
+    def isValid(self):
+        return True
+
+    def hasGeometry(self):
+        return self._geometry is not None
+
     def setAttributes(self, attrs):
         self._attributes = list(attrs)
 

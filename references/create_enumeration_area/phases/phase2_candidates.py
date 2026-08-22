@@ -17,7 +17,7 @@ from qgis.core import (
 from qgis.PyQt.QtCore import QVariant
 
 from ..helpers.constants import _PHASE_LABELS, yield_to_ui
-from ..helpers.spatial import get_parent_barangay
+from ..helpers.spatial import get_parent_barangay, normalize_to_8_digits
 
 
 def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
@@ -81,22 +81,17 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         return parent_feat
 
     def resolve_ea_parent_barangay(ea_feat):
-        if _dc_geo_idx != -1:
-            val = ea_feat.attribute(_dc_geo_idx)
-            if val is not None and not (isinstance(val, QVariant) and val.isNull()):
-                val_str = str(val).strip()
-                if val_str.endswith(".0"):
-                    val_str = val_str[:-2]
-                if val_str:
-                    return val_str
         parent_feat = get_parent_barangay(ea_feat.geometry())
         if parent_feat:
             val = parent_feat.attribute(barangay_id_field)
-            if val is not None:
-                val_str = str(val).strip()
-                if val_str.endswith(".0"):
-                    val_str = val_str[:-2]
-                return val_str
+            res = normalize_to_8_digits(val)
+            if res:
+                return res
+        if _dc_geo_idx != -1:
+            val = ea_feat.attribute(_dc_geo_idx)
+            res = normalize_to_8_digits(val)
+            if res:
+                return res
         return "Unknown"
 
     # Create output schema (inherits all fields from previous_ea_source)
@@ -509,6 +504,77 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         if overlap_source.sourceCrs() != previous_ea_source.sourceCrs():
             overlap_to_ea_transform = QgsCoordinateTransform(overlap_source.sourceCrs(), previous_ea_source.sourceCrs(), context.transformContext())
 
+    # ── Calculate Special EA Household Counts from Building Points & Parent EA Deductions ──
+    special_ea_hh = {}
+    ea_to_special_ea_hh = {}
+
+    if special_ea_ids:
+        combined_spec_bbox = QgsRectangle()
+        special_ea_feats_map = {}
+        for feat in all_ea_features:
+            if feat.id() in special_ea_ids and feat.geometry() and not feat.geometry().isEmpty():
+                special_ea_feats_map[feat.id()] = feat
+                combined_spec_bbox.combineExtentWith(feat.geometry().boundingBox())
+
+        if special_ea_feats_map and not combined_spec_bbox.isEmpty():
+            spec_bldg_req = QgsFeatureRequest()
+            if transform:
+                bldg_to_ea_tr = QgsCoordinateTransform(previous_ea_source.sourceCrs(), building_source.sourceCrs(), context.transformContext())
+                spec_bldg_req.setFilterRect(bldg_to_ea_tr.transformBoundingBox(combined_spec_bbox))
+            else:
+                spec_bldg_req.setFilterRect(combined_spec_bbox)
+
+            spec_bldg_idx = QgsSpatialIndex()
+            spec_bldg_map = {}
+            _spec_bldg_hh_idx = building_source.fields().indexOf(household_field)
+            if _spec_bldg_hh_idx == -1:
+                for _cname in ["hhcount", "hh_count", "household", "household_count", "pop", "population"]:
+                    if building_source.fields().indexOf(_cname) != -1:
+                        _spec_bldg_hh_idx = building_source.fields().indexOf(_cname)
+                        break
+
+            for _bfeat in building_source.getFeatures(spec_bldg_req):
+                _bgeom = _bfeat.geometry()
+                if not _bgeom or _bgeom.isEmpty():
+                    continue
+                if transform:
+                    _bgeom = QgsGeometry(_bgeom)
+                    _bgeom.transform(transform)
+                _bpt = _bgeom.asPoint()
+                _bpop_val = _bfeat.attribute(_spec_bldg_hh_idx) if _spec_bldg_hh_idx != -1 else None
+                try:
+                    _bpop = float(_bpop_val) if _bpop_val is not None else 1.0
+                    if _bpop <= 0:
+                        _bpop = 1.0
+                except (TypeError, ValueError):
+                    _bpop = 1.0
+
+                _bindex_feat = QgsFeature(_bfeat.id())
+                _bindex_feat.setGeometry(_bgeom)
+                spec_bldg_idx.insertFeature(_bindex_feat)
+                spec_bldg_map[_bfeat.id()] = (_bpt, _bpop)
+
+            for spec_fid, spec_feat in special_ea_feats_map.items():
+                _s_geom = spec_feat.geometry()
+                _s_nearby = spec_bldg_idx.intersects(_s_geom.boundingBox())
+                _s_hh_sum = 0.0
+                for _bid in _s_nearby:
+                    if _bid not in spec_bldg_map:
+                        continue
+                    _bpt, _bpop = spec_bldg_map[_bid]
+                    _bpt_geom = QgsGeometry.fromPointXY(_bpt)
+                    if _s_geom.contains(_bpt_geom) or _s_geom.intersects(_bpt_geom):
+                        _s_hh_sum += _bpop
+                special_ea_hh[spec_fid] = _s_hh_sum
+                if _dc_pop_idx != -1 and _dc_pop_idx < len(spec_feat.attributes()):
+                    spec_feat.setAttribute(_dc_pop_idx, _s_hh_sum)
+
+        for spec_fid, spec_info in special_ea_info.items():
+            s_hh = special_ea_hh.get(spec_fid, spec_info.get('hh_count', 0.0))
+            special_ea_hh[spec_fid] = s_hh
+            for p_id in spec_info.get('parent_ea_ids', []):
+                ea_to_special_ea_hh[p_id] = ea_to_special_ea_hh.get(p_id, 0.0) + s_hh
+
     for _dc_feat in previous_ea_source.getFeatures():
         if multi_feedback.isCanceled():
             raise QgsProcessingException("Algorithm cancelled by user.")
@@ -559,21 +625,41 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                             intersects_gap_or_overlap = True
                             break
 
+        _orig_hh = _dc_hh
+        _deducted_spec_hh = ea_to_special_ea_hh.get(_dc_feat.id(), 0.0)
+        _effective_hh = max(0.0, _orig_hh - _deducted_spec_hh)
+
         is_delin = False
         is_merge = False
 
-        if _dc_hh <= min_household:
+        if _orig_hh >= max_household:
+            if _effective_hh >= max_household:
+                is_delin = True
+            else:
+                feedback.pushInfo(
+                    f"[EA {_dc_ean_str}] Special EA extracted (-{_deducted_spec_hh:.0f} HH). "
+                    f"Adjusted HH ({_effective_hh:.0f}) dropped below max threshold ({max_household}). "
+                    f"Exempted from delineation."
+                )
+                if _effective_hh <= min_household:
+                    is_merge = True
+                    feedback.pushInfo(
+                        f"[EA {_dc_ean_str}] Adjusted HH ({_effective_hh:.0f}) is below min threshold ({min_household}). "
+                        f"Added to merge candidates."
+                    )
+        elif _effective_hh <= min_household:
             is_merge = True
-        elif _dc_hh >= max_household:
-            is_delin = True
         elif eadel_indi_col_idx != -1:
             val = _dc_feat.attribute(eadel_indi_col_idx)
             if val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"):
-                is_delin = True
+                if _effective_hh >= max_household or _deducted_spec_hh == 0.0:
+                    is_delin = True
+                elif _effective_hh <= min_household:
+                    is_merge = True
 
         if is_delin:
             total_delin_candidates += 1
-            _dc_num_parts = max(2, int(math.ceil(_dc_hh / float(max_household)))) if _dc_hh > 0 else 2
+            _dc_num_parts = max(2, int(math.ceil(_effective_hh / float(max_household)))) if _effective_hh > 0 else 2
             _dc_hhdivthres = 1.0 / _dc_num_parts
             delineation_candidate_ids.add(_dc_feat.id())
             delineation_candidate_hhdivthres[_dc_feat.id()] = _dc_hhdivthres
@@ -596,7 +682,9 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
 
     if gap_source is not None or overlap_source is not None:
         for special_fid in special_ea_info.keys():
-            merge_candidate_ids.add(special_fid)
+            s_hh = special_ea_hh.get(special_fid, 0.0)
+            if s_hh < min_household or s_hh == 0.0:
+                merge_candidate_ids.add(special_fid)
 
     barangay_index = p1.get("barangay_index")
 
@@ -628,23 +716,27 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                             return val_str
         return best_val
 
-    def get_field_val(f: QgsFeature, fname: str, default=0):
+    def get_field_val(f: QgsFeature, fname, default=0):
         if not f or not f.isValid():
             return default
         flds = f.fields()
-        idx = flds.indexOf(fname)
-        if idx == -1:
-            for j in range(flds.count()):
-                if flds.at(j).name().lower() == fname.lower():
-                    idx = j
-                    break
-        if idx != -1:
-            val = f.attribute(idx)
-            if val is not None and val != NULL and not (isinstance(val, QVariant) and val.isNull()):
-                try:
-                    return float(val) if isinstance(default, float) else int(round(float(val)))
-                except (TypeError, ValueError):
-                    return val
+        fnames = [fname] if isinstance(fname, str) else list(fname)
+        for target in fnames:
+            idx = flds.indexOf(target)
+            if idx == -1:
+                for j in range(flds.count()):
+                    if flds.at(j).name().lower() == target.lower():
+                        idx = j
+                        break
+            if idx != -1:
+                val = f.attribute(idx)
+                if val is not None and val != NULL and not (isinstance(val, QVariant) and val.isNull()):
+                    val_str = str(val).strip()
+                    if val_str not in ('', 'NULL', 'None'):
+                        try:
+                            return float(val) if isinstance(default, float) or default is None else int(round(float(val)))
+                        except (TypeError, ValueError):
+                            return val
         return default
 
     def safe_float(val, default=0.0):
@@ -779,12 +871,18 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
 
             hhcount_idx = delin_cand_fields.indexOf("hhcount")
             if hhcount_idx != -1:
-                val_hh = get_field_val(feat, "hhcount", 0.0)
+                hh_names = ["hhcount", "new_hhcount", "hh_count", "hh_cnt", "household", "household_count", "pop", "population"]
+                if household_field and household_field not in hh_names:
+                    hh_names.insert(0, household_field)
+                val_hh = get_field_val(feat, hh_names, 0.0)
+                if feat.id() in ea_to_special_ea_hh:
+                    val_hh = max(0.0, float(val_hh) - ea_to_special_ea_hh[feat.id()])
                 out_feat.setAttribute(hhcount_idx, safe_float(val_hh, 0.0))
 
             bldgcount_idx = delin_cand_fields.indexOf("bldgcount")
             if bldgcount_idx != -1:
-                val_bldg = get_field_val(feat, "bldgcount", 0)
+                bldg_names = ["bldgcount", "new_bldgcount", "bldg_count", "bldg_cnt", "bldgpts_cnt", "bldg_points", "building_count", "bldg_total", "buildings"]
+                val_bldg = get_field_val(feat, bldg_names, 0)
                 out_feat.setAttribute(bldgcount_idx, safe_int(val_bldg, 0))
 
             corr_ea_geo_idx = delin_cand_fields.indexOf("correspondence_ea_geocode")
@@ -1010,12 +1108,24 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
 
                 hhcount_idx = merge_cand_fields_filtered.indexOf("hhcount")
                 if hhcount_idx != -1:
-                    val_hh = get_field_val(feat, "hhcount", 0.0)
+                    hh_names = ["hhcount", "new_hhcount", "hh_count", "hh_cnt", "household", "household_count", "pop", "population"]
+                    if household_field and household_field not in hh_names:
+                        hh_names.insert(0, household_field)
+                    if feat.id() in special_ea_ids:
+                        val_hh = special_ea_hh.get(feat.id(), 0.0)
+                    else:
+                        val_hh = get_field_val(feat, hh_names, 0.0)
+                        if feat.id() in ea_to_special_ea_hh:
+                            val_hh = max(0.0, float(val_hh) - ea_to_special_ea_hh[feat.id()])
                     out_feat.setAttribute(hhcount_idx, safe_float(val_hh, 0.0))
 
                 bldgcount_idx = merge_cand_fields_filtered.indexOf("bldgcount")
                 if bldgcount_idx != -1:
-                    val_bldg = get_field_val(feat, "bldgcount", 0)
+                    if feat.id() in special_ea_ids:
+                        val_bldg = special_ea_info.get(feat.id(), {}).get('bldg_count', 0)
+                    else:
+                        bldg_names = ["bldgcount", "new_bldgcount", "bldg_count", "bldg_cnt", "bldgpts_cnt", "bldg_points", "building_count", "bldg_total", "buildings"]
+                        val_bldg = get_field_val(feat, bldg_names, 0)
                     out_feat.setAttribute(bldgcount_idx, safe_int(val_bldg, 0))
 
                 corr_ea_geo_idx = merge_cand_fields_filtered.indexOf("correspondence_ea_geocode")
@@ -1114,6 +1224,8 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             pt_geom = QgsGeometry.fromPointXY(p)
 
             candidate_ids = ea_index.intersects(pt_geom.boundingBox())
+            if special_ea_ids:
+                candidate_ids = sorted(candidate_ids, key=lambda fid: 0 if fid in special_ea_ids else 1)
             for parent_ea_id in candidate_ids:
                 parent_geom = ea_geometries[parent_ea_id]
                 if parent_geom.contains(pt_geom) or parent_geom.intersects(pt_geom):
@@ -1250,4 +1362,6 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         "ea_id_to_buildings": ea_id_to_buildings,
         "output_hh_field": output_hh_field,
         "full_ea_by_id": full_ea_by_id,
+        "special_ea_hh": special_ea_hh,
+        "ea_to_special_ea_hh": ea_to_special_ea_hh,
     }
