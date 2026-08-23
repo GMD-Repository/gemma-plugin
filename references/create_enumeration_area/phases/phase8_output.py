@@ -457,6 +457,8 @@ def run_phase_8(
                 val = src_feat.attribute(idx)
             else:
                 val = src_feat.attribute(f.name())
+            if f.name().lower() == "sy":
+                val = "2026"
             exp_attrs.append(val if val is not None else None)
         exp_feat.setAttributes(exp_attrs)
         return exp_feat
@@ -986,6 +988,10 @@ def run_phase_8(
                     c_val = ea.get('new_ea_code') or ea.get('original_code')
                 if c_val:
                     out_feat.setAttribute(code_idx, str(c_val))
+
+        sy_idx = out_fields.indexOf("sy")
+        if sy_idx != -1:
+            out_feat.setAttribute(sy_idx, "2026")
 
         # Delineated EA hhcount and bldgcount inherit directly from original_hhcount / parent feature
         if ea.get('is_special_ea', False):
