@@ -885,6 +885,10 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                 val_bldg = get_field_val(feat, bldg_names, 0)
                 out_feat.setAttribute(bldgcount_idx, safe_int(val_bldg, 0))
 
+            sy_idx = delin_cand_fields.indexOf("sy")
+            if sy_idx != -1:
+                out_feat.setAttribute(sy_idx, "2026")
+
             corr_ea_geo_idx = delin_cand_fields.indexOf("correspondence_ea_geocode")
             if corr_ea_geo_idx != -1:
                 map_uuid_idx = delin_cand_fields.indexOf("map_uuid")
@@ -892,10 +896,10 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                 sy_idx = delin_cand_fields.indexOf("sy")
                 map_uuid_val = out_feat.attribute(map_uuid_idx) if map_uuid_idx != -1 else ""
                 geocode_val = out_feat.attribute(geocode_idx) if geocode_idx != -1 else ""
-                sy_val = out_feat.attribute(sy_idx) if sy_idx != -1 else ""
+                sy_val = out_feat.attribute(sy_idx) if sy_idx != -1 else "2026"
                 map_uuid_str = str(map_uuid_val) if map_uuid_val is not None else ""
                 geocode_str = str(geocode_val) if geocode_val is not None else ""
-                sy_str = str(sy_val) if sy_val is not None else ""
+                sy_str = str(sy_val) if (sy_val is not None and str(sy_val).strip() not in ('', 'NULL', 'None')) else "2026"
                 if map_uuid_str.endswith(".0"): map_uuid_str = map_uuid_str[:-2]
                 if geocode_str.endswith(".0"): geocode_str = geocode_str[:-2]
                 if sy_str.endswith(".0"): sy_str = sy_str[:-2]
@@ -1128,6 +1132,10 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                         val_bldg = get_field_val(feat, bldg_names, 0)
                     out_feat.setAttribute(bldgcount_idx, safe_int(val_bldg, 0))
 
+                sy_idx = merge_cand_fields_filtered.indexOf("sy")
+                if sy_idx != -1:
+                    out_feat.setAttribute(sy_idx, "2026")
+
                 corr_ea_geo_idx = merge_cand_fields_filtered.indexOf("correspondence_ea_geocode")
                 if corr_ea_geo_idx != -1:
                     map_uuid_idx = merge_cand_fields_filtered.indexOf("map_uuid")
@@ -1135,10 +1143,10 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                     sy = merge_cand_fields_filtered.indexOf("sy")
                     map_uuid_val = out_feat.attribute(map_uuid_idx) if map_uuid_idx != -1 else ""
                     geocode_val = out_feat.attribute(geocode_idx) if geocode_idx != -1 else ""
-                    sy_val = out_feat.attribute(sy) if sy != -1 else ""
+                    sy_val = out_feat.attribute(sy) if sy != -1 else "2026"
                     map_uuid_str = str(map_uuid_val) if map_uuid_val is not None else ""
                     geocode_str = str(geocode_val) if geocode_val is not None else ""
-                    sy_str = str(sy_val) if sy_val is not None else ""
+                    sy_str = str(sy_val) if (sy_val is not None and str(sy_val).strip() not in ('', 'NULL', 'None')) else "2026"
                     if map_uuid_str.endswith(".0"): map_uuid_str = map_uuid_str[:-2]
                     if geocode_str.endswith(".0"): geocode_str = geocode_str[:-2]
                     if sy_str.endswith(".0"): sy_str = sy_str[:-2]

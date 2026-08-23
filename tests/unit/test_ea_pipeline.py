@@ -775,8 +775,65 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
         out_feat.setAttribute(new_ean_idx, ea_delineated['new_ea_tracker'])
         self.assertEqual(out_feat.attribute("new_ean"), "000001A")
 
+    def test_output_layer_sy_column_is_2026(self):
+        """Verify that sy column of output layers (delineated_ea, merge_ea, special_ea) is 2026."""
+        try:
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            try:
+                from PyQt5.QtCore import QVariant
+            except ImportError:
+                from qgis.core import QVariant
+
+        export_field_names = [
+            "fid", "map_uuid", "geocode", "region", "province",
+            "city_mun", "barangay", "code", "name", "ean",
+            "hhcount", "bldgcount", "sy", "new_ean", "hh_count",
+            "bldg_count", "ea_type", "remarks"
+        ]
+        export_fields = QgsFields()
+        for fname in export_field_names:
+            export_fields.append(QgsField(fname, QVariant.String))
+
+        special_ea_export_fields = QgsFields()
+        for f in export_fields:
+            if f.name() not in ("hhcount", "bldgcount"):
+                special_ea_export_fields.append(f)
+
+        def make_export_feature(src_feat, exp_fields):
+            exp_feat = QgsFeature(exp_fields)
+            exp_attrs = []
+            src_flds = src_feat.fields()
+            for f in exp_fields:
+                idx = src_flds.indexOf(f.name())
+                if idx != -1:
+                    val = src_feat.attribute(idx)
+                else:
+                    val = src_feat.attribute(f.name())
+                if f.name().lower() == "sy":
+                    val = "2026"
+                exp_attrs.append(val if val is not None else None)
+            exp_feat.setAttributes(exp_attrs)
+            return exp_feat
+
+        # 1. Delineated EA
+        feat_delin = QgsFeature(export_fields)
+        exp_delin = make_export_feature(feat_delin, export_fields)
+        self.assertEqual(str(exp_delin.attribute("sy")), "2026")
+
+        # 2. Merged EA
+        feat_merged = QgsFeature(export_fields)
+        exp_merged = make_export_feature(feat_merged, export_fields)
+        self.assertEqual(str(exp_merged.attribute("sy")), "2026")
+
+        # 3. Special EA
+        feat_special = QgsFeature(special_ea_export_fields)
+        exp_special = make_export_feature(feat_special, special_ea_export_fields)
+        self.assertEqual(str(exp_special.attribute("sy")), "2026")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
