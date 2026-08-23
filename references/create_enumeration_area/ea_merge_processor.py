@@ -184,21 +184,38 @@ def _repair_geometry(geom: QgsGeometry) -> QgsGeometry:
 # ---------------------------------------------------------------------------
 
 class EAMergeProcessor:
-    """
-    Executes the Enumeration Area Merge workflow.
+    """Executes the Enumeration Area Merge workflow."""
 
-    Usage::
+    @staticmethod
+    def short_help_string() -> str:
+        """Returns the HTML description string for Enumeration Area Merge."""
+        return (
+            "<h3>Enumeration Area Merge</h3>"
+            "<p>The <b>Enumeration Area Merge</b> workflow updates an existing base Enumeration Area (EA) "
+            "layer using one or more replacement polygon layers containing updated/replacement EA geometries.</p>"
+            "<p>Replacement polygons take precedence: any overlapping portions of the existing base EA layer "
+            "underneath the replacement geometries are removed, and the replacement geometries are inserted to "
+            "produce a consolidated <code>&lt;5-digit geocode&gt;_ea2026</code> layer and an exact Excel attribute "
+            "table export (<code>&lt;5-digit geocode&gt;_earf_&lt;citymun&gt;.xlsx</code>).</p>"
 
-        processor = EAMergeProcessor(
-            ea_layer=...,
-            replacement_layers=[...],
-            output_dir=...,
-            feedback_callback=...,
-            progress_callback=...,
-            is_cancelled_fn=...,
+            "<h4>Inputs</h4>"
+            "<b>Required</b>"
+            "<ul>"
+            "<li><b>Base EA Layer</b> (polygon) — Starting/existing EA layer. Attributes and fields are preserved. "
+            "Auto-detected by <code>*_ea</code>, <code>*_ea2024</code>, <code>*_ea2026</code>, or <code>*_ea_preprocessed</code>.</li>"
+            "<li><b>Replacement Polygon Layers</b> (polygon, multi-input) — One or more replacement polygon layers from "
+            "the project. Each layer name must follow the <b>14-digit numeric convention</b> (e.g. <code>01001000000001</code>).</li>"
+            "</ul>"
+
+            "<h4>Workflow & Guarantees</h4>"
+            "<ul>"
+            "<li><b>Source Data Protection</b>: Base EA and replacement layers are never modified or overwritten.</li>"
+            "<li><b>Precedence & Geometry Difference</b>: Overlapping areas in base EAs are subtracted so replacement polygons take precedence without geometric overlap.</li>"
+            "<li><b>Automated Geocode & CityMun Extraction</b>: Automatically determines the 5-digit geographic code and single City/Municipality name from the Base EA layer.</li>"
+            "<li><b>Consolidated Output Layer</b>: Adds <code>&lt;5-digit geocode&gt;_ea2026</code> directly to the active QGIS project.</li>"
+            "<li><b>Excel Attribute Table Export</b>: Generates <code>&lt;5-digit geocode&gt;_earf_&lt;citymun&gt;.xlsx</code> with primary sheet <code>EA2026</code> mirroring output attribute columns.</li>"
+            "</ul>"
         )
-        result = processor.run()
-    """
 
     def __init__(
         self,

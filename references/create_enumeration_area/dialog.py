@@ -217,7 +217,7 @@ class EALauncherDialog(QDialog):
         title_label.setStyleSheet("font-size: 15px; font-weight: bold; color: #2C3E50; padding: 0;")
         text_layout.addWidget(title_label)
 
-        sub_label = QLabel("Step-by-step workflow to prepare boundary layers, create enumeration areas, and merge small zones.")
+        sub_label = QLabel("Step-by-step workflow to prepare boundary layers, create enumeration areas, and merge replacement EA geometries.")
         sub_label.setWordWrap(True)
         sub_label.setStyleSheet("color: #7F8C8D; font-size: 11px;")
         text_layout.addWidget(sub_label)
@@ -301,10 +301,13 @@ class EALauncherDialog(QDialog):
 
     def _toggle_current_tab_description(self):
         """Toggle the description panel for whichever main tab is currently active."""
-        if self.main_tabs.currentIndex() == 0:
+        idx = self.main_tabs.currentIndex()
+        if idx == 0:
             self._pre_ea_toggle_description()
-        elif self.main_tabs.currentIndex() == 1:
+        elif idx == 1:
             self.toggle_help()
+        elif idx == 2:
+            self._ea_merge_toggle_description()
 
     def _on_main_tab_changed(self, index):
         """Update toggle button icon state when switching tabs."""
@@ -313,14 +316,15 @@ class EALauncherDialog(QDialog):
         
         if index == 0:
             is_vis = self.pre_ea_desc_panel.isVisible()
-            self.toggle_desc_btn.setEnabled(True)
         elif index == 1:
             is_vis = self.help_panel.isVisible()
-            self.toggle_desc_btn.setEnabled(True)
+        elif index == 2:
+            is_vis = self.ea_merge_desc_panel.isVisible() if hasattr(self, 'ea_merge_desc_panel') else False
+            self._ea_merge_auto_detect_ea_layer()
         else:
             is_vis = False
-            self.toggle_desc_btn.setEnabled(False)
-            self._ea_merge_auto_detect_ea_layer()
+
+        self.toggle_desc_btn.setEnabled(True)
 
         if is_vis:
             self.toggle_desc_btn.setIcon(QIcon(hide_icon))
@@ -2505,7 +2509,22 @@ class EALauncherDialog(QDialog):
         right_layout.addWidget(right_tabs)
         right_widget.setMinimumWidth(480)
         splitter.addWidget(right_widget)
-        splitter.setSizes([340, 660])
+
+        # ── Description Panel (third splitter pane) ──────────────────────
+        self.ea_merge_desc_panel = QWidget()
+        desc_panel_layout = QVBoxLayout(self.ea_merge_desc_panel)
+        desc_panel_layout.setContentsMargins(4, 4, 4, 4)
+        desc_panel_layout.setSpacing(0)
+
+        self.ea_merge_desc_browser = QTextBrowser()
+        self.ea_merge_desc_browser.setObjectName("eaMergeDescBrowser")
+        self.ea_merge_desc_browser.setOpenExternalLinks(True)
+        self.ea_merge_desc_browser.setHtml(self._ea_merge_help_html())
+        desc_panel_layout.addWidget(self.ea_merge_desc_browser)
+
+        self.ea_merge_desc_panel.setMinimumWidth(240)
+        splitter.addWidget(self.ea_merge_desc_panel)
+        splitter.setSizes([310, 640, 260])
 
         tab_layout.addWidget(splitter, 1)
 
@@ -2551,6 +2570,34 @@ class EALauncherDialog(QDialog):
     # ─────────────────────────────────────────────────────────────────────────
     # Tab 3 — Slots & Validation
     # ─────────────────────────────────────────────────────────────────────────
+
+    def _ea_merge_toggle_description(self):
+        """Toggle the visibility of the Enumeration Area Merge description panel."""
+        if not hasattr(self, 'ea_merge_desc_panel'):
+            return
+        is_visible = not self.ea_merge_desc_panel.isVisible()
+        self.ea_merge_desc_panel.setVisible(is_visible)
+
+        show_icon_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "icons", "show_description.svg")
+        )
+        hide_icon_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "icons", "hide_description.svg")
+        )
+        if is_visible:
+            icon = QIcon(hide_icon_path) if os.path.exists(hide_icon_path) else QIcon()
+            self.toggle_desc_btn.setIcon(icon)
+            self.toggle_desc_btn.setToolTip("Hide Description Panel")
+        else:
+            icon = QIcon(show_icon_path) if os.path.exists(show_icon_path) else QIcon()
+            self.toggle_desc_btn.setIcon(icon)
+            self.toggle_desc_btn.setToolTip("Show Description Panel")
+
+    @staticmethod
+    def _ea_merge_help_html() -> str:
+        """Return the HTML description string for the Enumeration Area Merge description panel."""
+        from .ea_merge_processor import EAMergeProcessor
+        return EAMergeProcessor.short_help_string()
 
     def _ea_merge_auto_detect_ea_layer(self):
         """Auto-detect EA base layer (*_ea, *_ea2024, *_ea2026, *_ea_preprocessed) from the Layers Panel for Tab 3."""
