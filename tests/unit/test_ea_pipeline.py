@@ -10,6 +10,8 @@ from qgis.core import (
     QgsGeometry,
     QgsPointXY,
     QgsPolygon,
+    QgsFields,
+    QgsField,
 )
 
 from references.create_enumeration_area.helpers.classification import (

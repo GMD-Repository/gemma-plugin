@@ -190,6 +190,11 @@ class QgsGeometry:
     def intersects(self, other):
         if hasattr(other, 'geom_type') and other.geom_type == "Point":
             return self.contains(other)
+        b1 = self.boundingBox()
+        b2 = other.boundingBox() if hasattr(other, 'boundingBox') else None
+        if b2:
+            return not (b1.xMaximum() < b2.xMinimum() or b1.xMinimum() > b2.xMaximum() or
+                        b1.yMaximum() < b2.yMinimum() or b1.yMinimum() > b2.yMaximum())
         return True
     def intersection(self, other):
         if self.geom_type in ("Polygon", "MultiPolygon") and hasattr(other, 'geom_type') and other.geom_type in ("Polygon", "MultiPolygon"):
@@ -207,9 +212,14 @@ class QgsGeometry:
         if hasattr(self, 'polygons') and self.polygons:
             other_polys = getattr(other, 'polygons', [])
             diff_rings = [p for p in self.polygons if p not in other_polys]
+            if other_polys and diff_rings == self.polygons:
+                # Mock difference: produce modified polygon with reduced area
+                diff_rings = [[QgsPointXY(p.x() + 1.0, p.y() + 1.0) for p in self.polygons[0]]]
             if diff_rings:
                 gtype = "MultiPolygon" if len(diff_rings) > 1 else "Polygon"
-                return QgsGeometry(gtype, diff_rings)
+                res = QgsGeometry(gtype, diff_rings)
+                res._mock_area = 60.0
+                return res
         return QgsGeometry("Polygon", [[QgsPointXY(80, 0), QgsPointXY(120, 0), QgsPointXY(120, 100), QgsPointXY(80, 100), QgsPointXY(80, 0)]])
     def mergeLines(self): return QgsGeometry("LineString")
     def simplify(self, tol): return self
@@ -236,7 +246,7 @@ class QgsGeometry:
         gtype = "MultiPolygon" if len(combined) > 1 else "Polygon"
         return QgsGeometry(gtype, combined)
     def buffer(self, distance, segments=3): return QgsGeometry("Polygon", self.polygons)
-    def area(self): return 100.0
+    def area(self): return getattr(self, '_mock_area', 100.0)
     def length(self): return 40.0
 
     def splitGeometry(self, split_line, preserve_input=False):
