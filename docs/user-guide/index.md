@@ -14,7 +14,7 @@ hero:
       link: /getting-started
     - theme: alt
       text: Download
-      link: https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.2/gemma-plugin-v1.0.2.zip
+      link: https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.6/gemma-plugin-v1.0.6.zip
 
 features:
   - icon:
@@ -22,6 +22,11 @@ features:
     title: MBI Checker
     details: Detect overlaps and gaps between barangay polygon boundaries with building point validation. Supports exporting styled MBI layers as GPKG.
     link: /tools/mbi-checker
+  - icon:
+      src: /icons/mbi_validator.svg
+    title: MBI Validator
+    details: Cross-check Reference MBI layers against Checker GAP/OVERLAP layers to flag status mismatches and audit boundary resolutions.
+    link: /tools/mbi-validator
   - icon:
       src: /icons/fill.svg
     title: Fill Polygon Gaps
@@ -34,8 +39,8 @@ features:
     link: /tools/export-preliminary-polygons
   - icon:
       src: /icons/update.svg
-    title: Update LGU PSGC Metadata
-    details: Auto-populate PSGC codes, region, province, and city/municipality fields using a reference table with fuzzy name matching.
+    title: Update Metadata
+    details: Standardize LGU polygon layers with PSGC geocodes, cascading administrative filters, and permanent GeoPackage export.
     link: /tools/update-metadata
   - icon:
       src: /icons/update.svg

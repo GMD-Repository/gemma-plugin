@@ -4,7 +4,7 @@ EA Delineation and Merging -- Custom Processing UI Dialog
 ---------------------------------------------------------
 Provides a comprehensive custom user interface for the EA Delineation and Merging
 processing workflow. Houses two main tabs:
-  Tab 1 — Pre-EA Processing   : clips EAs to their Barangay and fills coverage gaps.
+  Tab 1 — EA Preprocessing         : clips EAs to their Barangay and fills coverage gaps.
   Tab 2 — Create Enumeration Areas : existing EA delineation and merging algorithm.
 
 Adapts to dynamic light and dark themes (defaulting to white) and features validation
@@ -185,7 +185,7 @@ class EALauncherDialog(QDialog):
         and not during invisible construction or in response to subsequent
         project layer additions.
 
-        Runs both Tab 1 (Pre-EA Processing) and Tab 2 (Create Enumeration Areas)
+        Runs both Tab 1 (EA Preprocessing) and Tab 2 (Create Enumeration Areas)
         auto-detection on first display.
         """
         super().showEvent(event)
@@ -263,7 +263,7 @@ class EALauncherDialog(QDialog):
         line.setStyleSheet("color: #BDC3C7;")
         root.addWidget(line)
 
-        # Top-level tab widget: Tab 1 = Pre-EA Processing, Tab 2 = Create Enumeration Areas
+        # Top-level tab widget: Tab 1 = EA Preprocessing, Tab 2 = Create Enumeration Areas
         self.main_tabs = QTabWidget()
         self.main_tabs.setObjectName("mainTabs")
         self.main_tabs.tabBar().setElideMode(Qt.ElideNone)
@@ -317,11 +317,11 @@ class EALauncherDialog(QDialog):
             self.toggle_desc_btn.setToolTip("Show Description Panel")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Tab 1 — Pre-EA Processing
+    # Tab 1 — EA Preprocessing
     # ─────────────────────────────────────────────────────────────────────────
 
     def _build_pre_ea_tab(self):
-        """Build the Pre-EA Processing tab (Tab 1) and add it to main_tabs."""
+        """Build the EA Preprocessing tab (Tab 1) and add it to main_tabs."""
         tab_widget = QWidget()
         tab_layout = QVBoxLayout(tab_widget)
         tab_layout.setContentsMargins(6, 6, 6, 6)
@@ -471,7 +471,7 @@ class EALauncherDialog(QDialog):
         summary_layout.setContentsMargins(10, 10, 10, 10)
         summary_layout.setSpacing(8)
 
-        summary_title = QLabel("Pre-EA Processing Summary")
+        summary_title = QLabel("EA Preprocessing Summary")
         summary_title.setFont(QFont("Segoe UI", 11, QFont.Bold))
         summary_layout.addWidget(summary_title)
 
@@ -600,10 +600,10 @@ class EALauncherDialog(QDialog):
         bottom_layout.addLayout(controls_row)
         tab_layout.addWidget(bottom)
 
-        self.main_tabs.addTab(tab_widget, "Pre-EA Processing")
+        self.main_tabs.addTab(tab_widget, "EA Preprocessing")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Tab 1 — Pre-EA Processing Slots
+    # Tab 1 — EA Preprocessing Slots
     # ─────────────────────────────────────────────────────────────────────────
 
     def _pre_ea_auto_detect_layers(self):
@@ -2224,7 +2224,10 @@ class EALauncherDialog(QDialog):
                 self.status_banner.setText(banner_text)
 
         except Exception as e:
+            import traceback
+            tb_str = traceback.format_exc()
             self.log_console.append(f"<span style='color:#cf222e; font-weight:bold;'>[FATAL] Error executing pipeline: {str(e)}</span>")
+            self.log_console.append(f"<pre style='color:#cf222e; font-size:11px; font-family:Consolas, monospace;'>{tb_str}</pre>")
             self.status_banner.setText(f"Error: Pipeline execution failed — {str(e)}")
         
         finally:
