@@ -55,12 +55,15 @@ def run_phase_1(
         elif name_lower == "merge_indi":
             merge_indi_col_idx = i
 
-    ea_id_field = "ean"
-    for i in range(ea_fields.count()):
-        name_lower = ea_fields.at(i).name().lower()
-        if name_lower in ["ean", "new_ean", "ea_number", "ea_code", "id"]:
-            ea_id_field = ea_fields.at(i).name()
+    ea_id_field = None
+    field_names_lower = [ea_fields.at(i).name().lower() for i in range(ea_fields.count())]
+    for target in ["ean", "name", "geocode"]:
+        if target in field_names_lower:
+            idx = field_names_lower.index(target)
+            ea_id_field = ea_fields.at(idx).name()
             break
+    if not ea_id_field:
+        ea_id_field = "ean"
 
     household_field = "new_hhcount"
     for i in range(ea_fields.count()):
