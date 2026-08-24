@@ -136,16 +136,36 @@ def run_phase_4(alg, parameters, context, feedback, multi_feedback, p1, p2, prev
         else:
             _orig_hhcount = 0.0
 
+        _orig_bldgcount = 0
+        bldg_idx = feat.fields().indexOf("bldgcount")
+        if bldg_idx == -1:
+            bldg_idx = feat.fields().indexOf("bldg_count")
+        if bldg_idx != -1:
+            val_b = feat.attribute(bldg_idx)
+            try:
+                _orig_bldgcount = int(val_b) if val_b is not None else 0
+            except (TypeError, ValueError):
+                _orig_bldgcount = 0
+
         _ean = feat.attribute(ea_id_field)
         _ean_str = str(_ean).strip() if _ean is not None else ""
-        is_candidate = feat.id() in delineation_candidate_ids or feat.id() in merge_candidate_ids
-
-        if not is_candidate:
+        _bldg_pt_count = len(assigned_bldgs)
+        if _orig_hhcount > 0:
             _ea_hh_count = _orig_hhcount
+            if assigned_bldgs:
+                raw_pop_sum = sum(b['pop'] for b in assigned_bldgs)
+                if raw_pop_sum > 0:
+                    scale = _orig_hhcount / raw_pop_sum
+                    for b in assigned_bldgs:
+                        b['pop'] = b['pop'] * scale
+                else:
+                    per_bldg = _orig_hhcount / len(assigned_bldgs)
+                    for b in assigned_bldgs:
+                        b['pop'] = per_bldg
         else:
             _ea_hh_count = sum(b['pop'] for b in assigned_bldgs)
+            _orig_hhcount = _ea_hh_count
 
-        _bldg_pt_count = len(assigned_bldgs)
         _bldgpoints_value = _ea_hh_count / _bldg_pt_count if _bldg_pt_count > 0 else 0.0
         _total_bldg_val = sum(
             b.get('bldgpoints_value') if b.get('bldgpoints_value') is not None else b['pop']
@@ -162,6 +182,7 @@ def run_phase_4(alg, parameters, context, feedback, multi_feedback, p1, p2, prev
             'buildings': assigned_bldgs,
             'hh_count': _ea_hh_count,
             'original_hhcount': _orig_hhcount,
+            'original_bldgcount': _orig_bldgcount,
             'bldg_count': _bldg_pt_count,
             'bldgpoints_value': _bldgpoints_value,
             'attributes': feat.attributes(),

@@ -100,35 +100,57 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     else:
         out_fields.append(QgsField(output_hh_field, QVariant.Double))
 
-    if "split_by" not in [f.name() for f in out_fields]:
-        out_fields.append(QgsField("split_by", QVariant.String))
+    for fname, ftype in [
+        ("map_uuid", QVariant.String),
+        ("region", QVariant.String),
+        ("province", QVariant.String),
+        ("city_mun", QVariant.String),
+        ("barangay", QVariant.String),
+        ("code", QVariant.String),
+        ("name", QVariant.String),
+        ("ean", QVariant.String),
+        ("sy", QVariant.String),
+        ("new_ean", QVariant.String),
+        ("bldgcount", QVariant.Int),
+        ("hhcount", QVariant.Double),
+        ("hh_count", QVariant.Double),
+        ("bldg_count", QVariant.Int),
+        ("bldgpoints_value", QVariant.Double),
+        ("split_by", QVariant.String),
+        ("correspondence_ea_geocode", QVariant.String),
+        ("ea_type", QVariant.String),
+        ("special_type", QVariant.String),
+        ("source_id", QVariant.String),
+        ("indicator", QVariant.String),
+    ]:
+        if fname not in [f.name() for f in out_fields]:
+            out_fields.append(QgsField(fname, ftype))
 
-    if "new_ea" not in [f.name() for f in out_fields]:
-        out_fields.append(QgsField("new_ea", QVariant.String))
+    rem_idx = out_fields.indexOf("remarks")
+    if rem_idx != -1:
+        out_fields.remove(rem_idx)
+    out_fields.append(QgsField("remarks", QVariant.String))
 
-    if "bldg_count" not in [f.name() for f in out_fields]:
-        out_fields.append(QgsField("bldg_count", QVariant.Int))
-
-    if "hh_count" not in [f.name() for f in out_fields]:
-        out_fields.append(QgsField("hh_count", QVariant.Double))
-
-    if "hhcount" not in [f.name() for f in out_fields]:
-        out_fields.append(QgsField("hhcount", QVariant.Double))
-
-    if "bldgpoints_value" not in [f.name() for f in out_fields]:
-        out_fields.append(QgsField("bldgpoints_value", QVariant.Double))
-
-    if "correspondence_ea_geocode" not in [f.name() for f in out_fields]:
-        out_fields.append(QgsField("correspondence_ea_geocode", QVariant.String))
-
-    if "ea_type" not in [f.name() for f in out_fields]:
-        out_fields.append(QgsField("ea_type", QVariant.String))
-    if "special_type" not in [f.name() for f in out_fields]:
-        out_fields.append(QgsField("special_type", QVariant.String))
-    if "source_id" not in [f.name() for f in out_fields]:
-        out_fields.append(QgsField("source_id", QVariant.String))
-    if "remarks" not in [f.name() for f in out_fields]:
-        out_fields.append(QgsField("remarks", QVariant.String))
+    # Build export_fields containing ONLY the 18 standard output attributes
+    export_field_names = [
+        "fid", "map_uuid", "geocode", "region", "province",
+        "city_mun", "barangay", "code", "name", "ean",
+        "hhcount", "bldgcount", "sy", "new_ean", "hh_count",
+        "bldg_count", "ea_type", "remarks"
+    ]
+    export_fields = QgsFields()
+    for fname in export_field_names:
+        idx = out_fields.indexOf(fname)
+        if idx != -1:
+            export_fields.append(out_fields.at(idx))
+        else:
+            if fname == "fid":
+                ftype = QVariant.Int
+            elif fname == "hhcount":
+                ftype = QVariant.Double
+            elif fname in ("bldgcount", "bldg_count", "hh_count"):
+                ftype = QVariant.Int
+            export_fields.append(QgsField(fname, ftype))
 
     out_wkb_type = QgsWkbTypes.multiType(previous_ea_source.wkbType())
 
@@ -139,7 +161,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             parameters,
             alg.DELINEATED_OUTPUT,
             context,
-            out_fields,
+            export_fields,
             out_wkb_type,
             target_crs,
         )
@@ -151,10 +173,16 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             parameters,
             alg.MERGED_OUTPUT,
             context,
-            out_fields,
+            export_fields,
             out_wkb_type,
             target_crs,
         )
+
+    special_ea_export_fields = QgsFields()
+    for f in export_fields:
+        if f.name() in ("hhcount", "bldgcount"):
+            continue
+        special_ea_export_fields.append(f)
 
     special_ea_sink = None
     special_ea_dest_id = None
@@ -163,7 +191,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             parameters,
             alg.SPECIAL_EA_OUTPUT,
             context,
-            out_fields,
+            special_ea_export_fields,
             out_wkb_type,
             target_crs,
         )
@@ -200,13 +228,13 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     delin_candidate_dest_id = None
     if alg.DELINEATION_CANDIDATE_OUTPUT in parameters and parameters[alg.DELINEATION_CANDIDATE_OUTPUT] is not None:
         delin_cand_fields = QgsFields(out_fields)
-        for fname in [output_hh_field, "hh_count", "hhcount"]:
+        for fname in [output_hh_field, "new_hhcount", "hh_count", "hhcount"]:
             if fname.lower() != household_field.lower():
                 idx = delin_cand_fields.indexOf(fname)
                 if idx != -1:
                     delin_cand_fields.remove(idx)
-        if delin_cand_fields.indexOf("eadel_indi") == -1:
-            delin_cand_fields.append(QgsField("eadel_indi", QVariant.String))
+        if delin_cand_fields.indexOf("indicator") == -1 and delin_cand_fields.indexOf("eadel_indi") == -1:
+            delin_cand_fields.append(QgsField("indicator", QVariant.String))
         (delin_candidate_sink, delin_candidate_dest_id) = alg.parameterAsSink(
             parameters,
             alg.DELINEATION_CANDIDATE_OUTPUT,
@@ -221,12 +249,12 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     merge_cand_fields_filtered = None
     if alg.MERGE_CANDIDATE_OUTPUT in parameters and parameters[alg.MERGE_CANDIDATE_OUTPUT] is not None:
         merge_cand_fields_filtered = QgsFields(out_fields)
-        for fname in [output_hh_field, "hh_count", "hhcount"]:
+        for fname in [output_hh_field, "new_hhcount", "hh_count", "hhcount"]:
             if fname.lower() != household_field.lower():
                 idx = merge_cand_fields_filtered.indexOf(fname)
                 if idx != -1:
                     merge_cand_fields_filtered.remove(idx)
-        for fname in ["merge_partner", "split_by", "new_ea", "bldg_count", "bldgpoints_value", "bldgpts_val", "bldgpoint_value"]:
+        for fname in ["merge_partner", "split_by", "new_ea", "new_ean", "bldg_count", "new_bldgcount", "bldgpoints_value", "bldgpts_val", "bldgpoint_value"]:
             idx = merge_cand_fields_filtered.indexOf(fname)
             if idx != -1:
                 merge_cand_fields_filtered.remove(idx)
@@ -528,9 +556,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         is_delin = False
         is_merge = False
 
-        if intersects_gap_or_overlap:
-            is_delin = True
-        elif _dc_hh <= min_household:
+        if _dc_hh <= min_household:
             is_merge = True
         elif _dc_hh >= max_household:
             is_delin = True
@@ -608,7 +634,9 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                 if sy_str.endswith(".0"): sy_str = sy_str[:-2]
                 out_feat.setAttribute(corr_ea_geo_idx, f"{map_uuid_str}:{geocode_str}:{sy_str}")
 
-            eadel_indi_idx = delin_cand_fields.indexOf("eadel_indi")
+            eadel_indi_idx = delin_cand_fields.indexOf("indicator")
+            if eadel_indi_idx == -1:
+                eadel_indi_idx = delin_cand_fields.indexOf("eadel_indi")
             if eadel_indi_idx != -1:
                 out_feat.setAttribute(eadel_indi_idx, "for_delineation" if is_cand else "ea_reference")
 
@@ -922,6 +950,8 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         "preview_exit": False,
         "outputs": outputs,
         "out_fields": out_fields,
+        "export_fields": export_fields,
+        "special_ea_export_fields": special_ea_export_fields,
         "out_wkb_type": out_wkb_type,
         "delineated_sink": delineated_sink,
         "merged_sink": merged_sink,

@@ -8,6 +8,7 @@ Allows unit tests to run in standard Python CLI without throwing ModuleNotFoundE
 import sys
 import types
 import os
+import math
 
 # Ensure Qt offscreen platform plugin is used in headless/CI environments
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -77,6 +78,17 @@ class QgsPointXY:
     def x(self): return self._x
     def y(self): return self._y
 
+    def distance(self, other):
+        ox = other.x() if hasattr(other, 'x') else other[0]
+        oy = other.y() if hasattr(other, 'y') else other[1]
+        return math.hypot(self._x - ox, self._y - oy)
+
+    def sqrDist(self, other):
+        ox = other.x() if hasattr(other, 'x') else other[0]
+        oy = other.y() if hasattr(other, 'y') else other[1]
+        dx, dy = self._x - ox, self._y - oy
+        return dx * dx + dy * dy
+
     def __repr__(self):
         return f"QgsPointXY({self._x}, {self._y})"
 
@@ -88,16 +100,29 @@ class QgsPolygon:
 
 class QgsGeometry:
     def __init__(self, geom_type="Polygon", polygons=None):
-        self.geom_type = geom_type
-        self.polygons = polygons or []
+        if isinstance(geom_type, QgsGeometry):
+            other = geom_type
+            self.geom_type = other.geom_type
+            self.polygons = [list(p) for p in other.polygons] if other.polygons else []
+            self._point = getattr(other, '_point', None)
+            self._polyline = getattr(other, '_polyline', None)
+        else:
+            self.geom_type = geom_type
+            self.polygons = polygons or []
+            self._point = None
+            self._polyline = None
 
     @staticmethod
     def fromPointXY(point):
-        return QgsGeometry("Point")
+        g = QgsGeometry("Point")
+        g._point = point
+        return g
 
     @staticmethod
     def fromPolylineXY(polyline):
-        return QgsGeometry("LineString")
+        g = QgsGeometry("LineString")
+        g._polyline = polyline
+        return g
 
     @staticmethod
     def fromPolygonXY(polygons):
@@ -105,32 +130,165 @@ class QgsGeometry:
 
     @staticmethod
     def fromWkt(wkt):
-        return QgsGeometry("Polygon")
+        return QgsGeometry("Polygon", polygons=[[QgsPointXY(0, 0), QgsPointXY(1, 0), QgsPointXY(1, 1), QgsPointXY(0, 1), QgsPointXY(0, 0)]])
+
+    @staticmethod
+    def collectGeometry(geoms):
+        return QgsGeometry("MultiLineString")
+
+    @staticmethod
+    def unaryUnion(geoms):
+        if not geoms:
+            return QgsGeometry("Polygon", [])
+        polys = []
+        for g in geoms:
+            if hasattr(g, 'polygons') and g.polygons:
+                polys.extend(g.polygons)
+        return QgsGeometry("Polygon", polys if polys else [[QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)]])
+
+    @staticmethod
+    def fromMultiPolygonXY(multipoly):
+        polys = [p[0] for p in multipoly if p]
+        return QgsGeometry("MultiPolygon", polys)
+
+    @staticmethod
+    def fromMultiPolylineXY(multipoly):
+        return QgsGeometry("MultiLineString")
 
     def type(self):
         if self.geom_type == "Point": return 0
-        elif self.geom_type in ("LineString", "Line"): return 1
+        elif self.geom_type in ("LineString", "Line", "MultiLineString"): return 1
         return 2  # PolygonGeometry
 
-    def wkbType(self): return 3
+    def wkbType(self):
+        if self.geom_type in ("LineString", "Line"): return 2
+        elif self.geom_type == "MultiLineString": return 5
+        elif self.geom_type == "Point": return 1
+        elif self.geom_type == "MultiPolygon": return 6
+        return 3  # Polygon
+
     def isNull(self): return False
-    def isEmpty(self): return False
+    def isEmpty(self): return not bool(self.polygons) if self.geom_type in ("Polygon", "MultiPolygon") else False
     def isSimple(self): return True
     def isValid(self): return True
     def isGeosValid(self): return True
-    def isMultipart(self): return False
+    def isMultipart(self): return self.geom_type.startswith("Multi") or (len(self.polygons or []) > 1)
     def makeValid(self): return self
     def touches(self, other): return True
-    def intersects(self, other): return True
-    def combine(self, other): return QgsGeometry("Polygon")
-    def buffer(self, distance, segments=3): return QgsGeometry("Polygon")
+    def distance(self, other):
+        b1 = self.boundingBox()
+        b2 = other.boundingBox()
+        dx = max(0.0, max(b1.xMinimum() - b2.xMaximum(), b2.xMinimum() - b1.xMaximum()))
+        dy = max(0.0, max(b1.yMinimum() - b2.yMaximum(), b2.yMinimum() - b1.yMaximum()))
+        return math.hypot(dx, dy)
+    def contains(self, other):
+        if hasattr(other, 'geom_type') and other.geom_type == "Point":
+            pt = other.asPoint()
+            bbox = self.boundingBox()
+            return (bbox.xMinimum() <= pt.x() <= bbox.xMaximum() and bbox.yMinimum() <= pt.y() <= bbox.yMaximum())
+        return True
+    def intersects(self, other):
+        if hasattr(other, 'geom_type') and other.geom_type == "Point":
+            return self.contains(other)
+        return True
+    def intersection(self, other):
+        if self.geom_type in ("Polygon", "MultiPolygon") and hasattr(other, 'geom_type') and other.geom_type in ("Polygon", "MultiPolygon"):
+            p1 = self.polygons
+            p2 = getattr(other, 'polygons', [])
+            if not p1: return QgsGeometry("Polygon", p2)
+            if not p2: return QgsGeometry("Polygon", p1)
+            b1 = self.boundingBox()
+            b2 = other.boundingBox()
+            area1 = b1.width() * b1.height()
+            area2 = b2.width() * b2.height()
+            return QgsGeometry("Polygon", p1 if area1 <= area2 else p2)
+        return QgsGeometry("LineString")
+    def difference(self, other):
+        if hasattr(self, 'polygons') and self.polygons:
+            other_polys = getattr(other, 'polygons', [])
+            diff_rings = [p for p in self.polygons if p not in other_polys]
+            if diff_rings:
+                gtype = "MultiPolygon" if len(diff_rings) > 1 else "Polygon"
+                return QgsGeometry(gtype, diff_rings)
+        return QgsGeometry("Polygon", [[QgsPointXY(80, 0), QgsPointXY(120, 0), QgsPointXY(120, 100), QgsPointXY(80, 100), QgsPointXY(80, 0)]])
+    def mergeLines(self): return QgsGeometry("LineString")
+    def simplify(self, tol): return self
+    def convertToType(self, dest_type, destructively=False): return QgsGeometry("LineString")
+    def convertToMultiType(self): return True
+    def constParts(self):
+        if self.polygons:
+            return [QgsGeometry("Polygon", [p]) for p in self.polygons]
+        return [self]
+    def asGeometryCollection(self): return [self]
+    def asPolyline(self): return getattr(self, '_polyline', [QgsPointXY(0.0, 0.0), QgsPointXY(10.0, 0.0)])
+    def asPolygon(self):
+        if self.polygons: return self.polygons
+        return [[QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)]]
+    def asMultiPolygon(self):
+        if self.polygons: return [self.polygons]
+        return [[[QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)]]]
+    def clone(self): return QgsGeometry(self.geom_type, self.polygons)
+    def transform(self, ct): pass
+    def combine(self, other):
+        p1 = self.polygons or []
+        p2 = getattr(other, 'polygons', []) or []
+        combined = p1 + p2
+        gtype = "MultiPolygon" if len(combined) > 1 else "Polygon"
+        return QgsGeometry(gtype, combined)
+    def buffer(self, distance, segments=3): return QgsGeometry("Polygon", self.polygons)
     def area(self): return 100.0
     def length(self): return 40.0
 
-    def centroid(self): return QgsGeometry("Point")
-    def asPoint(self): return QgsPointXY(0.0, 0.0)
+    def splitGeometry(self, split_line, preserve_input=False):
+        bbox = self.boundingBox()
+        mid_x = (bbox.xMinimum() + bbox.xMaximum()) / 2.0
+        self.polygons = [[
+            QgsPointXY(bbox.xMinimum(), bbox.yMinimum()),
+            QgsPointXY(mid_x, bbox.yMinimum()),
+            QgsPointXY(mid_x, bbox.yMaximum()),
+            QgsPointXY(bbox.xMinimum(), bbox.yMaximum()),
+            QgsPointXY(bbox.xMinimum(), bbox.yMinimum()),
+        ]]
+        p2 = QgsGeometry.fromPolygonXY([[
+            QgsPointXY(mid_x, bbox.yMinimum()),
+            QgsPointXY(bbox.xMaximum(), bbox.yMinimum()),
+            QgsPointXY(bbox.xMaximum(), bbox.yMaximum()),
+            QgsPointXY(mid_x, bbox.yMaximum()),
+            QgsPointXY(mid_x, bbox.yMinimum()),
+        ]])
+        return 0, [p2], []
+
+    def voronoiDiagram(self, extent=None):
+        return QgsGeometry("MultiPolygon")
+
+    def centroid(self):
+        c = self.boundingBox().center()
+        return QgsGeometry.fromPointXY(c)
+    def asPoint(self): return getattr(self, '_point', QgsPointXY(0.0, 0.0))
 
     def boundingBox(self):
+        if self.polygons and self.polygons[0]:
+            xs = [p.x() for p in self.polygons[0]]
+            ys = [p.y() for p in self.polygons[0]]
+            xmin, xmax = min(xs), max(xs)
+            ymin, ymax = min(ys), max(ys)
+            class MockBox:
+                def __init__(self, x0, x1, y0, y1):
+                    self._x0, self._x1, self._y0, self._y1 = x0, x1, y0, y1
+                def xMinimum(self): return self._x0
+                def xMaximum(self): return self._x1
+                def yMinimum(self): return self._y0
+                def yMaximum(self): return self._y1
+                def width(self): return self._x1 - self._x0
+                def height(self): return self._y1 - self._y0
+                def center(self): return QgsPointXY((self._x0+self._x1)/2, (self._y0+self._y1)/2)
+                def buffered(self, b): return self
+                def scale(self, factor): pass
+                def contains(self, pt):
+                    px = pt.x() if hasattr(pt, 'x') else pt[0]
+                    py = pt.y() if hasattr(pt, 'y') else pt[1]
+                    return self._x0 <= px <= self._x1 and self._y0 <= py <= self._y1
+            return MockBox(xmin, xmax, ymin, ymax)
         class MockBox:
             def xMinimum(self): return 0.0
             def xMaximum(self): return 10.0
@@ -139,7 +297,9 @@ class QgsGeometry:
             def width(self): return 10.0
             def height(self): return 10.0
             def center(self): return QgsPointXY(5.0, 5.0)
+            def buffered(self, b): return self
             def scale(self, factor): pass
+            def contains(self, pt): return True
         return MockBox()
 
     def __repr__(self):
@@ -147,24 +307,40 @@ class QgsGeometry:
 
 
 class QgsField:
-    def __init__(self, name="", field_type=None, comment="", length=0, precision=0):
+    def __init__(self, name="", field_type=None, typeName="", len=0, prec=0, comment="", subType=None, length=0, precision=0, **kwargs):
         self._name = name
         self._type = field_type
-        self._length = length
-        self._precision = precision
+        self._typeName = typeName
+        self._length = len or length
+        self._precision = prec or precision
+        self._comment = comment
 
     def name(self): return self._name
     def type(self): return self._type
+    def typeName(self): return self._typeName
     def length(self): return self._length
     def precision(self): return self._precision
+    def comment(self): return self._comment
 
 
 class QgsFields:
     def __init__(self, fields=None):
-        self._fields = fields or []
+        if fields is None:
+            self._fields = []
+        elif isinstance(fields, QgsFields):
+            self._fields = list(fields._fields)
+        else:
+            self._fields = list(fields)
 
     def append(self, field):
         self._fields.append(field)
+
+    def remove(self, i):
+        if 0 <= i < len(self._fields):
+            self._fields.pop(i)
+
+    def at(self, i):
+        return self._fields[i] if 0 <= i < len(self._fields) else None
 
     def names(self):
         return [f.name() for f in self._fields]
@@ -216,6 +392,19 @@ class QgsFeature:
                 while len(self._attributes) <= idx:
                     self._attributes.append(None)
                 self._attributes[idx] = value
+
+    def attribute(self, field):
+        if isinstance(field, int):
+            if 0 <= field < len(self._attributes):
+                return self._attributes[field]
+            return None
+        elif isinstance(field, str):
+            if self._fields and hasattr(self._fields, "indexOf"):
+                idx = self._fields.indexOf(field)
+                if idx != -1 and 0 <= idx < len(self._attributes):
+                    return self._attributes[idx]
+            return None
+        return None
 
     def setGeometry(self, geom):
         self._geometry = geom
@@ -451,6 +640,7 @@ class QgsWkbTypes:
     MultiPoint = 4
     MultiLineString = 5
     MultiPolygon = 6
+    GeometryCollection = 7
 
     PointGeometry = 0
     LineGeometry = 1
@@ -460,13 +650,16 @@ class QgsWkbTypes:
     def displayString(wkb_type): return "Polygon"
 
     @staticmethod
-    def geometryType(wkb_type): return 2  # PolygonGeometry
+    def geometryType(wkb_type):
+        if wkb_type in (1, 4): return 0
+        elif wkb_type in (2, 5): return 1
+        return 2  # PolygonGeometry
 
     @staticmethod
     def multiType(wkb_type): return 6
 
     @staticmethod
-    def flatType(wkb_type): return 3
+    def flatType(wkb_type): return wkb_type
 
 
 class MockQVariant:
@@ -638,69 +831,69 @@ def setup_qgis_mock_if_needed():
         pass
 
     # Create dynamic mock modules for non-QGIS Python environment
-        qgis_mod = DynamicMockModule("qgis")
-        core_mod = DynamicMockModule("qgis.core")
-        gui_mod = DynamicMockModule("qgis.gui")
-        utils_mod = DynamicMockModule("qgis.utils")
-        analysis_mod = DynamicMockModule("qgis.analysis")
-        pyqt_mod = DynamicMockModule("qgis.PyQt")
-        qtcore_mod = DynamicMockModule("qgis.PyQt.QtCore")
-        qtgui_mod = DynamicMockModule("qgis.PyQt.QtWidgets")
-        qtwidgets_mod = DynamicMockModule("qgis.PyQt.QtGui")
+    qgis_mod = DynamicMockModule("qgis")
+    core_mod = DynamicMockModule("qgis.core")
+    gui_mod = DynamicMockModule("qgis.gui")
+    utils_mod = DynamicMockModule("qgis.utils")
+    analysis_mod = DynamicMockModule("qgis.analysis")
+    pyqt_mod = DynamicMockModule("qgis.PyQt")
+    qtcore_mod = DynamicMockModule("qgis.PyQt.QtCore")
+    qtgui_mod = DynamicMockModule("qgis.PyQt.QtWidgets")
+    qtwidgets_mod = DynamicMockModule("qgis.PyQt.QtGui")
 
-        # Explicit Core attributes
-        core_mod.QgsPointXY = QgsPointXY
-        core_mod.QgsPolygon = QgsPolygon
-        core_mod.QgsGeometry = QgsGeometry
-        core_mod.QgsField = QgsField
-        core_mod.QgsFields = QgsFields
-        core_mod.QgsFeature = QgsFeature
-        core_mod.QgsVectorLayer = QgsVectorLayer
-        core_mod.QgsSpatialIndex = QgsSpatialIndex
-        core_mod.QgsProcessingFeedback = QgsProcessingFeedback
-        core_mod.QgsProcessingContext = QgsProcessingContext
-        core_mod.QgsProcessingException = QgsProcessingException
-        core_mod.QgsProcessingAlgorithm = QgsProcessingAlgorithm
-        core_mod.QgsProcessingLayerPostProcessorInterface = MockGenericClass
-        core_mod.QgsProject = QgsProject
-        core_mod.QgsApplication = QgsApplication
-        core_mod.QgsWkbTypes = QgsWkbTypes
+    # Explicit Core attributes
+    core_mod.QgsPointXY = QgsPointXY
+    core_mod.QgsPolygon = QgsPolygon
+    core_mod.QgsGeometry = QgsGeometry
+    core_mod.QgsField = QgsField
+    core_mod.QgsFields = QgsFields
+    core_mod.QgsFeature = QgsFeature
+    core_mod.QgsVectorLayer = QgsVectorLayer
+    core_mod.QgsSpatialIndex = QgsSpatialIndex
+    core_mod.QgsProcessingFeedback = QgsProcessingFeedback
+    core_mod.QgsProcessingContext = QgsProcessingContext
+    core_mod.QgsProcessingException = QgsProcessingException
+    core_mod.QgsProcessingAlgorithm = QgsProcessingAlgorithm
+    core_mod.QgsProcessingLayerPostProcessorInterface = MockGenericClass
+    core_mod.QgsProject = QgsProject
+    core_mod.QgsApplication = QgsApplication
+    core_mod.QgsWkbTypes = QgsWkbTypes
 
-        # PyQt attributes
-        class MockSignal:
-            def emit(self, *args, **kwargs): pass
-            def connect(self, *args, **kwargs): pass
-            def disconnect(self, *args, **kwargs): pass
+    # PyQt attributes
+    class MockSignal:
+        def emit(self, *args, **kwargs): pass
+        def connect(self, *args, **kwargs): pass
+        def disconnect(self, *args, **kwargs): pass
 
-        qtcore_mod.QCoreApplication = MockQCoreApplication
-        qtcore_mod.QThread = MockQThread
-        qtcore_mod.QObject = MockQObject
-        qtcore_mod.QVariant = MockQVariant
-        qtcore_mod.Qt = MockQt
-        qtcore_mod.pyqtSignal = lambda *args, **kwargs: MockSignal()
+    qtcore_mod.QCoreApplication = MockQCoreApplication
+    qtcore_mod.QThread = MockQThread
+    qtcore_mod.QObject = MockQObject
+    qtcore_mod.QVariant = MockQVariant
+    qtcore_mod.Qt = MockQt
+    qtcore_mod.pyqtSignal = lambda *args, **kwargs: MockSignal()
 
-        qtgui_mod.QWidget = MockQWidget
-        qtgui_mod.QDialog = MockQDialog
+    qtgui_mod.QWidget = MockQWidget
+    qtgui_mod.QDialog = MockQDialog
 
-        pyqt_mod.QtCore = qtcore_mod
-        pyqt_mod.QtWidgets = qtgui_mod
-        pyqt_mod.QtGui = qtwidgets_mod
+    pyqt_mod.QtCore = qtcore_mod
+    pyqt_mod.QtWidgets = qtgui_mod
+    pyqt_mod.QtGui = qtwidgets_mod
 
-        qgis_mod.core = core_mod
-        qgis_mod.gui = gui_mod
-        qgis_mod.utils = utils_mod
-        qgis_mod.analysis = analysis_mod
-        qgis_mod.PyQt = pyqt_mod
+    qgis_mod.core = core_mod
+    qgis_mod.gui = gui_mod
+    qgis_mod.utils = utils_mod
+    qgis_mod.analysis = analysis_mod
+    qgis_mod.PyQt = pyqt_mod
 
-        sys.modules["qgis"] = qgis_mod
-        sys.modules["qgis.core"] = core_mod
-        sys.modules["qgis.gui"] = gui_mod
-        sys.modules["qgis.utils"] = utils_mod
-        sys.modules["qgis.analysis"] = analysis_mod
-        sys.modules["qgis.PyQt"] = pyqt_mod
-        sys.modules["qgis.PyQt.QtCore"] = qtcore_mod
-        sys.modules["qgis.PyQt.QtWidgets"] = qtgui_mod
-        sys.modules["qgis.PyQt.QtGui"] = qtwidgets_mod
+    sys.modules["qgis"] = qgis_mod
+    sys.modules["qgis.core"] = core_mod
+    sys.modules["qgis.gui"] = gui_mod
+    sys.modules["qgis.utils"] = utils_mod
+    sys.modules["qgis.analysis"] = analysis_mod
+    sys.modules["qgis.PyQt"] = pyqt_mod
+    sys.modules["qgis.PyQt.QtCore"] = qtcore_mod
+    sys.modules["qgis.PyQt.QtWidgets"] = qtgui_mod
+    sys.modules["qgis.PyQt.QtGui"] = qtwidgets_mod
 
     # 2. PyQt5 standalone fallback
     if "PyQt5" not in sys.modules:
@@ -740,3 +933,10 @@ def setup_qgis_mock_if_needed():
         sys.modules["processing"] = proc_mod
         sys.modules["processing.gui"] = proc_gui_mod
         sys.modules["processing.gui.wrappers"] = proc_wrappers_mod
+
+    # 4. openpyxl module fallback
+    if "openpyxl" not in sys.modules:
+        try:
+            import openpyxl
+        except ImportError:
+            sys.modules["openpyxl"] = DynamicMockModule("openpyxl")

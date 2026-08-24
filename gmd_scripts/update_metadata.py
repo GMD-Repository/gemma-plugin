@@ -26,7 +26,6 @@ from PyQt5.QtWidgets import (
     QHeaderView,
     QSizePolicy,
     QCheckBox,
-    QMessageBox,
 )
 from PyQt5.QtGui import QFont, QColor, QIcon
 from qgis.core import (
@@ -41,9 +40,9 @@ from qgis.core import (
     QgsProcessingException,
     QgsProcessingFeedback,
     QgsProcessingParameterFeatureSink,
+    QgsProcessingParameterDefinition,
     QgsProcessingParameterFeatureSource,
     QgsProcessingParameterField,
-    QgsProcessingParameterEnum,
     QgsProcessingParameterString,
     QgsProcessingParameterFile,
     QgsCoordinateReferenceSystem,
@@ -51,7 +50,6 @@ from qgis.core import (
     QgsProcessingUtils,
     QgsProject,
     QgsVectorLayer,
-    QgsWkbTypes,
     QgsSpatialIndex,
     QgsFieldConstraints,
     QgsEditorWidgetSetup,
@@ -682,6 +680,7 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
     def _get_psgc_field_mapping(self, fields):
         mapping = {}
         for key, aliases in {
+            "map_uuid": ["map_uuid", "mapuuid", "uuid", "map_id"],
             "geocode": ["geocode", "code", "psgc", "psgc_code", "geocode_code"],
             "region": ["region", "reg"],
             "province": ["province", "prov"],
@@ -782,6 +781,7 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
         actual_reg_col = mapping["region"]
         actual_prov_col = mapping["province"]
         actual_citymun_col = mapping["city_mun"]
+        actual_uuid_col = mapping.get("map_uuid")   # optional — may not exist in older sheets
         
         for feat in table_layer.getFeatures():
             reg_val = str(feat.attribute(actual_reg_col)).strip()
@@ -809,8 +809,16 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
                 
             exact_key = brgy_val.lower().strip()
             norm_key = normalize_barangay_name(brgy_val)
+
+            # Read map_uuid from the PSGC sheet if the column exists
+            psgc_uuid_val = ""
+            if actual_uuid_col:
+                raw_uuid = feat.attribute(actual_uuid_col)
+                if raw_uuid is not None and raw_uuid != NULL:
+                    psgc_uuid_val = str(raw_uuid).strip()
             
             psgc_data = {
+                "map_uuid": psgc_uuid_val,
                 "geocode": code_val,
                 "region": reg_val,
                 "province": prov_val,
@@ -858,6 +866,9 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
                 barangay = psgc_data["barangay"]
                 boundary_val = "Barangay"
                 preview_lgu_name = lgu_key_str
+                # map_uuid: use PSGC value if present; otherwise it will be auto-generated at run-time
+                psgc_uuid = psgc_data.get("map_uuid", "")
+                uuid_val = psgc_uuid if psgc_uuid else "[Auto-generated]"
             else:
                 geocode = ""
                 region = ""
@@ -867,10 +878,10 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
                 boundary_val = "Contested"
                 # Preview uses join field value; raw name field resolved at run-time
                 preview_lgu_name = lgu_key_str if lgu_key_str else "[from raw name field]"
+                uuid_val = "NULL"       # Contested features always keep map_uuid NULL
                 self._unmatched_features.append(feature)
 
             fid_val = current + 1
-            uuid_val = "Generating..."
 
             row_data = [
                 str(fid_val),
@@ -886,7 +897,7 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
                 "NULL",
                 "NULL",
                 sy_val,
-                boundary_val,
+                boundary_val,       # boundary
                 preview_lgu_name,   # lgu_bgy_name
                 "NULL",             # bdry_status
             ]
@@ -897,7 +908,7 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
         # Set rows count and fill elements
         self.table.setRowCount(len(preview_rows))
         for row_idx, row_data in enumerate(preview_rows):
-            is_matched = (row_data[13] == "Barangay")
+            is_matched = (row_data[6] != "NULL")
             
             for col_idx, val in enumerate(row_data):
                 item = QTableWidgetItem(val)
@@ -912,16 +923,10 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
                     item.setForeground(QColor("#cb2431"))
                     if col_idx == 2:
                         item.setText("[No Match]")
-                    if col_idx == 13:  # boundary column
-                        item.setBackground(QColor("#ffe0b2"))
-                        item.setForeground(QColor("#e65100"))
                 else:
                     if col_idx in [2, 3, 4, 5, 6]:
                         item.setBackground(QColor("#f0fff4"))
                         item.setForeground(QColor("#22863a"))
-                    if col_idx == 13:  # boundary column
-                        item.setBackground(QColor("#e8f5e9"))
-                        item.setForeground(QColor("#1b5e20"))
                 
                 self.table.setItem(row_idx, col_idx, item)
 
@@ -975,7 +980,6 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
     SOURCE_YEAR = "SOURCE_YEAR"
     OUTPUT_DIR = "OUTPUT_DIR"
     OUTPUT = "OUTPUT"
-    OUTPUT_CONTESTED = "OUTPUT_CONTESTED"
 
     def name(self) -> str:
         """
@@ -994,13 +998,13 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
         """
         Returns the name of the group this algorithm belongs to.
         """
-        return "GMD Toolkits"
+        return "1Map"
 
     def groupId(self) -> str:
         """
         Returns the unique ID of the group this algorithm belongs to.
         """
-        return "gmdtoolkits"
+        return "1map"
 
     def icon(self):
         """
@@ -1016,28 +1020,48 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
         Returns a helper string for the algorithm explaining its parameters.
         """
         return (
-            "This algorithm enriches an input LGU boundary polygon layer using a specific PSGC xlsx table.\n\n"
-            "Parameters:\n"
-            "- LGU boundary layer (polygon): The spatial polygon layer whose attributes you wish to update.\n"
-            "- LGU join field (from dropdown): The field in the LGU layer containing Barangay names to match.\n"
-            "- PSGC xlsx file / table: A loaded spreadsheet containing PSGC geocodes and metadata.\n" 
-            "- Region filter (from dropdown): Populated automatically from unique Region values in the PSGC sheet.\n"
-            "- Province filter (from dropdown): Automatically updates in real-time to list only the provinces belonging to your selected region.\n"
-            "- City/Municipality filter (from dropdown): Automatically updates in real-time to list only the cities/municipalities in your selected province.\n"
-            "- Output directory for permanent layer (folder): The directory where the final enriched layer will automatically be saved as a permanent GeoPackage file.\n\n"
-            "Features:\n"
+            "This algorithm enriches an input LGU boundary polygon layer using a specific PSGC xlsx table. "
+            "Matched and unmatched features are written together into a single output GeoPackage, "
+            "distinguished by a 'boundary' field ('Barangay' or 'Contested').\n\n"
+
+            "<b>Parameters:</b>\n"
+            "- <b>LGU boundary layer (polygon):</b> The spatial polygon layer whose attributes you wish to update.\n"
+            "- <b>LGU join field (from dropdown):</b> The field in the LGU layer containing barangay names to match against the PSGC. "
+            "If a feature has NULL in this field it is automatically treated as Contested.\n"
+            "- <b>Raw barangay name field (optional):</b> A secondary field (e.g. the original BARANGAY column before a join) "
+            "used to populate <i>lgu_bgy_name</i> when the join field is NULL.\n"
+            "- <b>PSGC xlsx file / table:</b> A loaded spreadsheet containing PSGC geocodes, map UUIDs, and metadata.\n"
+            "- <b>Region / Province / City-Municipality filters (dropdowns):</b> Cascade-linked dropdowns populated from the PSGC sheet. "
+            "Province updates when Region changes; City/Municipality updates when Province changes.\n"
+            "- <b>Output directory for permanent layer (folder):</b> Required — the directory where the enriched layer "
+            "will automatically be saved as a permanent GeoPackage file.\n\n"
+
+            "<b>Output schema:</b>\n"
+            "fid, map_uuid, geocode, region, province, city_mun, barangay, code, remarks, source, hhcount, bldgcount, "
+            "sy, boundary, lgu_bgy_name, bdry_status\n\n"
+
+            "<b>Features:</b>\n"
             "1. Scans the active QGIS project for any loaded layer with 'PSGC' in its name, extracting unique values "
             "to populate the Region, Province, and City/Municipality dropdown lists dynamically.\n"
             "2. Filters the PSGC table by selected region, province, and city/municipality beforehand.\n"
-            "3. Performs a fast memory-based join matching the selected LGU field with the PSGC 'barangay' field.\n"
-            "4. Generates 1-indexed feature IDs (fid) and unique Map UUIDs (map_uuid).\n"
-            "5. Structurizes the output layer with a strict schema (geocode, region, province, city_mun, barangay, "
-            "code, remarks, source, hhcount, bldgcount, sy).\n"
-            "6. Automatically reprojects geometries and coordinates to WGS 84 (EPSG:4326) on-the-fly.\n"
-            "7. Dynamically renames the loaded output layer in QGIS using the 5-digit code derived from the matched geocode followed by '_bgy' (e.g. '14000_bgy').\n"
-            "8. Automatically saves a permanent copy of the updated LGU layer in the specified output directory as a GeoPackage with the same custom name (e.g., '14000_bgy.gpkg').\n"
-            "Support Email: <b>gmd.support@psa.gov.ph</b>\n"
-            "Author: GMD Staff\n"
+            "3. Matches each LGU feature to a PSGC barangay record using exact name → normalised name → fuzzy match "
+            "(in that order).\n"
+            "4. <b>Barangay</b> features (matched): map_uuid is read directly from the PSGC sheet; auto-generated "
+            "only when the PSGC map_uuid cell is blank.\n"
+            "5. <b>Contested</b> features (unmatched or NULL join field): map_uuid is always left NULL. "
+            "geocode, region, province, and city_mun are filled from the adjacent Barangay with the longest shared "
+            "boundary edge. barangay field is left NULL; lgu_bgy_name preserves the original LGU name for reference.\n"
+            "6. Generates 1-indexed feature IDs (fid).\n"
+            "7. Automatically reprojects geometries and coordinates to WGS 84 (EPSG:4326) on-the-fly.\n"
+            "8. Output field <i>bdry_status</i> defaults to NULL and is editable (dropdown: Adjusted / Retained). "
+            "Field <i>barangay</i> is also editable. All other fields are locked read-only in the attribute form.\n"
+            "9. Dynamically renames the loaded output layer in QGIS using the 5-digit code derived from the matched "
+            "geocode followed by '_bgy' (e.g. '14000_bgy').\n"
+            "10. Automatically saves a permanent copy of the updated LGU layer in the specified output directory as "
+            "a GeoPackage with the same custom name (e.g., '14000_bgy.gpkg').\n\n"
+
+            "<b>Support Email:</b> gmd.support@psa.gov.ph\n"
+            "Author: CPA\n"
         )
 
     def initAlgorithm(self, config: Optional[dict[str, Any]] = None):
@@ -1135,8 +1159,7 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
                 self.OUTPUT_DIR,
                 "Output directory for permanent layer",
                 behavior=QgsProcessingParameterFile.Folder,
-                defaultValue=r"C:\PSA-GIS\Quezon\Project 1MAP\2_Updating of Boundary\3_Map Archive\1_Processing",
-                optional=True
+                optional=False
             )
         )
 
@@ -1174,12 +1197,18 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
             self.addParameter(preview_param)
 
         # The output enriched LGU polygon layer reprojected to EPSG:4326.
-        self.addParameter(
-            QgsProcessingParameterFeatureSink(self.OUTPUT, "Updated LGU layer — Barangay (EPSG:4326)")
+        # Hidden from the dialog — the actual save path is always driven by
+        # OUTPUT_DIR, so these sink fields are redundant UI clutter for the user.
+        # A defaultValue is required even though hidden, otherwise QGIS's own
+        # pre-run validation fails with "no value specified for parameter"
+        # before processAlgorithm ever gets a chance to override it.
+        output_param = QgsProcessingParameterFeatureSink(
+            self.OUTPUT,
+            "Updated LGU layer (EPSG:4326)",
+            defaultValue=QgsProcessing.TEMPORARY_OUTPUT,
         )
-        self.addParameter(
-            QgsProcessingParameterFeatureSink(self.OUTPUT_CONTESTED, "Updated LGU layer — Contested (EPSG:4326)")
-        )
+        output_param.setFlags(output_param.flags() | QgsProcessingParameterDefinition.FlagHidden)
+        self.addParameter(output_param)
 
     def _find_field_case_insensitive(self, fields: QgsFields, target_name: str) -> Optional[str]:
         """
@@ -1198,7 +1227,14 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
         to the actual field names found in the PSGC table.
         """
         mapping = {}
-        
+
+        # 0. Map UUID
+        for name in ["map_uuid", "mapuuid", "uuid", "map_id"]:
+            f = self._find_field_case_insensitive(fields, name)
+            if f:
+                mapping["map_uuid"] = f
+                break
+
         # 1. Geocode
         for name in ["geocode", "code", "psgc", "psgc_code", "geocode_code"]:
             f = self._find_field_case_insensitive(fields, name)
@@ -1310,6 +1346,7 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
         actual_reg_col = mapping["region"]
         actual_prov_col = mapping["province"]
         actual_citymun_col = mapping["city_mun"]
+        actual_uuid_col = mapping.get("map_uuid")   # optional — may not exist in older sheets
         
         filtered_count = 0
         total_table_count = table_source.featureCount()
@@ -1351,8 +1388,16 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
             # Store both exact trimmed key and normalized key to allow robust fallbacks
             exact_key = brgy_val.lower().strip()
             norm_key = normalize_barangay_name(brgy_val)
+
+            # Read map_uuid from the PSGC sheet if the column exists
+            psgc_uuid_val = ""
+            if actual_uuid_col:
+                raw_uuid = feat.attribute(actual_uuid_col)
+                if raw_uuid is not None and raw_uuid != NULL:
+                    psgc_uuid_val = str(raw_uuid).strip()
             
             psgc_data = {
+                "map_uuid": psgc_uuid_val,
                 "geocode": code_val,
                 "region": reg_val,
                 "province": prov_val,
@@ -1414,8 +1459,6 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
             feedback.pushInfo("Input CRS is already EPSG:4326. Reprojection is bypassed.")
 
         # Intercept output parameter if permanent directory is specified.
-        # Regardless of whether output_dir is set, we always ensure OUTPUT_CONTESTED
-        # gets a distinct destination so the two layers are never merged.
         if output_dir:
             output_dir = output_dir.strip()
 
@@ -1437,31 +1480,18 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
             output_file_path = os.path.join(output_dir, f"{custom_name}.gpkg")
             output_file_path = os.path.normpath(output_file_path).replace("\\", "/")
 
-            output_file_path_contested = os.path.join(output_dir, f"{custom_name}_contested.gpkg")
-            output_file_path_contested = os.path.normpath(output_file_path_contested).replace("\\", "/")
-
-            # Delete existing files to prevent conflicts/appending
-            for fp in (output_file_path, output_file_path_contested):
-                if os.path.exists(fp):
-                    try:
-                        os.remove(fp)
-                        feedback.pushInfo(f"Existing GeoPackage '{fp}' deleted to prevent merge issues.")
-                    except Exception as e:
-                        feedback.pushInfo(f"Warning: Could not delete existing GeoPackage '{fp}': {str(e)}")
+            # Delete existing file to prevent conflicts/appending
+            if os.path.exists(output_file_path):
+                try:
+                    os.remove(output_file_path)
+                    feedback.pushInfo(f"Existing GeoPackage '{output_file_path}' deleted to prevent merge issues.")
+                except Exception as e:
+                    feedback.pushInfo(f"Warning: Could not delete existing GeoPackage '{output_file_path}': {str(e)}")
 
             parameters[self.OUTPUT] = output_file_path
-            parameters[self.OUTPUT_CONTESTED] = output_file_path_contested
-            feedback.pushInfo(f"Barangay output:  {output_file_path}")
-            feedback.pushInfo(f"Contested output: {output_file_path_contested}")
+            feedback.pushInfo(f"Output: {output_file_path}")
 
-        else:
-            # No output_dir — ensure contested sink always gets its own memory layer,
-            # distinct from OUTPUT, so the two are never written to the same destination.
-            if self.OUTPUT_CONTESTED not in parameters or not parameters[self.OUTPUT_CONTESTED]:
-                parameters[self.OUTPUT_CONTESTED] = QgsProcessing.TEMPORARY_OUTPUT
-
-
-        # Create Barangay output sink (EPSG:4326)
+        # Create output sink (EPSG:4326) — Barangay and Contested features both go here
         (sink, dest_id) = self.parameterAsSink(
             parameters,
             self.OUTPUT,
@@ -1473,21 +1503,8 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
         if sink is None:
             raise QgsProcessingException(self.invalidSinkError(parameters, self.OUTPUT))
 
-        # Create Contested output sink (same schema, same CRS)
-        (sink_contested, dest_id_contested) = self.parameterAsSink(
-            parameters,
-            self.OUTPUT_CONTESTED,
-            context,
-            output_fields,
-            source.wkbType(),
-            target_crs,
-        )
-        if sink_contested is None:
-            raise QgsProcessingException(self.invalidSinkError(parameters, self.OUTPUT_CONTESTED))
-
-        # Store destination IDs for post-processing
+        # Store destination ID for post-processing
         self.dest_id = dest_id
-        self.dest_id_contested = dest_id_contested
 
         # -----------------------------------------------------------------------
         # PASS 1 — Build all output features in memory, tagging each as
@@ -1499,18 +1516,10 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
         progress_step = 50.0 / total_features if total_features else 0
         matched_count = 0
 
-        # Each entry: {"attrs": [...], "geom": QgsGeometry, "boundary": str}
+        # Each entry: {"attrs": {...}, "geom": QgsGeometry}  (attrs includes "boundary": "Barangay"/"Contested")
         staged = []
 
         feedback.pushInfo("Pass 1 — Matching LGU boundaries against PSGC records...")
-
-        # --- DIAGNOSTIC counters: geometry validity before/after reprojection ---
-        geom_diag_total = 0
-        geom_diag_flipped = 0        # valid before -> invalid after (reprojection caused it)
-        geom_diag_still_invalid = 0  # invalid before -> invalid after (pre-existing)
-        geom_diag_fixed = 0          # invalid before -> valid after (reprojection incidentally fixed it)
-        geom_diag_repaired = 0       # count of features successfully auto-repaired with makeValid()
-
         for current, feature in enumerate(source.getFeatures()):
             if feedback.isCanceled():
                 break
@@ -1551,51 +1560,17 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
 
             # Re-project geometry on-the-fly
             geom = feature.geometry()
-
-            # --- DIAGNOSTIC: check validity BEFORE reprojection ---
-            was_valid_before = geom.isGeosValid()
-
             if reproject and transform:
                 geom.transform(transform)
-
-            # --- DIAGNOSTIC: check validity AFTER reprojection ---
-            is_valid_after = geom.isGeosValid()
-
-            if was_valid_before and not is_valid_after:
-                geom_diag_flipped += 1
-                feedback.pushInfo(
-                    f"[GEOM DIAGNOSTIC] Feature fid~{current+1} ('{lgu_key_str}') was VALID before "
-                    f"reprojection but INVALID after. This confirms reprojection-induced precision drift."
-                )
-                # --- AUTO-REPAIR: fix the geometry introduced by reprojection ---
-                repaired = geom.makeValid()
-                if repaired and not repaired.isEmpty():
-                    geom = repaired
-                    geom_diag_repaired += 1
-                    feedback.pushInfo(
-                        f"[GEOM REPAIR] Feature fid~{current+1} ('{lgu_key_str}') auto-repaired with "
-                        f"makeValid() after reprojection."
-                    )
-                else:
-                    feedback.pushInfo(
-                        f"[GEOM REPAIR] WARNING: makeValid() failed or returned empty geometry for "
-                        f"fid~{current+1} ('{lgu_key_str}'). Original (invalid) geometry retained — "
-                        f"please inspect this feature manually."
-                    )
-            elif not was_valid_before and not is_valid_after:
-                geom_diag_still_invalid += 1
-            elif not was_valid_before and is_valid_after:
-                geom_diag_fixed += 1
-            geom_diag_total += 1
 
             if psgc_data:
                 matched_count += 1
                 geocode = psgc_data["geocode"]
                 if geocode:
                     geocode = geocode[2:] + "000000"
-                boundary_val = "Barangay"
+                psgc_uuid = psgc_data.get("map_uuid", "")
                 attrs = {
-                    "map_uuid":     str(uuid.uuid4()),
+                    "map_uuid":     psgc_uuid if psgc_uuid else str(uuid.uuid4()),
                     "geocode":      geocode,
                     "region":       psgc_data["region"],
                     "province":     psgc_data["province"],
@@ -1606,9 +1581,8 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
                     "bdry_status":  None,
                 }
             else:
-                boundary_val = "Contested"
                 attrs = {
-                    "map_uuid":     str(uuid.uuid4()),
+                    "map_uuid":     None,           # NULL for Contested — no PSGC match
                     "geocode":      "",
                     "region":       "",
                     "province":     "",
@@ -1621,27 +1595,6 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
 
             staged.append({"attrs": attrs, "geom": geom})
             feedback.setProgress(int(current * progress_step))
-
-        # --- DIAGNOSTIC summary ---
-        feedback.pushInfo(
-            f"[GEOM DIAGNOSTIC SUMMARY] Total features checked: {geom_diag_total} | "
-            f"Flipped VALID->INVALID by reprojection: {geom_diag_flipped} | "
-            f"Auto-repaired with makeValid(): {geom_diag_repaired} | "
-            f"Already invalid before reprojection (unaffected): {geom_diag_still_invalid} | "
-            f"Invalid->Valid after reprojection: {geom_diag_fixed}"
-        )
-        if geom_diag_flipped > 0:
-            feedback.pushInfo(
-                f"[GEOM DIAGNOSTIC] CONFIRMED: reprojection introduced new geometry invalidity in "
-                f"{geom_diag_flipped} feature(s); {geom_diag_repaired} were auto-repaired with makeValid(). "
-                f"See the [GEOM DIAGNOSTIC] / [GEOM REPAIR] lines above for the specific affected features."
-            )
-        else:
-            feedback.pushInfo(
-                "[GEOM DIAGNOSTIC] No features flipped from valid to invalid during reprojection. "
-                "The reported geometry errors likely originate elsewhere (e.g. pre-existing in source, "
-                "or introduced by GeoPackage write precision)."
-            )
 
         # -----------------------------------------------------------------------
         # PASS 2 — For every Contested feature, find the adjacent Barangay with
@@ -1708,7 +1661,7 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
 
             if best_idx is not None:
                 donor = staged[best_idx]["attrs"]
-                entry["attrs"]["map_uuid"]  = donor["map_uuid"]
+                # map_uuid intentionally NOT copied — stays NULL for Contested (no PSGC match)
                 entry["attrs"]["geocode"]   = donor["geocode"]
                 entry["attrs"]["region"]    = donor["region"]
                 entry["attrs"]["province"]  = donor["province"]
@@ -1766,10 +1719,7 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
             new_feature.setGeometry(entry["geom"])
             new_feature.setAttributes(new_attributes)
 
-            if a["boundary"] == "Barangay":
-                sink.addFeature(new_feature, QgsFeatureSink.Flag.FastInsert)
-            else:
-                sink_contested.addFeature(new_feature, QgsFeatureSink.Flag.FastInsert)
+            sink.addFeature(new_feature, QgsFeatureSink.Flag.FastInsert)
 
             feedback.setProgress(50 + int(current * progress_step2))
 
@@ -1780,7 +1730,7 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
             f"Output layer reprojected to EPSG:4326."
         )
 
-        return {self.OUTPUT: dest_id, self.OUTPUT_CONTESTED: dest_id_contested}
+        return {self.OUTPUT: dest_id}
 
     def postProcessAlgorithm(
         self,
@@ -1861,34 +1811,6 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
                     feedback.pushInfo(f"Safeguard: Manually added output layer '{layer_name}' to the Layers Panel.")
 
         # -----------------------------------------------------------------------
-        # CONTESTED LAYER — naming, safeguard loading, and field constraints
-        # -----------------------------------------------------------------------
-        contested_name = f"{primary_name}_contested" if primary_name else "Updated_LGU_contested"
-
-        if context.willLoadLayerOnCompletion(self.dest_id_contested):
-            details = context.layerToLoadOnCompletionDetails(self.dest_id_contested)
-            details.name = contested_name
-
-        if not context.willLoadLayerOnCompletion(self.dest_id_contested):
-            already_loaded = False
-            target_source_c = self.dest_id_contested.split("|")[0]
-            for l in QgsProject.instance().mapLayers().values():
-                if l.source().split("|")[0] == target_source_c:
-                    already_loaded = True
-                    l.setName(contested_name)
-                    break
-
-            if not already_loaded:
-                new_layer_c = QgsVectorLayer(self.dest_id_contested, contested_name, "ogr")
-                if new_layer_c and new_layer_c.isValid():
-                    try:
-                        new_layer_c.saveDefaultMetadata()
-                    except Exception:
-                        pass
-                    QgsProject.instance().addMapLayer(new_layer_c)
-                    feedback.pushInfo(f"Safeguard: Manually added Contested layer '{contested_name}' to the Layers Panel.")
-
-        # -----------------------------------------------------------------------
         # FIELD CONSTRAINTS — lock every field except bdry_status and barangay,
         # set up bdry_status dropdown (Adjusted / Retained).
         # Applied via QTimer.singleShot to both layers.
@@ -1936,14 +1858,13 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
 
         from PyQt5.QtCore import QTimer
         QTimer.singleShot(0, _make_constraint_fn(self.dest_id))
-        QTimer.singleShot(0, _make_constraint_fn(self.dest_id_contested))
 
         feedback.pushInfo(
-            "Field constraints scheduled for both Barangay and Contested layers: "
-            "all fields locked except 'barangay' and 'bdry_status' (dropdown: Adjusted / Retained)."
+            "Field constraints scheduled: all fields locked except 'barangay' and 'bdry_status' "
+            "(dropdown: Adjusted / Retained)."
         )
 
-        return {self.OUTPUT: self.dest_id, self.OUTPUT_CONTESTED: self.dest_id_contested}
+        return {self.OUTPUT: self.dest_id}
 
     def createInstance(self):
         return self.__class__()
