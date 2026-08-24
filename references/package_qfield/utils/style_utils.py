@@ -24,16 +24,21 @@ def get_qml_styles_dir():
     return os.path.join(plugin_dir, "qml styles")
 
 
+def _natural_sort_key(filename):
+    """Sort key for natural sorting so '10.' comes after '8.', not before '2.'."""
+    return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', filename)]
+
+
 def get_available_qml_files():
-    """Return a sorted list of QML filenames (with extension) found in the
+    """Return a naturally sorted list of QML filenames (with extension) found in the
     'qml styles' folder.  Returns an empty list if the folder doesn't exist.
     """
     qml_dir = get_qml_styles_dir()
     if not os.path.isdir(qml_dir):
         return []
     return sorted(
-        f for f in os.listdir(qml_dir)
-        if f.lower().endswith(".qml")
+        (f for f in os.listdir(qml_dir) if f.lower().endswith(".qml")),
+        key=_natural_sort_key
     )
 
 
@@ -59,6 +64,10 @@ _KEYWORD_ALIAS_MAP = {
     "road": ["road"],
     "river": ["river"],
     "block": ["block"],
+    "railroad": ["railroad", "rail"],
+    "delineated ea line": ["delineated_ea_line", "delineated_line"],
+    "delineated ea polygon": ["delineated_ea", "delineated_ea2026", "delineated_polygon"],
+    "merged ea polygon": ["merged_ea", "merged_ea2026", "merged_polygon"],
 }
 
 
