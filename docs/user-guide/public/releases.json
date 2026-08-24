@@ -75,7 +75,7 @@
       ],
       "changes": {
         "features": [
-          "Implemented MBI validator tool for PMDR, enhancing data validation capabilities (@psacjperez) (#139)"
+          "Implemented MBI validator tool, enhancing data validation capabilities (@psacjperez) (#139)"
         ],
         "improvements": [
           "Added support for duplicate vertices fix in geometry repair toolkit (@psacjperez)",

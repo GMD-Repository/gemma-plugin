@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.4] - 2026-08-20
 
 ### Added
-- Implemented MBI validator tool for PMDR, enhancing data validation capabilities (@psacjperez) (#139)
+- Implemented MBI validator tool, enhancing data validation capabilities (@psacjperez) (#139)
 
 ### Changed
 - Added support for duplicate vertices fix in geometry repair toolkit (@psacjperez)

@@ -39,8 +39,8 @@ features:
     link: /tools/export-preliminary-polygons
   - icon:
       src: /icons/update.svg
-    title: Update LGU PSGC Metadata
-    details: Auto-populate PSGC codes, region, province, and city/municipality fields using a reference table with fuzzy name matching.
+    title: Update Metadata
+    details: Standardize LGU polygon layers with PSGC geocodes, cascading administrative filters, and permanent GeoPackage export.
     link: /tools/update-metadata
   - icon:
       src: /icons/update.svg
