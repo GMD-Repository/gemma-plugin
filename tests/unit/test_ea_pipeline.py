@@ -72,6 +72,45 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
         self.assertFalse(is_merge_candidate(ea_normal, min_household=100, merge_candidate_ids=merge_ids))
         self.assertFalse(is_merge_candidate(ea_over, min_household=100, merge_candidate_ids=merge_ids))
 
+    def test_special_ea_extraction_candidate_threshold_reevaluation(self):
+        """Verify candidate status post Special EA extraction (dropping below max_household vs remaining over)."""
+        delin_ids = {101, 102}
+
+        # Candidate 101: Originally over-threshold (350 HH), but after Special EA extraction dropped to 250 HH (< 300 max_household)
+        ea_extracted_under = {"original_id": 101, "hh_count": 250.0}
+
+        # Candidate 102: Originally over-threshold (400 HH), and after Special EA extraction still has 320 HH (>= 300 max_household)
+        ea_extracted_over = {"original_id": 102, "hh_count": 320.0}
+
+        # Candidate 103: Explicit indicator 'for_delineation' (remains candidate regardless of HH count)
+        ea_explicit = {"original_id": 103, "hh_count": 200.0}
+
+        # 1. Dropped below max_household after Special EA extraction -> Exempted from delineation
+        self.assertFalse(
+            is_delineation_candidate(ea_extracted_under, max_household=300, eadel_indi_col_idx=-1, full_ea_by_id={}, delineation_candidate_ids=delin_ids),
+            "EA whose HH count fell below max_household post-extraction should NOT be a delineation candidate."
+        )
+        self.assertFalse(
+            phase6_is_delin(ea_extracted_under, max_household=300, eadel_indi_col_idx=-1, full_ea_by_id={}, delineation_candidate_ids=delin_ids),
+            "Phase6 predicate should also exempt EA whose HH count fell below max_household post-extraction."
+        )
+
+        # 2. Remains over max_household after Special EA extraction -> Must be delineated
+        self.assertTrue(
+            is_delineation_candidate(ea_extracted_over, max_household=300, eadel_indi_col_idx=-1, full_ea_by_id={}, delineation_candidate_ids=delin_ids),
+            "EA remaining over max_household post-extraction MUST be a delineation candidate."
+        )
+
+        # 3. Explicit indicator -> Always candidate
+        from tests.mocks.qgis_mock import QgsFeature as MockQgsFeature
+        mock_feat = MockQgsFeature()
+        mock_feat.attributes_dict = {"eadel_indi": "for_delineation"}
+        mock_feat.attribute = lambda idx: "for_delineation"
+        self.assertTrue(
+            is_delineation_candidate(ea_explicit, max_household=300, eadel_indi_col_idx=0, full_ea_by_id={103: mock_feat}, delineation_candidate_ids=set()),
+            "EA with explicit 'for_delineation' indicator must be a candidate regardless of HH count."
+        )
+
     def test_merge_all_under_threshold_candidates(self):
         """Verify that multiple adjacent under-threshold EAs successfully merge together when no reference EA exists."""
         feedback = MockFeedback()
@@ -360,6 +399,39 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
         self.assertIn("hhcount", field_names)
         self.assertIn("indicator", field_names)
         self.assertEqual(field_names[-1], "remarks", "remarks must be the last column in output schema.")
+
+    def test_special_ea_schema_field_names(self):
+        """Verify that special_ea_export_fields omits hhcount/bldgcount and includes hh_count/bldg_count."""
+        from qgis.core import QgsFields, QgsField
+        try:
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            try:
+                from PyQt5.QtCore import QVariant
+            except ImportError:
+                from qgis.core import QVariant
+
+        export_field_names = [
+            "fid", "map_uuid", "geocode", "region", "province",
+            "city_mun", "barangay", "code", "name", "ean",
+            "hhcount", "bldgcount", "sy", "new_ean", "hh_count",
+            "bldg_count", "ea_type", "remarks"
+        ]
+        export_fields = QgsFields()
+        for fname in export_field_names:
+            export_fields.append(QgsField(fname, QVariant.String))
+
+        special_ea_export_fields = QgsFields()
+        for f in export_fields:
+            if f.name() in ("hhcount", "bldgcount"):
+                continue
+            special_ea_export_fields.append(f)
+
+        spec_field_names = [special_ea_export_fields.at(i).name() for i in range(special_ea_export_fields.count())]
+        self.assertNotIn("hhcount", spec_field_names, "Special EA layer schema must NOT contain 'hhcount'")
+        self.assertNotIn("bldgcount", spec_field_names, "Special EA layer schema must NOT contain 'bldgcount'")
+        self.assertIn("hh_count", spec_field_names, "Special EA layer schema MUST contain 'hh_count'")
+        self.assertIn("bldg_count", spec_field_names, "Special EA layer schema MUST contain 'bldg_count'")
 
     def test_enable_thresholds_toggle_behavior(self):
         """Verify that default threshold values (min=100, max=300) are maintained."""

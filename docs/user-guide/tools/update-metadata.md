@@ -1,63 +1,70 @@
-# <img src="/icons/update.svg" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Update LGU PSGC Metadata
+# <img src="/icons/update.svg" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Update Metadata
 
-The **Update LGU PSGC Metadata** tool automatically populates PSGC (Philippine Standard Geographic Code) metadata fields in your barangay boundary layers. It uses a reference PSGC table and fuzzy name matching to fill in region, province, city/municipality codes and names.
+The **Update Metadata** tool automatically enriches an input LGU boundary polygon layer with standardized administrative metadata from an official PSGC (Philippine Standard Geographic Code) Excel spreadsheet. Matched and unmatched features are combined into a single permanent GeoPackage output layer, clearly categorized by a `boundary` classification field (`Barangay` vs `Contested`).
 
 ## Access
 
-- **Processing Toolbox:** GMD Pipeline → 1Map → Update LGU PSGC Metadata
-- **Algorithm ID:** `gmd_pipeline:update_lgu_with_psgc`
+- **Processing Toolbox:** GMD Pipeline → 1Map → Update Metadata
+- **Algorithm ID:** `gmd_pipeline:update_metadata`
 
 ## When to Use
 
 Use this tool when:
 
-- Barangay boundary layers are missing PSGC code fields
-- You need to standardize administrative metadata across layers
-- Layer names need to be matched against the official PSGC reference table
-- You're preparing layers for official submission and need accurate administrative codes
+- Barangay boundary layers are missing PSGC geocodes or standardized geographic metadata.
+- You need to standardize region, province, city/municipality, and barangay attributes before official submission.
+- You want to cleanly identify contested boundary areas while maintaining complete topological coverage.
+- You need to generate an auto-formatted, permanent GeoPackage file for downstream validation.
 
 ## Parameters
 
+### Inputs
+
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| **Input Layer** | Feature Source (Polygon) | The barangay boundary layer to update |
-| **PSGC Reference Table** | File / Layer | The PSGC lookup table containing region, province, city/mun, and barangay data |
-| **Region** | Cascading Dropdown | Select the region — auto-detected from the input layer name |
-| **Province** | Cascading Dropdown | Select the province — filtered by the selected region |
-| **City/Municipality** | Cascading Dropdown | Select the city/municipality — filtered by the selected province |
+| **LGU boundary layer** | Feature Source (Polygon) | The spatial polygon layer whose attributes you wish to update. |
+| **LGU join field** | Layer Field (String) | Field containing barangay names to match against PSGC. Features with NULL are classified as Contested. |
+| **Raw barangay name field** | Layer Field (Optional) | Secondary column (e.g. original BARANGAY name) used to populate `lgu_bgy_name` when the join field is NULL. |
+| **PSGC xlsx file / table** | File / Table | Official PSGC Excel spreadsheet containing geocodes, map UUIDs, and admin hierarchies. |
+| **Region** | Cascading Dropdown | Region filter populated dynamically from the PSGC sheet. |
+| **Province** | Cascading Dropdown | Province filter filtered dynamically by selected region. |
+| **City/Municipality** | Cascading Dropdown | City/Municipality filter filtered dynamically by selected province. |
+| **Output Directory** | Folder Destination | Destination folder where the resulting GeoPackage will be permanently saved. |
 
 ## Key Features
 
-### Auto-Detection
-The tool automatically detects the city/municipality from the **input layer name**. It searches the PSGC table for a matching city/municipality name, using:
+### Smart Name Normalization & Fuzzy Matching
+The algorithm normalizes barangay strings to ensure high-accuracy joining against PSGC records:
+- **Abbreviations**: Expands prefixes such as `Sta.` → `Santa`, `Sto.` → `Santo`, `San.` → `San`, `St.` → `Saint`.
+- **Roman Numerals**: Standardizes Roman numerals and alphanumeric barangay names (e.g. `Poblacion III` ↔ `Poblacion 3`, `Zone 1` ↔ `Zone I`).
+- **Whitespace & Punctuation**: Strips special characters, trailing zeroes, and inconsistent spacing.
 
-1. **Exact substring match** — normalized to lowercase, with common suffixes like `_bgy` and `_barangay` stripped
-2. **Fuzzy matching fallback** — uses `difflib` fuzzy matching (cutoff = 0.75) for spelling variants
+### Cascading Administrative Hierarchy
+Selecting a **Region** updates available **Provinces**, and selecting a **Province** dynamically populates the **City/Municipality** list. When layer names match standard naming conventions, administrative filters auto-detect corresponding values.
 
-### Cascading Dropdowns
-The Region, Province, and City/Municipality parameters are linked as cascading dropdowns:
-- Changing the **Region** updates the Province and City/Municipality options
-- Changing the **Province** updates the City/Municipality options
+### Unified Single-Layer Classification
+Rather than splitting output files, all features are saved into a single permanent GeoPackage with a dedicated `boundary` attribute:
+- **`Barangay`**: Successfully matched to an official PSGC record.
+- **`Contested`**: Unmatched, NULL, or disputed boundary polygons.
 
-### Barangay Name Normalization
-The tool normalizes barangay names for robust matching, handling:
-- Common abbreviations: `Sta.` → `Santa`, `Sto.` → `Santo`, `Brgy.` → removed
-- Roman numerals: `Poblacion III` → `Poblacion 3`
-- Punctuation and spacing variations
-- Leading zeros in numeric names
+## Output Schema
 
-## Output
-
-| Output | Description |
-|--------|-------------|
-| **Updated Layer** | A new layer with PSGC metadata fields populated |
-
-The output layer will contain updated fields with the official PSGC codes, region, province, city/municipality, and barangay information.
+| Field Name | Type | Description |
+|------------|------|-------------|
+| `fid` | Integer | Feature unique integer identifier |
+| `map_uuid` | String | Standardized Map UUID code |
+| `geocode` | String | Complete 9- or 10-digit PSGC geocode |
+| `region` | String | Region name |
+| `province` | String | Province name |
+| `city_mun` | String | City or Municipality name |
+| `barangay` | String | Official standardized barangay name |
+| `code` | String | Administrative boundary code |
+| `boundary` | String | Boundary classification (`Barangay` or `Contested`) |
+| `remarks` | String | Audit notes, match quality, or dispute comments |
+| `source` | String | Data source attribution |
+| `hhcount` | Integer | Total household count |
+| `bldgcount` | Integer | Total building point count |
 
 ::: tip
-For best results, name your input layers with the city/municipality name (e.g., `Quezon City_bgy`) — the auto-detection will recognize the name and pre-fill the cascading dropdowns.
-:::
-
-::: warning
-Always verify the auto-detected values before running the tool. Fuzzy matching may occasionally produce incorrect matches for similarly named municipalities.
+Specify a dedicated target directory under **Output Directory**. The tool automatically creates the output `.gpkg` file with standardized naming conventions based on the selected LGU.
 :::
