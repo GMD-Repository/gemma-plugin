@@ -66,6 +66,9 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
     GAP_INPUT = "GAP_INPUT"
     OVERLAP_INPUT = "OVERLAP_INPUT"
     SNAP_TOLERANCE = "SNAP_TOLERANCE"
+    ENABLE_THRESHOLDS = "ENABLE_THRESHOLDS"
+    SPLIT_STRATEGY = "SPLIT_STRATEGY"
+    SPLIT_TYPE = "SPLIT_TYPE"
     # Buffer tolerance (meters) for snapping splits to linear features
     LINE_BUFFER_TOLERANCE = 0.5
 
@@ -75,7 +78,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
 
     def displayName(self) -> str:
         """Returns the translated algorithm name for display."""
-        return "Create Enumeration Areas"
+        return "EA Delineation and Merging"
 
     def createInstance(self):
         return EADMCandidatesAlgorithm()
@@ -102,7 +105,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
     def shortHelpString(self) -> str:
         """Returns a short description of the algorithm."""
         return (
-            "<h3>Create Enumeration Areas</h3>"
+            "<h3>EA Delineation and Merging</h3>"
             "<p>Delineates new Enumeration Areas (EAs) by spatially aggregating or splitting "
             "existing EA polygons to meet household-count thresholds, with optional alignment "
             "to road and river boundaries.</p>"
@@ -120,10 +123,14 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             "Fields and region attributes from this layer are inherited by the output.</li>"
             "<li><b>Minimum / Maximum Household Count per EA</b> — Target range (default 100–300 HH). "
             "EAs below the minimum are merged with neighbours; EAs above the maximum are split.</li>"
+            "<li><b>Splitting Rule for Large Areas (&gt;300 Houses)</b> — Controls how strictly household limits are enforced during splits. "
+            "Options: <i>Follow Roads & Rivers (Recommended)</i>, <i>Strict Minimum 100 Houses</i>, or <i>Do Not Split</i>.</li>"
+            "<li><b>Boundary Cut Method</b> — Selects the line tool used to cut boundaries. "
+            "Options: <i>Auto (Roads First, then Houses)</i>, <i>Roads & Rivers Only</i>, <i>House Groups Only</i>, <i>Straight Line Only</i>, or <i>Do Not Split</i>.</li>"
             "<li><b>Optimize for Compactness</b> — When enabled, the clustering algorithm "
             "prefers spatially compact EA shapes over purely household-balanced splits.</li>"
             "<li><b>Allow Merging Between Under-Threshold Candidate EAs</b> — When enabled (default: True), "
-            "under-threshold EAs (<= min_household) can merge with each other when no reference EAs are available in the barangay.</li>"
+            "under-threshold EAs (&lt;= min_household) can merge with each other when no reference EAs are available in the barangay.</li>"
             "<li><b>Sliver Polygon Area Threshold</b> — Controls how small a remnant polygon "
             "must be before it is discarded as a sliver. <i>Auto-detect</i> derives the threshold "
             "from the average nearest-neighbour spacing of building points.</li>"
@@ -136,7 +143,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             "<li><b>River Layer</b> (line) — River/waterway network used in the same "
             "boundary-snapping process as the road layer.</li>"
             "<li><b>Snapping Tolerance (metres)</b> — Maximum distance a proposed split line "
-            "is shifted to coincide with the nearest road or river segment (default 20 m).</li>"
+            "is shifted to coincide with the nearest road or river segment (default 15 m).</li>"
             "</ul>"
 
             "<h4>Process</h4>"
@@ -159,13 +166,14 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             "<ul>"
             "<li><b>Output EA Layer</b> (polygon, named <i>&lt;5-digit geocode&gt;_ea2026</i>) — "
             "All fields from the previous EA layer are preserved. Additional/updated fields:</li>"
-            "<ul>"
-            "<li><i>hhcount</i> / <i>hh_count</i> — Total household count for the EA.</li>"
-            "<li><i>bldg_count</i> — Number of building points within the EA.</li>"
+            "<li><i>hhcount</i> — Total household count for the EA.</li>"
+            "<li><i>bldgcount</i> — Number of building points within the EA.</li>"
             "<li><i>split_by</i> — Method used to split the EA (e.g. <i>road</i>, <i>river</i>, "
             "<i>kmeans</i>), or empty if unchanged/merged.</li>"
-            "<li><i>new_ea</i> — Flag indicating whether the EA is newly created.</li>"
+            "<li><i>new_ean</i> — Flag/code indicating whether the EA is newly created.</li>"
             "<li><i>correspondence_ea_geocode</i> — Geocode of the originating previous EA.</li>"
+            "<li><i>indicator</i> — Delineation status/indicator (e.g., <i>for_delineation</i>, <i>ea_reference</i>).</li>"
+            "<li><i>remarks</i> — Remarks describing split/merge operations.</li>"
             "</ul>"
             "<li><b>Delineated EAs Layer</b> (polygon, named <i>&lt;5-digit geocode&gt;_delineated_ea2026</i>) — "
             "Contains all sub-polygons generated from delineation, fully covering the split candidate EAs.</li>"
@@ -302,6 +310,15 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
 
         # Hidden fields for Barangay ID, EA ID, and Household Count are hardcoded in processAlgorithm
 
+        # Enable Household Thresholds option
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.ENABLE_THRESHOLDS,
+                "Enable Household Count Thresholds",
+                defaultValue=True,
+            )
+        )
+
         # Minimum household threshold
         self.addParameter(
             QgsProcessingParameterNumber(
@@ -321,6 +338,34 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 type=QgsProcessingParameterNumber.Integer,
                 defaultValue=300,
                 minValue=1,
+            )
+        )
+        # Split Strategy option for large EAs
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                self.SPLIT_STRATEGY,
+                "Splitting Rule for Large Areas (>300 Houses)",
+                options=[
+                    "Follow Roads & Rivers (Recommended)",
+                    "Strict Minimum 100 Houses",
+                    "Do Not Split",
+                ],
+                defaultValue=0,
+            )
+        )
+        # Split Type option (algorithm selection)
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                self.SPLIT_TYPE,
+                "Boundary Cut Method",
+                options=[
+                    "Auto (Roads First, then Houses)",
+                    "Roads & Rivers Only",
+                    "House Groups Only",
+                    "Straight Line Only",
+                    "Do Not Split",
+                ],
+                defaultValue=0,
             )
         )
 
@@ -637,6 +682,30 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
         return run_phase_8(
             self, parameters, context, feedback, multi_feedback, p1, p2, p3, p4, p7
         )
+
+    def postProcessAlgorithm(self, context, feedback):
+        """Automatically apply QML styles and automated labeling to generated output layers."""
+        try:
+            from .helpers.style import apply_qml_to_layer
+
+            styles_map = {
+                self.DELINEATED_OUTPUT: "ea_output.qml",
+                self.MERGED_OUTPUT: "ea_output.qml",
+                self.DELINEATION_CANDIDATE_OUTPUT: "delineation_candidates.qml",
+                self.MERGE_CANDIDATE_OUTPUT: "merge_candidates.qml",
+            }
+
+            for param_name, qml_filename in styles_map.items():
+                layer_id = self.parameterAsOutputLayer(context, param_name)
+                if layer_id:
+                    layer = context.getMapLayer(layer_id)
+                    if layer is not None:
+                        apply_qml_to_layer(layer, qml_filename)
+        except Exception as e:
+            if feedback:
+                feedback.pushInfo(f"Note: Could not auto-apply QML style: {str(e)}")
+
+        return super().postProcessAlgorithm(context, feedback)
 
     def createInstance(self):
         """Create a new instance of this algorithm."""

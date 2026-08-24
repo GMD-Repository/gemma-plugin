@@ -6,7 +6,36 @@ from qgis.core import (
     QgsGeometry,
     QgsWkbTypes,
     QgsSpatialIndex,
+    QgsPointXY,
 )
+
+
+def get_polylines_from_geom(geom: QgsGeometry) -> List[List[QgsPointXY]]:
+    """Helper to extract individual polylines (as list of QgsPointXY) from a QgsGeometry."""
+    lines = []
+    if geom.isEmpty():
+        return lines
+    flat_type = QgsWkbTypes.flatType(geom.wkbType())
+    if flat_type == QgsWkbTypes.LineString:
+        pts = geom.asPolyline()
+        if pts and len(pts) >= 2:
+            lines.append(pts)
+    elif flat_type in (QgsWkbTypes.MultiLineString, QgsWkbTypes.GeometryCollection) or geom.isMultipart():
+        try:
+            for part in geom.constParts():
+                part_pts = [QgsPointXY(pt.x(), pt.y()) for pt in part]
+                if len(part_pts) >= 2:
+                    lines.append(part_pts)
+        except Exception:
+            pts = geom.asPolyline()
+            if pts and len(pts) >= 2:
+                lines.append(pts)
+    else:
+        pts = geom.asPolyline()
+        if pts and len(pts) >= 2:
+            lines.append(pts)
+    return lines
+
 
 def get_polygons_from_geom(geom: QgsGeometry) -> List[QgsGeometry]:
     """Helper to extract individual contiguous polygon parts from a QgsGeometry."""
@@ -63,14 +92,18 @@ def get_polygons_from_geom(geom: QgsGeometry) -> List[QgsGeometry]:
 
 def allocate_gaps_to_parts(parts: List[Dict[str, Any]], parent_geom: QgsGeometry) -> List[Dict[str, Any]]:
     """Allocate gaps/holes in the union of parts to their nearest parent part."""
-    if not parts:
+    if not parts or not parent_geom or parent_geom.isEmpty():
         return parts
     
+    valid_geoms = [p['geom'] for p in parts if p.get('geom') and not p['geom'].isEmpty()]
+    if not valid_geoms:
+        return parts
+
     # Compute union of parts
-    parts_union = parts[0]['geom']
-    for p in parts[1:]:
-        parts_union = parts_union.combine(p['geom'])
-        
+    parts_union = QgsGeometry.unaryUnion(valid_geoms)
+    if parts_union is None or parts_union.isEmpty():
+        return parts
+
     # Get gaps
     gaps = parent_geom.difference(parts_union).buffer(0.0, 3)
     if gaps.isEmpty():
@@ -85,7 +118,10 @@ def allocate_gaps_to_parts(parts: List[Dict[str, Any]], parent_geom: QgsGeometry
         best_part = None
         max_boundary_len = -1.0
         for p in parts:
-            shared = gap_poly.intersection(p['geom'])
+            p_geom = p.get('geom')
+            if not p_geom or p_geom.isEmpty():
+                continue
+            shared = gap_poly.intersection(p_geom)
             if not shared.isEmpty():
                 boundary_len = shared.length()
                 if boundary_len > max_boundary_len:
@@ -95,11 +131,20 @@ def allocate_gaps_to_parts(parts: List[Dict[str, Any]], parent_geom: QgsGeometry
         # Fallback: assign to the nearest part by centroid distance
         if best_part is None:
             gap_centroid = gap_poly.centroid().asPoint()
-            best_part = min(parts, key=lambda p: gap_centroid.distance(p['geom'].centroid().asPoint()))
+            candidates = [p for p in parts if p.get('geom') and not p['geom'].isEmpty()]
+            if candidates:
+                best_part = min(
+                    candidates,
+                    key=lambda p: math.hypot(
+                        gap_centroid.x() - p['geom'].centroid().asPoint().x(),
+                        gap_centroid.y() - p['geom'].centroid().asPoint().y()
+                    )
+                )
             
-        # Combine gap polygon with the selected part
-        combined = best_part['geom'].combine(gap_poly).buffer(0.0, 3)
-        best_part['geom'] = combined
+        if best_part is not None:
+            # Combine gap polygon with the selected part
+            combined = best_part['geom'].combine(gap_poly).buffer(0.0, 3)
+            best_part['geom'] = combined
     return parts
 
 
@@ -218,3 +263,100 @@ def weighted_kmeans(
                 centroids.append(random.choice(points))
                 
     return labels, centroids
+
+
+def assign_buildings_to_parts(
+    bldgs: List[Dict[str, Any]],
+    part_geoms: List[QgsGeometry],
+    fback: Any = None,
+    parent_code: str = ""
+) -> List[List[Dict[str, Any]]]:
+    """
+    Assign building points exclusively to sub-polygon geometries.
+    
+    Guarantees:
+    1. Every building is assigned to EXACTLY ONE sub-polygon (zero HH lost, zero HH duplicated).
+    2. Primary: Strict geometric containment (poly.contains).
+    3. Tie-breaker (boundary points): Assigned to the polygon whose centroid is closest.
+    4. Orphan recovery (points in geometric gaps/buffers): Assigned to the nearest polygon by centroid distance.
+    """
+    n_parts = len(part_geoms)
+    if n_parts == 0:
+        return []
+    if n_parts == 1:
+        return [list(bldgs)]
+
+    # Pre-calculate centroids and bounding boxes for fast spatial matching
+    centroids = []
+    bboxes = []
+    for g in part_geoms:
+        if g and not g.isEmpty():
+            c = g.centroid().asPoint()
+            centroids.append(c)
+            bboxes.append(g.boundingBox())
+        else:
+            centroids.append(QgsPointXY(0.0, 0.0))
+            bboxes.append(None)
+
+    assignments = [None] * len(bldgs)
+
+    for b_idx, b in enumerate(bldgs):
+        pt = b['point']
+        pt_xy = pt if isinstance(pt, QgsPointXY) else QgsPointXY(pt[0], pt[1])
+        pt_geom = QgsGeometry.fromPointXY(pt_xy)
+
+        # 1. Check strict containment
+        contained_parts = []
+        for p_idx, poly in enumerate(part_geoms):
+            if poly and not poly.isEmpty():
+                if bboxes[p_idx] and not bboxes[p_idx].contains(pt_xy):
+                    continue
+                if poly.contains(pt_geom):
+                    contained_parts.append(p_idx)
+
+        if len(contained_parts) == 1:
+            assignments[b_idx] = contained_parts[0]
+        elif len(contained_parts) > 1:
+            # Boundary case (shared edge / point in multiple parts) -> nearest centroid
+            assignments[b_idx] = min(
+                contained_parts,
+                key=lambda pi: math.hypot(pt_xy.x() - centroids[pi].x(), pt_xy.y() - centroids[pi].y())
+            )
+        else:
+            # 2. Not strictly contained -> check intersection (touching boundary)
+            intersected_parts = []
+            for p_idx, poly in enumerate(part_geoms):
+                if poly and not poly.isEmpty():
+                    if bboxes[p_idx] and not bboxes[p_idx].contains(pt_xy):
+                        continue
+                    if poly.intersects(pt_geom):
+                        intersected_parts.append(p_idx)
+
+            if len(intersected_parts) == 1:
+                assignments[b_idx] = intersected_parts[0]
+            elif len(intersected_parts) > 1:
+                assignments[b_idx] = min(
+                    intersected_parts,
+                    key=lambda pi: math.hypot(pt_xy.x() - centroids[pi].x(), pt_xy.y() - centroids[pi].y())
+                )
+            else:
+                # 3. Orphan recovery (point outside due to buffer/sliver elimination/snapping)
+                # Assign to nearest part by centroid distance
+                assignments[b_idx] = min(
+                    range(n_parts),
+                    key=lambda pi: math.hypot(pt_xy.x() - centroids[pi].x(), pt_xy.y() - centroids[pi].y())
+                )
+
+    part_buildings: List[List[Dict[str, Any]]] = [[] for _ in range(n_parts)]
+    for b_idx, p_idx in enumerate(assignments):
+        part_buildings[p_idx].append(bldgs[b_idx])
+
+    total_assigned = sum(len(pb) for pb in part_buildings)
+    if total_assigned != len(bldgs) and fback:
+        fback.pushWarning(
+            f"[EA {parent_code}] Building assignment count mismatch: "
+            f"{len(bldgs)} input buildings vs {total_assigned} assigned."
+        )
+
+    return part_buildings
+

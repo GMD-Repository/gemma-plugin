@@ -23,8 +23,8 @@ class EADelineationPlugin:
       - unload    : remove toolbar button + menu item + deregister provider
     """
 
-    MENU_LABEL = "&Create Enumeration Areas"
-    ACTION_LABEL = "Create Enumeration Areas"
+    MENU_LABEL = "&EA Delineation and Merging"
+    ACTION_LABEL = "EA Delineation and Merging"
     ALGORITHM_ID = "eadelineation:createea"
 
     def __init__(self, iface):
@@ -71,10 +71,10 @@ class EADelineationPlugin:
             self.iface.mainWindow(),
         )
         self.action.setToolTip(
-            "Open the Create Enumeration Areas dialog"
+            "Open the EA Delineation and Merging dialog"
         )
         self.action.setStatusTip(
-            "Create Enumeration Areas -- splits/merges EAs to meet household thresholds"
+            "EA Delineation and Merging -- EA Preprocessing and EA splits/merges to meet household thresholds"
         )
         self.action.triggered.connect(self._open_dialog)
 

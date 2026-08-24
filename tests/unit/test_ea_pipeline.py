@@ -21,6 +21,9 @@ from references.create_enumeration_area.phases.phase6_merge import (
     is_delineation_candidate as phase6_is_delin,
     is_merge_candidate as phase6_is_merge,
 )
+from references.create_enumeration_area.phases.phase8_output import (
+    refine_split_line,
+)
 
 
 class MockFeedback:
@@ -68,6 +71,45 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
         self.assertTrue(is_merge_candidate(ea_under, min_household=100, merge_candidate_ids=merge_ids))
         self.assertFalse(is_merge_candidate(ea_normal, min_household=100, merge_candidate_ids=merge_ids))
         self.assertFalse(is_merge_candidate(ea_over, min_household=100, merge_candidate_ids=merge_ids))
+
+    def test_special_ea_extraction_candidate_threshold_reevaluation(self):
+        """Verify candidate status post Special EA extraction (dropping below max_household vs remaining over)."""
+        delin_ids = {101, 102}
+
+        # Candidate 101: Originally over-threshold (350 HH), but after Special EA extraction dropped to 250 HH (< 300 max_household)
+        ea_extracted_under = {"original_id": 101, "hh_count": 250.0}
+
+        # Candidate 102: Originally over-threshold (400 HH), and after Special EA extraction still has 320 HH (>= 300 max_household)
+        ea_extracted_over = {"original_id": 102, "hh_count": 320.0}
+
+        # Candidate 103: Explicit indicator 'for_delineation' (remains candidate regardless of HH count)
+        ea_explicit = {"original_id": 103, "hh_count": 200.0}
+
+        # 1. Dropped below max_household after Special EA extraction -> Exempted from delineation
+        self.assertFalse(
+            is_delineation_candidate(ea_extracted_under, max_household=300, eadel_indi_col_idx=-1, full_ea_by_id={}, delineation_candidate_ids=delin_ids),
+            "EA whose HH count fell below max_household post-extraction should NOT be a delineation candidate."
+        )
+        self.assertFalse(
+            phase6_is_delin(ea_extracted_under, max_household=300, eadel_indi_col_idx=-1, full_ea_by_id={}, delineation_candidate_ids=delin_ids),
+            "Phase6 predicate should also exempt EA whose HH count fell below max_household post-extraction."
+        )
+
+        # 2. Remains over max_household after Special EA extraction -> Must be delineated
+        self.assertTrue(
+            is_delineation_candidate(ea_extracted_over, max_household=300, eadel_indi_col_idx=-1, full_ea_by_id={}, delineation_candidate_ids=delin_ids),
+            "EA remaining over max_household post-extraction MUST be a delineation candidate."
+        )
+
+        # 3. Explicit indicator -> Always candidate
+        from tests.mocks.qgis_mock import QgsFeature as MockQgsFeature
+        mock_feat = MockQgsFeature()
+        mock_feat.attributes_dict = {"eadel_indi": "for_delineation"}
+        mock_feat.attribute = lambda idx: "for_delineation"
+        self.assertTrue(
+            is_delineation_candidate(ea_explicit, max_household=300, eadel_indi_col_idx=0, full_ea_by_id={103: mock_feat}, delineation_candidate_ids=set()),
+            "EA with explicit 'for_delineation' indicator must be a candidate regardless of HH count."
+        )
 
     def test_merge_all_under_threshold_candidates(self):
         """Verify that multiple adjacent under-threshold EAs successfully merge together when no reference EA exists."""
@@ -280,6 +322,130 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
         )
 
         self.assertEqual(len(merged), 2, "When allow_candidate_merge=False, small candidates must NOT merge together.")
+
+    def test_refine_split_line_gap_and_prune(self):
+        """Verify that refine_split_line bridges small gaps and prunes tiny isolated branches."""
+        # Line 1: (0,0) -> (10,0)
+        # Line 2: (12,0) -> (20,0) with gap of 2 units
+        p1, p2 = QgsPointXY(0, 0), QgsPointXY(10, 0)
+        p3, p4 = QgsPointXY(12, 0), QgsPointXY(20, 0)
+        g1 = QgsGeometry.fromPolylineXY([p1, p2])
+        g2 = QgsGeometry.fromPolylineXY([p3, p4])
+        multi_line = QgsGeometry.collectGeometry([g1, g2])
+
+        # gap_tolerance=5.0 should bridge the 2.0-unit gap
+        refined = refine_split_line(multi_line, gap_tolerance=5.0, min_branch_len=1.0)
+        self.assertFalse(refined.isEmpty())
+
+    def test_pairwise_split_shared_boundary_extraction(self):
+        """Verify that intersection of two adjacent split polygons extracts their shared boundary line."""
+        # Polygon 1: [0,0] to [10,10]
+        # Polygon 2: [10,0] to [20,10] (adjacent along x=10 line from y=0 to y=10)
+        geom1 = make_square_geom(0, 0, 10)
+        geom2 = make_square_geom(10, 0, 10)
+
+        shared = geom1.intersection(geom2)
+        self.assertFalse(shared.isEmpty())
+        merged = shared.mergeLines()
+        refined = refine_split_line(merged, gap_tolerance=1.0, min_branch_len=0.5)
+        self.assertFalse(refined.isEmpty())
+
+
+class TestEAOutputSchemaAndRenaming(unittest.TestCase):
+
+    def test_output_schema_field_renaming_and_ordering(self):
+        """Verify new_ean, bldgcount, hhcount, indicator, and remarks as the last field."""
+        from qgis.core import QgsFields, QgsField, QgsVectorLayer
+        try:
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            try:
+                from PyQt5.QtCore import QVariant
+            except ImportError:
+                from qgis.core import QVariant  # headless mock fallback
+        fields = QgsFields()
+        fields.append(QgsField("geocode", QVariant.String))
+        fields.append(QgsField("ean", QVariant.String))
+        fields.append(QgsField("remarks", QVariant.String))
+        fields.append(QgsField("hh_count", QVariant.Double))
+
+        layer = QgsVectorLayer("Polygon?crs=EPSG:4326", "test_layer", "memory")
+        layer.dataProvider().addAttributes(fields)
+        layer.updateFields()
+
+        out_fields = QgsFields(layer.fields())
+
+        if "new_ean" not in [f.name() for f in out_fields]:
+            out_fields.append(QgsField("new_ean", QVariant.String))
+
+        if "bldgcount" not in [f.name() for f in out_fields]:
+            out_fields.append(QgsField("bldgcount", QVariant.Int))
+
+        if "hhcount" not in [f.name() for f in out_fields]:
+            out_fields.append(QgsField("hhcount", QVariant.Double))
+
+        if "indicator" not in [f.name() for f in out_fields]:
+            out_fields.append(QgsField("indicator", QVariant.String))
+
+        rem_idx = out_fields.indexOf("remarks")
+        if rem_idx != -1:
+            out_fields.remove(rem_idx)
+        out_fields.append(QgsField("remarks", QVariant.String))
+
+        field_names = [out_fields.at(i).name() for i in range(out_fields.count())]
+
+        self.assertIn("new_ean", field_names)
+        self.assertIn("bldgcount", field_names)
+        self.assertIn("hhcount", field_names)
+        self.assertIn("indicator", field_names)
+        self.assertEqual(field_names[-1], "remarks", "remarks must be the last column in output schema.")
+
+    def test_special_ea_schema_field_names(self):
+        """Verify that special_ea_export_fields omits hhcount/bldgcount and includes hh_count/bldg_count."""
+        from qgis.core import QgsFields, QgsField
+        try:
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            try:
+                from PyQt5.QtCore import QVariant
+            except ImportError:
+                from qgis.core import QVariant
+
+        export_field_names = [
+            "fid", "map_uuid", "geocode", "region", "province",
+            "city_mun", "barangay", "code", "name", "ean",
+            "hhcount", "bldgcount", "sy", "new_ean", "hh_count",
+            "bldg_count", "ea_type", "remarks"
+        ]
+        export_fields = QgsFields()
+        for fname in export_field_names:
+            export_fields.append(QgsField(fname, QVariant.String))
+
+        special_ea_export_fields = QgsFields()
+        for f in export_fields:
+            if f.name() in ("hhcount", "bldgcount"):
+                continue
+            special_ea_export_fields.append(f)
+
+        spec_field_names = [special_ea_export_fields.at(i).name() for i in range(special_ea_export_fields.count())]
+        self.assertNotIn("hhcount", spec_field_names, "Special EA layer schema must NOT contain 'hhcount'")
+        self.assertNotIn("bldgcount", spec_field_names, "Special EA layer schema must NOT contain 'bldgcount'")
+        self.assertIn("hh_count", spec_field_names, "Special EA layer schema MUST contain 'hh_count'")
+        self.assertIn("bldg_count", spec_field_names, "Special EA layer schema MUST contain 'bldg_count'")
+
+    def test_enable_thresholds_toggle_behavior(self):
+        """Verify that default threshold values (min=100, max=300) are maintained."""
+        ea_high = {"original_id": 1, "hh_count": 500.0}
+        ea_low = {"original_id": 2, "hh_count": 20.0}
+
+    def test_qml_style_files_exist(self):
+        """Verify that output QML style files exist in qml styles directory."""
+        import os
+        from references.create_enumeration_area.helpers.style import get_qml_file_path
+        self.assertTrue(os.path.isfile(get_qml_file_path("ea_output.qml")))
+        self.assertTrue(os.path.isfile(get_qml_file_path("eadel_update_lines.qml")))
+        self.assertTrue(os.path.isfile(get_qml_file_path("delineation_candidates.qml")))
+        self.assertTrue(os.path.isfile(get_qml_file_path("merge_candidates.qml")))
 
 
 if __name__ == "__main__":

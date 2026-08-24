@@ -50,22 +50,25 @@ def run_phase_1(
     merge_indi_col_idx = -1
     for i in range(ea_fields.count()):
         name_lower = ea_fields.at(i).name().lower()
-        if name_lower == "eadel_indi":
+        if name_lower in ["eadel_indi", "indicator"]:
             eadel_indi_col_idx = i
         elif name_lower == "merge_indi":
             merge_indi_col_idx = i
 
-    ea_id_field = "ean"
-    for i in range(ea_fields.count()):
-        name_lower = ea_fields.at(i).name().lower()
-        if name_lower in ["ean", "ea_number", "ea_code", "id"]:
-            ea_id_field = ea_fields.at(i).name()
+    ea_id_field = None
+    field_names_lower = [ea_fields.at(i).name().lower() for i in range(ea_fields.count())]
+    for target in ["ean", "name", "geocode"]:
+        if target in field_names_lower:
+            idx = field_names_lower.index(target)
+            ea_id_field = ea_fields.at(idx).name()
             break
+    if not ea_id_field:
+        ea_id_field = "ean"
 
-    household_field = "hhcount"
+    household_field = "new_hhcount"
     for i in range(ea_fields.count()):
         name_lower = ea_fields.at(i).name().lower()
-        if name_lower in ["hhcount", "hh_count", "household", "household_count"]:
+        if name_lower in ["new_hhcount", "hhcount", "hh_count", "household", "household_count"]:
             household_field = ea_fields.at(i).name()
             break
 
@@ -531,6 +534,9 @@ def run_phase_1(
     feedback.pushInfo(f"Input Previous EA Count: {previous_ea_source.featureCount()}")
     feedback.pushInfo(f"Input Building Count: {building_source.featureCount()}")
 
+    split_strategy = alg.parameterAsEnum(parameters, getattr(alg, 'SPLIT_STRATEGY', 'SPLIT_STRATEGY'), context) if hasattr(alg, 'SPLIT_STRATEGY') else 0
+    split_type = alg.parameterAsEnum(parameters, getattr(alg, 'SPLIT_TYPE', 'SPLIT_TYPE'), context) if hasattr(alg, 'SPLIT_TYPE') else 0
+
     return {
         "barangay_source": barangay_source,
         "building_source": building_source,
@@ -542,6 +548,8 @@ def run_phase_1(
         "snap_tolerance_m": snap_tolerance_m,
         "preview_only": preview_only,
         "allow_candidate_merge": allow_candidate_merge,
+        "split_strategy": split_strategy,
+        "split_type": split_type,
         "eadel_indi_col_idx": eadel_indi_col_idx,
         "merge_indi_col_idx": merge_indi_col_idx,
         "ea_id_field": ea_id_field,
