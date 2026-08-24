@@ -48,7 +48,8 @@ from libqfieldsync.utils.file_utils import fileparts
 from libqfieldsync.utils.qgis import get_project_title
 from qgis.core import Qgis, QgsApplication, QgsProject, QgsLayerTreeGroup, QgsLayerTreeLayer, QgsVectorLayer, QgsRasterLayer, QgsVectorFileWriter, QgsTask, QgsTaskManager, QgsSnappingConfig, QgsTolerance, QgsGeometry, QgsFeatureRequest, QgsCoordinateTransform, QgsMapLayer
 from qgis.PyQt.QtCore import QDir, Qt, QUrl, QTimer, QEvent
-from qgis.PyQt.QtGui import QIcon, QBrush
+from qgis.PyQt.QtGui import QIcon, QBrush, QPixmap, QImage, QPainter
+from qgis.PyQt.QtSvg import QSvgRenderer
 from qgis.PyQt.QtWidgets import QApplication, QDialog, QDialogButtonBox, QMessageBox, QLabel, QListWidget, QListWidgetItem, QWidget, QHBoxLayout, QPushButton, QComboBox, QGridLayout, QGroupBox, QSizePolicy, QScrollArea, QFrame, QVBoxLayout, QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView, QTreeWidget, QTreeWidgetItem, QTabWidget, QLineEdit, QInputDialog, QFileDialog, QToolButton, QAbstractItemView
 from qgis.PyQt.uic import loadUiType
 from .checker_feedback_table import CheckerFeedbackTable
@@ -980,6 +981,26 @@ class PackageDialog(QDialog, DialogUi):
         """Constructor."""
         super(PackageDialog, self).__init__(parent=parent)
         self.setupUi(self)
+
+        try:
+            svg_path = os.path.join(os.path.dirname(__file__), "..", "resources", "qfield.svg")
+            renderer = QSvgRenderer(svg_path)
+            if renderer.isValid():
+                dpr = getattr(self, 'devicePixelRatioF', self.devicePixelRatio)()
+                sz = renderer.defaultSize()
+                h = 100
+                w = int(h * (sz.width() / max(sz.height(), 1)))
+                pixmap = QPixmap(int(w * dpr), int(h * dpr))
+                pixmap.fill(Qt.transparent)
+                painter = QPainter(pixmap)
+                painter.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+                renderer.render(painter)
+                painter.end()
+                pixmap.setDevicePixelRatio(dpr)
+                self.photo.setPixmap(pixmap)
+                self.photo.setFixedHeight(h)
+        except Exception:
+            pass  # fall back to the .ui-provided pixmap
         
         # Define layer roles
         self._ea_layer_roles = [
