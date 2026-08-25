@@ -1704,9 +1704,17 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                                     )
                                     split_parts = enforce_min_household(split_parts, fback, ea_geom=ea['geom'])
                                     split_parts = enforce_bldgpv_threshold(split_parts, _parent_hhdivthres, fback, ea_geom=ea['geom'])
-                                new_eas.extend(split_parts)
-                                changed = True
-                                fback.pushInfo(f"[Barangay {bar_code}] Split over-populated EA (code={ea['original_code']}, pop={ea['hh_count']}) into {len(split_parts)} sub-polygons.")
+
+                                # UNBREAKABLE SAFETY GATE: Guarantee no delineated sub-polygon is below min_household
+                                if any(p['hh_count'] < min_household for p in split_parts) or len(split_parts) < 2:
+                                    fback.pushWarning(
+                                        f"[Barangay {bar_code}] [EA {ea['original_code']}] Delineation rejected: "
+                                        f"one or more sub-polygons fell below min_household ({min_household} HH). Keeping EA whole."
+                                    )
+                                    new_eas.append(ea)
+                                else:
+                                    new_eas.extend(split_parts)
+                                    changed = True
                             else:
                                 new_eas.append(ea)
                     else:
