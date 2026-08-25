@@ -22,6 +22,7 @@ from .gmd_scripts.scan_geometry_errors import ScanGeometryErrorsAlgorithm
 from .gmd_scripts.repair_geometry_errors import RepairGeometryErrorsAlgorithm
 from .gmd_scripts.clip_project_layers import ClipProjectLayersAlgorithm
 from .gmd_scripts.apply_qml_styles import ApplyQmlStylesAlgorithm
+from .gmd_scripts.cbms_mv.mv_2027_hp_4a_map_uuid__duplicate import mv_2027_hp_4a_map_uuid__duplicate
 from .references.create_enumeration_area.algorithm import CreateEAAlgorithm
 #from .gmd_scripts.gsheet_csv import
 
@@ -56,6 +57,7 @@ class GmdPipelineProvider(QgsProcessingProvider):
         self.addAlgorithm(RepairGeometryErrorsAlgorithm())
         self.addAlgorithm(ClipProjectLayersAlgorithm())
         self.addAlgorithm(ApplyQmlStylesAlgorithm())
+        self.addAlgorithm(mv_2027_hp_4a_map_uuid__duplicate())
 
     def id(self):
         return 'gmd_pipeline'

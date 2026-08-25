@@ -501,6 +501,33 @@ class QgsProcessingException(Exception):
     pass
 
 
+class QgsProcessingParameterDefinition:
+    File = 0
+    Folder = 1
+    TypeVectorPolygon = 0
+    TypeVectorPoint = 1
+    TypeVectorAnyGeometry = 2
+    Any = 0
+
+    def __init__(self, name="", description="", *args, **kwargs):
+        self._name = name
+        self._description = description
+
+    def name(self):
+        return self._name
+
+    def description(self):
+        return self._description
+
+
+class QgsProcessingParameterFile(QgsProcessingParameterDefinition): pass
+class QgsProcessingParameterFeatureSink(QgsProcessingParameterDefinition): pass
+class QgsProcessingParameterFeatureSource(QgsProcessingParameterDefinition): pass
+class QgsProcessingParameterField(QgsProcessingParameterDefinition): pass
+class QgsProcessingParameterString(QgsProcessingParameterDefinition): pass
+class QgsProcessingParameterBoolean(QgsProcessingParameterDefinition): pass
+
+
 class QgsSpatialIndex:
     def __init__(self, *args, **kwargs):
         self._features = {}
@@ -518,12 +545,25 @@ class QgsSpatialIndex:
 
 
 class QgsProcessingAlgorithm:
+    def __init__(self):
+        self._parameters = []
+
     @classmethod
     def flags(cls): return 0
     @classmethod
     def group(cls): return "GMD Pipeline"
     @classmethod
     def groupId(cls): return "gmd_pipeline"
+
+    def addParameter(self, param, group=None):
+        self._parameters.append(param)
+        return True
+
+    def parameterDefinitions(self):
+        return self._parameters
+
+    def parameterAsFile(self, parameters, name, context):
+        return str(parameters.get(name, ""))
 
     def parameterAsLayerList(self, parameters, name, context):
         val = parameters.get(name, [])
@@ -851,6 +891,13 @@ def setup_qgis_mock_if_needed():
     core_mod.QgsProcessingException = QgsProcessingException
     core_mod.QgsProcessingAlgorithm = QgsProcessingAlgorithm
     core_mod.QgsProcessingLayerPostProcessorInterface = MockGenericClass
+    core_mod.QgsProcessingParameterDefinition = QgsProcessingParameterDefinition
+    core_mod.QgsProcessingParameterFile = QgsProcessingParameterFile
+    core_mod.QgsProcessingParameterFeatureSink = QgsProcessingParameterFeatureSink
+    core_mod.QgsProcessingParameterFeatureSource = QgsProcessingParameterFeatureSource
+    core_mod.QgsProcessingParameterField = QgsProcessingParameterField
+    core_mod.QgsProcessingParameterString = QgsProcessingParameterString
+    core_mod.QgsProcessingParameterBoolean = QgsProcessingParameterBoolean
     core_mod.QgsProject = QgsProject
     core_mod.QgsApplication = QgsApplication
     core_mod.QgsWkbTypes = QgsWkbTypes
