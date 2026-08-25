@@ -48,11 +48,13 @@ def is_delineation_candidate(ea_item, max_household, eadel_indi_col_idx=-1, full
 
 
 def is_merge_candidate(ea_item, min_household, merge_candidate_ids=None):
-    if ea_item.get('from_split', False) or ea_item.get('from_merge', False):
+    if ea_item.get('from_split', False):
         return False
+    if ea_item.get('from_merge', False):
+        return ea_item.get('hh_count', 0.0) <= min_household
     orig_id = ea_item.get('original_id')
     merge_set = merge_candidate_ids or set()
-    return (orig_id in merge_set) or (ea_item['hh_count'] <= min_household)
+    return (orig_id in merge_set) or (ea_item.get('hh_count', 0.0) <= min_household)
 
 
 def process_barangay_merge(
@@ -72,7 +74,7 @@ def process_barangay_merge(
     merge_candidate_ids = merge_candidate_ids or set()
 
     iteration = 0
-    max_iterations = 5
+    max_iterations = 10
     changed = True
 
     while changed and iteration < max_iterations:

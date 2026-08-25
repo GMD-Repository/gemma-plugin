@@ -337,6 +337,69 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
         self.assertEqual(result[0]['hh_count'], 80.0, "Combined household count should be 50 + 30 = 80 HH.")
         self.assertTrue(result[0]['from_merge'], "Resulting merged EA must be marked with from_merge=True.")
 
+    def test_multi_iteration_merge_up_to_10_excluding_delin(self):
+        """Verify multi-iteration chain merging runs up to 10 iterations while strictly excluding delineation candidates."""
+        feedback = MockFeedback()
+
+        # Chain of 6 contiguous EAs of 15 HH each (total 90 HH) + 1 adjacent delineation candidate (350 HH)
+        eas = []
+        for i in range(6):
+            eas.append({
+                'geom': make_square_geom(i * 10, 0, 10),
+                'buildings': [],
+                'hh_count': 15.0,
+                'original_hhcount': 15.0,
+                'bldg_count': 1,
+                'attributes': [i + 1, f"EA {i+1:03d}"],
+                'original_id': 601 + i,
+                'original_code': f"0173700{i+1:03d}",
+                'is_new': False,
+                'split_by': 'none',
+                'from_merge': False,
+                'from_split': False,
+                'is_special_ea': False,
+                'parent_barangay': "01737"
+            })
+
+        # Delineation candidate adjacent to the last EA
+        ea_delin = {
+            'geom': make_square_geom(60, 0, 10),
+            'buildings': [],
+            'hh_count': 350.0,
+            'original_hhcount': 350.0,
+            'bldg_count': 10,
+            'attributes': [7, "EA 007 (Delin)"],
+            'original_id': 607,
+            'original_code': "01737007",
+            'is_new': False,
+            'split_by': 'none',
+            'from_merge': False,
+            'from_split': True,  # Delineated candidate
+            'is_special_ea': False,
+            'parent_barangay': "01737"
+        }
+        eas.append(ea_delin)
+
+        merge_ids = {601, 602, 603, 604, 605, 606}
+        delin_ids = {607}
+
+        result = process_barangay_merge(
+            bar_code="01737",
+            bar_eas=eas,
+            fback=feedback,
+            min_household=100.0,
+            max_household=300.0,
+            merge_candidate_ids=merge_ids,
+            delineation_candidate_ids=delin_ids
+        )
+
+        # 6 small EAs (90 HH total) should merge into 1 EA (90 HH), leaving the delineation candidate separate (total 2 EAs)
+        self.assertEqual(len(result), 2, "6 small EAs should merge into 1, leaving delineation candidate separate.")
+        merged_item = [item for item in result if item.get('from_merge', False)][0]
+        self.assertEqual(merged_item['hh_count'], 90.0, "Merged chain should have 90 HH.")
+        delin_item = [item for item in result if item.get('original_id') == 607][0]
+        self.assertFalse(delin_item.get('from_merge', False), "Delineation candidate must NOT be merged.")
+
     def test_prevent_merge_exceeding_max_household(self):
         """Verify that EAs are prevented from merging if their combined count exceeds max_household (300 HH)."""
         feedback = MockFeedback()
