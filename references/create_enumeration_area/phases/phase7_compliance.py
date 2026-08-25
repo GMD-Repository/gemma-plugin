@@ -74,7 +74,7 @@ def run_phase_7(
             ea = eas[i]
             if ea.get("original_id") not in delineation_candidate_ids:
                 continue
-            if ea.get("from_merge", False):
+            if ea.get("from_split", False) or ea.get("from_merge", False):
                 continue
             parts = force_geometric_split(ea, max_household, feedback)
             if len(parts) > 1:

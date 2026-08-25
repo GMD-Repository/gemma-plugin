@@ -1692,19 +1692,6 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                         else:
                             split_parts = split_ea(ea, max_household, fback)
                             if len(split_parts) > 1:
-                                _ea_id = ea.get('original_id')
-                                _ea_ean = str(ea.get('original_code', '')).strip()
-                                _max_part_hh = max(p['hh_count'] for p in split_parts) if split_parts else 0
-                                if _max_part_hh > max_household:
-                                    _parent_hhdivthres = max_household / ea['hh_count'] if ea['hh_count'] > 0 else 1.0
-                                    fback.pushWarning(
-                                        f"[Barangay {bar_code}] [EA {ea['original_code']}] "
-                                        f"Part exceeds max_household ({_max_part_hh} > {max_household}). "
-                                        f"Enforcing {min_household + 1}–{max_household - 1} HH range on parts."
-                                    )
-                                    split_parts = enforce_min_household(split_parts, fback, ea_geom=ea['geom'])
-                                    split_parts = enforce_bldgpv_threshold(split_parts, _parent_hhdivthres, fback, ea_geom=ea['geom'])
-
                                 # UNBREAKABLE SAFETY GATE: Guarantee no delineated sub-polygon is below min_household
                                 if any(p['hh_count'] < min_household for p in split_parts) or len(split_parts) < 2:
                                     fback.pushWarning(
