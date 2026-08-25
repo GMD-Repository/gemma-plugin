@@ -48,7 +48,7 @@ The **EA Preprocessing** tab prepares starting EA boundaries before running deli
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | **Barangay Layer** | Vector (Polygon) | Administrative barangay polygon boundaries. Must contain a `geocode` field used to assign parent barangay codes. Required. |
-| **EA Layer** | Vector (Polygon) | Starting EA polygon boundaries to be pre-processed. Must contain a `geocode` field. Attributes are inherited by output. Required. |
+| **EA Layer** | Vector (Polygon) | Starting EA polygon boundaries to be pre-processed. Optional; if left unselected, a new EA layer is automatically created based on the Barangay layer input. |
 | **Gap Area Tolerance (m²)** | Double | Minimum area threshold (default: `1.0 m²`) for a gap to be processed; smaller gaps are treated as geometry precision slivers and skipped. |
 | **Clip EA to Barangay Boundary** | Boolean | When enabled (default: `True`), clips any portion of an EA extending outside its parent Barangay boundary. |
 | **Detect Uncovered Barangay Areas** | Boolean | When enabled (default: `True`), identifies uncovered gaps within each Barangay after clipping. |

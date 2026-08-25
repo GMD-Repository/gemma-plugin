@@ -388,7 +388,7 @@ class EALauncherDialog(QDialog):
         inputs_layout.addWidget(self.pre_ea_bgy_status_lbl)
 
         # EA Layer
-        inputs_layout.addWidget(QLabel("EA Layer (Polygon)*"))
+        inputs_layout.addWidget(QLabel("EA Layer (Polygon, Optional)"))
         self.pre_ea_ea_combo = QgsMapLayerComboBox()
         self.pre_ea_ea_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
         self.pre_ea_ea_combo.setAllowEmptyLayer(True)
@@ -694,13 +694,18 @@ class EALauncherDialog(QDialog):
             )
 
         if not ea_layer:
-            self.pre_ea_ea_status_lbl.setText("EA Layer is required.")
+            if bgy_layer:
+                self.pre_ea_ea_status_lbl.setText(
+                    "No EA layer selected. A new EA layer will be created from the Barangay layer."
+                )
+            else:
+                self.pre_ea_ea_status_lbl.setText("No layer selected.")
         else:
             self.pre_ea_ea_status_lbl.setText(
                 f"Active: {ea_layer.featureCount()} EA polygons ({ea_layer.crs().authid()})."
             )
 
-        can_run = bool(bgy_layer and ea_layer)
+        can_run = bool(bgy_layer)
         self.pre_ea_run_btn.setEnabled(can_run)
 
     def _pre_ea_cancel(self):
@@ -762,7 +767,8 @@ class EALauncherDialog(QDialog):
 
     def _pre_ea_run(self):
         """Validate inputs and launch the Pre-EA Processing workflow."""
-        from qgis.core import QgsApplication
+        from qgis.core import QgsApplication, QgsProject
+        from .pre_ea_processor import PreEAProcessor
 
         bgy_layer = self.pre_ea_bgy_combo.currentLayer()
         ea_layer = self.pre_ea_ea_combo.currentLayer()
@@ -770,11 +776,6 @@ class EALauncherDialog(QDialog):
         if not bgy_layer:
             self._pre_ea_append_log(
                 "<span style='color:#cf222e; font-weight:bold;'>[ERROR] Barangay Layer is required.</span>"
-            )
-            return
-        if not ea_layer:
-            self._pre_ea_append_log(
-                "<span style='color:#cf222e; font-weight:bold;'>[ERROR] EA Layer is required.</span>"
             )
             return
 
