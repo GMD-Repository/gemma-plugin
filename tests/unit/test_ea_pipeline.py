@@ -433,6 +433,28 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
         self.assertEqual(len(result), 1, "Forced split must be rejected when a sub-polygon falls below 100 HH.")
         self.assertEqual(result[0]['hh_count'], 320.0, "Original EA must be kept whole with 320 HH.")
 
+    def test_delineation_dissolves_zero_and_low_hh_sub_polygons_into_sister_parts(self):
+        """Verify enforce_min_household dissolves 0 HH and low HH sub-polygons into sister parts of the same parent EA."""
+        from references.create_enumeration_area.phases.phase5_delineate import enforce_min_household_parts
+
+        feedback = MockFeedback()
+        parent_geom = make_square_geom(0, 0, 50)
+
+        # 5 sister sub-polygons from splitting an EA: 2 with 0 HH, 1 with 1 HH, 2 with 200 HH & 150 HH
+        parts = [
+            {'geom': make_square_geom(0, 0, 10), 'buildings': [], 'hh_count': 200.0, 'original_id': 801, 'from_split': True},
+            {'geom': make_square_geom(10, 0, 10), 'buildings': [], 'hh_count': 0.0, 'original_id': 801, 'from_split': True},
+            {'geom': make_square_geom(20, 0, 10), 'buildings': [], 'hh_count': 1.0, 'original_id': 801, 'from_split': True},
+            {'geom': make_square_geom(30, 0, 10), 'buildings': [], 'hh_count': 0.0, 'original_id': 801, 'from_split': True},
+            {'geom': make_square_geom(40, 0, 10), 'buildings': [], 'hh_count': 150.0, 'original_id': 801, 'from_split': True},
+        ]
+
+        result = enforce_min_household_parts(parts, feedback, min_household=100.0, max_household=300.0, ea_geom=parent_geom)
+
+        # All 0 HH and 1 HH sub-polygons must be dissolved into sister parts
+        for part in result:
+            self.assertGreaterEqual(part['hh_count'], 100.0, "Every resulting sister sub-polygon must be >= 100 HH.")
+
     def test_prevent_merge_exceeding_max_household(self):
         """Verify that EAs are prevented from merging if their combined count exceeds max_household (300 HH)."""
         feedback = MockFeedback()

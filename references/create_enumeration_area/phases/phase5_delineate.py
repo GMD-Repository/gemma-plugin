@@ -564,8 +564,6 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             for j, nb in enumerate(parts):
                 if j == up_idx:
                     continue
-                if is_delineation_candidate(nb):
-                    continue
                 if up['geom'].intersects(nb['geom']) or up['geom'].touches(nb['geom']):
                     inter = up['geom'].intersection(nb['geom'])
                     overlap = inter.length() if not inter.isEmpty() else 0.0
@@ -580,8 +578,6 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                 best_idx_over = -1
                 for j, nb in enumerate(parts):
                     if j == up_idx:
-                        continue
-                    if is_delineation_candidate(nb):
                         continue
                     dist = up_centroid.distance(nb['geom'].centroid().asPoint())
                     combined = up['hh_count'] + nb['hh_count']
@@ -1410,8 +1406,11 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             p['bldgpoints_value'] = p['hh_count'] / p['bldg_count'] if p['bldg_count'] > 0 else 0.0
             p['split_by'] = split_by
 
-        # Reject the split if any resulting part falls below the min_household threshold
-        if any(p['hh_count'] < min_household for p in final_parts):
+        # Re-enforce min_household to dissolve any 0 HH or under-threshold sister sub-polygons
+        final_parts = enforce_min_household(final_parts, fback, ea_geom=parent_geom)
+
+        # Reject the split if resulting parts < 2 or any part falls below min_household threshold
+        if len(final_parts) < 2 or any(p['hh_count'] < min_household for p in final_parts):
             under_parts = [p for p in final_parts if p['hh_count'] < min_household]
             fback.pushWarning(
                 f"[EA {ea_item['original_code']}] Hybrid split rejected: "
@@ -1560,8 +1559,11 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
 
         final_parts = allocate_gaps_to_parts(final_parts, parent_geom)
 
-        # Reject the split if any resulting part falls below the min_household threshold
-        if any(p['hh_count'] < min_household for p in final_parts):
+        # Re-enforce min_household to dissolve any 0 HH or under-threshold sister sub-polygons
+        final_parts = enforce_min_household(final_parts, fback, ea_geom=parent_geom)
+
+        # Reject the split if resulting parts < 2 or any part falls below min_household threshold
+        if len(final_parts) < 2 or any(p['hh_count'] < min_household for p in final_parts):
             under_parts = [p for p in final_parts if p['hh_count'] < min_household]
             fback.pushWarning(
                 f"[EA {ea_item['original_code']}] Building-cluster split rejected: "
