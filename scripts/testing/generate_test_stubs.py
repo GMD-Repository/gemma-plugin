@@ -10,7 +10,9 @@ Usage:
 
 import sys
 import os
+import re
 import argparse
+import unittest
 from pathlib import Path
 
 # Set up project root in python path
@@ -89,7 +91,79 @@ def to_class_name(stem):
     return "".join(p.capitalize() for p in parts if p)
 
 
-def run_generator(check_only=False):
+def sync_skill_docs():
+    """Update SKILL.md test counts and architecture tree automatically."""
+    skill_file = PROJECT_ROOT / ".agents" / "skills" / "qgis-test-pipeline" / "SKILL.md"
+    if not skill_file.exists():
+        return
+
+    unit_dir = PROJECT_ROOT / "tests" / "unit"
+    loader = unittest.TestLoader()
+
+    module_counts = {}
+    for py_file in sorted(unit_dir.glob("test_*.py")):
+        mod_name = py_file.stem
+        try:
+            suite = loader.loadTestsFromName(f"tests.unit.{mod_name}")
+            module_counts[mod_name] = suite.countTestCases()
+        except Exception:
+            module_counts[mod_name] = 1
+
+    total_tests = sum(module_counts.values())
+    total_modules = len(module_counts)
+
+    content = skill_file.read_text(encoding="utf-8")
+
+    # Update totals line
+    totals_pattern = r"\*\*Current Suite Totals\*\*:\s*\*\*\d+\s*tests\*\*\s*across\s*\*\*\d+\s*test modules\*\*"
+    new_totals = f"**Current Suite Totals**: **{total_tests} tests** across **{total_modules} test modules**"
+    content = re.sub(totals_pattern, new_totals, content)
+
+    # Update test breakdown in tree
+    tree_lines = []
+    descriptions = {
+        "test_apply_qml_styles": "QML style application",
+        "test_auto_arrange": "Auto-arrange layer ordering",
+        "test_check_and_update_dialog": "Check & update dialog",
+        "test_clip_project_layers": "Layer clipping",
+        "test_create_enumeration_area": "EA creation",
+        "test_ea_merge_processor": "EA merge processor",
+        "test_ea_pipeline": "Full EA delineation pipeline",
+        "test_ea_split_modes": "EA split mode strategies",
+        "test_export_preliminary_polygons": "Preliminary polygon export",
+        "test_fill_polygon_gaps": "Gap filling",
+        "test_gaps_overlaps_checker": "Gap & overlap detection",
+        "test_geom_check_repair_legacy": "Legacy geometry repair",
+        "test_geom_repair_toolkit": "Topology engine & repair toolkit",
+        "test_gmdhelpers": "Core helper functions",
+        "test_gsheet": "Google Sheets integration",
+        "test_join_barangay_attributes": "Barangay attribute joining",
+        "test_lgu_fix_processing": "LGU fix processing",
+        "test_mbi_validator": "MBI validation engine",
+        "test_package_qfield": "QField packaging",
+        "test_pre_ea_processor": "Pre-EA processor",
+        "test_repair_geometry_errors": "Geometry error repair",
+        "test_scan_geometry_errors": "Geometry error scanning",
+        "test_update_metadata": "Metadata update",
+        "test_update_metadata_by_geocode": "Geocode metadata update",
+    }
+
+    for mod, count in sorted(module_counts.items()):
+        desc = descriptions.get(mod, "Automated unit test module")
+        unit_str = f"{count} test" if count == 1 else f"{count} tests"
+        tree_lines.append(f"│   │   ├── {mod}.py".ljust(46) + f"# {unit_str} — {desc}")
+
+    if tree_lines:
+        tree_lines[-1] = tree_lines[-1].replace("├──", "└──")
+        unit_tree_block = "\n".join(tree_lines)
+        unit_block_pattern = r"(│\s*├── unit/\n)([\s\S]*?)(│\s*├── integration/)"
+        content = re.sub(unit_block_pattern, rf"\g<1>{unit_tree_block}\n│   \g<3>", content)
+
+    skill_file.write_text(content, encoding="utf-8")
+    print(f"[INFO] Synced SKILL.md with {total_tests} tests across {total_modules} modules.")
+
+
+def run_generator(check_only=False, sync_docs=True):
     target_scripts = get_target_scripts()
     unit_tests_dir = PROJECT_ROOT / "tests" / "unit"
     unit_tests_dir.mkdir(parents=True, exist_ok=True)
@@ -137,13 +211,21 @@ def run_generator(check_only=False):
     else:
         print("[INFO] All scripts already have unit test files in tests/unit/.")
 
+    if sync_docs:
+        sync_skill_docs()
+
     return True
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Auto-generate unit test stubs for GEMMA plugin scripts.")
+    parser = argparse.ArgumentParser(description="Auto-generate unit test stubs and sync test docs for GEMMA plugin scripts.")
     parser.add_argument("--check", action="store_true", help="Check if all scripts have unit tests without creating them.")
+    parser.add_argument("--sync-skill", action="store_true", help="Sync SKILL.md test counts and architecture tree.")
     args = parser.parse_args()
+
+    if args.sync_skill:
+        sync_skill_docs()
+        return
 
     success = run_generator(check_only=args.check)
     if not success:

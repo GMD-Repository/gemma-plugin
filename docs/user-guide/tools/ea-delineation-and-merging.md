@@ -129,6 +129,35 @@ The output layers `<geocode>_delineated_ea2026`, `<geocode>_merged_ea2026`, and 
 
 ---
 
+## Tab 3 — Enumeration Area Merge
+
+The **Enumeration Area Merge** tab updates an existing EA base layer using one or more replacement polygon layers containing replacement EA geometries.
+
+Replacement polygons take precedence over the base EA layer: any overlapping portions of the existing EA layer underneath the replacement geometries are removed, and the replacement geometries are inserted to produce a consolidated `<5-digit geocode>_ea2026` output layer and an exact Excel attribute table export (`<5-digit geocode>_earf_<citymun>.xlsx`).
+
+### Parameters & Inputs
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| **EA Input Layer** | Vector (Polygon) | Base EA polygon layer (e.g. `<geocode>_ea`, `<geocode>_ea2024`, `<geocode>_ea2026_preprocessed`). Attributes and fields are preserved. Required. |
+| **Replacement Polygon Layers — Multi Input** | Vector (Polygon, Multi) | One or more vector polygon layers selected from the project. Every layer name must contain **exactly 14 numeric digits** (e.g. `01001000000001`). Required. |
+
+### Tab 3 Validation Checklist
+
+- **Polygon layers**: All selected replacement layers must be vector polygon geometries.
+- **14-digit layer names**: Layer names must follow the `##############` 14-digit numeric pattern.
+- **Valid geometries**: Checks for valid, non-empty geometries and reconciles CRS differences via on-the-fly transformations.
+- **Geographic code & City/Municipality**: Automatically extracts the 5-digit geocode and single City/Municipality name from the EA Input Layer for output naming.
+
+### Outputs
+
+| Output | Format | Description |
+|--------|--------|-------------|
+| **Consolidated EA Layer** | QGIS Layer (Polygon) | `<5-digit geocode>_ea2026` memory layer added to current project containing updated geometries with original EA attributes. |
+| **Consolidated Excel Table** | File (`.xlsx`) | `<5-digit geocode>_earf_<citymun>.xlsx` attribute table export with primary sheet `EA2026`. Columns dynamically mirror output layer fields. |
+
+---
+
 ## How It Works
 
 1. **Pre-Processing Alignment (Tab 1)**:
@@ -145,9 +174,11 @@ The output layers `<geocode>_delineated_ea2026`, `<geocode>_merged_ea2026`, and 
 4. **Iterative Spatial Merging**:
    - Underpopulated EAs (<=100 HH) undergo up to 5 iterative passes of spatial adjacency merging strictly within the same parent Barangay.
 
-5. **Sliver Dissolve & Final Output**:
-   - Remnant sliver polygons smaller than the area threshold are dissolved into adjacent neighbors.
-   - Consolidated output layers (`<geocode>_ea2026`) are created with full attribute schemas and automated QML styling.
+5. **Enumeration Area Merge (Tab 3)**:
+   - Takes base EA layer and multiple 14-digit replacement polygon layers.
+   - Performs geometric difference on existing EAs against combined replacement polygons.
+   - Inserts replacement geometries and builds `<5-digit geocode>_ea2026` layer.
+   - Dynamically exports attribute table to `<5-digit geocode>_earf_<citymun>.xlsx`.
 
 ## Supported Geometry Types
 
@@ -157,7 +188,7 @@ The output layers `<geocode>_delineated_ea2026`, `<geocode>_merged_ea2026`, and 
 
 ::: tip Complete Module Workflow
 In the **EA Delineation and Merging** launcher dialog:
-1. Run **Tab 1: EA Preprocessing** first to create the `<pppmm>_ea2026_preprocessed` layer.
-2. Switch to **Tab 2: EA Delineation & Merging** and select `<pppmm>_ea2026_preprocessed` as the **Previous EA Layer**.
-3. Execute the algorithm to produce 100% gap-free, household-balanced Enumeration Areas.
+1. Run **Tab 1: EA Preprocessing** to create the `<pppmm>_ea2026_preprocessed` layer.
+2. Switch to **Tab 2: Create Enumeration Areas** to balance household counts and delineate/merge zones.
+3. Switch to **Tab 3: Enumeration Area Merge** to apply specific 14-digit replacement polygon layers and export the consolidated Excel attribute table (`.xlsx`).
 :::

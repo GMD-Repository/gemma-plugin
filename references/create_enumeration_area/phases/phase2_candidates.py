@@ -12,10 +12,12 @@ from qgis.core import (
     QgsRectangle,
     QgsFeatureRequest,
     QgsFeatureSink,
+    NULL,
 )
 from qgis.PyQt.QtCore import QVariant
 
 from ..helpers.constants import _PHASE_LABELS, yield_to_ui
+from ..helpers.spatial import get_parent_barangay, normalize_to_8_digits
 
 
 def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
@@ -58,12 +60,18 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     barangay_by_id = p1["barangay_by_id"]
     _dc_geo_idx = p1["_dc_geo_idx"]
 
-    def get_parent_barangay(ea_geom):
-        candidates = barangay_index.intersects(ea_geom.boundingBox())
-        max_overlap = -1
+    def get_parent_barangay(ea_geom, b_index=None, b_by_id=None):
+        idx = b_index if b_index is not None else barangay_index
+        by_id = b_by_id if b_by_id is not None else barangay_by_id
+        if idx is None or by_id is None or ea_geom is None or ea_geom.isEmpty():
+            return None
+        candidates = idx.intersects(ea_geom.boundingBox())
+        max_overlap = -1.0
         parent_feat = None
         for cid in candidates:
-            bar = barangay_by_id[cid]
+            bar = by_id.get(cid)
+            if not bar:
+                continue
             bar_geom = bar.geometry()
             if bar_geom.intersects(ea_geom):
                 overlap_area = bar_geom.intersection(ea_geom).area()
@@ -73,22 +81,17 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         return parent_feat
 
     def resolve_ea_parent_barangay(ea_feat):
-        if _dc_geo_idx != -1:
-            val = ea_feat.attribute(_dc_geo_idx)
-            if val is not None and not (isinstance(val, QVariant) and val.isNull()):
-                val_str = str(val).strip()
-                if val_str.endswith(".0"):
-                    val_str = val_str[:-2]
-                if val_str:
-                    return val_str
         parent_feat = get_parent_barangay(ea_feat.geometry())
         if parent_feat:
             val = parent_feat.attribute(barangay_id_field)
-            if val is not None:
-                val_str = str(val).strip()
-                if val_str.endswith(".0"):
-                    val_str = val_str[:-2]
-                return val_str
+            res = normalize_to_8_digits(val)
+            if res:
+                return res
+        if _dc_geo_idx != -1:
+            val = ea_feat.attribute(_dc_geo_idx)
+            res = normalize_to_8_digits(val)
+            if res:
+                return res
         return "Unknown"
 
     # Create output schema (inherits all fields from previous_ea_source)
@@ -228,11 +231,10 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     delin_candidate_dest_id = None
     if alg.DELINEATION_CANDIDATE_OUTPUT in parameters and parameters[alg.DELINEATION_CANDIDATE_OUTPUT] is not None:
         delin_cand_fields = QgsFields(out_fields)
-        for fname in [output_hh_field, "new_hhcount", "hh_count", "hhcount"]:
-            if fname.lower() != household_field.lower():
-                idx = delin_cand_fields.indexOf(fname)
-                if idx != -1:
-                    delin_cand_fields.remove(idx)
+        if delin_cand_fields.indexOf("hhcount") == -1:
+            delin_cand_fields.append(QgsField("hhcount", QVariant.Double))
+        if delin_cand_fields.indexOf("bldgcount") == -1:
+            delin_cand_fields.append(QgsField("bldgcount", QVariant.Int))
         if delin_cand_fields.indexOf("indicator") == -1 and delin_cand_fields.indexOf("eadel_indi") == -1:
             delin_cand_fields.append(QgsField("indicator", QVariant.String))
         (delin_candidate_sink, delin_candidate_dest_id) = alg.parameterAsSink(
@@ -249,12 +251,11 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     merge_cand_fields_filtered = None
     if alg.MERGE_CANDIDATE_OUTPUT in parameters and parameters[alg.MERGE_CANDIDATE_OUTPUT] is not None:
         merge_cand_fields_filtered = QgsFields(out_fields)
-        for fname in [output_hh_field, "new_hhcount", "hh_count", "hhcount"]:
-            if fname.lower() != household_field.lower():
-                idx = merge_cand_fields_filtered.indexOf(fname)
-                if idx != -1:
-                    merge_cand_fields_filtered.remove(idx)
-        for fname in ["merge_partner", "split_by", "new_ea", "new_ean", "bldg_count", "new_bldgcount", "bldgpoints_value", "bldgpts_val", "bldgpoint_value"]:
+        if merge_cand_fields_filtered.indexOf("hhcount") == -1:
+            merge_cand_fields_filtered.append(QgsField("hhcount", QVariant.Double))
+        if merge_cand_fields_filtered.indexOf("bldgcount") == -1:
+            merge_cand_fields_filtered.append(QgsField("bldgcount", QVariant.Int))
+        for fname in ["merge_partner", "split_by", "new_ea", "new_ean", "bldgpoints_value", "bldgpts_val", "bldgpoint_value"]:
             idx = merge_cand_fields_filtered.indexOf(fname)
             if idx != -1:
                 merge_cand_fields_filtered.remove(idx)
@@ -503,6 +504,77 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         if overlap_source.sourceCrs() != previous_ea_source.sourceCrs():
             overlap_to_ea_transform = QgsCoordinateTransform(overlap_source.sourceCrs(), previous_ea_source.sourceCrs(), context.transformContext())
 
+    # ── Calculate Special EA Household Counts from Building Points & Parent EA Deductions ──
+    special_ea_hh = {}
+    ea_to_special_ea_hh = {}
+
+    if special_ea_ids:
+        combined_spec_bbox = QgsRectangle()
+        special_ea_feats_map = {}
+        for feat in all_ea_features:
+            if feat.id() in special_ea_ids and feat.geometry() and not feat.geometry().isEmpty():
+                special_ea_feats_map[feat.id()] = feat
+                combined_spec_bbox.combineExtentWith(feat.geometry().boundingBox())
+
+        if special_ea_feats_map and not combined_spec_bbox.isEmpty():
+            spec_bldg_req = QgsFeatureRequest()
+            if transform:
+                bldg_to_ea_tr = QgsCoordinateTransform(previous_ea_source.sourceCrs(), building_source.sourceCrs(), context.transformContext())
+                spec_bldg_req.setFilterRect(bldg_to_ea_tr.transformBoundingBox(combined_spec_bbox))
+            else:
+                spec_bldg_req.setFilterRect(combined_spec_bbox)
+
+            spec_bldg_idx = QgsSpatialIndex()
+            spec_bldg_map = {}
+            _spec_bldg_hh_idx = building_source.fields().indexOf(household_field)
+            if _spec_bldg_hh_idx == -1:
+                for _cname in ["hhcount", "hh_count", "household", "household_count", "pop", "population"]:
+                    if building_source.fields().indexOf(_cname) != -1:
+                        _spec_bldg_hh_idx = building_source.fields().indexOf(_cname)
+                        break
+
+            for _bfeat in building_source.getFeatures(spec_bldg_req):
+                _bgeom = _bfeat.geometry()
+                if not _bgeom or _bgeom.isEmpty():
+                    continue
+                if transform:
+                    _bgeom = QgsGeometry(_bgeom)
+                    _bgeom.transform(transform)
+                _bpt = _bgeom.asPoint()
+                _bpop_val = _bfeat.attribute(_spec_bldg_hh_idx) if _spec_bldg_hh_idx != -1 else None
+                try:
+                    _bpop = float(_bpop_val) if _bpop_val is not None else 1.0
+                    if _bpop <= 0:
+                        _bpop = 1.0
+                except (TypeError, ValueError):
+                    _bpop = 1.0
+
+                _bindex_feat = QgsFeature(_bfeat.id())
+                _bindex_feat.setGeometry(_bgeom)
+                spec_bldg_idx.insertFeature(_bindex_feat)
+                spec_bldg_map[_bfeat.id()] = (_bpt, _bpop)
+
+            for spec_fid, spec_feat in special_ea_feats_map.items():
+                _s_geom = spec_feat.geometry()
+                _s_nearby = spec_bldg_idx.intersects(_s_geom.boundingBox())
+                _s_hh_sum = 0.0
+                for _bid in _s_nearby:
+                    if _bid not in spec_bldg_map:
+                        continue
+                    _bpt, _bpop = spec_bldg_map[_bid]
+                    _bpt_geom = QgsGeometry.fromPointXY(_bpt)
+                    if _s_geom.contains(_bpt_geom) or _s_geom.intersects(_bpt_geom):
+                        _s_hh_sum += _bpop
+                special_ea_hh[spec_fid] = _s_hh_sum
+                if _dc_pop_idx != -1 and _dc_pop_idx < len(spec_feat.attributes()):
+                    spec_feat.setAttribute(_dc_pop_idx, _s_hh_sum)
+
+        for spec_fid, spec_info in special_ea_info.items():
+            s_hh = special_ea_hh.get(spec_fid, spec_info.get('hh_count', 0.0))
+            special_ea_hh[spec_fid] = s_hh
+            for p_id in spec_info.get('parent_ea_ids', []):
+                ea_to_special_ea_hh[p_id] = ea_to_special_ea_hh.get(p_id, 0.0) + s_hh
+
     for _dc_feat in previous_ea_source.getFeatures():
         if multi_feedback.isCanceled():
             raise QgsProcessingException("Algorithm cancelled by user.")
@@ -553,21 +625,41 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                             intersects_gap_or_overlap = True
                             break
 
+        _orig_hh = _dc_hh
+        _deducted_spec_hh = ea_to_special_ea_hh.get(_dc_feat.id(), 0.0)
+        _effective_hh = max(0.0, _orig_hh - _deducted_spec_hh)
+
         is_delin = False
         is_merge = False
 
-        if _dc_hh <= min_household:
+        if _orig_hh >= max_household:
+            if _effective_hh >= max_household:
+                is_delin = True
+            else:
+                feedback.pushInfo(
+                    f"[EA {_dc_ean_str}] Special EA extracted (-{_deducted_spec_hh:.0f} HH). "
+                    f"Adjusted HH ({_effective_hh:.0f}) dropped below max threshold ({max_household}). "
+                    f"Exempted from delineation."
+                )
+                if _effective_hh <= min_household:
+                    is_merge = True
+                    feedback.pushInfo(
+                        f"[EA {_dc_ean_str}] Adjusted HH ({_effective_hh:.0f}) is below min threshold ({min_household}). "
+                        f"Added to merge candidates."
+                    )
+        elif _effective_hh <= min_household:
             is_merge = True
-        elif _dc_hh >= max_household:
-            is_delin = True
         elif eadel_indi_col_idx != -1:
             val = _dc_feat.attribute(eadel_indi_col_idx)
             if val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"):
-                is_delin = True
+                if _effective_hh >= max_household or _deducted_spec_hh == 0.0:
+                    is_delin = True
+                elif _effective_hh <= min_household:
+                    is_merge = True
 
         if is_delin:
             total_delin_candidates += 1
-            _dc_num_parts = max(2, int(math.ceil(_dc_hh / float(max_household)))) if _dc_hh > 0 else 2
+            _dc_num_parts = max(2, int(math.ceil(_effective_hh / float(max_household)))) if _effective_hh > 0 else 2
             _dc_hhdivthres = 1.0 / _dc_num_parts
             delineation_candidate_ids.add(_dc_feat.id())
             delineation_candidate_hhdivthres[_dc_feat.id()] = _dc_hhdivthres
@@ -590,7 +682,86 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
 
     if gap_source is not None or overlap_source is not None:
         for special_fid in special_ea_info.keys():
-            merge_candidate_ids.add(special_fid)
+            s_hh = special_ea_hh.get(special_fid, 0.0)
+            if s_hh < min_household or s_hh == 0.0:
+                merge_candidate_ids.add(special_fid)
+
+    barangay_index = p1.get("barangay_index")
+
+    def get_text_attr(feat: QgsFeature, candidate_names: list, prefer_text: bool = True):
+        if not feat or not feat.isValid():
+            return None
+        fields = feat.fields()
+        best_val = None
+        for name in candidate_names:
+            idx = fields.indexOf(name)
+            if idx == -1:
+                for j in range(fields.count()):
+                    if fields.at(j).name().lower() == name.lower():
+                        idx = j
+                        break
+            if idx != -1:
+                val = feat.attribute(idx)
+                if val is not None and val != NULL and not (isinstance(val, QVariant) and val.isNull()):
+                    val_str = str(val).strip()
+                    if val_str not in ('', 'NULL', 'None'):
+                        if val_str.endswith(".0"):
+                            val_str = val_str[:-2]
+                        if prefer_text:
+                            if not val_str.isdigit():
+                                return val_str
+                            elif best_val is None:
+                                best_val = val_str
+                        else:
+                            return val_str
+        return best_val
+
+    def get_field_val(f: QgsFeature, fname, default=0):
+        if not f or not f.isValid():
+            return default
+        flds = f.fields()
+        fnames = [fname] if isinstance(fname, str) else list(fname)
+        for target in fnames:
+            idx = flds.indexOf(target)
+            if idx == -1:
+                for j in range(flds.count()):
+                    if flds.at(j).name().lower() == target.lower():
+                        idx = j
+                        break
+            if idx != -1:
+                val = f.attribute(idx)
+                if val is not None and val != NULL and not (isinstance(val, QVariant) and val.isNull()):
+                    val_str = str(val).strip()
+                    if val_str not in ('', 'NULL', 'None'):
+                        try:
+                            return float(val) if isinstance(default, float) or default is None else int(round(float(val)))
+                        except (TypeError, ValueError):
+                            return val
+        return default
+
+    def safe_float(val, default=0.0):
+        if val is None or val == NULL or str(val).strip() in ('', 'NULL', 'None'):
+            return default
+        if isinstance(val, QVariant):
+            if val.isNull():
+                return default
+            val = val.value()
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return default
+
+    def safe_int(val, default=0):
+        if val is None or val == NULL or str(val).strip() in ('', 'NULL', 'None'):
+            return default
+        if isinstance(val, QVariant):
+            if val.isNull():
+                return default
+            val = val.value()
+        try:
+            return int(round(float(val)))
+        except (TypeError, ValueError):
+            return default
 
     if delin_candidate_sink is not None:
         for feat in previous_ea_source.getFeatures():
@@ -618,6 +789,106 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                 else:
                     attrs.append(None)
             out_feat.setAttributes(attrs)
+
+            # Inherit and enrich standard attributes
+            parent_bgy_feat = None
+            if barangay_index is not None and feat.hasGeometry():
+                parent_bgy_feat = get_parent_barangay(feat.geometry(), barangay_index, barangay_by_id)
+
+            if parent_bgy_feat is None and parent_bar:
+                for b_feat in barangay_by_id.values():
+                    val = b_feat.attribute(bar_geocode_field)
+                    if val is not None:
+                        val_str = str(val).strip()
+                        if val_str.endswith(".0"):
+                            val_str = val_str[:-2]
+                        if val_str == parent_bar or (len(val_str) >= 9 and len(parent_bar) >= 9 and val_str[:9] == parent_bar[:9]):
+                            parent_bgy_feat = b_feat
+                            break
+
+            map_uuid_idx = delin_cand_fields.indexOf("map_uuid")
+            if map_uuid_idx != -1:
+                cur_uuid = out_feat.attribute(map_uuid_idx)
+                if cur_uuid is None or cur_uuid == NULL or str(cur_uuid).strip() in ('', 'NULL', 'None'):
+                    inh_uuid = (
+                        get_text_attr(parent_bgy_feat, ["map_uuid", "mapuuid", "uuid", "map_id"], prefer_text=False)
+                        or get_text_attr(feat, ["map_uuid", "mapuuid", "uuid", "map_id"], prefer_text=False)
+                    )
+                    if inh_uuid:
+                        out_feat.setAttribute(map_uuid_idx, inh_uuid)
+
+            region_idx = delin_cand_fields.indexOf("region")
+            if region_idx != -1:
+                cur_reg = out_feat.attribute(region_idx)
+                if cur_reg is None or cur_reg == NULL or str(cur_reg).strip() in ('', 'NULL', 'None') or str(cur_reg).strip().isdigit():
+                    reg_val = (
+                        get_text_attr(parent_bgy_feat, ["region", "reg_name", "region_name", "reg_desc", "adm1_en", "reg", "region_n", "reg_n"])
+                        or get_text_attr(feat, ["region", "reg_name", "region_name", "reg_desc", "adm1_en", "reg", "region_n", "reg_n"])
+                    )
+                    if reg_val:
+                        out_feat.setAttribute(region_idx, reg_val)
+
+            province_idx = delin_cand_fields.indexOf("province")
+            if province_idx != -1:
+                cur_prov = out_feat.attribute(province_idx)
+                if cur_prov is None or cur_prov == NULL or str(cur_prov).strip() in ('', 'NULL', 'None') or str(cur_prov).strip().isdigit():
+                    prov_val = (
+                        get_text_attr(parent_bgy_feat, ["province", "prov_name", "province_name", "prov_desc", "adm2_en", "prov", "province_n", "prov_n"])
+                        or get_text_attr(feat, ["province", "prov_name", "province_name", "prov_desc", "adm2_en", "prov", "province_n", "prov_n"])
+                    )
+                    if prov_val:
+                        out_feat.setAttribute(province_idx, prov_val)
+
+            city_mun_idx = delin_cand_fields.indexOf("city_mun")
+            if city_mun_idx != -1:
+                cur_cm = out_feat.attribute(city_mun_idx)
+                if cur_cm is None or cur_cm == NULL or str(cur_cm).strip() in ('', 'NULL', 'None') or str(cur_cm).strip().isdigit():
+                    cm_val = (
+                        get_text_attr(parent_bgy_feat, ["city_mun", "citymun", "city_mun_name", "citymun_name", "municipality", "city_name", "mun_name", "city", "mun", "adm3_en", "mun_desc", "city_n", "mun_n"])
+                        or get_text_attr(feat, ["city_mun", "citymun", "city_mun_name", "citymun_name", "municipality", "city_name", "mun_name", "city", "mun", "adm3_en", "mun_desc", "city_n", "mun_n"])
+                    )
+                    if cm_val:
+                        out_feat.setAttribute(city_mun_idx, cm_val)
+
+            barangay_idx = delin_cand_fields.indexOf("barangay")
+            if barangay_idx != -1:
+                cur_bgy = out_feat.attribute(barangay_idx)
+                if cur_bgy is None or cur_bgy == NULL or str(cur_bgy).strip() in ('', 'NULL', 'None') or str(cur_bgy).strip().isdigit():
+                    bgy_val = (
+                        get_text_attr(parent_bgy_feat, ["barangay", "bgy_name", "brgy_name", "barangay_name", "bgy_desc", "brgy_desc", "adm4_en", "name", "bgy", "brgy", "barangay_n", "bgy_n", "brgy_n"])
+                        or get_text_attr(feat, ["barangay", "bgy_name", "brgy_name", "barangay_name", "bgy_desc", "brgy_desc", "adm4_en", "name", "bgy", "brgy", "barangay_n", "bgy_n", "brgy_n"])
+                    )
+                    if bgy_val:
+                        out_feat.setAttribute(barangay_idx, bgy_val)
+
+            code_idx = delin_cand_fields.indexOf("code")
+            if code_idx != -1:
+                cur_code = out_feat.attribute(code_idx)
+                if cur_code is None or cur_code == NULL or str(cur_code).strip() in ('', 'NULL', 'None'):
+                    c_val = get_text_attr(feat, ["code", "ea_code", "eacode"], prefer_text=False)
+                    if c_val:
+                        out_feat.setAttribute(code_idx, str(c_val))
+
+            hhcount_idx = delin_cand_fields.indexOf("hhcount")
+            if hhcount_idx != -1:
+                hh_names = ["hhcount", "new_hhcount", "hh_count", "hh_cnt", "household", "household_count", "pop", "population"]
+                if household_field and household_field not in hh_names:
+                    hh_names.insert(0, household_field)
+                val_hh = get_field_val(feat, hh_names, 0.0)
+                if feat.id() in ea_to_special_ea_hh:
+                    val_hh = max(0.0, float(val_hh) - ea_to_special_ea_hh[feat.id()])
+                out_feat.setAttribute(hhcount_idx, safe_float(val_hh, 0.0))
+
+            bldgcount_idx = delin_cand_fields.indexOf("bldgcount")
+            if bldgcount_idx != -1:
+                bldg_names = ["bldgcount", "new_bldgcount", "bldg_count", "bldg_cnt", "bldgpts_cnt", "bldg_points", "building_count", "bldg_total", "buildings"]
+                val_bldg = get_field_val(feat, bldg_names, 0)
+                out_feat.setAttribute(bldgcount_idx, safe_int(val_bldg, 0))
+
+            sy_idx = delin_cand_fields.indexOf("sy")
+            if sy_idx != -1:
+                out_feat.setAttribute(sy_idx, "2026")
+
             corr_ea_geo_idx = delin_cand_fields.indexOf("correspondence_ea_geocode")
             if corr_ea_geo_idx != -1:
                 map_uuid_idx = delin_cand_fields.indexOf("map_uuid")
@@ -625,10 +896,10 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                 sy_idx = delin_cand_fields.indexOf("sy")
                 map_uuid_val = out_feat.attribute(map_uuid_idx) if map_uuid_idx != -1 else ""
                 geocode_val = out_feat.attribute(geocode_idx) if geocode_idx != -1 else ""
-                sy_val = out_feat.attribute(sy_idx) if sy_idx != -1 else ""
+                sy_val = out_feat.attribute(sy_idx) if sy_idx != -1 else "2026"
                 map_uuid_str = str(map_uuid_val) if map_uuid_val is not None else ""
                 geocode_str = str(geocode_val) if geocode_val is not None else ""
-                sy_str = str(sy_val) if sy_val is not None else ""
+                sy_str = str(sy_val) if (sy_val is not None and str(sy_val).strip() not in ('', 'NULL', 'None')) else "2026"
                 if map_uuid_str.endswith(".0"): map_uuid_str = map_uuid_str[:-2]
                 if geocode_str.endswith(".0"): geocode_str = geocode_str[:-2]
                 if sy_str.endswith(".0"): sy_str = sy_str[:-2]
@@ -642,7 +913,13 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
 
             fid_idx = delin_cand_fields.indexOf("fid")
             if fid_idx != -1:
-                out_feat.setAttribute(fid_idx, None)
+                orig_fid = feat.attribute(fid_idx) if feat.fields().indexOf("fid") != -1 else None
+                if orig_fid is None or orig_fid == NULL or str(orig_fid).strip() in ('', 'NULL', 'None'):
+                    orig_fid = feat.id()
+                try:
+                    out_feat.setAttribute(fid_idx, int(orig_fid))
+                except (ValueError, TypeError):
+                    out_feat.setAttribute(fid_idx, orig_fid)
 
             if delin_candidate_sink.addFeature(out_feat):
                 delin_candidate_feat_count += 1
@@ -752,6 +1029,113 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                     else:
                         attrs.append(None)
                 out_feat.setAttributes(attrs)
+
+                # Inherit and enrich standard attributes
+                parent_bar = resolve_ea_parent_barangay(feat)
+                parent_bgy_feat = None
+                if barangay_index is not None and feat.hasGeometry():
+                    parent_bgy_feat = get_parent_barangay(feat.geometry(), barangay_index, barangay_by_id)
+
+                if parent_bgy_feat is None and parent_bar:
+                    for b_feat in barangay_by_id.values():
+                        val = b_feat.attribute(bar_geocode_field)
+                        if val is not None:
+                            val_str = str(val).strip()
+                            if val_str.endswith(".0"):
+                                val_str = val_str[:-2]
+                            if val_str == parent_bar or (len(val_str) >= 9 and len(parent_bar) >= 9 and val_str[:9] == parent_bar[:9]):
+                                parent_bgy_feat = b_feat
+                                break
+
+                map_uuid_idx = merge_cand_fields_filtered.indexOf("map_uuid")
+                if map_uuid_idx != -1:
+                    cur_uuid = out_feat.attribute(map_uuid_idx)
+                    if cur_uuid is None or cur_uuid == NULL or str(cur_uuid).strip() in ('', 'NULL', 'None'):
+                        inh_uuid = (
+                            get_text_attr(parent_bgy_feat, ["map_uuid", "mapuuid", "uuid", "map_id"], prefer_text=False)
+                            or get_text_attr(feat, ["map_uuid", "mapuuid", "uuid", "map_id"], prefer_text=False)
+                        )
+                        if inh_uuid:
+                            out_feat.setAttribute(map_uuid_idx, inh_uuid)
+
+                region_idx = merge_cand_fields_filtered.indexOf("region")
+                if region_idx != -1:
+                    cur_reg = out_feat.attribute(region_idx)
+                    if cur_reg is None or cur_reg == NULL or str(cur_reg).strip() in ('', 'NULL', 'None') or str(cur_reg).strip().isdigit():
+                        reg_val = (
+                            get_text_attr(parent_bgy_feat, ["region", "reg_name", "region_name", "reg_desc", "adm1_en", "reg", "region_n", "reg_n"])
+                            or get_text_attr(feat, ["region", "reg_name", "region_name", "reg_desc", "adm1_en", "reg", "region_n", "reg_n"])
+                        )
+                        if reg_val:
+                            out_feat.setAttribute(region_idx, reg_val)
+
+                province_idx = merge_cand_fields_filtered.indexOf("province")
+                if province_idx != -1:
+                    cur_prov = out_feat.attribute(province_idx)
+                    if cur_prov is None or cur_prov == NULL or str(cur_prov).strip() in ('', 'NULL', 'None') or str(cur_prov).strip().isdigit():
+                        prov_val = (
+                            get_text_attr(parent_bgy_feat, ["province", "prov_name", "province_name", "prov_desc", "adm2_en", "prov", "province_n", "prov_n"])
+                            or get_text_attr(feat, ["province", "prov_name", "province_name", "prov_desc", "adm2_en", "prov", "province_n", "prov_n"])
+                        )
+                        if prov_val:
+                            out_feat.setAttribute(province_idx, prov_val)
+
+                city_mun_idx = merge_cand_fields_filtered.indexOf("city_mun")
+                if city_mun_idx != -1:
+                    cur_cm = out_feat.attribute(city_mun_idx)
+                    if cur_cm is None or cur_cm == NULL or str(cur_cm).strip() in ('', 'NULL', 'None') or str(cur_cm).strip().isdigit():
+                        cm_val = (
+                            get_text_attr(parent_bgy_feat, ["city_mun", "citymun", "city_mun_name", "citymun_name", "municipality", "city_name", "mun_name", "city", "mun", "adm3_en", "mun_desc", "city_n", "mun_n"])
+                            or get_text_attr(feat, ["city_mun", "citymun", "city_mun_name", "citymun_name", "municipality", "city_name", "mun_name", "city", "mun", "adm3_en", "mun_desc", "city_n", "mun_n"])
+                        )
+                        if cm_val:
+                            out_feat.setAttribute(city_mun_idx, cm_val)
+
+                barangay_idx = merge_cand_fields_filtered.indexOf("barangay")
+                if barangay_idx != -1:
+                    cur_bgy = out_feat.attribute(barangay_idx)
+                    if cur_bgy is None or cur_bgy == NULL or str(cur_bgy).strip() in ('', 'NULL', 'None') or str(cur_bgy).strip().isdigit():
+                        bgy_val = (
+                            get_text_attr(parent_bgy_feat, ["barangay", "bgy_name", "brgy_name", "barangay_name", "bgy_desc", "brgy_desc", "adm4_en", "name", "bgy", "brgy", "barangay_n", "bgy_n", "brgy_n"])
+                            or get_text_attr(feat, ["barangay", "bgy_name", "brgy_name", "barangay_name", "bgy_desc", "brgy_desc", "adm4_en", "name", "bgy", "brgy", "barangay_n", "bgy_n", "brgy_n"])
+                        )
+                        if bgy_val:
+                            out_feat.setAttribute(barangay_idx, bgy_val)
+
+                code_idx = merge_cand_fields_filtered.indexOf("code")
+                if code_idx != -1:
+                    cur_code = out_feat.attribute(code_idx)
+                    if cur_code is None or cur_code == NULL or str(cur_code).strip() in ('', 'NULL', 'None'):
+                        c_val = get_text_attr(feat, ["code", "ea_code", "eacode"], prefer_text=False)
+                        if c_val:
+                            out_feat.setAttribute(code_idx, str(c_val))
+
+                hhcount_idx = merge_cand_fields_filtered.indexOf("hhcount")
+                if hhcount_idx != -1:
+                    hh_names = ["hhcount", "new_hhcount", "hh_count", "hh_cnt", "household", "household_count", "pop", "population"]
+                    if household_field and household_field not in hh_names:
+                        hh_names.insert(0, household_field)
+                    if feat.id() in special_ea_ids:
+                        val_hh = special_ea_hh.get(feat.id(), 0.0)
+                    else:
+                        val_hh = get_field_val(feat, hh_names, 0.0)
+                        if feat.id() in ea_to_special_ea_hh:
+                            val_hh = max(0.0, float(val_hh) - ea_to_special_ea_hh[feat.id()])
+                    out_feat.setAttribute(hhcount_idx, safe_float(val_hh, 0.0))
+
+                bldgcount_idx = merge_cand_fields_filtered.indexOf("bldgcount")
+                if bldgcount_idx != -1:
+                    if feat.id() in special_ea_ids:
+                        val_bldg = special_ea_info.get(feat.id(), {}).get('bldg_count', 0)
+                    else:
+                        bldg_names = ["bldgcount", "new_bldgcount", "bldg_count", "bldg_cnt", "bldgpts_cnt", "bldg_points", "building_count", "bldg_total", "buildings"]
+                        val_bldg = get_field_val(feat, bldg_names, 0)
+                    out_feat.setAttribute(bldgcount_idx, safe_int(val_bldg, 0))
+
+                sy_idx = merge_cand_fields_filtered.indexOf("sy")
+                if sy_idx != -1:
+                    out_feat.setAttribute(sy_idx, "2026")
+
                 corr_ea_geo_idx = merge_cand_fields_filtered.indexOf("correspondence_ea_geocode")
                 if corr_ea_geo_idx != -1:
                     map_uuid_idx = merge_cand_fields_filtered.indexOf("map_uuid")
@@ -759,10 +1143,10 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                     sy = merge_cand_fields_filtered.indexOf("sy")
                     map_uuid_val = out_feat.attribute(map_uuid_idx) if map_uuid_idx != -1 else ""
                     geocode_val = out_feat.attribute(geocode_idx) if geocode_idx != -1 else ""
-                    sy_val = out_feat.attribute(sy) if sy != -1 else ""
+                    sy_val = out_feat.attribute(sy) if sy != -1 else "2026"
                     map_uuid_str = str(map_uuid_val) if map_uuid_val is not None else ""
                     geocode_str = str(geocode_val) if geocode_val is not None else ""
-                    sy_str = str(sy_val) if sy_val is not None else ""
+                    sy_str = str(sy_val) if (sy_val is not None and str(sy_val).strip() not in ('', 'NULL', 'None')) else "2026"
                     if map_uuid_str.endswith(".0"): map_uuid_str = map_uuid_str[:-2]
                     if geocode_str.endswith(".0"): geocode_str = geocode_str[:-2]
                     if sy_str.endswith(".0"): sy_str = sy_str[:-2]
@@ -778,7 +1162,13 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
 
                 fid_idx = merge_cand_fields_filtered.indexOf("fid")
                 if fid_idx != -1:
-                    out_feat.setAttribute(fid_idx, None)
+                    orig_fid = feat.attribute(fid_idx) if feat.fields().indexOf("fid") != -1 else None
+                    if orig_fid is None or orig_fid == NULL or str(orig_fid).strip() in ('', 'NULL', 'None'):
+                        orig_fid = feat.id()
+                    try:
+                        out_feat.setAttribute(fid_idx, int(orig_fid))
+                    except (ValueError, TypeError):
+                        out_feat.setAttribute(fid_idx, orig_fid)
 
                 if merge_candidate_sink.addFeature(out_feat):
                     merge_candidate_feat_count += 1
@@ -842,6 +1232,8 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             pt_geom = QgsGeometry.fromPointXY(p)
 
             candidate_ids = ea_index.intersects(pt_geom.boundingBox())
+            if special_ea_ids:
+                candidate_ids = sorted(candidate_ids, key=lambda fid: 0 if fid in special_ea_ids else 1)
             for parent_ea_id in candidate_ids:
                 parent_geom = ea_geometries[parent_ea_id]
                 if parent_geom.contains(pt_geom) or parent_geom.intersects(pt_geom):
@@ -978,4 +1370,6 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         "ea_id_to_buildings": ea_id_to_buildings,
         "output_hh_field": output_hh_field,
         "full_ea_by_id": full_ea_by_id,
+        "special_ea_hh": special_ea_hh,
+        "ea_to_special_ea_hh": ea_to_special_ea_hh,
     }
