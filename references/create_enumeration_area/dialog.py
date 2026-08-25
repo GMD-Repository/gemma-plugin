@@ -3,9 +3,10 @@
 EA Delineation and Merging -- Custom Processing UI Dialog
 ---------------------------------------------------------
 Provides a comprehensive custom user interface for the EA Delineation and Merging
-processing workflow. Houses two main tabs:
+processing workflow. Houses three main tabs:
   Tab 1 — EA Preprocessing         : clips EAs to their Barangay and fills coverage gaps.
   Tab 2 — Create Enumeration Areas : existing EA delineation and merging algorithm.
+  Tab 3 — Enumeration Area Merge   : updates previous EAs with 8-digit replacement polygons.
 
 Adapts to dynamic light and dark themes (defaulting to white) and features validation
 indicators, layer auto-detection, KPI cards, candidate table filters, and a stylized
@@ -16,7 +17,7 @@ import os
 from qgis.core import (
     QgsApplication, QgsProject, QgsVectorLayer, QgsCoordinateTransform, QgsSpatialIndex,
     QgsFeature, QgsGeometry, QgsProcessingContext, QgsProcessingFeedback,
-    QgsCoordinateReferenceSystem, NULL, QgsMapLayerProxyModel
+    QgsCoordinateReferenceSystem, QgsWkbTypes, NULL, QgsMapLayerProxyModel
 )
 try:
     from qgis.gui import QgsMapLayerComboBox, QgsProjectionSelectionWidget, QgsCollapsibleGroupBox
@@ -387,7 +388,7 @@ class EALauncherDialog(QDialog):
         inputs_layout.addWidget(self.pre_ea_bgy_status_lbl)
 
         # EA Layer
-        inputs_layout.addWidget(QLabel("EA Layer (Polygon)*"))
+        inputs_layout.addWidget(QLabel("EA Layer (Polygon, Optional)"))
         self.pre_ea_ea_combo = QgsMapLayerComboBox()
         self.pre_ea_ea_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
         self.pre_ea_ea_combo.setAllowEmptyLayer(True)
@@ -693,13 +694,18 @@ class EALauncherDialog(QDialog):
             )
 
         if not ea_layer:
-            self.pre_ea_ea_status_lbl.setText("EA Layer is required.")
+            if bgy_layer:
+                self.pre_ea_ea_status_lbl.setText(
+                    "No EA layer selected. A new EA layer will be created from the Barangay layer."
+                )
+            else:
+                self.pre_ea_ea_status_lbl.setText("No layer selected.")
         else:
             self.pre_ea_ea_status_lbl.setText(
                 f"Active: {ea_layer.featureCount()} EA polygons ({ea_layer.crs().authid()})."
             )
 
-        can_run = bool(bgy_layer and ea_layer)
+        can_run = bool(bgy_layer)
         self.pre_ea_run_btn.setEnabled(can_run)
 
     def _pre_ea_cancel(self):
@@ -761,7 +767,8 @@ class EALauncherDialog(QDialog):
 
     def _pre_ea_run(self):
         """Validate inputs and launch the Pre-EA Processing workflow."""
-        from qgis.core import QgsApplication
+        from qgis.core import QgsApplication, QgsProject
+        from .pre_ea_processor import PreEAProcessor
 
         bgy_layer = self.pre_ea_bgy_combo.currentLayer()
         ea_layer = self.pre_ea_ea_combo.currentLayer()
@@ -769,11 +776,6 @@ class EALauncherDialog(QDialog):
         if not bgy_layer:
             self._pre_ea_append_log(
                 "<span style='color:#cf222e; font-weight:bold;'>[ERROR] Barangay Layer is required.</span>"
-            )
-            return
-        if not ea_layer:
-            self._pre_ea_append_log(
-                "<span style='color:#cf222e; font-weight:bold;'>[ERROR] EA Layer is required.</span>"
             )
             return
 
@@ -1693,6 +1695,8 @@ class EALauncherDialog(QDialog):
             self._safe_set_layer(self.river_combo, candidates["river"])
         if candidates["gap"]:
             self._safe_set_layer(self.gap_combo, candidates["gap"])
+        if candidates["overlap"]:
+            self._safe_set_layer(self.overlap_combo, candidates["overlap"])
         self.validate_layer_inputs()
 
     def auto_arrange_and_detect_layers(self):
@@ -2297,21 +2301,22 @@ class EALauncherDialog(QDialog):
         scroll_layout.setContentsMargins(0, 0, 5, 0)
         scroll_layout.setSpacing(10)
 
-        # ── 1. EA Input Layer Group ───────────────────────────────────────
-        ea_group = QGroupBox("EA Input Layer")
+        # ── 1. Previous EA Layer Group ────────────────────────────────────
+        ea_group = QGroupBox("Previous EA Layer")
         ea_layout = QVBoxLayout(ea_group)
         ea_layout.setContentsMargins(8, 8, 8, 8)
         ea_layout.setSpacing(6)
 
         self.ea_merge_detect_btn = QPushButton("Auto-detect Layers")
         self.ea_merge_detect_btn.setToolTip(
-            "Scan project layers and auto-select Base EA (*_ea, *_ea2024, *_ea2026, *_ea_preprocessed) layer."
+            "Scan project layers and auto-select Previous EA (*_ea*, *_ea2024, *_ea2026) layer."
         )
         self.ea_merge_detect_btn.clicked.connect(self._ea_merge_auto_detect_ea_layer)
         ea_layout.addWidget(self.ea_merge_detect_btn)
 
-        ea_layout.addWidget(QLabel("Base EA Layer (Polygon)*"))
+        ea_layout.addWidget(QLabel("Previous EA Layer (Polygon)*"))
         self.ea_merge_ea_combo = QgsMapLayerComboBox(self)
+        self.ea_merge_ea_combo.setAllowEmptyLayer(True)
         self.ea_merge_ea_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
         ea_layout.addWidget(self.ea_merge_ea_combo)
 
@@ -2327,7 +2332,7 @@ class EALauncherDialog(QDialog):
         repl_layout.setContentsMargins(8, 8, 8, 8)
         repl_layout.setSpacing(6)
 
-        repl_layout.addWidget(QLabel("Selected Replacement Layers (14-digit numeric names):"))
+        repl_layout.addWidget(QLabel("Selected Replacement Layers (8-digit numeric names):"))
 
         self.ea_merge_layers_list = QListWidget()
         self.ea_merge_layers_list.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -2351,7 +2356,7 @@ class EALauncherDialog(QDialog):
         btn_row.setSpacing(6)
 
         self.ea_merge_select_btn = QPushButton("Select Multiple Layers")
-        self.ea_merge_select_btn.setToolTip("Open layer picker to select one or more 14-digit replacement polygon layers.")
+        self.ea_merge_select_btn.setToolTip("Open layer picker to select one or more 8-digit replacement polygon layers.")
         self.ea_merge_select_btn.clicked.connect(self._ea_merge_select_layers)
         btn_row.addWidget(self.ea_merge_select_btn)
 
@@ -2377,7 +2382,7 @@ class EALauncherDialog(QDialog):
         self.ea_merge_val_poly_lbl.setStyleSheet("color: #7F8C8D; font-size: 11px;")
         val_layout.addWidget(self.ea_merge_val_poly_lbl)
 
-        self.ea_merge_val_name_lbl = QLabel("• 14-digit layer names: -")
+        self.ea_merge_val_name_lbl = QLabel("• 8-digit layer names: -")
         self.ea_merge_val_name_lbl.setStyleSheet("color: #7F8C8D; font-size: 11px;")
         val_layout.addWidget(self.ea_merge_val_name_lbl)
 
@@ -2458,7 +2463,7 @@ class EALauncherDialog(QDialog):
             return val
 
         self._ea_merge_sum_geocode_val = _add_ea_merge_sum_row("Geographic Code:", 0)
-        self._ea_merge_sum_ea_input_val = _add_ea_merge_sum_row("EA Input Layer:", 1)
+        self._ea_merge_sum_ea_input_val = _add_ea_merge_sum_row("Previous EA Layer:", 1)
         self._ea_merge_sum_repl_layers_val = _add_ea_merge_sum_row("Replacement Layers:", 2)
         self._ea_merge_sum_repl_feats_val = _add_ea_merge_sum_row("Replacement Features:", 3)
         self._ea_merge_sum_mod_eas_val = _add_ea_merge_sum_row("Modified EA Features:", 4)
@@ -2600,83 +2605,38 @@ class EALauncherDialog(QDialog):
         return EAMergeProcessor.short_help_string()
 
     def _ea_merge_auto_detect_ea_layer(self):
-        """Auto-detect EA base layer (*_ea, *_ea2024, *_ea2026, *_ea_preprocessed) from the Layers Panel for Tab 3."""
+        """Auto-detect Previous EA layer from the QGIS project for Tab 3."""
         import re
-        pat_14 = re.compile(r"^\d{14}$")
+        pat_8 = re.compile(r"^\d{8}$")
 
-        # Collect layers in Layers panel top-to-bottom visual order + all project mapLayers
-        layers = []
-        seen_ids = set()
-        try:
-            root = QgsProject.instance().layerTreeRoot()
-            if root and hasattr(root, "findLayers"):
-                for node in root.findLayers():
-                    if node and hasattr(node, "layer") and node.layer():
-                        lyr = node.layer()
-                        if lyr.id() not in seen_ids:
-                            seen_ids.add(lyr.id())
-                            layers.append(lyr)
-        except Exception:
-            pass
-        for lyr in list(QgsProject.instance().mapLayers().values()):
-            if lyr and lyr.id() not in seen_ids:
-                seen_ids.add(lyr.id())
-                layers.append(lyr)
+        layers = list(QgsProject.instance().mapLayers().values())
 
-        # Exclude keywords identifying non-EA base layers
+        ea_patterns = ["_ea2024", "_ea2026", "_ea2025", "_ea2023", "_ea2022", "_ea_preprocessed", "_ea", "previous", "prev", "enumeration"]
         non_ea_keywords = ["_bgy", "barangay", "brgy", "boundary", "road", "river", "bldg", "building", "point", "gap", "overlap"]
 
         ea_match = None
 
-        # 1. Primary scan: any polygon layer containing '_ea' in its name (case-insensitive)
         for layer in layers:
             if not isinstance(layer, QgsVectorLayer):
                 continue
-            if layer.geometryType() not in (2, QgsWkbTypes.PolygonGeometry):
+            if layer.geometryType() not in (2, QgsWkbTypes.PolygonGeometry):  # Polygon
                 continue
             name_lower = layer.name().lower()
-            if pat_14.match(layer.name()):
+            if pat_8.match(layer.name()):
                 continue
-            if any(k in name_lower for k in non_ea_keywords):
+            if any(k in name_lower for k in non_ea_keywords) and not any(pat in name_lower for pat in ea_patterns):
                 continue
 
-            if "_ea" in name_lower:
-                ea_match = layer
+            for pat in ea_patterns:
+                if pat in name_lower:
+                    ea_match = layer
+                    break
+            if ea_match:
                 break
 
-        # 2. Secondary scan: priority patterns if '_ea' was not in the exact name
-        if not ea_match:
-            ea_priority_patterns = [
-                "ea2026",
-                "ea2024",
-                "ea2025",
-                "ea2023",
-                "ea2022",
-                "ea_",
-                "ea",
-                "enumeration",
-            ]
-            for pat in ea_priority_patterns:
-                for layer in layers:
-                    if not isinstance(layer, QgsVectorLayer):
-                        continue
-                    if layer.geometryType() not in (2, QgsWkbTypes.PolygonGeometry):
-                        continue
-                    name_lower = layer.name().lower()
-                    if pat_14.match(layer.name()):
-                        continue
-                    if any(k in name_lower for k in non_ea_keywords):
-                        continue
-                    if pat in name_lower:
-                        ea_match = layer
-                        break
-                if ea_match:
-                    break
+        self._safe_set_layer(self.ea_merge_ea_combo, ea_match)
 
-        if ea_match:
-            self._safe_set_layer(self.ea_merge_ea_combo, ea_match)
-
-        # Also auto-detect 14-digit replacement layers if none are selected yet
+        # Also auto-detect 8-digit replacement layers if none are selected yet
         if not self._ea_merge_replacement_layers:
             auto_repl = []
             for layer in layers:
@@ -2684,7 +2644,7 @@ class EALauncherDialog(QDialog):
                     continue
                 if layer.geometryType() not in (2, QgsWkbTypes.PolygonGeometry):
                     continue
-                if pat_14.match(layer.name()):
+                if pat_8.match(layer.name()):
                     auto_repl.append(layer)
             if auto_repl:
                 self._ea_merge_replacement_layers = auto_repl
@@ -2710,7 +2670,7 @@ class EALauncherDialog(QDialog):
         """Refresh the QListWidget showing the selected replacement layers."""
         self.ea_merge_layers_list.clear()
         import re
-        pat = re.compile(r"^\d{14}$")
+        pat = re.compile(r"^\d{8}$")
         for layer in self._ea_merge_replacement_layers:
             if not layer:
                 continue
@@ -2727,7 +2687,7 @@ class EALauncherDialog(QDialog):
     def _ea_merge_validate_inputs(self):
         """Validate EA Input Layer and Replacement Polygon Layers and update UI indicators."""
         import re
-        pat = re.compile(r"^\d{14}$")
+        pat = re.compile(r"^\d{8}$")
 
         ea_layer = self.ea_merge_ea_combo.currentLayer()
         repl_layers = self._ea_merge_replacement_layers
@@ -2736,7 +2696,7 @@ class EALauncherDialog(QDialog):
         geo_code = None
         citymun = None
         if not ea_layer:
-            self.ea_merge_ea_status_lbl.setText("<span style='color:#cf222e;'>EA Input Layer is required.</span>")
+            self.ea_merge_ea_status_lbl.setText("<span style='color:#cf222e;'>Previous EA Layer is required.</span>")
         else:
             fc = ea_layer.featureCount()
             crs_str = ea_layer.crs().authid()
@@ -2760,20 +2720,20 @@ class EALauncherDialog(QDialog):
 
         # 2. Replacement Layers validation
         all_poly = True
-        all_14digits = True
+        all_8digits = True
         all_valid_geom = True
         has_repl = len(repl_layers) > 0
 
         if not has_repl:
             all_poly = False
-            all_14digits = False
+            all_8digits = False
             all_valid_geom = False
         else:
             for lyr in repl_layers:
                 if not lyr or lyr.geometryType() != QgsWkbTypes.PolygonGeometry:
                     all_poly = False
                 if not lyr or not pat.match(lyr.name()):
-                    all_14digits = False
+                    all_8digits = False
                 if not lyr or lyr.featureCount() == 0 or not lyr.crs().isValid():
                     all_valid_geom = False
 
@@ -2786,7 +2746,7 @@ class EALauncherDialog(QDialog):
             return f"• {label_name}: <span style='color:#CF222E; font-weight:bold;'>✗ Failed</span>"
 
         self.ea_merge_val_poly_lbl.setText(_check_text("Polygon layers", all_poly, has_repl))
-        self.ea_merge_val_name_lbl.setText(_check_text("14-digit layer names", all_14digits, has_repl))
+        self.ea_merge_val_name_lbl.setText(_check_text("8-digit layer names", all_8digits, has_repl))
         self.ea_merge_val_geom_lbl.setText(_check_text("Valid geometries", all_valid_geom, has_repl))
 
         # Update Output Preview
@@ -2803,7 +2763,7 @@ class EALauncherDialog(QDialog):
             self.ea_merge_out_excel_lbl.setText("-")
 
         # Enable/Disable Run button
-        can_run = bool(ea_layer and has_repl and all_poly and all_14digits and geo_code)
+        can_run = bool(ea_layer and has_repl and all_poly and all_8digits and geo_code)
         self.ea_merge_run_btn.setEnabled(can_run)
 
     def _ea_merge_cancel(self):
@@ -2843,7 +2803,7 @@ class EALauncherDialog(QDialog):
         repl_layers = self._ea_merge_replacement_layers
 
         if not ea_layer:
-            self._ea_merge_append_log("<span style='color:#cf222e; font-weight:bold;'>[ERROR] EA Input Layer is required.</span>")
+            self._ea_merge_append_log("<span style='color:#cf222e; font-weight:bold;'>[ERROR] Previous EA Layer is required.</span>")
             return
         if not repl_layers:
             self._ea_merge_append_log("<span style='color:#cf222e; font-weight:bold;'>[ERROR] At least one Replacement Polygon Layer is required.</span>")
@@ -2942,7 +2902,7 @@ class MultiLayerSelectDialog(QDialog):
         layout.setSpacing(8)
 
         info_lbl = QLabel(
-            "Select one or more polygon layers with 14-digit numeric names\n"
+            "Select one or more polygon layers with 8-digit numeric names\n"
             "to use as replacement geometries:"
         )
         info_lbl.setWordWrap(True)

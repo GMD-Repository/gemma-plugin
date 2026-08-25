@@ -103,7 +103,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     else:
         out_fields.append(QgsField(output_hh_field, QVariant.Double))
 
-    for fname, ftype in [
+    for fname, ftype in (
         ("map_uuid", QVariant.String),
         ("region", QVariant.String),
         ("province", QVariant.String),
@@ -125,14 +125,12 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         ("special_type", QVariant.String),
         ("source_id", QVariant.String),
         ("indicator", QVariant.String),
-    ]:
-        if fname not in [f.name() for f in out_fields]:
+    ):
+        if out_fields.indexOf(fname) == -1:
             out_fields.append(QgsField(fname, ftype))
 
-    rem_idx = out_fields.indexOf("remarks")
-    if rem_idx != -1:
-        out_fields.remove(rem_idx)
-    out_fields.append(QgsField("remarks", QVariant.String))
+    if out_fields.indexOf("remarks") == -1:
+        out_fields.append(QgsField("remarks", QVariant.String))
 
     # Build export_fields containing ONLY the 18 standard output attributes
     export_field_names = [
@@ -147,6 +145,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         if idx != -1:
             export_fields.append(out_fields.at(idx))
         else:
+            ftype = QVariant.String
             if fname == "fid":
                 ftype = QVariant.Int
             elif fname == "hhcount":
@@ -428,7 +427,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                 _bpop = 1.0
             _bindex_feat = QgsFeature(_bfeat.id())
             _bindex_feat.setGeometry(_bgeom)
-            _imp_bldg_index.insertFeature(_bindex_feat)
+            _imp_bldg_index.addFeature(_bindex_feat)
             _imp_bldg_by_id[_bfeat.id()] = (_bpt, _bpop)
             _imp_bldg_count += 1
 
@@ -487,7 +486,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         gap_index = QgsSpatialIndex()
         for go_feat in gap_source.getFeatures():
             if go_feat.geometry() and not go_feat.geometry().isEmpty():
-                gap_index.insertFeature(go_feat)
+                gap_index.addFeature(go_feat)
                 gap_features.append(go_feat)
         if gap_source.sourceCrs() != previous_ea_source.sourceCrs():
             gap_to_ea_transform = QgsCoordinateTransform(gap_source.sourceCrs(), previous_ea_source.sourceCrs(), context.transformContext())
@@ -499,7 +498,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         overlap_index = QgsSpatialIndex()
         for go_feat in overlap_source.getFeatures():
             if go_feat.geometry() and not go_feat.geometry().isEmpty():
-                overlap_index.insertFeature(go_feat)
+                overlap_index.addFeature(go_feat)
                 overlap_features.append(go_feat)
         if overlap_source.sourceCrs() != previous_ea_source.sourceCrs():
             overlap_to_ea_transform = QgsCoordinateTransform(overlap_source.sourceCrs(), previous_ea_source.sourceCrs(), context.transformContext())
@@ -551,7 +550,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
 
                 _bindex_feat = QgsFeature(_bfeat.id())
                 _bindex_feat.setGeometry(_bgeom)
-                spec_bldg_idx.insertFeature(_bindex_feat)
+                spec_bldg_idx.addFeature(_bindex_feat)
                 spec_bldg_map[_bfeat.id()] = (_bpt, _bpop)
 
             for spec_fid, spec_feat in special_ea_feats_map.items():
@@ -936,7 +935,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     full_ea_index = QgsSpatialIndex()
     full_ea_by_id = {}
     for feat in previous_ea_source.getFeatures():
-        full_ea_index.insertFeature(feat)
+        full_ea_index.addFeature(feat)
         full_ea_by_id[feat.id()] = feat
 
     feedback.pushInfo("Identifying contiguous partners for Merge Candidates...")
@@ -1182,7 +1181,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         if _ean_str.endswith(".0"):
             _ean_str = _ean_str[:-2]
         if feat.id() in delineation_candidate_ids or feat.id() in merge_candidate_ids or feat.id() in adjacent_ea_ids:
-            temp_ea_index.insertFeature(feat)
+            temp_ea_index.addFeature(feat)
             temp_ea_by_id[feat.id()] = feat
 
     ea_index = temp_ea_index

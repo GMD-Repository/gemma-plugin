@@ -124,7 +124,7 @@ def run_phase_1(
         if feedback.isCanceled():
             raise QgsProcessingException("Algorithm cancelled by user.")
         yield_to_ui(idx)
-        barangay_index.insertFeature(feat)
+        barangay_index.addFeature(feat)
         barangay_by_id[feat.id()] = feat
 
         if bar_geocode_idx != -1:
@@ -292,6 +292,7 @@ def run_phase_1(
 
                 go_geom = go_feat.geometry()
                 if not go_geom or go_geom.isEmpty():
+                    feedback.pushInfo(f"[WARNING] Overlap feature FID={go_feat.id()} skipped: empty geometry.")
                     continue
 
                 go_geom = QgsGeometry(go_geom)
@@ -311,12 +312,36 @@ def run_phase_1(
                             max_bar_overlap = overlap_area
                             best_bar_feat = bar_feat
 
+                # Fallback: if strict intersects() fails (edge precision issue),
+                # pick the candidate barangay that contains the overlap centroid
+                if best_bar_feat is None and candidates:
+                    centroid = go_geom.centroid()
+                    for cid in candidates:
+                        bar_feat = barangay_by_id[cid]
+                        if bar_feat.geometry().contains(centroid):
+                            best_bar_feat = bar_feat
+                            break
+                    # Last resort: pick the nearest candidate by distance
+                    if best_bar_feat is None:
+                        min_dist = float('inf')
+                        for cid in candidates:
+                            bar_feat = barangay_by_id[cid]
+                            d = bar_feat.geometry().distance(go_geom)
+                            if d < min_dist:
+                                min_dist = d
+                                best_bar_feat = bar_feat
+
                 if best_bar_feat is None:
+                    feedback.pushInfo(f"[WARNING] Overlap feature FID={go_feat.id()} skipped: no intersecting barangay found (bbox={go_geom.boundingBox().toString()}, {len(candidates)} spatial index candidates).")
                     continue
 
-                go_geom = go_geom.intersection(best_bar_feat.geometry()).makeValid()
-                if go_geom.isEmpty():
-                    continue
+                clipped_geom = go_geom.intersection(best_bar_feat.geometry()).makeValid()
+                if clipped_geom.isEmpty():
+                    # Edge-precision fallback: use the original overlap geometry when
+                    # the strict intersection produces an empty result (boundary-edge case)
+                    feedback.pushInfo(f"Overlap feature FID={go_feat.id()}: intersection clip was empty, using original overlap geometry.")
+                else:
+                    go_geom = clipped_geom
 
                 parent_bar_geo = normalize_to_8_digits(best_bar_feat.attribute(bar_geocode_field))
 
@@ -433,7 +458,7 @@ def run_phase_1(
 
                     _bindex_feat = QgsFeature(_bfeat.id())
                     _bindex_feat.setGeometry(_bgeom)
-                    spec_bldg_idx.insertFeature(_bindex_feat)
+                    spec_bldg_idx.addFeature(_bindex_feat)
                     spec_bldg_map[_bfeat.id()] = (_bpt, _bpop)
 
                 _hhcount_field_idx = previous_ea_source.fields().indexOf(household_field)
@@ -564,7 +589,7 @@ def run_phase_1(
             for idx, pt in enumerate(sample_pts):
                 f = QgsFeature(idx)
                 f.setGeometry(QgsGeometry.fromPointXY(pt))
-                sample_index.insertFeature(f)
+                sample_index.addFeature(f)
                 pt_geoms[idx] = pt
 
             distances = []

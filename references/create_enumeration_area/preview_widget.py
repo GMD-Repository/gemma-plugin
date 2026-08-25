@@ -416,11 +416,11 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
 
             if is_delin:
                 delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, feat))
-                temp_ea_index.insertFeature(feat)
+                temp_ea_index.addFeature(feat)
                 temp_ea_by_id[feat.id()] = (ean_str, ea_name_str, bgy_name_str, hh, feat)
             elif is_merge:
                 merge_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, feat))
-                temp_ea_index.insertFeature(feat)
+                temp_ea_index.addFeature(feat)
                 temp_ea_by_id[feat.id()] = (ean_str, ea_name_str, bgy_name_str, hh, feat)
 
         # 1. Populate Delineation Table
