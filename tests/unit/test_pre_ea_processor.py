@@ -97,10 +97,11 @@ class TestPreEAProcessor(unittest.TestCase):
         self.assertIsNotNone(result.output_layer)
         self.assertTrue(result.output_layer.isValid())
 
-        # Verify hhcount and bldgcount fields exist in output layer
+        # Verify hhcount, bldgcount, sy fields exist in output layer
         out_field_names = [f.name() for f in result.output_layer.fields()]
         self.assertIn("hhcount", out_field_names)
         self.assertIn("bldgcount", out_field_names)
+        self.assertIn("sy", out_field_names)
 
         # Output features count should match input EAs (2)
         output_features = list(result.output_layer.getFeatures())
@@ -110,6 +111,7 @@ class TestPreEAProcessor(unittest.TestCase):
         feat1 = next(f for f in output_features if f.attribute("ean") == "001")
         self.assertEqual(float(feat1.attribute("hhcount")), 120.0)
         self.assertEqual(int(feat1.attribute("bldgcount")), 15)
+        self.assertEqual(str(feat1.attribute("sy")), "2026")
 
     def test_explode_to_polygons_handles_multipolygon(self):
         """Test that _explode_to_polygons correctly handles MultiPolygon WKB types."""
@@ -137,6 +139,48 @@ class TestPreEAProcessor(unittest.TestCase):
         self.assertIsNotNone(cleaned)
         self.assertFalse(cleaned.isEmpty())
 
+    def test_create_ea_layer_from_barangay(self):
+        """Test static method create_ea_layer_from_barangay generates a valid EA layer."""
+        ea_layer = PreEAProcessor.create_ea_layer_from_barangay(self.bgy_layer)
+        self.assertIsNotNone(ea_layer)
+        self.assertTrue(ea_layer.isValid())
+        self.assertEqual(ea_layer.featureCount(), self.bgy_layer.featureCount())
+        
+        field_names = [f.name() for f in ea_layer.fields()]
+        self.assertIn("ean", field_names)
+        self.assertIn("hhcount", field_names)
+        self.assertIn("bldgcount", field_names)
+        self.assertIn("sy", field_names)
+
+        # Check feature attribute values defaulted
+        feats = list(ea_layer.getFeatures())
+        self.assertEqual(len(feats), 1)
+        self.assertEqual(feats[0].attribute("ean"), "000000")
+        self.assertEqual(float(feats[0].attribute("hhcount")), 0.0)
+        self.assertEqual(int(feats[0].attribute("bldgcount")), 0)
+        self.assertEqual(str(feats[0].attribute("sy")), "2026")
+
+    def test_processor_runs_without_ea_layer(self):
+        """Test PreEAProcessor run method when ea_layer is None (auto-create from Barangay)."""
+        processor = PreEAProcessor()
+        result = processor.run(
+            barangay_layer=self.bgy_layer,
+            ea_layer=None,
+            gap_tolerance=1.0,
+            clip_to_bgy=True,
+            detect_gaps=True,
+            assign_gaps=True,
+        )
+
+        self.assertTrue(result.success, f"PreEAProcessor failed with error: {result.error_message}")
+        self.assertEqual(result.summary.barangays_processed, 1)
+        self.assertEqual(result.summary.eas_processed, 1)
+        self.assertIsNotNone(result.output_layer)
+        self.assertTrue(result.output_layer.isValid())
+        out_feat = list(result.output_layer.getFeatures())[0]
+        self.assertEqual(str(out_feat.attribute("sy")), "2026")
+
 
 if __name__ == "__main__":
     unittest.main()
+
