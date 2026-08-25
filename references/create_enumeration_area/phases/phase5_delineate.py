@@ -166,10 +166,10 @@ def force_geometric_split(ea_item, target_pop, fback, min_household=100, max_hou
     for p in final_parts:
         clipped = p['geom'].intersection(parent_geom).buffer(0.0, 3)
     final_parts = enforce_min_household_parts(final_parts, fback, min_household=min_household, max_household=max_household, ea_geom=parent_geom)
-    if len(final_parts) < 2 or any(p['hh_count'] < min_household for p in final_parts):
+    if len(final_parts) < 2 or any(p['hh_count'] < min_household or p['hh_count'] > max_household for p in final_parts):
         fback.pushWarning(
-            f"[EA {ea_item['original_code']}] Forced split rejected: sub-polygon(s) fall below min threshold "
-            f"({min_household} HH). Keeping EA whole."
+            f"[EA {ea_item['original_code']}] Forced split rejected: sub-polygon(s) fall outside threshold range "
+            f"[{min_household}, {max_household}] HH. Keeping EA whole."
         )
         return [ea_item]
 
@@ -1409,13 +1409,13 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         # Re-enforce min_household to dissolve any 0 HH or under-threshold sister sub-polygons
         final_parts = enforce_min_household(final_parts, fback, ea_geom=parent_geom)
 
-        # Reject the split if resulting parts < 2 or any part falls below min_household threshold
-        if len(final_parts) < 2 or any(p['hh_count'] < min_household for p in final_parts):
-            under_parts = [p for p in final_parts if p['hh_count'] < min_household]
+        # Reject the split if resulting parts < 2 or any part falls outside [min_household, max_household]
+        if len(final_parts) < 2 or any(p['hh_count'] < min_household or p['hh_count'] > max_household for p in final_parts):
+            invalid_parts = [p for p in final_parts if p['hh_count'] < min_household or p['hh_count'] > max_household]
             fback.pushWarning(
                 f"[EA {ea_item['original_code']}] Hybrid split rejected: "
-                f"{len(under_parts)} sub-polygon(s) fall below min threshold "
-                f"({min_household} HH). Keeping EA whole."
+                f"{len(invalid_parts)} sub-polygon(s) fall outside threshold range "
+                f"[{min_household}, {max_household}] HH. Keeping EA whole."
             )
             return [ea_item]
 
@@ -1562,13 +1562,13 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         # Re-enforce min_household to dissolve any 0 HH or under-threshold sister sub-polygons
         final_parts = enforce_min_household(final_parts, fback, ea_geom=parent_geom)
 
-        # Reject the split if resulting parts < 2 or any part falls below min_household threshold
-        if len(final_parts) < 2 or any(p['hh_count'] < min_household for p in final_parts):
-            under_parts = [p for p in final_parts if p['hh_count'] < min_household]
+        # Reject the split if resulting parts < 2 or any part falls outside [min_household, max_household]
+        if len(final_parts) < 2 or any(p['hh_count'] < min_household or p['hh_count'] > max_household for p in final_parts):
+            invalid_parts = [p for p in final_parts if p['hh_count'] < min_household or p['hh_count'] > max_household]
             fback.pushWarning(
                 f"[EA {ea_item['original_code']}] Building-cluster split rejected: "
-                f"{len(under_parts)} sub-polygon(s) fall below min threshold "
-                f"({min_household} HH). Keeping EA whole."
+                f"{len(invalid_parts)} sub-polygon(s) fall outside threshold range "
+                f"[{min_household}, {max_household}] HH. Keeping EA whole."
             )
             return [ea_item]
 
@@ -1692,11 +1692,11 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                         else:
                             split_parts = split_ea(ea, max_household, fback)
                             if len(split_parts) > 1:
-                                # UNBREAKABLE SAFETY GATE: Guarantee no delineated sub-polygon is below min_household
-                                if any(p['hh_count'] < min_household for p in split_parts) or len(split_parts) < 2:
+                                # UNBREAKABLE SAFETY GATE: Guarantee no delineated sub-polygon falls outside [min_household, max_household]
+                                if any(p['hh_count'] < min_household or p['hh_count'] > max_household for p in split_parts) or len(split_parts) < 2:
                                     fback.pushWarning(
                                         f"[Barangay {bar_code}] [EA {ea['original_code']}] Delineation rejected: "
-                                        f"one or more sub-polygons fell below min_household ({min_household} HH). Keeping EA whole."
+                                        f"one or more sub-polygons fell outside threshold range [{min_household}, {max_household}] HH. Keeping EA whole."
                                     )
                                     new_eas.append(ea)
                                 else:
