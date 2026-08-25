@@ -48,7 +48,7 @@ The **EA Preprocessing** tab prepares starting EA boundaries before running deli
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | **Barangay Layer** | Vector (Polygon) | Administrative barangay polygon boundaries. Must contain a `geocode` field used to assign parent barangay codes. Required. |
-| **EA Layer** | Vector (Polygon) | Starting EA polygon boundaries to be pre-processed. Must contain a `geocode` field. Attributes are inherited by output. Required. |
+| **EA Layer** | Vector (Polygon) | Starting EA polygon boundaries to be pre-processed. Optional; if left unselected, a new EA layer is automatically created based on the Barangay layer input. |
 | **Gap Area Tolerance (m²)** | Double | Minimum area threshold (default: `1.0 m²`) for a gap to be processed; smaller gaps are treated as geometry precision slivers and skipped. |
 | **Clip EA to Barangay Boundary** | Boolean | When enabled (default: `True`), clips any portion of an EA extending outside its parent Barangay boundary. |
 | **Detect Uncovered Barangay Areas** | Boolean | When enabled (default: `True`), identifies uncovered gaps within each Barangay after clipping. |
@@ -131,23 +131,23 @@ The output layers `<geocode>_delineated_ea2026`, `<geocode>_merged_ea2026`, and 
 
 ## Tab 3 — Enumeration Area Merge
 
-The **Enumeration Area Merge** tab updates an existing EA base layer using one or more replacement polygon layers containing replacement EA geometries.
+The **Enumeration Area Merge** tab updates an existing previous EA layer using one or more replacement polygon layers containing replacement EA geometries.
 
-Replacement polygons take precedence over the base EA layer: any overlapping portions of the existing EA layer underneath the replacement geometries are removed, and the replacement geometries are inserted to produce a consolidated `<5-digit geocode>_ea2026` output layer and an exact Excel attribute table export (`<5-digit geocode>_earf_<citymun>.xlsx`).
+Replacement polygons take precedence over the previous EA layer: any overlapping portions of the existing EA layer underneath the replacement geometries are removed, and the replacement geometries are inserted to produce a consolidated `<5-digit geocode>_ea2026` output layer and an exact Excel attribute table export (`<5-digit geocode>_earf_<citymun>.xlsx`).
 
 ### Parameters & Inputs
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| **EA Input Layer** | Vector (Polygon) | Base EA polygon layer (e.g. `<geocode>_ea`, `<geocode>_ea2024`, `<geocode>_ea2026_preprocessed`). Attributes and fields are preserved. Required. |
-| **Replacement Polygon Layers — Multi Input** | Vector (Polygon, Multi) | One or more vector polygon layers selected from the project. Every layer name must contain **exactly 14 numeric digits** (e.g. `01001000000001`). Required. |
+| **Previous EA Layer** | Vector (Polygon) | Previous EA polygon layer (e.g. `<geocode>_ea`, `<geocode>_ea2024`, `<geocode>_ea2026_preprocessed`). Attributes and fields are preserved. Required. |
+| **Replacement Polygon Layers — Multi Input** | Vector (Polygon, Multi) | One or more vector polygon layers selected from the project. Every layer name must contain **exactly 8 numeric digits** (e.g. `01001000`). Required. |
 
 ### Tab 3 Validation Checklist
 
 - **Polygon layers**: All selected replacement layers must be vector polygon geometries.
-- **14-digit layer names**: Layer names must follow the `##############` 14-digit numeric pattern.
+- **8-digit layer names**: Layer names must follow the `########` 8-digit numeric pattern.
 - **Valid geometries**: Checks for valid, non-empty geometries and reconciles CRS differences via on-the-fly transformations.
-- **Geographic code & City/Municipality**: Automatically extracts the 5-digit geocode and single City/Municipality name from the EA Input Layer for output naming.
+- **Geographic code & City/Municipality**: Automatically extracts the 5-digit geocode and single City/Municipality name from the Previous EA Layer for output naming.
 
 ### Outputs
 
@@ -175,7 +175,7 @@ Replacement polygons take precedence over the base EA layer: any overlapping por
    - Underpopulated EAs (<=100 HH) undergo up to 5 iterative passes of spatial adjacency merging strictly within the same parent Barangay.
 
 5. **Enumeration Area Merge (Tab 3)**:
-   - Takes base EA layer and multiple 14-digit replacement polygon layers.
+   - Takes previous EA layer and multiple 8-digit replacement polygon layers.
    - Performs geometric difference on existing EAs against combined replacement polygons.
    - Inserts replacement geometries and builds `<5-digit geocode>_ea2026` layer.
    - Dynamically exports attribute table to `<5-digit geocode>_earf_<citymun>.xlsx`.
@@ -190,5 +190,5 @@ Replacement polygons take precedence over the base EA layer: any overlapping por
 In the **EA Delineation and Merging** launcher dialog:
 1. Run **Tab 1: EA Preprocessing** to create the `<pppmm>_ea2026_preprocessed` layer.
 2. Switch to **Tab 2: Create Enumeration Areas** to balance household counts and delineate/merge zones.
-3. Switch to **Tab 3: Enumeration Area Merge** to apply specific 14-digit replacement polygon layers and export the consolidated Excel attribute table (`.xlsx`).
+3. Switch to **Tab 3: Enumeration Area Merge** to apply specific 8-digit replacement polygon layers and export the consolidated Excel attribute table (`.xlsx`).
 :::

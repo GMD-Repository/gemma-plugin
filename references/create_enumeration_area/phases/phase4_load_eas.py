@@ -152,7 +152,7 @@ def run_phase_4(alg, parameters, context, feedback, multi_feedback, p1, p2, prev
     temp_index = QgsSpatialIndex()
     ea_by_id = {}
     for feat in all_ea_features:
-        temp_index.insertFeature(feat)
+        temp_index.addFeature(feat)
         ea_by_id[feat.id()] = feat
 
     for feat in all_ea_features:

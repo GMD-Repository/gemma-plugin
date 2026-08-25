@@ -178,7 +178,7 @@ def clean_unsnapped_vertices(eas_list: List[dict], snap_tolerance: float, road_g
     for idx_ea, ea_item in enumerate(eas_list):
         f_ea = QgsFeature(idx_ea)
         f_ea.setGeometry(ea_item['geom'])
-        idx_spatial.insertFeature(f_ea)
+        idx_spatial.addFeature(f_ea)
         ea_map[idx_ea] = ea_item
 
     constraint_geoms = []
@@ -359,7 +359,7 @@ def clean_unsnapped_vertices(eas_list: List[dict], snap_tolerance: float, road_g
                 idx_spatial.deleteFeature(f_del)
                 f_ea = QgsFeature(idx_ea)
                 f_ea.setGeometry(ea_item['geom'])
-                idx_spatial.insertFeature(f_ea)
+                idx_spatial.addFeature(f_ea)
 
 
 def run_phase_8(
