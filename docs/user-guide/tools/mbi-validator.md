@@ -35,10 +35,11 @@ Outputs are generated conditionally and will only create output layers when at l
 
 | Output | Type | Description |
 |--------|------|-------------|
-| **Status Mismatch** | Feature Sink (Polygon) | Cases where reported status conflicts with spatial evidence or attribute rules (e.g. marked resolved but still detected, Pending w/ 0 building points and no remarks, or Updated w/ nonzero building points and no remarks). |
-| **Mismatch with Remarks** | Feature Sink (Polygon) | Cases marked `2_Pending` w/ 0 building points but with remarks present, or `1_Updated` w/ non-zero building points with remarks present. |
+| **Status Mismatch** | Feature Sink (Polygon) | Cases where reported status conflicts with spatial evidence or attribute rules (e.g. marked resolved but still detected, Pending w/ 0 building points and no remarks, Updated w/ nonzero building points and no remarks, or Pending cases no longer detected by Checker). |
+| **Mismatch with Remarks** | Feature Sink (Polygon) | Reference cases marked `1_Updated` with non-zero building points where remarks are present (review justification). |
+| **Pending with Remarks** | Feature Sink (Polygon) | Reference cases marked `2_Pending` that contain substantive justification remarks (with or without building points). |
 | **New Cases** | Feature Sink (Polygon) | Checker cases that do not genuinely overlap any existing reference case in the baseline. |
-| **Remaining Cases** | Feature Sink (Polygon) | Known, legitimately open or pending boundary cases with valid justifications. |
+| **Remaining Cases** | Feature Sink (Polygon) | Baseline reference cases actively detected by the checker that remain legitimately open without remarks. |
 | **Confirmed Resolved** | Feature Sink (Polygon) | Reference cases marked `1_Updated` with 0 building points that are no longer detected by topological checkers. |
 | **Manual Review** | Feature Sink (Polygon) | Ambiguous cases where a single checker polygon overlaps multiple reference polygons. |
 | **No Status** | Feature Sink (Polygon) | Reference boundary cases where the `mbi_status` field is blank or NULL. |
@@ -54,13 +55,15 @@ Outputs are generated conditionally and will only create output layers when at l
    - Boundary-touching features (sharing only edges or vertices without interior area overlap) are excluded from matching to prevent brand-new adjacent boundary cases from inheriting old reference statuses.
 
 3. **Status Audit & Rule Evaluation**:
-   - **Status Mismatch**: Cases reported as `1_Updated` (resolved) that are still physically detected, `2_Pending` cases with `0` building points and empty justification remarks, or `1_Updated` cases with remaining building points and empty remarks.
-   - **Mismatch with Remarks**: Cases marked `2_Pending` with `0` building points but possessing written remarks, or `1_Updated` cases with remaining building points and non-empty justification remarks.
+   - **Status Mismatch**: Cases reported as `1_Updated` (resolved) that are still physically detected, `2_Pending` cases with `0` building points and empty remarks, `1_Updated` cases with remaining building points and empty remarks, or `2_Pending` cases no longer detected by the checker.
+   - **Mismatch with Remarks**: Cases marked `1_Updated` with remaining building points and non-empty justification remarks.
+   - **Pending with Remarks**: Cases marked `2_Pending` containing written justification remarks, regardless of building point count.
+   - **Remaining Cases**: Cases in the reference layer confirmed detected by the checker that remain legitimately unresolved without remarks.
    - **Confirmed Resolved**: Reference cases marked `1_Updated` with zero building points that no longer spatially intersect any active checker polygon.
    - **New Cases**: Active checker polygons that have zero interior area overlap against reference cases.
 
 4. **Timestamped GeoPackage Consolidation**:
-   - If enabled (by checking **Save outputs as GeoPackage**), non-empty result categories are automatically saved into a single `.gpkg` file formatted as `ref_mbi_reviewed-YYYY-MM-DD_HH-MM-SS.gpkg`. A **Save Path** destination folder is required only when this option is checked; if unchecked, the algorithm runs without requiring a output folder.
+   - If enabled (by checking **Save outputs as GeoPackage**), non-empty result categories are automatically saved into a single `.gpkg` file formatted as `ref_mbi_reviewed-YYYY-MM-DD_HH-MM-SS.gpkg`. A **Save Path** destination folder is required only when this option is checked; if unchecked, the algorithm runs without requiring an output folder.
 
 ## Classification Rules
 
@@ -68,24 +71,27 @@ Outputs are generated conditionally and will only create output layers when at l
    - Case marked `1_Updated` but spatially detected by the Checker layer.
    - Case marked `2_Pending` with `0` building points (`num_bldg_pts = 0`) and no substantive justification remarks.
    - Case marked `1_Updated` with non-zero building points (`num_bldg_pts > 0`) and no substantive justification remarks.
+   - Case marked `2_Pending` with non-zero building points (`num_bldg_pts > 0`) and no remarks that is no longer detected by the Checker.
 
 2. **Mismatch with Remarks (`MISMATCH_WITH_REMARKS`)**:
-   - Case marked `2_Pending` with `0` building points (`num_bldg_pts = 0`) but containing non-empty justification remarks.
    - Case marked `1_Updated` with non-zero building points (`num_bldg_pts > 0`) and containing non-empty justification remarks.
 
-3. **New Cases (`NEW_CASE`)**:
+3. **Pending with Remarks (`PENDING_WITH_REMARKS`)**:
+   - Case marked `2_Pending` containing non-empty justification remarks (with or without building points).
+
+4. **New Cases (`NEW_CASE`)**:
    - Detected by Checker GAP or OVERLAP layers with zero area overlap against the Reference dataset (merely touching polygon boundaries does not count as a match).
 
-4. **Remaining Cases (`REMAINING_CASE`)**:
-   - Reference cases marked `2_Pending` that have valid remarks and active topological findings.
+5. **Remaining Cases (`REMAINING_CASE`)**:
+   - Reference cases detected by the Checker layer that remain open without remarks.
 
-5. **Confirmed Resolved (`CONFIRMED_RESOLVED`)**:
+6. **Confirmed Resolved (`CONFIRMED_RESOLVED`)**:
    - Reference cases marked `1_Updated` with zero building points that no longer overlap any Checker polygons.
 
-6. **Manual Review (`MANUAL_REVIEW`)**:
+7. **Manual Review (`MANUAL_REVIEW`)**:
    - Checker polygons that spatially overlap two or more distinct Reference cases.
 
-7. **No Status (`NO_STATUS`)**:
+8. **No Status (`NO_STATUS`)**:
    - Reference boundary cases where the `mbi_status` field is empty or NULL.
 
 ## Output Fields
