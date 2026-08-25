@@ -455,35 +455,39 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
         for part in result:
             self.assertGreaterEqual(part['hh_count'], 100.0, "Every resulting sister sub-polygon must be >= 100 HH.")
 
-    def test_delineated_ea_has_no_maximum_threshold(self):
-        """Verify that delineated EAs (from_split=True) have no max_household upper bound limit."""
-        from references.create_enumeration_area.helpers.classification import is_delineation_candidate
+    def test_delineated_ea_must_fall_within_min_and_max_threshold(self):
+        """Verify that delineated EAs must fall strictly within [min_household, max_household] range."""
+        from references.create_enumeration_area.phases.phase5_delineate import force_geometric_split
 
         feedback = MockFeedback()
         geom = make_square_geom(0, 0, 10)
 
-        # Delineated sub-EA with 350 HH (exceeds max_household 300)
-        ea_delineated = {
+        # 2 buildings: 1 with 320 HH (exceeds 300 HH), 1 with 150 HH (total 470 HH).
+        # Splitting would produce 1 part with 320 HH (> max_household 300).
+        b1 = {'point': QgsPointXY(2, 2), 'pop': 320.0, 'bldgpoints_value': 320.0}
+        b2 = {'point': QgsPointXY(8, 8), 'pop': 150.0, 'bldgpoints_value': 150.0}
+
+        ea_over = {
             'geom': geom,
-            'buildings': [],
-            'hh_count': 350.0,
-            'original_hhcount': 350.0,
-            'bldg_count': 10,
-            'attributes': [1, "EA 001A"],
+            'buildings': [b1, b2],
+            'hh_count': 470.0,
+            'original_hhcount': 470.0,
+            'bldg_count': 2,
+            'attributes': [1, "EA 001"],
             'original_id': 901,
-            'original_code': "01737009001A",
-            'is_new': True,
-            'split_by': 'road_river',
+            'original_code': "01737009001",
+            'is_new': False,
+            'split_by': 'none',
             'from_merge': False,
-            'from_split': True,  # Delineated EA
+            'from_split': False,
             'parent_barangay': "01737"
         }
 
-        # Delineated EAs must NOT be flagged as delineation candidates regardless of max_household
-        self.assertFalse(
-            is_delineation_candidate(ea_delineated, max_household=300.0),
-            "Delineated EAs (from_split=True) must NOT be flagged as over-threshold delineation candidates."
-        )
+        result = force_geometric_split(ea_over, target_pop=200.0, fback=feedback, min_household=100.0, max_household=300.0)
+
+        # The split must be rejected if any part exceeds max_household (300 HH)
+        self.assertEqual(len(result), 1, "Split must be rejected when a sub-polygon exceeds max_household (300 HH).")
+        self.assertEqual(result[0]['hh_count'], 470.0, "Original EA must be kept whole.")
 
     def test_prevent_merge_exceeding_max_household(self):
         """Verify that EAs are prevented from merging if their combined count exceeds max_household (300 HH)."""
