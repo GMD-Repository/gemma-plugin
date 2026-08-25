@@ -99,6 +99,29 @@ def layer_has_field(layer, field_name):
     return layer.fields().indexOf(field_name) != -1
 
 
+def find_matching_layer_id(keywords, geom_types=None):
+    """
+    Scans QgsProject.instance() for loaded vector layers whose names match
+    any of the specified keywords (case-insensitive) and match geom_types.
+    Returns the matching layer's ID, or None if not found.
+    """
+    try:
+        project = QgsProject.instance()
+        if not project:
+            return None
+        for layer in project.mapLayers().values():
+            if isinstance(layer, QgsVectorLayer) and layer.isValid():
+                if geom_types is not None and layer.geometryType() not in geom_types:
+                    continue
+                name_lower = layer.name().lower()
+                for kw in keywords:
+                    if kw.lower() in name_lower:
+                        return layer.id()
+    except Exception:
+        pass
+    return None
+
+
 def meaningful(val):
     if val in (None, NULL):
         return False
@@ -229,10 +252,16 @@ def evaluate_reference_case(rf, spatially_confirmed):
         else:
             plain_reasons.append("'2_Pending' with 0 num_bldg_pts and no justifying remarks.")
 
-    # Rule C: 1_Updated but still has building points -- always routed to
-    # the "review the remarks" bucket, regardless of whether remarks exist.
-    if status == "1_Updated" and bp != 0:
-        remarks_reasons.append(f"For Review of Remarks: Status='1_Updated' but has {bp} building point(s) remaining.")
+    # Rule C: 1_Updated but still has building points
+    if status in RESOLVED_STATUSES and bp != 0:
+        if has_remarks:
+            remarks_reasons.append(
+                f"For Review of Remarks: Status='{status}' but has {bp} building point(s) remaining."
+            )
+        else:
+            plain_reasons.append(
+                f"Status='{status}' but has {bp} building point(s) remaining and no justifying remarks."
+            )
 
     if plain_reasons:
         return "status_mismatch", "; ".join(plain_reasons + remarks_reasons)
@@ -397,25 +426,26 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
             "Cross-checks a single combined Reference MBI layer (Gap and "
             "Overlap cases distinguished by the 'mbi_type' field) against "
             "separate Checker GAP / OVERLAP layers to flag status mismatches.\n\n"
+            "Layer Auto-Detection:\n"
+            "Automatically detects and pre-selects matching 'ref_mbi_cases', "
+            "'Gaps', and 'Overlaps' polygon layers loaded in the active project.\n\n"
+            "Spatial Matching Rules:\n"
             "A Checker case is only linked to a Reference case when it "
             "genuinely overlaps it in area — merely touching a neighboring "
             "Reference polygon's edge does NOT count as a match, so a truly "
             "new case sitting next to an old one is correctly classified as "
             "a New Case.\n\n"
+            "Inputs:\n"
             "Reference layer is required. Leave a Checker input empty if "
             "that case type doesn't apply.\n\n"
-            "Optionally, tick 'Combine all outputs into a single GeoPackage' "
-            "and pick a folder — every non-empty category will be written as "
-            "a separate layer inside one .gpkg file, automatically named "
-            "'ref_mbi_reviewed-YYYY-MM-DD_HH-MM-SS.gpkg' with the current "
-            "date and time. The filename is generated automatically and "
-            "cannot be edited — only the destination folder is chosen.\n\n"
-            "Outputs (only generated when they contain at least one feature):\n"
-            "- Status Mismatch: claimed resolved but still detected, or "
-            "Pending w/ 0 bldg pts and no remarks at all\n"
-            "- Mismatch with Remarks: Pending w/ 0 bldg pts but remarks ARE "
-            "present (verify the justification), or Updated w/ nonzero "
-            "bldg pts (review remarks either way)\n"
+            "GeoPackage Output:\n"
+            "Optionally tick 'Save outputs as GeoPackage' and pick a destination "
+            "folder — every non-empty category will be written as a separate layer "
+            "inside a single .gpkg file, automatically named 'ref_mbi_reviewed-YYYY-MM-DD_HH-MM-SS.gpkg' "
+            "with the current timestamp.\n\n"
+            "Outputs (only generated when containing at least one feature):\n"
+            "- Status Mismatch: claimed resolved but still detected, Pending w/ 0 bldg pts and no remarks, or Updated w/ nonzero bldg pts and no remarks\n"
+            "- Mismatch with Remarks: Pending w/ 0 bldg pts but remarks present, or Updated w/ nonzero bldg pts but remarks ARE present (verify justification)\n"
             "- New Cases: Checker case with no genuine Reference overlap\n"
             "- Remaining Cases: known, legitimately unresolved\n"
             "- Confirmed Resolved: claimed resolved and Checker agrees\n"
@@ -448,17 +478,36 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
         return param
 
     def initAlgorithm(self, config=None):
-        # Reference layer is REQUIRED — no optional=True here
+        # Auto-detect default reference layer matching 'ref_mbi_cases' or 'ref_mbi' from active project
+        default_ref = find_matching_layer_id(
+            ["ref_mbi_cases", "ref_mbi"],
+            [QgsWkbTypes.PolygonGeometry]
+        )
         self.addParameter(QgsProcessingParameterFeatureSource(
-            self.REF_LAYER, self.tr("Reference layer "),
-            [QgsProcessing.TypeVectorPolygon]))
+            self.REF_LAYER, self.tr("Reference layer (ref_mbi_cases)"),
+            [QgsProcessing.TypeVectorPolygon],
+            optional=False,
+            defaultValue=default_ref))
 
+        default_gap = find_matching_layer_id(
+            ["gaps", "gap", "chk_gap", "checker_gap"],
+            [QgsWkbTypes.PolygonGeometry]
+        )
         self.addParameter(QgsProcessingParameterFeatureSource(
             self.CHK_GAP, self.tr("Checker GAP layer"),
-            [QgsProcessing.TypeVectorPolygon], optional=True))
+            [QgsProcessing.TypeVectorPolygon],
+            optional=True,
+            defaultValue=default_gap))
+
+        default_overlap = find_matching_layer_id(
+            ["overlaps", "overlap", "chk_overlap", "checker_overlap"],
+            [QgsWkbTypes.PolygonGeometry]
+        )
         self.addParameter(QgsProcessingParameterFeatureSource(
             self.CHK_OVERLAP, self.tr("Checker OVERLAP layer"),
-            [QgsProcessing.TypeVectorPolygon], optional=True))
+            [QgsProcessing.TypeVectorPolygon],
+            optional=True,
+            defaultValue=default_overlap))
 
         self.addParameter(QgsProcessingParameterBoolean(
             self.COMBINE_GPKG,
