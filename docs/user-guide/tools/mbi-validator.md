@@ -27,7 +27,7 @@ Use this tool when you need to:
 | **Checker GAP layer** | Feature Source (Polygon) | Topological checker output layer containing detected boundary gaps. Optional. Automatically pre-selects matching `Gaps` layer loaded in active QGIS project. |
 | **Checker OVERLAP layer** | Feature Source (Polygon) | Topological checker output layer containing detected boundary overlaps. Optional. Automatically pre-selects matching `Overlaps` layer loaded in active QGIS project. |
 | **Save outputs as GeoPackage** | Boolean | Option to consolidate all non-empty audit result categories into a single GeoPackage file. Default is `False`. |
-| **Save Path** | Folder Directory | Destination folder where the GeoPackage will be saved. Required. The filename is automatically generated as `ref_mbi_reviewed-YYYY-MM-DD_HH-MM-SS.gpkg`. |
+| **Save Path** | Folder Directory | Destination folder where the GeoPackage will be saved. Optional unless **Save outputs as GeoPackage** is checked. The filename is automatically generated as `ref_mbi_reviewed-YYYY-MM-DD_HH-MM-SS.gpkg`. |
 
 ### Outputs
 
@@ -60,7 +60,7 @@ Outputs are generated conditionally and will only create output layers when at l
    - **New Cases**: Active checker polygons that have zero interior area overlap against reference cases.
 
 4. **Timestamped GeoPackage Consolidation**:
-   - If enabled, non-empty result categories are automatically saved into a single `.gpkg` file formatted as `ref_mbi_reviewed-YYYY-MM-DD_HH-MM-SS.gpkg`.
+   - If enabled (by checking **Save outputs as GeoPackage**), non-empty result categories are automatically saved into a single `.gpkg` file formatted as `ref_mbi_reviewed-YYYY-MM-DD_HH-MM-SS.gpkg`. A **Save Path** destination folder is required only when this option is checked; if unchecked, the algorithm runs without requiring a output folder.
 
 ## Classification Rules
 
