@@ -6,9 +6,9 @@ Implements the Enumeration Area Merge workflow for the EA Delineation and
 Merging plugin (Tab 3).
 
 Workflow:
-  Phase 1 — Validate EA Input Layer (geometry type, feature count, 5-digit
+  Phase 1 — Validate Previous EA Layer (geometry type, feature count, 5-digit
              geographic code, CityMun field).
-  Phase 2 — Validate Replacement Polygon Layers (14-digit numeric names,
+  Phase 2 — Validate Replacement Polygon Layers (8-digit numeric names,
              polygon geometry, non-empty).
   Phase 3 — CRS reconciliation across all input layers.
   Phase 4 — Dissolve/union all replacement geometries into a single combined
@@ -16,22 +16,22 @@ Workflow:
   Phase 5 — For each EA feature, subtract the combined replacement geometry.
              Preserve original attributes for all remaining EA fragments.
   Phase 6 — Collect replacement features from all replacement layers.
-  Phase 7 — Build output memory layer with the EA Input Layer's field schema.
+  Phase 7 — Build output memory layer with the Previous EA Layer's field schema.
   Phase 8 — Validate final output geometries.
   Phase 9 — Add output layer to the QGIS project.
   Phase 10 — Export final attribute table to Excel.
 
 Inputs:
-  - ea_layer         : QgsVectorLayer (polygon) — the base EA Input Layer.
+  - ea_layer         : QgsVectorLayer (polygon) — the Previous EA Layer.
   - replacement_layers: list[QgsVectorLayer]    — replacement polygon layers
-                        each named with exactly 14 numeric digits.
+                        each named with exactly 8 numeric digits.
 
 Outputs:
   - QgsVectorLayer in-memory named  <5digit>_ea2026
   - Excel file named  <5digit>_earf_<citymun>.xlsx
 
 Source data protection:
-  The EA Input Layer and all replacement layers are NEVER modified or
+  The Previous EA Layer and all replacement layers are NEVER modified or
   overwritten. All operations work on copies of geometries.
 
 Dependencies:
@@ -77,7 +77,7 @@ _CITYMUN_FIELDS = (
 )
 
 # Pattern for valid replacement layer names.
-_REPLACEMENT_NAME_RE = re.compile(r"^\d{14}$")
+_REPLACEMENT_NAME_RE = re.compile(r"^\d{8}$")
 
 # Output year suffix.
 _OUTPUT_YEAR = "ea2026"
@@ -94,7 +94,7 @@ _EXCEL_SHEET_NAME = "EA2026"
 class EAMergeSummary:
     """Statistical summary produced by EAMergeProcessor.run()."""
     geographic_code: str = ""
-    ea_input_layer_name: str = ""
+    previous_ea_layer_name: str = ""
     replacement_layer_count: int = 0
     replacement_feature_count: int = 0
     modified_ea_count: int = 0
@@ -105,6 +105,14 @@ class EAMergeSummary:
     citymun_name: str = ""
     overall_status: str = "READY"   # READY | PASS | WARNING | ERROR
     excel_generated: bool = False
+
+    @property
+    def ea_input_layer_name(self) -> str:
+        return self.previous_ea_layer_name
+
+    @ea_input_layer_name.setter
+    def ea_input_layer_name(self, val: str) -> None:
+        self.previous_ea_layer_name = val
 
 
 @dataclass
@@ -191,9 +199,9 @@ class EAMergeProcessor:
         """Returns the HTML description string for Enumeration Area Merge."""
         return (
             "<h3>Enumeration Area Merge</h3>"
-            "<p>The <b>Enumeration Area Merge</b> workflow updates an existing base Enumeration Area (EA) "
+            "<p>The <b>Enumeration Area Merge</b> workflow updates an existing previous Enumeration Area (EA) "
             "layer using one or more replacement polygon layers containing updated/replacement EA geometries.</p>"
-            "<p>Replacement polygons take precedence: any overlapping portions of the existing base EA layer "
+            "<p>Replacement polygons take precedence: any overlapping portions of the existing previous EA layer "
             "underneath the replacement geometries are removed, and the replacement geometries are inserted to "
             "produce a consolidated <code>&lt;5-digit geocode&gt;_ea2026</code> layer and an exact Excel attribute "
             "table export (<code>&lt;5-digit geocode&gt;_earf_&lt;citymun&gt;.xlsx</code>).</p>"
@@ -201,17 +209,17 @@ class EAMergeProcessor:
             "<h4>Inputs</h4>"
             "<b>Required</b>"
             "<ul>"
-            "<li><b>Base EA Layer</b> (polygon) — Starting/existing EA layer. Attributes and fields are preserved. "
+            "<li><b>Previous EA Layer</b> (polygon) — Starting/existing EA layer. Attributes and fields are preserved. "
             "Auto-detected by <code>*_ea</code>, <code>*_ea2024</code>, <code>*_ea2026</code>, or <code>*_ea_preprocessed</code>.</li>"
             "<li><b>Replacement Polygon Layers</b> (polygon, multi-input) — One or more replacement polygon layers from "
-            "the project. Each layer name must follow the <b>14-digit numeric convention</b> (e.g. <code>01001000000001</code>).</li>"
+            "the project. Each layer name must follow the <b>8-digit numeric convention</b> (e.g. <code>01001000</code>).</li>"
             "</ul>"
 
             "<h4>Workflow & Guarantees</h4>"
             "<ul>"
-            "<li><b>Source Data Protection</b>: Base EA and replacement layers are never modified or overwritten.</li>"
-            "<li><b>Precedence & Geometry Difference</b>: Overlapping areas in base EAs are subtracted so replacement polygons take precedence without geometric overlap.</li>"
-            "<li><b>Automated Geocode & CityMun Extraction</b>: Automatically determines the 5-digit geographic code and single City/Municipality name from the Base EA layer.</li>"
+            "<li><b>Source Data Protection</b>: Previous EA and replacement layers are never modified or overwritten.</li>"
+            "<li><b>Precedence & Geometry Difference</b>: Overlapping areas in previous EAs are subtracted so replacement polygons take precedence without geometric overlap.</li>"
+            "<li><b>Automated Geocode & CityMun Extraction</b>: Automatically determines the 5-digit geographic code and single City/Municipality name from the Previous EA layer.</li>"
             "<li><b>Consolidated Output Layer</b>: Adds <code>&lt;5-digit geocode&gt;_ea2026</code> directly to the active QGIS project.</li>"
             "<li><b>Excel Attribute Table Export</b>: Generates <code>&lt;5-digit geocode&gt;_earf_&lt;citymun&gt;.xlsx</code> with primary sheet <code>EA2026</code> mirroring output attribute columns.</li>"
             "</ul>"
@@ -252,9 +260,9 @@ class EAMergeProcessor:
             self._log("[INFO] Starting Enumeration Area Merge...")
             self._progress(2)
 
-            # ── Phase 1: Validate EA Input Layer ──────────────────────────
-            self._log(f"[INFO] EA Input Layer: {self.ea_layer.name()}")
-            summary.ea_input_layer_name = self.ea_layer.name()
+            # ── Phase 1: Validate Previous EA Layer ──────────────────────────
+            self._log(f"[INFO] Previous EA Layer: {self.ea_layer.name()}")
+            summary.previous_ea_layer_name = self.ea_layer.name()
 
             if not self._validate_ea_layer():
                 return self._result
@@ -264,7 +272,7 @@ class EAMergeProcessor:
             if geo_code is None:
                 self._fail(
                     "Unable to determine the 5-digit geographic code from "
-                    "the EA Input Layer."
+                    "the Previous EA Layer."
                 )
                 return self._result
             self._geo_code = geo_code
@@ -437,30 +445,30 @@ class EAMergeProcessor:
     # ------------------------------------------------------------------
 
     def _validate_ea_layer(self) -> bool:
-        """Validate the EA Input Layer (geometry type, features)."""
+        """Validate the Previous EA Layer (geometry type, features)."""
         if self.ea_layer is None:
-            self._fail("EA Input Layer is required.")
+            self._fail("Previous EA Layer is required.")
             return False
         if self.ea_layer.geometryType() != QgsWkbTypes.PolygonGeometry:
             self._fail(
                 f"Layer \"{self.ea_layer.name()}\" is not a polygon layer. "
-                "A polygon layer is required for EA Input."
+                "A polygon layer is required for Previous EA Layer."
             )
             return False
         if self.ea_layer.featureCount() == 0:
             self._fail(
-                f"EA Input Layer \"{self.ea_layer.name()}\" contains no features."
+                f"Previous EA Layer \"{self.ea_layer.name()}\" contains no features."
             )
             return False
         self._log(
-            f"[INFO] EA Input Layer valid: "
+            f"[INFO] Previous EA Layer valid: "
             f"{self.ea_layer.featureCount()} polygons  "
             f"({self.ea_layer.crs().authid()})"
         )
         return True
 
     def _determine_geographic_code(self) -> Optional[str]:
-        """Extract the 5-digit geographic code from the EA Input Layer.
+        """Extract the 5-digit geographic code from the Previous EA Layer.
 
         Searches the first matching geocode field, then takes the first
         5 digits of the first non-null value.
@@ -477,7 +485,7 @@ class EAMergeProcessor:
         return digits_only[:5]
 
     def _validate_replacement_layers(self) -> bool:
-        """Validate each replacement layer: polygon type, 14-digit name, non-empty."""
+        """Validate each replacement layer: polygon type, 8-digit name, non-empty."""
         if not self.replacement_layers:
             self._fail("At least one Replacement Polygon Layer is required.")
             return False
@@ -487,14 +495,14 @@ class EAMergeProcessor:
         for layer in self.replacement_layers:
             name = layer.name()
 
-            # 1. 14-digit numeric name
+            # 1. 8-digit numeric name
             if not _REPLACEMENT_NAME_RE.match(name):
                 self._fail(
                     f"Layer \"{name}\" does not follow the required "
-                    "14-digit numeric naming convention.\n"
+                    "8-digit numeric naming convention.\n"
                     "The replacement polygon layer name must contain "
-                    "exactly 14 numeric digits.\n"
-                    "Required format: ##############"
+                    "exactly 8 numeric digits.\n"
+                    "Required format: ########"
                 )
                 return False
 
@@ -513,7 +521,7 @@ class EAMergeProcessor:
                 )
                 return False
 
-        self._log("[INFO] All replacement layers have valid 14-digit codes.")
+        self._log("[INFO] All replacement layers have valid 8-digit codes.")
         return True
 
     def _validate_geometries(self) -> bool:
@@ -525,7 +533,7 @@ class EAMergeProcessor:
         # Check EA layer CRS is defined
         if not self.ea_layer.crs().isValid():
             self._fail(
-                "EA Input Layer has an undefined or invalid CRS. "
+                "Previous EA Layer has an undefined or invalid CRS. "
                 "Please assign a valid CRS before processing."
             )
             return False
@@ -558,7 +566,7 @@ class EAMergeProcessor:
             return None
         if len(values) > 1:
             self._fail(
-                "Multiple City/Municipality values found in the EA Input Layer "
+                "Multiple City/Municipality values found in the Previous EA Layer "
                 f"({', '.join(values)}). "
                 "Expected exactly one value for the Excel filename."
             )
@@ -697,7 +705,7 @@ class EAMergeProcessor:
     ) -> Optional[QgsVectorLayer]:
         """Build the output in-memory polygon layer from the collected features.
 
-        Uses the exact field schema of the EA Input Layer.
+        Uses the exact field schema of the Previous EA Layer.
         """
         crs_auth = self.ea_layer.crs().authid()
         is_multi = False
@@ -718,7 +726,7 @@ class EAMergeProcessor:
 
         provider = layer.dataProvider()
 
-        # Copy field schema from EA Input Layer
+        # Copy field schema from Previous EA Layer
         ea_fields = self.ea_layer.fields()
         fields_list = [ea_fields.at(i) for i in range(ea_fields.count())]
         provider.addAttributes(fields_list)
