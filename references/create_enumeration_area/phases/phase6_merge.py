@@ -203,6 +203,8 @@ def process_barangay_merge(
                         if idx == j or j in merged_indices:
                             continue
                         neighbor = bar_eas[j]
+                        if neighbor.get('from_split', False):
+                            continue
                         if is_delineation_candidate(neighbor, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
                             continue
                         if neighbor.get('original_id') in delineation_candidate_ids:
