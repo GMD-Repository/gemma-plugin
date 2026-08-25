@@ -54,7 +54,7 @@ def run_phase_3(alg, parameters, context, feedback, multi_feedback, p1, p2):
                 g.transform(road_transform)
             f_copy = QgsFeature(feat.id())
             f_copy.setGeometry(g)
-            road_index.insertFeature(f_copy)
+            road_index.addFeature(f_copy)
             road_geoms[feat.id()] = g
 
     river_index = None
@@ -77,7 +77,7 @@ def run_phase_3(alg, parameters, context, feedback, multi_feedback, p1, p2):
                 g.transform(river_transform)
             f_copy = QgsFeature(feat.id())
             f_copy.setGeometry(g)
-            river_index.insertFeature(f_copy)
+            river_index.addFeature(f_copy)
             river_geoms[feat.id()] = g
 
     multi_feedback.setProgress(100)
