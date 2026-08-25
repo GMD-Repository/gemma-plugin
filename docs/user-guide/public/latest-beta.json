@@ -1,9 +1,9 @@
 {
-  "version": "1.0.6-r622",
-  "tag": "r622",
+  "version": "1.0.6-r625",
+  "tag": "r625",
   "releaseDate": "2026-08-25",
   "repositoryUrl": "https://gemma-plugin.vercel.app/gemma-beta.xml",
-  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r622/gemma-plugin-r622.zip",
-  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r622",
-  "changelogUrl": "https://gemma-plugin.vercel.app/changelog/r622"
+  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r625/gemma-plugin-r625.zip",
+  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r625",
+  "changelogUrl": "https://gemma-plugin.vercel.app/changelog/r625"
 }
