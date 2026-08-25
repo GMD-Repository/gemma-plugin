@@ -455,6 +455,36 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
         for part in result:
             self.assertGreaterEqual(part['hh_count'], 100.0, "Every resulting sister sub-polygon must be >= 100 HH.")
 
+    def test_delineated_ea_has_no_maximum_threshold(self):
+        """Verify that delineated EAs (from_split=True) have no max_household upper bound limit."""
+        from references.create_enumeration_area.helpers.classification import is_delineation_candidate
+
+        feedback = MockFeedback()
+        geom = make_square_geom(0, 0, 10)
+
+        # Delineated sub-EA with 350 HH (exceeds max_household 300)
+        ea_delineated = {
+            'geom': geom,
+            'buildings': [],
+            'hh_count': 350.0,
+            'original_hhcount': 350.0,
+            'bldg_count': 10,
+            'attributes': [1, "EA 001A"],
+            'original_id': 901,
+            'original_code': "01737009001A",
+            'is_new': True,
+            'split_by': 'road_river',
+            'from_merge': False,
+            'from_split': True,  # Delineated EA
+            'parent_barangay': "01737"
+        }
+
+        # Delineated EAs must NOT be flagged as delineation candidates regardless of max_household
+        self.assertFalse(
+            is_delineation_candidate(ea_delineated, max_household=300.0),
+            "Delineated EAs (from_split=True) must NOT be flagged as over-threshold delineation candidates."
+        )
+
     def test_prevent_merge_exceeding_max_household(self):
         """Verify that EAs are prevented from merging if their combined count exceeds max_household (300 HH)."""
         feedback = MockFeedback()
