@@ -51,7 +51,7 @@ class TestPreEAProcessor(unittest.TestCase):
         bgy_pr.addFeatures([bgy_feat])
         self.bgy_layer.updateExtents()
 
-        # Create EA vector layer with intentional gap
+        # Create EA vector layer with intentional gap and source field
         self.ea_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "eas", "memory")
         ea_pr = self.ea_layer.dataProvider()
         ea_pr.addAttributes([
@@ -59,18 +59,19 @@ class TestPreEAProcessor(unittest.TestCase):
             QgsField("ean", QVariant.String),
             QgsField("hh_count", QVariant.Double),
             QgsField("bldg_count", QVariant.Int),
+            QgsField("source", QVariant.String),
         ])
         self.ea_layer.updateFields()
 
         # EA 1 covers 0,0 to 80,100 (leaving 80 to 200 as gap inside Barangay)
         ea1 = QgsFeature(self.ea_layer.fields())
         ea1.setGeometry(make_square(0, 0, 80))
-        ea1.setAttributes(["137401001", "001", 120.0, 15])
+        ea1.setAttributes(["137401001", "001", 120.0, 15, "LGU"])
 
         # EA 2 covers 120,0 to 200,100
         ea2 = QgsFeature(self.ea_layer.fields())
         ea2.setGeometry(make_square(120, 0, 80))
-        ea2.setAttributes(["137401001", "002", 85.0, 10])
+        ea2.setAttributes(["137401001", "002", 85.0, 10, "LGU"])
 
         ea_pr.addFeatures([ea1, ea2])
         self.ea_layer.updateExtents()
@@ -102,6 +103,10 @@ class TestPreEAProcessor(unittest.TestCase):
         self.assertIn("hhcount", out_field_names)
         self.assertIn("bldgcount", out_field_names)
         self.assertIn("sy", out_field_names)
+
+        # Verify source field is removed from preprocessed output
+        self.assertNotIn("source", out_field_names)
+        self.assertNotIn("SOURCE", out_field_names)
 
         # Output features count should match input EAs (2)
         output_features = list(result.output_layer.getFeatures())

@@ -49,7 +49,7 @@ from qgis.core import (
     QgsVectorLayer,
     QgsWkbTypes,
 )
-from qgis.PyQt.QtCore import QVariant, QMetaType
+from qgis.PyQt.QtCore import QVariant
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -497,7 +497,14 @@ class PreEAProcessor:
         ea_layer = QgsVectorLayer(uri, layer_name, "memory")
         dp = ea_layer.dataProvider()
 
-        fields = QgsFields(barangay_layer.fields())
+        bgy_fields = barangay_layer.fields()
+        fields = QgsFields()
+        for i in range(bgy_fields.count()):
+            f = bgy_fields.at(i)
+            if f.name().lower() == "source":
+                continue
+            fields.append(f)
+
         existing_names = [fields.at(i).name().lower() for i in range(fields.count())]
 
         ean_field_name = None
@@ -536,9 +543,10 @@ class PreEAProcessor:
             ea_feat = QgsFeature(ea_layer.fields())
             ea_feat.setGeometry(bgy_feat.geometry())
 
-            bgy_fields = barangay_layer.fields()
             for bgy_i in range(bgy_fields.count()):
                 bgy_field_name = bgy_fields.at(bgy_i).name()
+                if bgy_field_name.lower() == "source":
+                    continue
                 ea_field_idx = ea_layer.fields().indexOf(bgy_field_name)
                 if ea_field_idx != -1:
                     ea_feat.setAttribute(ea_field_idx, bgy_feat.attribute(bgy_i))
@@ -624,6 +632,31 @@ class PreEAProcessor:
                 features.append(feat)
         return features
 
+    def _remove_interior_rings(self, geom: Optional[QgsGeometry]) -> Optional[QgsGeometry]:
+        """Remove all interior rings (holes) from a Polygon or MultiPolygon geometry."""
+        if geom is None or geom.isEmpty():
+            return geom
+        flat_type = QgsWkbTypes.flatType(geom.wkbType())
+        try:
+            if flat_type == QgsWkbTypes.Polygon:
+                poly_xy = geom.asPolygon()
+                if poly_xy and len(poly_xy) > 1:
+                    return QgsGeometry.fromPolygonXY([poly_xy[0]])
+            elif flat_type == QgsWkbTypes.MultiPolygon:
+                mpoly_xy = geom.asMultiPolygon()
+                cleaned_mpoly = []
+                has_holes = False
+                for poly_xy in mpoly_xy:
+                    if poly_xy:
+                        if len(poly_xy) > 1:
+                            has_holes = True
+                        cleaned_mpoly.append([poly_xy[0]])
+                if has_holes:
+                    return QgsGeometry.fromMultiPolygonXY(cleaned_mpoly)
+        except Exception:
+            pass
+        return geom
+
     def _clean_geometry(
         self,
         geom: Optional[QgsGeometry],
@@ -636,10 +669,11 @@ class PreEAProcessor:
         if not geom.isGeosValid():
             repaired = geom.makeValid()
             if repaired and not repaired.isEmpty():
-                return repaired
-            log_fn(f"[WARNING] Could not repair geometry for {label}.")
-            return None
-        return geom
+                geom = repaired
+            else:
+                log_fn(f"[WARNING] Could not repair geometry for {label}.")
+                return None
+        return self._remove_interior_rings(geom)
 
     def _eliminate_sliver_parts(
         self,
@@ -734,17 +768,17 @@ class PreEAProcessor:
     def _get_effective_snap_tolerance(
         self,
         crs: Optional[QgsCoordinateReferenceSystem],
-        snap_tolerance: float = 25.0,
+        snap_tolerance: float = 1.0,
     ) -> float:
         """
         Compute effective snapping tolerance in native CRS map units.
-        For Projected CRS: snap_tolerance in metres (default 25.0 m).
+        For Projected CRS: snap_tolerance in metres (default 1.0 m).
         For Geographic CRS (EPSG:4326): converts metres to degrees (~1m ≈ 0.000009 deg).
         """
         is_geo = bool(crs and crs.isValid() and crs.isGeographic())
         if is_geo:
-            return max(snap_tolerance * 0.000009, 0.0003)
-        return max(snap_tolerance, 25.0)
+            return max(snap_tolerance * 0.000009, 0.000001)
+        return max(snap_tolerance, 0.1)
 
     def _snap_ring_vertices_to_line(
         self,
@@ -804,7 +838,12 @@ class PreEAProcessor:
                     snapped_ring = self._snap_ring_vertices_to_line(ring, ref_line, snap_tolerance)
                     snapped_poly.append(snapped_ring)
                 snapped = QgsGeometry.fromPolygonXY(snapped_poly)
-                return snapped if snapped and not snapped.isEmpty() else geom
+                if snapped and not snapped.isEmpty():
+                    snapped = snapped.makeValid()
+                    if geom.area() > 0 and snapped.area() < geom.area() * 0.8:
+                        return geom
+                    return snapped
+                return geom
 
             elif flat_type == QgsWkbTypes.MultiPolygon:
                 mpoly_xy = geom.asMultiPolygon()
@@ -816,7 +855,12 @@ class PreEAProcessor:
                         snapped_poly.append(snapped_ring)
                     snapped_mpoly.append(snapped_poly)
                 snapped = QgsGeometry.fromMultiPolygonXY(snapped_mpoly)
-                return snapped if snapped and not snapped.isEmpty() else geom
+                if snapped and not snapped.isEmpty():
+                    snapped = snapped.makeValid()
+                    if geom.area() > 0 and snapped.area() < geom.area() * 0.8:
+                        return geom
+                    return snapped
+                return geom
         except Exception:
             return geom
 
@@ -1346,16 +1390,23 @@ class PreEAProcessor:
             log_fn("[ERROR] Failed to create output memory layer.")
             return None
 
-        # Copy field schema from input EA layer and ensure hhcount & bldgcount exist
+        # Copy field schema from input EA layer (excluding 'source') and ensure hhcount, bldgcount & sy exist
         dp = output_layer.dataProvider()
         ea_fields: QgsFields = ea_layer.fields()
-        fields_to_add = QgsFields(ea_fields)
+        fields_to_add = QgsFields()
+        for i in range(ea_fields.count()):
+            f = ea_fields.at(i)
+            if f.name().lower() == "source":
+                continue
+            fields_to_add.append(f)
 
         existing_names = [fields_to_add.at(i).name().lower() for i in range(fields_to_add.count())]
         if "hhcount" not in existing_names:
-            fields_to_add.append(QgsField("hhcount", QMetaType.Type.Double))
+            fields_to_add.append(QgsField("hhcount", QVariant.Double))
         if "bldgcount" not in existing_names:
-            fields_to_add.append(QgsField("bldgcount", QMetaType.Type.Int))
+            fields_to_add.append(QgsField("bldgcount", QVariant.Int))
+        if "sy" not in existing_names:
+            fields_to_add.append(QgsField("sy", QVariant.String))
 
         dp.addAttributes(fields_to_add)
         output_layer.updateFields()
@@ -1487,15 +1538,21 @@ class PreEAProcessor:
 
             # Eliminate sliver polygon parts below gap_tolerance
             geom = self._eliminate_sliver_parts(geom, gap_tolerance, crs)
+            geom = self._remove_interior_rings(geom)
             if geom is None or geom.isEmpty():
                 continue
 
             new_feat = QgsFeature(out_fields)
             new_feat.setGeometry(geom)
 
-            # Copy existing fields from input EA
+            # Copy existing fields from input EA (matching by field name, excluding 'source')
             for i in range(ea_fields.count()):
-                new_feat.setAttribute(i, ea_feat.attribute(i))
+                src_field_name = ea_fields.at(i).name()
+                if src_field_name.lower() == "source":
+                    continue
+                out_idx = out_fields.indexOf(src_field_name)
+                if out_idx != -1:
+                    new_feat.setAttribute(out_idx, ea_feat.attribute(i))
 
             # Ensure hhcount field is populated
             if hhcount_idx != -1:
