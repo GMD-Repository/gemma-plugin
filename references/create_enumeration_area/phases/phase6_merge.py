@@ -117,8 +117,6 @@ def process_barangay_merge(
                         continue
                     if neighbor.get('original_id') in delineation_candidate_ids:
                         continue
-                    if neighbor.get('is_special_ea', False) and not is_merge_candidate(neighbor, min_household, merge_candidate_ids):
-                        continue
                     if ea['geom'].touches(neighbor['geom']) or ea['geom'].intersects(neighbor['geom']):
                         combined_hh = ea['hh_count'] + neighbor['hh_count']
                         score = combined_hh
@@ -182,8 +180,6 @@ def process_barangay_merge(
                         continue
                     if is_merge_candidate(neighbor, min_household, merge_candidate_ids):
                         continue
-                    if neighbor.get('is_special_ea', False) and not is_merge_candidate(neighbor, min_household, merge_candidate_ids):
-                        continue
 
                     is_adjacent = (
                         ea['geom'].touches(neighbor['geom'])
@@ -210,8 +206,6 @@ def process_barangay_merge(
                         if neighbor.get('original_id') in delineation_candidate_ids:
                             continue
                         if not allow_candidate_merge and is_merge_candidate(neighbor, min_household, merge_candidate_ids):
-                            continue
-                        if neighbor.get('is_special_ea', False) and not is_merge_candidate(neighbor, min_household, merge_candidate_ids):
                             continue
 
                         is_adjacent = (

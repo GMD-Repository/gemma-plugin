@@ -282,6 +282,61 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
         for item in result:
             self.assertFalse(item.get('from_merge', False), "Neither EA should be marked as merged.")
 
+    def test_under_threshold_ea_merges_with_special_ea(self):
+        """Verify that an under-threshold EA can merge with a contiguous Special EA while excluding delineation candidates."""
+        feedback = MockFeedback()
+
+        geom1 = make_square_geom(0, 0, 10)
+        geom2 = make_square_geom(10, 0, 10)
+
+        ea_small = {
+            'geom': geom1,
+            'buildings': [],
+            'hh_count': 50.0,
+            'original_hhcount': 50.0,
+            'bldg_count': 2,
+            'attributes': [1, "EA 001"],
+            'original_id': 401,
+            'original_code': "01737001001",
+            'is_new': False,
+            'split_by': 'none',
+            'from_merge': False,
+            'from_split': False,
+            'is_special_ea': False,
+            'parent_barangay': "01737"
+        }
+
+        ea_special = {
+            'geom': geom2,
+            'buildings': [],
+            'hh_count': 30.0,
+            'original_hhcount': 30.0,
+            'bldg_count': 1,
+            'attributes': [2, "Special EA Gap"],
+            'original_id': 402,
+            'original_code': "01737002002",
+            'is_new': False,
+            'split_by': 'none',
+            'from_merge': False,
+            'from_split': False,
+            'is_special_ea': True,  # Special EA
+            'parent_barangay': "01737"
+        }
+
+        result = process_barangay_merge(
+            bar_code="01737",
+            bar_eas=[ea_small, ea_special],
+            fback=feedback,
+            min_household=100.0,
+            max_household=300.0,
+            merge_candidate_ids={401},
+            delineation_candidate_ids=set()
+        )
+
+        self.assertEqual(len(result), 1, "Under-threshold EA should successfully merge with contiguous Special EA.")
+        self.assertEqual(result[0]['hh_count'], 80.0, "Combined household count should be 50 + 30 = 80 HH.")
+        self.assertTrue(result[0]['from_merge'], "Resulting merged EA must be marked with from_merge=True.")
+
     def test_prevent_merge_exceeding_max_household(self):
         """Verify that EAs are prevented from merging if their combined count exceeds max_household (300 HH)."""
         feedback = MockFeedback()
