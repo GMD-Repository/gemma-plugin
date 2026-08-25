@@ -1,12 +1,12 @@
-import os
-import re
-from qgis.PyQt.QtCore import QCoreApplication, QVariant
-from qgis.PyQt.QtGui import QIcon
 from qgis.core import (
     QgsProcessing,
     QgsProcessingAlgorithm,
+    QgsProcessingContext,
+    QgsProcessingParameterDefinition,
     QgsProcessingParameterFeatureSource,
     QgsProcessingParameterFeatureSink,
+    QgsProcessingParameterBoolean,
+    QgsProcessingParameterFile,
     QgsProcessingException,
     QgsFeature,
     QgsField,
@@ -17,8 +17,15 @@ from qgis.core import (
     QgsProject,
     QgsFields,
     QgsWkbTypes,
+    QgsVectorFileWriter,
+    QgsVectorLayer,
     NULL,
 )
+from PyQt5.QtCore import QCoreApplication, QVariant
+from PyQt5.QtGui import QIcon
+import re
+import os
+from datetime import datetime
 
 
 # =====================================================
@@ -26,7 +33,7 @@ from qgis.core import (
 # =====================================================
 
 STATUS_FIELD = "mbi_status"
-REMARKS_FIELD = "mbi_remarks"
+REMARKS_FIELD = "pso_remarks"
 CASE_UUID_FIELD = "case_uuid"
 INVOLVED_BGYS_FIELD = "involved_bgys"
 NUM_BLDG_PTS_FIELD = "num_bldg_pts"
@@ -40,6 +47,33 @@ TYPE_KEYWORDS = {
 
 # Statuses that mean "processor claims this case is resolved"
 RESOLVED_STATUSES = {"1_Updated"}
+
+CATEGORY_GPKG_LAYER_NAMES = {
+    "status_mismatch": "status_mismatch",
+    "mismatch_with_remarks": "mismatch_with_remarks",
+    "new_cases": "new_cases",
+    "still_active": "remaining_cases",
+    "confirmed_resolved": "confirmed_resolved",
+    "ambiguous": "manual_review",
+    "no_status": "no_status",
+}
+
+# Base name used for the auto-generated GeoPackage filename.
+# Final filename pattern: ref_mbi_reviewed-YYYY-MM-DD_HH-MM-SS.gpkg
+# (colons are not valid in Windows filenames, so time uses hyphens instead of ':')
+GPKG_BASE_NAME = "ref_mbi_reviewed"
+
+
+def build_timestamped_gpkg_path(folder):
+    """
+    Builds the full output path inside the given folder, with the
+    filename forced to: ref_mbi_reviewed-YYYY-MM-DD_HH-MM-SS.gpkg
+    The processor never gets to type or edit this filename -- the
+    input parameter is a folder picker only (see GPKG_OUTPUT below).
+    """
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    filename = f"{GPKG_BASE_NAME}-{timestamp}.gpkg"
+    return os.path.join(folder, filename)
 
 
 # =====================================================
@@ -75,6 +109,8 @@ def meaningful(val):
 
 
 def get_num_bldg_pts(feature):
+    if feature is None:
+        return 0
     idx = feature.fields().indexOf(NUM_BLDG_PTS_FIELD)
     if idx == -1:
         return 0
@@ -88,10 +124,10 @@ def get_num_bldg_pts(feature):
 def get_reference_subset(reference_layer, case_type):
     """
     Returns a materialized list of reference features matching the
-    given case_type ('GAP' or 'OVERLAP'), based on the mbi_type field.
+    given case_type ('Gap' or 'Overlap'), based on the mbi_type field.
     Case-insensitive substring match, so '1_Gap', '2_Overlap', etc. all work.
     """
-    keyword = TYPE_KEYWORDS[case_type]
+    keyword = TYPE_KEYWORDS[case_type.upper()]
     if not layer_has_field(reference_layer, TYPE_FIELD):
         # No type field at all -> can't distinguish, treat everything as unfiltered
         return list(reference_layer.getFeatures())
@@ -104,7 +140,10 @@ def get_reference_subset(reference_layer, case_type):
 def spatial_match(checker_layer, reference_features, reference_crs):
     """
     For every checker feature, find all reference features (from the
-    already-filtered reference_features list) whose geometry intersects it.
+    already-filtered reference_features list) whose geometry actually
+    OVERLAPS it (shares interior area) — not just touches at a shared
+    edge or vertex, which would wrongly link an adjacent-but-unrelated
+    (genuinely new) case to a neighboring reference case.
     Returns a list of (checker_feat, [ref_feats]).
     """
     idx = QgsSpatialIndex()
@@ -128,8 +167,24 @@ def spatial_match(checker_layer, reference_features, reference_crs):
         matched_refs = []
         for rid in idx.intersects(g.boundingBox()):
             rf = ref_by_id.get(rid)
-            if rf and rf.geometry() and rf.geometry().intersects(g):
-                matched_refs.append(rf)
+            if rf is None or not rf.geometry():
+                continue
+
+            rgeom = rf.geometry()
+
+            # Adjacent-only (shares boundary/vertex, no interior overlap) ->
+            # NOT a real match. This is what previously caused a brand-new
+            # case sitting next to a reference polygon to wrongly inherit
+            # that reference's status.
+            if rgeom.touches(g):
+                continue
+
+            if rgeom.intersects(g):
+                # Extra safety: confirm the intersection has real area,
+                # guarding against near-zero sliver overlaps from snapping.
+                overlap_geom = rgeom.intersection(g)
+                if overlap_geom and not overlap_geom.isEmpty() and overlap_geom.area() > 0:
+                    matched_refs.append(rf)
 
         results.append((cf, matched_refs))
     return results
@@ -139,28 +194,51 @@ def evaluate_reference_case(rf, spatially_confirmed):
     """
     Runs attribute-based rules on a single reference feature.
     Returns (category, reason) where category is one of:
-      "status_mismatch", "still_active", "confirmed_resolved", "no_status"
+      "status_mismatch", "mismatch_with_remarks", "still_active",
+      "confirmed_resolved", "no_status"
+
+    "status_mismatch" vs "mismatch_with_remarks" split:
+      - status_mismatch: no justification exists in ref_remarks at all
+        (Rule A, or Rule B when remarks are blank/meaningless) -- these
+        need someone to actually go fix the case, there's nothing on
+        record explaining the discrepancy.
+      - mismatch_with_remarks: ref_remarks already has something written
+        (Rule C always, since it's flagged "For Review of Remarks"; or
+        Rule B when remarks ARE present) -- these need someone to check
+        whether the existing remarks actually justify the mismatch,
+        rather than starting from nothing.
     """
     status = safe_get(rf, STATUS_FIELD)
     bp = get_num_bldg_pts(rf)
     rem = rf[REMARKS_FIELD] if layer_has_field(rf, REMARKS_FIELD) else None
+    has_remarks = meaningful(rem)
 
-    reasons = []
+    plain_reasons = []
+    remarks_reasons = []
 
     # Rule A: claimed resolved, but checker still finds it
     if status in RESOLVED_STATUSES and spatially_confirmed:
-        reasons.append(f"'{status}' but case still detected by Checker.")
+        plain_reasons.append(f"'{status}' but case still detected by Checker.")
 
-    # Rule B: 2_Pending, zero building points, no justification remarks
-    if status == "2_Pending" and bp == 0 and not meaningful(rem):
-        reasons.append("'2_Pending' with 0 num_bldg_pts and no justifying remarks.")
+    # Rule B: 2_Pending, zero building points
+    if status == "2_Pending" and bp == 0:
+        if has_remarks:
+            remarks_reasons.append(
+                "'2_Pending' with 0 num_bldg_pts; remarks present, please verify justification."
+            )
+        else:
+            plain_reasons.append("'2_Pending' with 0 num_bldg_pts and no justifying remarks.")
 
-    # Rule C: 1_Updated but still has building points
+    # Rule C: 1_Updated but still has building points -- always routed to
+    # the "review the remarks" bucket, regardless of whether remarks exist.
     if status == "1_Updated" and bp != 0:
-        reasons.append(f"For Review of Remarks: '1_Updated' but has {bp} building point(s) remaining.")
+        remarks_reasons.append(f"For Review of Remarks: Status='1_Updated' but has {bp} building point(s) remaining.")
 
-    if reasons:
-        return "status_mismatch", "; ".join(reasons)
+    if plain_reasons:
+        return "status_mismatch", "; ".join(plain_reasons + remarks_reasons)
+
+    if remarks_reasons:
+        return "mismatch_with_remarks", "; ".join(remarks_reasons)
 
     if status == "":
         return "no_status", "Reference case has no status value."
@@ -175,16 +253,18 @@ def evaluate_reference_case(rf, spatially_confirmed):
 def classify(checker_layer, reference_features, reference_crs):
     """
     Classifies cases into:
-      - status_mismatch: attribute rules failed (see evaluate_reference_case)
+      - status_mismatch: attribute rules failed, no justification on record
+      - mismatch_with_remarks: attribute rules failed, but ref_remarks
+        already has something written that needs verification
       - no_status: reference case has a blank/missing status
       - still_active: matched or unmatched, but legitimately still open (Remaining Case)
-      - new_cases: checker case has no reference match at all
-      - ambiguous: checker case matches more than one reference feature (Manual Review)
+      - new_cases: checker case has no genuine reference overlap at all
+      - ambiguous: checker case overlaps more than one reference feature (Manual Review)
       - confirmed_resolved: reference marked resolved, checker no longer detects it
     """
     matches = spatial_match(checker_layer, reference_features, reference_crs)
 
-    status_mismatch, still_active, new_cases, ambiguous, no_status = [], [], [], [], []
+    status_mismatch, mismatch_with_remarks, still_active, new_cases, ambiguous, no_status = [], [], [], [], [], []
     matched_ref_ids = set()
 
     for cf, matched_refs in matches:
@@ -196,6 +276,8 @@ def classify(checker_layer, reference_features, reference_crs):
             category, reason = evaluate_reference_case(rf, spatially_confirmed=True)
             if category == "status_mismatch":
                 status_mismatch.append((cf, rf, reason))
+            elif category == "mismatch_with_remarks":
+                mismatch_with_remarks.append((cf, rf, reason))
             elif category == "no_status":
                 no_status.append((cf, rf, reason))
             else:
@@ -212,6 +294,8 @@ def classify(checker_layer, reference_features, reference_crs):
         category, reason = evaluate_reference_case(rf, spatially_confirmed=False)
         if category == "status_mismatch":
             status_mismatch.append((None, rf, reason))
+        elif category == "mismatch_with_remarks":
+            mismatch_with_remarks.append((None, rf, reason))
         elif category == "confirmed_resolved":
             confirmed_resolved.append((rf, reason))
         elif category == "no_status":
@@ -221,6 +305,7 @@ def classify(checker_layer, reference_features, reference_crs):
 
     return {
         "status_mismatch": status_mismatch,
+        "mismatch_with_remarks": mismatch_with_remarks,
         "still_active": still_active,
         "new_cases": new_cases,
         "ambiguous": ambiguous,
@@ -230,29 +315,35 @@ def classify(checker_layer, reference_features, reference_crs):
 
 
 def output_fields():
+    """
+    Column order (fid is auto-managed by the output provider and always
+    appears leftmost automatically -- it is intentionally not defined here):
+    case_uuid, case_type, remarks, ref_status, ref_remarks,
+    ref_involved_bgys, ref_num_bldg_pts
+    """
     fields = QgsFields()
     fields.append(QgsField("case_uuid", QVariant.String, len=100))
     fields.append(QgsField("case_type", QVariant.String, len=20))
-    fields.append(QgsField("audit_flag", QVariant.String, len=40))
-    fields.append(QgsField("gmd_remarks", QVariant.String, len=255))
+    fields.append(QgsField("remarks", QVariant.String, len=255))
     fields.append(QgsField("ref_status", QVariant.String, len=60))
     fields.append(QgsField("ref_remarks", QVariant.String, len=255))
     fields.append(QgsField("ref_involved_bgys", QVariant.String, len=255))
+    fields.append(QgsField("ref_num_bldg_pts", QVariant.Int))
     return fields
 
 
-def make_feature(fields, geometry, case_type, audit_flag, remarks, case_uuid="", ref_feature=None):
+def make_feature(fields, geometry, case_type, remarks, case_uuid="", ref_feature=None):
     nf = QgsFeature(fields)
     nf.setGeometry(QgsGeometry(geometry))
     final_uuid = case_uuid or safe_get(ref_feature, CASE_UUID_FIELD)
     nf.setAttribute("case_uuid", final_uuid)
     nf.setAttribute("case_type", case_type)
-    nf.setAttribute("audit_flag", audit_flag)
-    nf.setAttribute("gmd_remarks", remarks)
+    nf.setAttribute("remarks", remarks)
     if ref_feature is not None:
         nf.setAttribute("ref_status", safe_get(ref_feature, STATUS_FIELD))
         nf.setAttribute("ref_remarks", safe_get(ref_feature, REMARKS_FIELD))
         nf.setAttribute("ref_involved_bgys", safe_get(ref_feature, INVOLVED_BGYS_FIELD))
+        nf.setAttribute("ref_num_bldg_pts", get_num_bldg_pts(ref_feature))
     return nf
 
 
@@ -260,13 +351,17 @@ def make_feature(fields, geometry, case_type, audit_flag, remarks, case_uuid="",
 # PROCESSING ALGORITHM
 # =====================================================
 
-class MBIStatusAuditAlgorithm(QgsProcessingAlgorithm):
+class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
 
     REF_LAYER = "REF_LAYER"
     CHK_GAP = "CHK_GAP"
     CHK_OVERLAP = "CHK_OVERLAP"
 
+    COMBINE_GPKG = "COMBINE_GPKG"
+    GPKG_OUTPUT = "GPKG_OUTPUT"
+
     OUT_MISMATCH = "OUT_MISMATCH"
+    OUT_MISMATCH_REMARKS = "OUT_MISMATCH_REMARKS"
     OUT_NEW = "OUT_NEW"
     OUT_STILL = "OUT_STILL"
     OUT_RESOLVED = "OUT_RESOLVED"
@@ -274,10 +369,10 @@ class MBIStatusAuditAlgorithm(QgsProcessingAlgorithm):
     OUT_NOSTATUS = "OUT_NOSTATUS"
 
     def tr(self, string):
-        return QCoreApplication.translate("MBIStatusAuditAlgorithm", string)
+        return QCoreApplication.translate("MbiValidatorAlgorithm", string)
 
     def createInstance(self):
-        return MBIStatusAuditAlgorithm()
+        return MbiValidatorAlgorithm()
 
     def name(self):
         return "mbi_validator"
@@ -302,18 +397,55 @@ class MBIStatusAuditAlgorithm(QgsProcessingAlgorithm):
             "Cross-checks a single combined Reference MBI layer (Gap and "
             "Overlap cases distinguished by the 'mbi_type' field) against "
             "separate Checker GAP / OVERLAP layers to flag status mismatches.\n\n"
+            "A Checker case is only linked to a Reference case when it "
+            "genuinely overlaps it in area — merely touching a neighboring "
+            "Reference polygon's edge does NOT count as a match, so a truly "
+            "new case sitting next to an old one is correctly classified as "
+            "a New Case.\n\n"
             "Reference layer is required. Leave a Checker input empty if "
             "that case type doesn't apply.\n\n"
+            "Optionally, tick 'Combine all outputs into a single GeoPackage' "
+            "and pick a folder — every non-empty category will be written as "
+            "a separate layer inside one .gpkg file, automatically named "
+            "'ref_mbi_reviewed-YYYY-MM-DD_HH-MM-SS.gpkg' with the current "
+            "date and time. The filename is generated automatically and "
+            "cannot be edited — only the destination folder is chosen.\n\n"
             "Outputs (only generated when they contain at least one feature):\n"
-            "- Status Mismatch: claimed resolved but still detected, or fails "
-            "attribute rules (Pending w/ 0 bldg pts & no remarks; Updated "
-            "w/ nonzero bldg pts)\n"
-            "- New Cases: Checker case with no Reference match\n"
+            "- Status Mismatch: claimed resolved but still detected, or "
+            "Pending w/ 0 bldg pts and no remarks at all\n"
+            "- Mismatch with Remarks: Pending w/ 0 bldg pts but remarks ARE "
+            "present (verify the justification), or Updated w/ nonzero "
+            "bldg pts (review remarks either way)\n"
+            "- New Cases: Checker case with no genuine Reference overlap\n"
             "- Remaining Cases: known, legitimately unresolved\n"
             "- Confirmed Resolved: claimed resolved and Checker agrees\n"
             "- No Status: Reference case with blank status\n"
             "- Manual Review: one Checker case overlaps multiple Reference cases"
         )
+
+    @staticmethod
+    def _hidden_sink(name, description):
+        """
+        Builds an optional QgsProcessingParameterFeatureSink that behaves
+        exactly like before (defaults to a temporary output, skipped
+        entirely in processAlgorithm() when its category has no features)
+        but is flagged Hidden so it never shows a row -- not even folded
+        away under "Advanced Parameters" -- in the algorithm dialog.
+
+        FlagHidden also removes the parameter from the dialog's normal
+        "load resulting layer on completion" bookkeeping (that's driven
+        by the "Open output file after running algorithm" checkbox,
+        which no longer exists once hidden). To compensate, processAlgorithm()
+        explicitly calls context.addLayerToLoadOnCompletion(...) for each
+        of these sinks itself, so the temporary layers still get added to
+        the project after a run even though there's no visible checkbox
+        telling QGIS to do so.
+        """
+        param = QgsProcessingParameterFeatureSink(
+            name, description, optional=True,
+            defaultValue=QgsProcessing.TEMPORARY_OUTPUT)
+        param.setFlags(param.flags() | QgsProcessingParameterDefinition.FlagHidden)
+        return param
 
     def initAlgorithm(self, config=None):
         # Reference layer is REQUIRED — no optional=True here
@@ -328,23 +460,41 @@ class MBIStatusAuditAlgorithm(QgsProcessingAlgorithm):
             self.CHK_OVERLAP, self.tr("Checker OVERLAP layer"),
             [QgsProcessing.TypeVectorPolygon], optional=True))
 
-        self.addParameter(QgsProcessingParameterFeatureSink(
-            self.OUT_MISMATCH, self.tr("Status Mismatch"), optional=True))
-        self.addParameter(QgsProcessingParameterFeatureSink(
-            self.OUT_NEW, self.tr("New Cases"), optional=True))
-        self.addParameter(QgsProcessingParameterFeatureSink(
-            self.OUT_STILL, self.tr("Remaining Cases"), optional=True))
-        self.addParameter(QgsProcessingParameterFeatureSink(
-            self.OUT_RESOLVED, self.tr("Confirmed Resolved"), optional=True))
-        self.addParameter(QgsProcessingParameterFeatureSink(
-            self.OUT_MANUAL_REVIEW, self.tr("Manual Review"), optional=True))
-        self.addParameter(QgsProcessingParameterFeatureSink(
-            self.OUT_NOSTATUS, self.tr("No Status"), optional=True))
+        self.addParameter(QgsProcessingParameterBoolean(
+            self.COMBINE_GPKG,
+            self.tr("Save outputs as GeoPackage"),
+            defaultValue=False))
+
+        # Folder picker only -- no filename box, so the auto-generated
+        # timestamped filename can never be edited by the processor.
+        self.addParameter(QgsProcessingParameterFile(
+            self.GPKG_OUTPUT,
+            self.tr("Save Path"),
+            behavior=QgsProcessingParameterFile.Folder,
+            optional=False))
+
+        # --- Individual output sinks: process-wise these are unchanged
+        # (still optional QgsProcessingParameterFeatureSink, still created
+        # as temporary layers, still skipped when their category is empty
+        # in processAlgorithm()). FlagHidden removes their rows from the
+        # dialog completely (not even under "Advanced Parameters"), since
+        # "Save outputs as GeoPackage" above is now the primary output
+        # path. processAlgorithm() manually re-registers each one to load
+        # on completion, so they still appear as temporary layers.
+        self.addParameter(self._hidden_sink(self.OUT_MISMATCH, self.tr("Status Mismatch")))
+        self.addParameter(self._hidden_sink(self.OUT_MISMATCH_REMARKS, self.tr("Mismatch with Remarks")))
+        self.addParameter(self._hidden_sink(self.OUT_NEW, self.tr("New Cases")))
+        self.addParameter(self._hidden_sink(self.OUT_STILL, self.tr("Remaining Cases")))
+        self.addParameter(self._hidden_sink(self.OUT_RESOLVED, self.tr("Confirmed Resolved")))
+        self.addParameter(self._hidden_sink(self.OUT_MANUAL_REVIEW, self.tr("Manual Review")))
+        self.addParameter(self._hidden_sink(self.OUT_NOSTATUS, self.tr("No Status")))
 
     def processAlgorithm(self, parameters, context, feedback):
         ref_layer = self.parameterAsVectorLayer(parameters, self.REF_LAYER, context)
         chk_g = self.parameterAsVectorLayer(parameters, self.CHK_GAP, context)
         chk_o = self.parameterAsVectorLayer(parameters, self.CHK_OVERLAP, context)
+        combine_gpkg = self.parameterAsBoolean(parameters, self.COMBINE_GPKG, context)
+        gpkg_folder = self.parameterAsFile(parameters, self.GPKG_OUTPUT, context)
 
         if ref_layer is None:
             raise QgsProcessingException(
@@ -361,15 +511,24 @@ class MBIStatusAuditAlgorithm(QgsProcessingAlgorithm):
                 self.tr(f"Reference layer has no '{STATUS_FIELD}' field.")
             )
 
+        if combine_gpkg and not gpkg_folder:
+            raise QgsProcessingException(
+                self.tr("Please choose a folder to save the GeoPackage.")
+            )
+
+        # Filename is always auto-generated -- never taken from user input.
+        gpkg_path = build_timestamped_gpkg_path(gpkg_folder) if combine_gpkg else None
+
         crs = chk_g.sourceCrs() if chk_g else chk_o.sourceCrs()
         wkb = chk_g.wkbType() if chk_g else chk_o.wkbType()
         fields = output_fields()
         ref_crs = ref_layer.sourceCrs()
 
-        # --- collect classified results across GAP/OVERLAP without writing yet ---
-        # each entry: (geometry, case_type, audit_flag, remarks, case_uuid, ref_feature)
+        # --- collect classified results across Gap/Overlap without writing yet ---
+        # each entry: (geometry, case_type, remarks, case_uuid, ref_feature)
         collected = {
             "status_mismatch": [],
+            "mismatch_with_remarks": [],
             "new_cases": [],
             "still_active": [],
             "confirmed_resolved": [],
@@ -379,9 +538,9 @@ class MBIStatusAuditAlgorithm(QgsProcessingAlgorithm):
 
         pairs = []
         if chk_g is not None:
-            pairs.append(("GAP", chk_g))
+            pairs.append(("Gap", chk_g))
         if chk_o is not None:
-            pairs.append(("OVERLAP", chk_o))
+            pairs.append(("Overlap", chk_o))
 
         total = len(pairs) or 1
         step = 0
@@ -397,70 +556,81 @@ class MBIStatusAuditAlgorithm(QgsProcessingAlgorithm):
             for cf, rf, reason in result["status_mismatch"]:
                 geom = cf.geometry() if cf is not None else rf.geometry()
                 remarks = reason
-                collected["status_mismatch"].append((geom, case_type, "STATUS_MISMATCH", remarks, "", rf))
+                collected["status_mismatch"].append((geom, case_type, remarks, "", rf))
+
+            for cf, rf, reason in result["mismatch_with_remarks"]:
+                geom = cf.geometry() if cf is not None else rf.geometry()
+                remarks = reason
+                collected["mismatch_with_remarks"].append((geom, case_type, remarks, "", rf))
 
             for cf in result["new_cases"]:
                 remarks = "No matching reference case found."
                 chk_uuid = safe_get(cf, CASE_UUID_FIELD)
-                collected["new_cases"].append((cf.geometry(), case_type, "NEW_CASE", remarks, chk_uuid, None))
+                collected["new_cases"].append((cf.geometry(), case_type, remarks, chk_uuid, None))
 
             for cf, rf, reason in result["still_active"]:
                 geom = cf.geometry() if cf is not None else rf.geometry()
                 remarks = reason
-                collected["still_active"].append((geom, case_type, "REMAINING_CASE", remarks, "", rf))
+                collected["still_active"].append((geom, case_type, remarks, "", rf))
 
             for cf, rf, reason in result["no_status"]:
                 geom = cf.geometry() if cf is not None else rf.geometry()
                 remarks = reason
-                collected["no_status"].append((geom, case_type, "NO_STATUS", remarks, "", rf))
+                collected["no_status"].append((geom, case_type, remarks, "", rf))
 
             for rf, reason in result["confirmed_resolved"]:
                 remarks = reason
-                collected["confirmed_resolved"].append((rf.geometry(), case_type, "CONFIRMED_RESOLVED", remarks, "", rf))
+                collected["confirmed_resolved"].append((rf.geometry(), case_type, remarks, "", rf))
 
             for cf, matched_refs in result["ambiguous"]:
                 uuids = ", ".join(safe_get(rf, CASE_UUID_FIELD) or str(rf.id()) for rf in matched_refs)
                 remarks = f"Matches {len(matched_refs)} reference cases ({uuids}). Review manually."
                 chk_uuid = safe_get(cf, CASE_UUID_FIELD)
-                collected["ambiguous"].append((cf.geometry(), case_type, "MANUAL_REVIEW", remarks, chk_uuid, None))
+                collected["ambiguous"].append((cf.geometry(), case_type, remarks, chk_uuid, None))
 
             step += 1
             feedback.setProgress(int(100 * step / total))
 
         # reference-only case types (no matching checker layer provided at all)
-        for case_type, chk_layer in (("GAP", chk_g), ("OVERLAP", chk_o)):
+        for case_type, chk_layer in (("Gap", chk_g), ("Overlap", chk_o)):
             if chk_layer is None:
                 for rf in get_reference_subset(ref_layer, case_type):
                     category, reason = evaluate_reference_case(rf, spatially_confirmed=False)
                     if category == "status_mismatch":
                         remarks = reason
-                        collected["status_mismatch"].append((rf.geometry(), case_type, "STATUS_MISMATCH", remarks, "", rf))
+                        collected["status_mismatch"].append((rf.geometry(), case_type, remarks, "", rf))
+                    elif category == "mismatch_with_remarks":
+                        remarks = reason
+                        collected["mismatch_with_remarks"].append((rf.geometry(), case_type, remarks, "", rf))
                     elif category == "confirmed_resolved":
                         remarks = reason
-                        collected["confirmed_resolved"].append((rf.geometry(), case_type, "CONFIRMED_RESOLVED", remarks, "", rf))
+                        collected["confirmed_resolved"].append((rf.geometry(), case_type, remarks, "", rf))
                     elif category == "no_status":
                         remarks = reason
-                        collected["no_status"].append((rf.geometry(), case_type, "NO_STATUS", remarks, "", rf))
+                        collected["no_status"].append((rf.geometry(), case_type, remarks, "", rf))
                     else:
                         remarks = reason
-                        collected["still_active"].append((rf.geometry(), case_type, "REMAINING_CASE", remarks, "", rf))
+                        collected["still_active"].append((rf.geometry(), case_type, remarks, "", rf))
 
-        # --- only create sinks / outputs for categories with at least 1 feature ---
+        counts = {k: len(v) for k, v in collected.items()}
+        results = {}
+
+        # --- temporary-layer sinks: ALWAYS produced for non-empty categories,
+        # regardless of whether "Save outputs as GeoPackage" is ticked. This
+        # is the same behaviour as before GeoPackage export was added.
+        # Layer names double as the label shown in the Layers panel once loaded.
         output_map = (
-            (self.OUT_MISMATCH, "status_mismatch"),
-            (self.OUT_NEW, "new_cases"),
-            (self.OUT_STILL, "still_active"),
-            (self.OUT_RESOLVED, "confirmed_resolved"),
-            (self.OUT_MANUAL_REVIEW, "ambiguous"),
-            (self.OUT_NOSTATUS, "no_status"),
+            (self.OUT_MISMATCH, "status_mismatch", self.tr("Status Mismatch")),
+            (self.OUT_MISMATCH_REMARKS, "mismatch_with_remarks", self.tr("Mismatch with Remarks")),
+            (self.OUT_NEW, "new_cases", self.tr("New Cases")),
+            (self.OUT_STILL, "still_active", self.tr("Remaining Cases")),
+            (self.OUT_RESOLVED, "confirmed_resolved", self.tr("Confirmed Resolved")),
+            (self.OUT_MANUAL_REVIEW, "ambiguous", self.tr("Manual Review")),
+            (self.OUT_NOSTATUS, "no_status", self.tr("No Status")),
         )
 
-        results = {}
-        counts = {}
-
-        for out_key, coll_key in output_map:
+        for out_key, coll_key, label in output_map:
             items = collected[coll_key]
-            counts[coll_key] = len(items)
 
             if not items:
                 # skip creating this output entirely -> keeps Layers panel clean
@@ -471,23 +641,81 @@ class MBIStatusAuditAlgorithm(QgsProcessingAlgorithm):
                 # user didn't set a destination for this optional output -> skip silently
                 continue
 
-            for geom, case_type, audit_flag, remarks, case_uuid, ref_feature in items:
+            for geom, case_type, remarks, case_uuid, ref_feature in items:
                 sink.addFeature(
-                    make_feature(fields, geom, case_type, audit_flag, remarks,
+                    make_feature(fields, geom, case_type, remarks,
                                  case_uuid=case_uuid, ref_feature=ref_feature)
                 )
 
             results[out_key] = dest_id
 
+            # Because these sinks are FlagHidden, the dialog has no checkbox
+            # to tell it "load this on completion" -- so we register it
+            # ourselves. Without this, the temporary layer would be written
+            # but never added to the Layers panel.
+            context.addLayerToLoadOnCompletion(
+                dest_id,
+                QgsProcessingContext.LayerDetails(label, context.project(), out_key)
+            )
+
+        if combine_gpkg:
+            # --- ADDITIONALLY write every non-empty category as a layer
+            # inside one GeoPackage. This happens alongside the temporary
+            # layers above, not instead of them.
+            first_written = True
+            for coll_key, items in collected.items():
+                if not items:
+                    continue
+
+                layer_name = CATEGORY_GPKG_LAYER_NAMES[coll_key]
+
+                mem_layer = QgsVectorLayer(
+                    f"{QgsWkbTypes.displayString(wkb)}?crs={crs.authid()}",
+                    layer_name, "memory"
+                )
+                mem_layer.dataProvider().addAttributes(fields)
+                mem_layer.updateFields()
+
+                feats = []
+                for geom, case_type, remarks, case_uuid, ref_feature in items:
+                    feats.append(
+                        make_feature(mem_layer.fields(), geom, case_type, remarks,
+                                     case_uuid=case_uuid, ref_feature=ref_feature)
+                    )
+                mem_layer.dataProvider().addFeatures(feats)
+                mem_layer.updateExtents()
+
+                save_options = QgsVectorFileWriter.SaveVectorOptions()
+                save_options.driverName = "GPKG"
+                save_options.layerName = layer_name
+                save_options.fileEncoding = "UTF-8"
+                if not first_written:
+                    save_options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+
+                error = QgsVectorFileWriter.writeAsVectorFormatV3(
+                    mem_layer, gpkg_path, QgsProject.instance().transformContext(), save_options
+                )
+                if error[0] != QgsVectorFileWriter.NoError:
+                    raise QgsProcessingException(
+                        self.tr(f"Failed to write layer '{layer_name}' to GeoPackage: {error[1]}")
+                    )
+
+                first_written = False
+
+            feedback.pushInfo(self.tr(f"GeoPackage saved to: {gpkg_path}"))
+
         feedback.pushInfo(
-            f"Status Mismatch: {counts['status_mismatch']} | New Cases: {counts['new_cases']} | "
+            f"Status Mismatch: {counts['status_mismatch']} | Mismatch with Remarks: {counts['mismatch_with_remarks']} | "
+            f"New Cases: {counts['new_cases']} | "
             f"Remaining Cases: {counts['still_active']} | No Status: {counts['no_status']} | "
             f"Confirmed Resolved: {counts['confirmed_resolved']} | Manual Review: {counts['ambiguous']}"
         )
 
+        if combine_gpkg:
+            results[self.GPKG_OUTPUT] = gpkg_path
+
         return results
 
 
-# Aliases for naming and provider consistency
-MbiValidatorAlgorithm = MBIStatusAuditAlgorithm
-MBIValidatorAlgorithm = MBIStatusAuditAlgorithm
+# Backward compatibility alias
+MBIStatusAuditAlgorithm = MbiValidatorAlgorithm
