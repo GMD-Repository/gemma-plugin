@@ -124,7 +124,7 @@ def run_phase_1(
         if feedback.isCanceled():
             raise QgsProcessingException("Algorithm cancelled by user.")
         yield_to_ui(idx)
-        barangay_index.insertFeature(feat)
+        barangay_index.addFeature(feat)
         barangay_by_id[feat.id()] = feat
 
         if bar_geocode_idx != -1:
@@ -458,7 +458,7 @@ def run_phase_1(
 
                     _bindex_feat = QgsFeature(_bfeat.id())
                     _bindex_feat.setGeometry(_bgeom)
-                    spec_bldg_idx.insertFeature(_bindex_feat)
+                    spec_bldg_idx.addFeature(_bindex_feat)
                     spec_bldg_map[_bfeat.id()] = (_bpt, _bpop)
 
                 _hhcount_field_idx = previous_ea_source.fields().indexOf(household_field)
@@ -589,7 +589,7 @@ def run_phase_1(
             for idx, pt in enumerate(sample_pts):
                 f = QgsFeature(idx)
                 f.setGeometry(QgsGeometry.fromPointXY(pt))
-                sample_index.insertFeature(f)
+                sample_index.addFeature(f)
                 pt_geoms[idx] = pt
 
             distances = []

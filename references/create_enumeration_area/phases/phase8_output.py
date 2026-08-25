@@ -8,7 +8,7 @@ and renders HTML execution summary tables.
 import math
 import os
 from typing import Dict, Any, List
-from PyQt5.QtCore import QVariant
+from PyQt5.QtCore import QVariant, QMetaType
 from qgis.core import (
     QgsFeatureSink,
     QgsProcessingException,
@@ -178,7 +178,7 @@ def clean_unsnapped_vertices(eas_list: List[dict], snap_tolerance: float, road_g
     for idx_ea, ea_item in enumerate(eas_list):
         f_ea = QgsFeature(idx_ea)
         f_ea.setGeometry(ea_item['geom'])
-        idx_spatial.insertFeature(f_ea)
+        idx_spatial.addFeature(f_ea)
         ea_map[idx_ea] = ea_item
 
     constraint_geoms = []
@@ -359,7 +359,7 @@ def clean_unsnapped_vertices(eas_list: List[dict], snap_tolerance: float, road_g
                 idx_spatial.deleteFeature(f_del)
                 f_ea = QgsFeature(idx_ea)
                 f_ea.setGeometry(ea_item['geom'])
-                idx_spatial.insertFeature(f_ea)
+                idx_spatial.addFeature(f_ea)
 
 
 def run_phase_8(
@@ -424,13 +424,13 @@ def run_phase_8(
             if idx != -1:
                 export_fields.append(out_fields.at(idx))
             else:
-                ftype = QVariant.String
+                ftype = QMetaType.Type.QString
                 if fname == "fid":
-                    ftype = QVariant.Int
+                    ftype = QMetaType.Type.Int
                 elif fname == "hhcount":
-                    ftype = QVariant.Double
+                    ftype = QMetaType.Type.Double
                 elif fname in ("bldgcount", "bldg_count", "hh_count"):
-                    ftype = QVariant.Int
+                    ftype = QMetaType.Type.Int
                 export_fields.append(QgsField(fname, ftype))
 
     special_ea_export_fields = p2.get("special_ea_export_fields")
@@ -1199,20 +1199,20 @@ def run_phase_8(
         if extracted_buildings_sink is not None:
             bldg_out_fields = QgsFields(building_source.fields())
             if bldg_out_fields.indexOf("parent_ean") == -1:
-                bldg_out_fields.append(QgsField("parent_ean", QVariant.String))
+                bldg_out_fields.append(QgsField("parent_ean", QMetaType.Type.QString))
 
             bldgpts_idx = bldg_out_fields.indexOf("bldgpoints_value")
             if bldgpts_idx == -1:
                 bldgpts_idx = bldg_out_fields.indexOf("bldgpts_val")
             if bldgpts_idx == -1:
-                bldg_out_fields.append(QgsField("bldgpoints_value", QVariant.Double))
+                bldg_out_fields.append(QgsField("bldgpoints_value", QMetaType.Type.Double))
                 bldgpts_idx = bldg_out_fields.count() - 1
 
             pop_out_idx = bldg_out_fields.indexOf("pop")
             if pop_out_idx == -1:
                 pop_out_idx = bldg_out_fields.indexOf(bldg_hh_field)
             if pop_out_idx == -1:
-                bldg_out_fields.append(QgsField("pop", QVariant.Double))
+                bldg_out_fields.append(QgsField("pop", QMetaType.Type.Double))
                 pop_out_idx = bldg_out_fields.count() - 1
 
             parent_ean_idx = bldg_out_fields.indexOf("parent_ean")

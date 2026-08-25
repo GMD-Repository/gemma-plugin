@@ -49,7 +49,7 @@ from qgis.core import (
     QgsVectorLayer,
     QgsWkbTypes,
 )
-from qgis.PyQt.QtCore import QVariant
+from qgis.PyQt.QtCore import QVariant, QMetaType
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -1262,9 +1262,9 @@ class PreEAProcessor:
 
         existing_names = [fields_to_add.at(i).name().lower() for i in range(fields_to_add.count())]
         if "hhcount" not in existing_names:
-            fields_to_add.append(QgsField("hhcount", QVariant.Double))
+            fields_to_add.append(QgsField("hhcount", QMetaType.Type.Double))
         if "bldgcount" not in existing_names:
-            fields_to_add.append(QgsField("bldgcount", QVariant.Int))
+            fields_to_add.append(QgsField("bldgcount", QMetaType.Type.Int))
 
         dp.addAttributes(fields_to_add)
         output_layer.updateFields()
