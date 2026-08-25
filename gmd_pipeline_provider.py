@@ -53,7 +53,7 @@ class GmdPipelineProvider(QgsProcessingProvider):
         self.addAlgorithm(FixLGUCRSAlgorithm())
         self.addAlgorithm(JoinBarangayAttributes())
         self.addAlgorithm(MbiValidatorAlgorithm())
-        self.addAlgorithm(CreateEAAlgorithm())
+        # self.addAlgorithm(CreateEAAlgorithm())
         self.addAlgorithm(ScanGeometryErrorsAlgorithm())
         self.addAlgorithm(RepairGeometryErrorsAlgorithm())
         self.addAlgorithm(ClipProjectLayersAlgorithm())
