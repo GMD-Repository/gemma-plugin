@@ -993,8 +993,8 @@ def run_phase_8(
         if sy_idx != -1:
             out_feat.setAttribute(sy_idx, "2026")
 
-        # Delineated EA hhcount and bldgcount inherit directly from original_hhcount / parent feature
-        if ea.get('is_special_ea', False):
+        # Merged EAs and Special EAs inherit the new combined hh_count and bldg_count
+        if ea.get('is_special_ea', False) or ea.get('from_merge', False):
             val_hh = safe_float(ea.get('hh_count', ea.get('original_hhcount', 0.0)), 0.0)
         else:
             val_hh = ea.get('original_hhcount')
@@ -1024,11 +1024,13 @@ def run_phase_8(
             if out_fields.at(j).name().lower() == "hh_count":
                 out_feat.setAttribute(j, new_hh_val)
 
-        # For Special EAs, ensure bldg_count and bldgcount get the total building point count within its geometry
+        # For Merged EAs and Special EAs, ensure bldgcount gets the new combined building count
         if ea.get('is_special_ea', False):
             special_bldgs = ea.get('buildings', [])
             ea['bldg_count'] = len(special_bldgs)
             val_bldg = len(special_bldgs)
+        elif ea.get('from_merge', False):
+            val_bldg = safe_int(ea.get('bldg_count', len(ea.get('buildings', []))), 0)
         else:
             # Delineated EA bldgcount inherits directly from original_bldgcount / parent feature
             val_bldg = ea.get('original_bldgcount')

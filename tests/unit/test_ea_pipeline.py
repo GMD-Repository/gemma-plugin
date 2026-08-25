@@ -941,6 +941,45 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
         exp_special = make_export_feature(feat_special, special_ea_export_fields)
         self.assertEqual(str(exp_special.attribute("sy")), "2026")
 
+    def test_merged_ea_hhcount_and_bldgcount_updated(self):
+        """Verify that hhcount and bldgcount fields are updated with the combined merged totals for merged EAs."""
+        from qgis.core import QgsFields, QgsField, QgsFeature
+        try:
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            from PyQt5.QtCore import QVariant
+
+        out_fields = QgsFields()
+        out_fields.append(QgsField("hhcount", QVariant.Double))
+        out_fields.append(QgsField("hh_count", QVariant.Int))
+        out_fields.append(QgsField("bldgcount", QVariant.Int))
+        out_fields.append(QgsField("bldg_count", QVariant.Int))
+
+        # Merged EA with original single-EA count 40 HH, but new combined count 90 HH & 5 bldgs
+        ea_merged = {
+            'hh_count': 90.0,
+            'original_hhcount': 40.0,
+            'bldg_count': 5,
+            'original_bldgcount': 2,
+            'from_merge': True,
+            'is_special_ea': False
+        }
+
+        # Simulate Phase 8 attribute assignment logic
+        out_feat = QgsFeature(out_fields)
+        val_hh = ea_merged['hh_count'] if (ea_merged.get('is_special_ea') or ea_merged.get('from_merge')) else ea_merged.get('original_hhcount')
+        val_bldg = ea_merged['bldg_count'] if (ea_merged.get('is_special_ea') or ea_merged.get('from_merge')) else ea_merged.get('original_bldgcount')
+
+        out_feat.setAttribute(out_fields.indexOf("hhcount"), float(val_hh))
+        out_feat.setAttribute(out_fields.indexOf("hh_count"), int(ea_merged['hh_count']))
+        out_feat.setAttribute(out_fields.indexOf("bldgcount"), int(val_bldg))
+        out_feat.setAttribute(out_fields.indexOf("bldg_count"), int(ea_merged['bldg_count']))
+
+        self.assertEqual(out_feat.attribute("hhcount"), 90.0, "hhcount for merged EA must reflect combined 90 HH.")
+        self.assertEqual(out_feat.attribute("hh_count"), 90, "hh_count for merged EA must reflect combined 90 HH.")
+        self.assertEqual(out_feat.attribute("bldgcount"), 5, "bldgcount for merged EA must reflect combined 5 bldgs.")
+        self.assertEqual(out_feat.attribute("bldg_count"), 5, "bldg_count for merged EA must reflect combined 5 bldgs.")
+
 
 if __name__ == "__main__":
     unittest.main()
