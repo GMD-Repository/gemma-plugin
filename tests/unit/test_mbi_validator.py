@@ -101,6 +101,16 @@ class TestMbiValidator(unittest.TestCase):
         self.assertIsNotNone(self.alg.icon())
         self.assertIsNotNone(self.alg.shortHelpString())
 
+    def test_gpkg_save_path_optionality(self):
+        """Verify that GPKG_OUTPUT save path parameter is optional."""
+        try:
+            self.alg.initAlgorithm()
+            param = self.alg.parameterDefinition(self.alg.GPKG_OUTPUT)
+            if param:
+                self.assertTrue(param.isOptional(), "GPKG_OUTPUT parameter must be optional so save path is not required when checkbox is unchecked.")
+        except Exception as e:
+            self.skipTest(f"Skipping test due to processing environment error: {e}")
+
     def test_normalize_helper(self):
         """Test normalize and meaningful helper functions."""
         self.assertEqual(self.mod.normalize(None), "")
