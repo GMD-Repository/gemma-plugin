@@ -705,7 +705,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             for _i_pt, _q_pt in enumerate(unique_pts):
                 _pf = QgsFeature(_i_pt)
                 _pf.setGeometry(QgsGeometry.fromPointXY(_q_pt))
-                _local_idx.insertFeature(_pf)
+                _local_idx.addFeature(_pf)
 
             _nn_dists = []
             for _i_pt, _q_pt in enumerate(unique_pts):
@@ -778,7 +778,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             for l_idx, line in enumerate(all_lines):
                 feat = QgsFeature(l_idx)
                 feat.setGeometry(line)
-                line_index.insertFeature(feat)
+                line_index.addFeature(feat)
                 line_map[l_idx] = line
 
             snapped_cells = []

@@ -1620,7 +1620,7 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
             if entry["attrs"]["boundary"] == "Barangay":
                 dummy = QgsFeature(i)
                 dummy.setGeometry(entry["geom"])
-                bgy_index.insertFeature(dummy)
+                bgy_index.addFeature(dummy)
                 bgy_map[i] = i   # map feature id back to staged index
 
         contested_count = 0
