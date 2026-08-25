@@ -400,6 +400,39 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
         delin_item = [item for item in result if item.get('original_id') == 607][0]
         self.assertFalse(delin_item.get('from_merge', False), "Delineation candidate must NOT be merged.")
 
+    def test_split_rejected_if_sub_polygon_below_min_household(self):
+        """Verify that any split producing sub-polygons below min_household (100 HH) is rejected and kept whole."""
+        from references.create_enumeration_area.phases.phase5_delineate import force_geometric_split
+
+        feedback = MockFeedback()
+        geom = make_square_geom(0, 0, 10)
+
+        # 2 buildings: 1 with 250 HH, 1 with 70 HH (total 320 HH).
+        # Splitting into 2 parts would produce 1 part with 70 HH (< 100 HH).
+        b1 = {'point': QgsPointXY(2, 2), 'pop': 250.0, 'bldgpoints_value': 250.0}
+        b2 = {'point': QgsPointXY(8, 8), 'pop': 70.0, 'bldgpoints_value': 70.0}
+
+        ea_over = {
+            'geom': geom,
+            'buildings': [b1, b2],
+            'hh_count': 320.0,
+            'original_hhcount': 320.0,
+            'bldg_count': 2,
+            'attributes': [1, "EA 001"],
+            'original_id': 701,
+            'original_code': "01737007001",
+            'is_new': False,
+            'split_by': 'none',
+            'from_merge': False,
+            'from_split': False,
+            'parent_barangay': "01737"
+        }
+
+        result = force_geometric_split(ea_over, target_pop=200.0, fback=feedback, min_household=100.0, max_household=300.0)
+
+        self.assertEqual(len(result), 1, "Forced split must be rejected when a sub-polygon falls below 100 HH.")
+        self.assertEqual(result[0]['hh_count'], 320.0, "Original EA must be kept whole with 320 HH.")
+
     def test_prevent_merge_exceeding_max_household(self):
         """Verify that EAs are prevented from merging if their combined count exceeds max_household (300 HH)."""
         feedback = MockFeedback()

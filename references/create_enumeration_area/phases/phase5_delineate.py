@@ -165,8 +165,13 @@ def force_geometric_split(ea_item, target_pop, fback, min_household=100, max_hou
     parent_geom = ea_item['geom']
     for p in final_parts:
         clipped = p['geom'].intersection(parent_geom).buffer(0.0, 3)
-        if not clipped.isEmpty():
-            p['geom'] = clipped
+    final_parts = enforce_min_household_parts(final_parts, fback, min_household=min_household, max_household=max_household, ea_geom=parent_geom)
+    if len(final_parts) < 2 or any(p['hh_count'] < min_household for p in final_parts):
+        fback.pushWarning(
+            f"[EA {ea_item['original_code']}] Forced split rejected: sub-polygon(s) fall below min threshold "
+            f"({min_household} HH). Keeping EA whole."
+        )
+        return [ea_item]
 
     fback.pushWarning(
         f"[EA {ea_item['original_code']}] FORCED SPLIT: Applied {accepted_orientation} "
@@ -1405,8 +1410,8 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             p['bldgpoints_value'] = p['hh_count'] / p['bldg_count'] if p['bldg_count'] > 0 else 0.0
             p['split_by'] = split_by
 
-        # Reject the split if any resulting part falls below the min_household threshold (Strict Threshold mode only)
-        if split_strategy == 1 and any(p['hh_count'] < min_household for p in final_parts):
+        # Reject the split if any resulting part falls below the min_household threshold
+        if any(p['hh_count'] < min_household for p in final_parts):
             under_parts = [p for p in final_parts if p['hh_count'] < min_household]
             fback.pushWarning(
                 f"[EA {ea_item['original_code']}] Hybrid split rejected: "
@@ -1555,8 +1560,8 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
 
         final_parts = allocate_gaps_to_parts(final_parts, parent_geom)
 
-        # Reject the split if any resulting part falls below the min_household threshold (Strict Threshold mode only)
-        if split_strategy == 1 and any(p['hh_count'] < min_household for p in final_parts):
+        # Reject the split if any resulting part falls below the min_household threshold
+        if any(p['hh_count'] < min_household for p in final_parts):
             under_parts = [p for p in final_parts if p['hh_count'] < min_household]
             fback.pushWarning(
                 f"[EA {ea_item['original_code']}] Building-cluster split rejected: "
