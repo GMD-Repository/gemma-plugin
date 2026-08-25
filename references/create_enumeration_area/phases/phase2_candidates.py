@@ -14,7 +14,7 @@ from qgis.core import (
     QgsFeatureSink,
     NULL,
 )
-from qgis.PyQt.QtCore import QVariant, QMetaType
+from qgis.PyQt.QtCore import QVariant
 
 from ..helpers.constants import _PHASE_LABELS, yield_to_ui
 from ..helpers.spatial import get_parent_barangay, normalize_to_8_digits
@@ -101,38 +101,36 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     if household_field in [f.name() for f in out_fields]:
         output_hh_field = household_field
     else:
-        out_fields.append(QgsField(output_hh_field, QMetaType.Type.Double))
+        out_fields.append(QgsField(output_hh_field, QVariant.Double))
 
-    for fname, ftype in [
-        ("map_uuid", QMetaType.Type.QString),
-        ("region", QMetaType.Type.QString),
-        ("province", QMetaType.Type.QString),
-        ("city_mun", QMetaType.Type.QString),
-        ("barangay", QMetaType.Type.QString),
-        ("code", QMetaType.Type.QString),
-        ("name", QMetaType.Type.QString),
-        ("ean", QMetaType.Type.QString),
-        ("sy", QMetaType.Type.QString),
-        ("new_ean", QMetaType.Type.QString),
-        ("bldgcount", QMetaType.Type.Int),
-        ("hhcount", QMetaType.Type.Double),
-        ("hh_count", QMetaType.Type.Double),
-        ("bldg_count", QMetaType.Type.Int),
-        ("bldgpoints_value", QMetaType.Type.Double),
-        ("split_by", QMetaType.Type.QString),
-        ("correspondence_ea_geocode", QMetaType.Type.QString),
-        ("ea_type", QMetaType.Type.QString),
-        ("special_type", QMetaType.Type.QString),
-        ("source_id", QMetaType.Type.QString),
-        ("indicator", QMetaType.Type.QString),
-    ]:
-        if fname not in [f.name() for f in out_fields]:
+    for fname, ftype in (
+        ("map_uuid", QVariant.String),
+        ("region", QVariant.String),
+        ("province", QVariant.String),
+        ("city_mun", QVariant.String),
+        ("barangay", QVariant.String),
+        ("code", QVariant.String),
+        ("name", QVariant.String),
+        ("ean", QVariant.String),
+        ("sy", QVariant.String),
+        ("new_ean", QVariant.String),
+        ("bldgcount", QVariant.Int),
+        ("hhcount", QVariant.Double),
+        ("hh_count", QVariant.Double),
+        ("bldg_count", QVariant.Int),
+        ("bldgpoints_value", QVariant.Double),
+        ("split_by", QVariant.String),
+        ("correspondence_ea_geocode", QVariant.String),
+        ("ea_type", QVariant.String),
+        ("special_type", QVariant.String),
+        ("source_id", QVariant.String),
+        ("indicator", QVariant.String),
+    ):
+        if out_fields.indexOf(fname) == -1:
             out_fields.append(QgsField(fname, ftype))
 
-    rem_idx = out_fields.indexOf("remarks")
-    if rem_idx != -1:
-        out_fields.remove(rem_idx)
-    out_fields.append(QgsField("remarks", QMetaType.Type.QString))
+    if out_fields.indexOf("remarks") == -1:
+        out_fields.append(QgsField("remarks", QVariant.String))
 
     # Build export_fields containing ONLY the 18 standard output attributes
     export_field_names = [
@@ -147,13 +145,13 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         if idx != -1:
             export_fields.append(out_fields.at(idx))
         else:
-            ftype = QMetaType.Type.QString
+            ftype = QVariant.String
             if fname == "fid":
-                ftype = QMetaType.Type.Int
+                ftype = QVariant.Int
             elif fname == "hhcount":
-                ftype = QMetaType.Type.Double
+                ftype = QVariant.Double
             elif fname in ("bldgcount", "bldg_count", "hh_count"):
-                ftype = QMetaType.Type.Int
+                ftype = QVariant.Int
             export_fields.append(QgsField(fname, ftype))
 
     out_wkb_type = QgsWkbTypes.multiType(previous_ea_source.wkbType())
@@ -205,19 +203,19 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     if alg.EXTRACTED_BUILDINGS_OUTPUT in parameters and parameters[alg.EXTRACTED_BUILDINGS_OUTPUT] is not None:
         bldg_out_fields = QgsFields(building_source.fields())
         if bldg_out_fields.indexOf("parent_ean") == -1:
-            bldg_out_fields.append(QgsField("parent_ean", QMetaType.Type.QString))
+            bldg_out_fields.append(QgsField("parent_ean", QVariant.String))
 
         bldgpts_idx = bldg_out_fields.indexOf("bldgpoints_value")
         if bldgpts_idx == -1:
             bldgpts_idx = bldg_out_fields.indexOf("bldgpts_val")
         if bldgpts_idx == -1:
-            bldg_out_fields.append(QgsField("bldgpoints_value", QMetaType.Type.Double))
+            bldg_out_fields.append(QgsField("bldgpoints_value", QVariant.Double))
 
         pop_out_idx = bldg_out_fields.indexOf("pop")
         if pop_out_idx == -1:
             pop_out_idx = bldg_out_fields.indexOf(bldg_hh_field)
         if pop_out_idx == -1:
-            bldg_out_fields.append(QgsField("pop", QMetaType.Type.Double))
+            bldg_out_fields.append(QgsField("pop", QVariant.Double))
 
         (extracted_buildings_sink, extracted_buildings_dest_id) = alg.parameterAsSink(
             parameters,
@@ -233,11 +231,11 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     if alg.DELINEATION_CANDIDATE_OUTPUT in parameters and parameters[alg.DELINEATION_CANDIDATE_OUTPUT] is not None:
         delin_cand_fields = QgsFields(out_fields)
         if delin_cand_fields.indexOf("hhcount") == -1:
-            delin_cand_fields.append(QgsField("hhcount", QMetaType.Type.Double))
+            delin_cand_fields.append(QgsField("hhcount", QVariant.Double))
         if delin_cand_fields.indexOf("bldgcount") == -1:
-            delin_cand_fields.append(QgsField("bldgcount", QMetaType.Type.Int))
+            delin_cand_fields.append(QgsField("bldgcount", QVariant.Int))
         if delin_cand_fields.indexOf("indicator") == -1 and delin_cand_fields.indexOf("eadel_indi") == -1:
-            delin_cand_fields.append(QgsField("indicator", QMetaType.Type.QString))
+            delin_cand_fields.append(QgsField("indicator", QVariant.String))
         (delin_candidate_sink, delin_candidate_dest_id) = alg.parameterAsSink(
             parameters,
             alg.DELINEATION_CANDIDATE_OUTPUT,
@@ -253,15 +251,15 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     if alg.MERGE_CANDIDATE_OUTPUT in parameters and parameters[alg.MERGE_CANDIDATE_OUTPUT] is not None:
         merge_cand_fields_filtered = QgsFields(out_fields)
         if merge_cand_fields_filtered.indexOf("hhcount") == -1:
-            merge_cand_fields_filtered.append(QgsField("hhcount", QMetaType.Type.Double))
+            merge_cand_fields_filtered.append(QgsField("hhcount", QVariant.Double))
         if merge_cand_fields_filtered.indexOf("bldgcount") == -1:
-            merge_cand_fields_filtered.append(QgsField("bldgcount", QMetaType.Type.Int))
+            merge_cand_fields_filtered.append(QgsField("bldgcount", QVariant.Int))
         for fname in ["merge_partner", "split_by", "new_ea", "new_ean", "bldgpoints_value", "bldgpts_val", "bldgpoint_value"]:
             idx = merge_cand_fields_filtered.indexOf(fname)
             if idx != -1:
                 merge_cand_fields_filtered.remove(idx)
         if merge_cand_fields_filtered.indexOf("merge_indi") == -1:
-            merge_cand_fields_filtered.append(QgsField("merge_indi", QMetaType.Type.QString))
+            merge_cand_fields_filtered.append(QgsField("merge_indi", QVariant.String))
         (merge_candidate_sink, merge_candidate_dest_id) = alg.parameterAsSink(
             parameters,
             alg.MERGE_CANDIDATE_OUTPUT,
@@ -1280,19 +1278,19 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             feedback.pushInfo("Writing matched building points to extracted buildings output layer...")
             bldg_out_fields = QgsFields(building_source.fields())
             if bldg_out_fields.indexOf("parent_ean") == -1:
-                bldg_out_fields.append(QgsField("parent_ean", QMetaType.Type.QString))
+                bldg_out_fields.append(QgsField("parent_ean", QVariant.String))
 
             bldgpts_idx = bldg_out_fields.indexOf("bldgpoints_value")
             if bldgpts_idx == -1:
                 bldgpts_idx = bldg_out_fields.indexOf("bldgpts_val")
             if bldgpts_idx == -1:
-                bldg_out_fields.append(QgsField("bldgpoints_value", QMetaType.Type.Double))
+                bldg_out_fields.append(QgsField("bldgpoints_value", QVariant.Double))
 
             pop_out_idx = bldg_out_fields.indexOf("pop")
             if pop_out_idx == -1:
                 pop_out_idx = bldg_out_fields.indexOf(bldg_hh_field)
             if pop_out_idx == -1:
-                bldg_out_fields.append(QgsField("pop", QMetaType.Type.Double))
+                bldg_out_fields.append(QgsField("pop", QVariant.Double))
 
             barangay_to_target = None
             if previous_ea_source.sourceCrs() != target_crs:
