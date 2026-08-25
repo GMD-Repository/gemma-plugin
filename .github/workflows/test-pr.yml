@@ -49,18 +49,69 @@ jobs:
         run: |
           python3 tests/run_tests.py
 
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.qgis-version }}
+          path: tests/test_results.json
+          retention-days: 1
+
   pr-comment:
     name: Post PR Test Results Summary
     runs-on: ubuntu-latest
     needs: test-suite
     if: always() && github.event_name == 'pull_request'
     steps:
+      - name: Download Test Results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-results-*
+          path: results
+        continue-on-error: true
+
       - name: Post Sticky PR Comment
         uses: actions/github-script@v7
         with:
           script: |
+            const fs = require('fs');
+            const path = require('path');
             const commit = context.sha.substring(0, 7);
             const isSuccess = '${{ needs.test-suite.result }}' === 'success';
+
+            function findTestResults(dir) {
+              let results = [];
+              if (!fs.existsSync(dir)) return results;
+              for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
+                const fullPath = path.join(dir, item.name);
+                if (item.isDirectory()) {
+                  results = results.concat(findTestResults(fullPath));
+                } else if (item.name === 'test_results.json') {
+                  results.push(fullPath);
+                }
+              }
+              return results;
+            }
+
+            let breakdown = 'See workflow logs for details';
+            try {
+              const files = findTestResults('results');
+              if (files.length > 0) {
+                // Prefer 3.40.10 result if present, otherwise first available
+                const target = files.find(f => f.includes('3.40.10')) || files[0];
+                const raw = fs.readFileSync(target, 'utf8');
+                const results = JSON.parse(raw);
+                const total = results.tests_run;
+                const passed = results.passed;
+                const skipped = results.skipped;
+                const failures = results.failures;
+                const errors = results.errors;
+                breakdown = `**${total} Total** · ${passed} Passed · ${skipped} Skipped · ${failures} Failures · ${errors} Errors`;
+              }
+            } catch (e) {
+              // Fall back to generic message if artifact is unavailable
+            }
+
             const body = [
               '### GEMMA QGIS Plugin — Automated Test Suite Results',
               '',
@@ -68,7 +119,7 @@ jobs:
               '| :--- | :--- |',
               `| **Pipeline Status** | ${isSuccess ? '**Passed** (All verification gates satisfied)' : '**Failed** (Test suite or coverage check error)'} |`,
               '| **Target Environments** | **QGIS 3.38** & **3.40.10 LTR** (Ubuntu Headless Matrix) |',
-              '| **Test Execution Breakdown** | **55 Total** · 53 Passed · 2 Skipped · 0 Failures · 0 Errors |',
+              `| **Test Execution Breakdown** | ${breakdown} |`,
               '| **Script Coverage Gate** | **100%** (All `gmd_scripts` covered by unit tests) |',
               `| **Target Commit** | \`${commit}\` |`,
               '',
@@ -82,7 +133,7 @@ jobs:
               issue_number: context.payload.pull_request.number,
             });
             
-            const botComment = comments.find(c => c.body && c.body.includes('GEMMA QGIS Plugin - PR Test Results'));
+            const botComment = comments.find(c => c.body && c.body.includes('GEMMA QGIS Plugin — Automated Test Suite Results'));
             
             if (botComment) {
               await github.rest.issues.updateComment({

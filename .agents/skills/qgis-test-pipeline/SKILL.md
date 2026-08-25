@@ -20,18 +20,42 @@ gemma-plugin/
 │   │   ├── qgis_mock.py            # Headless QGIS/PyQt5 mock & PyQGIS initializer
 │   │   └── sample_data.py          # Spatial vector layer fixture generators (polygons, lines, points)
 │   ├── unit/
-│   │   ├── test_ea_pipeline.py     # EA delineation & merge unit tests
-│   │   ├── test_gmdhelpers.py      # Core helper function unit tests
-│   │   └── test_*.py               # Unit tests for all gmd_scripts/ modules
-│   ├── integration/                # Full spatial integration tests with GeoPackages
-│   └── run_tests.py                # Unified test runner & reporter
+│   │   ├── test_apply_qml_styles.py          # 3 tests — QML style application
+│   │   ├── test_auto_arrange.py              # 6 tests — Auto-arrange layer ordering
+│   │   ├── test_check_and_update_dialog.py   # 2 tests — Check & update dialog
+│   │   ├── test_clip_project_layers.py       # 3 tests — Layer clipping
+│   │   ├── test_create_enumeration_area.py   # 2 tests — EA creation
+│   │   ├── test_ea_merge_processor.py        # 3 tests — EA merge processor
+│   │   ├── test_ea_pipeline.py               # 20 tests — Full EA delineation pipeline
+│   │   ├── test_ea_split_modes.py            # 5 tests — EA split mode strategies
+│   │   ├── test_export_preliminary_polygons.py# 3 tests — Preliminary polygon export
+│   │   ├── test_fill_polygon_gaps.py         # 3 tests — Gap filling
+│   │   ├── test_gaps_overlaps_checker.py     # 2 tests — Gap & overlap detection
+│   │   ├── test_geom_check_repair_legacy.py  # 2 tests — Legacy geometry repair
+│   │   ├── test_geom_repair_toolkit.py       # 3 tests — Topology engine & repair toolkit
+│   │   ├── test_gmdhelpers.py                # 3 tests — Core helper functions
+│   │   ├── test_gsheet.py                    # 1 test — Google Sheets integration
+│   │   ├── test_join_barangay_attributes.py  # 7 tests — Barangay attribute joining
+│   │   ├── test_lgu_fix_processing.py        # 4 tests — LGU fix processing
+│   │   ├── test_mbi_validator.py             # 5 tests — MBI validation engine
+│   │   ├── test_package_qfield.py            # 2 tests — QField packaging
+│   │   ├── test_pre_ea_processor.py          # 3 tests — Pre-EA processor
+│   │   ├── test_repair_geometry_errors.py    # 4 tests — Geometry error repair
+│   │   ├── test_scan_geometry_errors.py      # 3 tests — Geometry error scanning
+│   │   ├── test_update_metadata.py           # 2 tests — Metadata update
+│   │   └── test_update_metadata_by_geocode.py# 2 tests — Geocode metadata update
+│   │   ├── integration/                # Full spatial integration tests with GeoPackages
+│   ├── run_tests.py                # Unified test runner & reporter (writes test_results.json)
+│   └── test_results.json           # Machine-readable test results (consumed by CI bot)
 ├── scripts/
 │   └── testing/
 │       └── generate_test_stubs.py  # Auto-scaffolds test files & checks CI coverage
 └── .github/
     └── workflows/
-        └── test-pr.yml             # QGIS Docker container GitHub Actions PR Gate + Comment Bot
+        └── test-pr.yml             # QGIS Docker container GitHub Actions PR Gate + Dynamic Comment Bot
 ```
+
+**Current Suite Totals**: **93 tests** across **24 test modules** (91 Passed · 2 Skipped · 0 Failures · 0 Errors)
 
 ---
 
@@ -55,6 +79,7 @@ from tests.mocks.qgis_mock import setup_qgis_mock_if_needed, QgsProcessingFeedba
 from tests.mocks.sample_data import create_sample_polygon_layer
 
 setup_qgis_mock_if_needed()
+
 
 class TestMyNewScript(unittest.TestCase):
     def setUp(self):
@@ -90,6 +115,13 @@ Run with `--check` to confirm 100% test coverage before committing:
 
 ```bash
 python scripts/testing/generate_test_stubs.py --check
+```
+
+### Step 6: Auto-Sync Test Docs & Metrics (Automatic)
+Whenever tests or test cases are added, running `generate_test_stubs.py` automatically updates the architecture tree, test catalog, and suite totals in `SKILL.md`. You can also manually sync anytime:
+
+```bash
+python scripts/testing/generate_test_stubs.py --sync-skill
 ```
 
 ---
@@ -131,10 +163,10 @@ python tests/run_tests.py
 ======================================================================
 Discovering tests under: .../tests
 ======================================================================
-Tests run: 55
+Tests run: 93
 Errors: 0
 Failures: 0
-Skipped: 0
+Skipped: 2
 ======================================================================
 [STATUS] PASSED — All unit & integration tests succeeded.
 ```
@@ -165,8 +197,17 @@ Every Pull Request submitted to `main`, `master`, `develop`, or `enhance/**` bra
 - **Automated Workflow**:
   1. **Coverage Check**: Runs `python3 scripts/testing/generate_test_stubs.py --check` (Fails if any script in `gmd_scripts/` lacks a unit test).
   2. **Full QGIS Execution**: Runs `python3 tests/run_tests.py` against the native QGIS engine inside the GitHub runner container.
-  3. **Sticky PR Comment Bot**: Automatically posts or updates a PR comment table with test status, coverage status, and commit hash.
+  3. **Artifact Upload**: Uploads `tests/test_results.json` as a GitHub Actions artifact keyed by QGIS version.
+  4. **Dynamic Sticky PR Comment Bot**: Downloads the test results artifact from the QGIS 3.40.10 run, parses the JSON, and automatically posts or updates a PR comment table with **real test counts** dynamically extracted from the test run.
 
+### Dynamic PR Comment Bot Flow:
+```text
+test-suite job → writes test_results.json → uploads artifact
+                                                    ↓
+pr-comment job → downloads artifact → reads JSON → builds PR comment with real counts
+```
+
+### Sample PR Comment Output:
 ```markdown
 ### GEMMA QGIS Plugin — Automated Test Suite Results
 
@@ -174,10 +215,12 @@ Every Pull Request submitted to `main`, `master`, `develop`, or `enhance/**` bra
 | :--- | :--- |
 | **Pipeline Status** | **Passed** (All verification gates satisfied) |
 | **Target Environments** | **QGIS 3.38** & **3.40.10 LTR** (Ubuntu Headless Matrix) |
-| **Test Execution Breakdown** | **55 Total** · 53 Passed · 2 Skipped · 0 Failures · 0 Errors |
+| **Test Execution Breakdown** | **93 Total** · 91 Passed · 2 Skipped · 0 Failures · 0 Errors |
 | **Script Coverage Gate** | **100%** (All `gmd_scripts` covered by unit tests) |
-| **Target Commit** | `5cf86a6` |
+| **Target Commit** | `a56d10c` |
 
 ---
-*This automated report was generated by GitHub Actions Bot. Resilient fallback handling gracefully skips environment-dependent GUI tests without compromising CI gate integrity.*
+*This automated report was generated by GitHub Actions Bot.*
 ```
+
+> **Note**: The test counts in the PR comment are now **dynamic** — they are read from `test_results.json` at runtime. As new tests are added, the PR comment will automatically reflect the updated totals without any workflow changes.
