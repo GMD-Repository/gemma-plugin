@@ -440,8 +440,9 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
             "that case type doesn't apply.\n\n"
             "GeoPackage Output:\n"
             "Optionally tick 'Save outputs as GeoPackage' and pick a destination "
-            "folder — every non-empty category will be written as a separate layer "
-            "inside a single .gpkg file, automatically named 'ref_mbi_reviewed-YYYY-MM-DD_HH-MM-SS.gpkg' "
+            "folder (required only if checkbox is checked) — every non-empty "
+            "category will be written as a separate layer inside a single .gpkg file, "
+            "automatically named 'ref_mbi_reviewed-YYYY-MM-DD_HH-MM-SS.gpkg' "
             "with the current timestamp.\n\n"
             "Outputs (only generated when containing at least one feature):\n"
             "- Status Mismatch: claimed resolved but still detected, Pending w/ 0 bldg pts and no remarks, or Updated w/ nonzero bldg pts and no remarks\n"
@@ -520,7 +521,7 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
             self.GPKG_OUTPUT,
             self.tr("Save Path"),
             behavior=QgsProcessingParameterFile.Folder,
-            optional=False))
+            optional=True))
 
         # --- Individual output sinks: process-wise these are unchanged
         # (still optional QgsProcessingParameterFeatureSink, still created
