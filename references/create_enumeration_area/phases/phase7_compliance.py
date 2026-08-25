@@ -37,10 +37,9 @@ def run_phase_7(
     multi_feedback.setProgressText(f"{_PHASE_LABELS[6]}...")
     feedback.pushInfo("Running compliance sweep...")
 
-    compliance_changed = False
+    compliance_changed = True
     compliance_pass = 0
     max_compliance_passes = 10
-    feedback.pushInfo("TEMPORARY BYPASS: Skipping Phase 8 Final Compliance Sweep as requested.")
 
     while compliance_changed and compliance_pass < max_compliance_passes:
         if multi_feedback.isCanceled():
@@ -162,6 +161,28 @@ def run_phase_7(
                         if dist < best_dist:
                             best_dist = dist
                             best_j = j
+
+            if best_j == -1:
+                # Pass 4: Absolute fallback — merge with smallest non-delineation neighbor in barangay
+                up_centroid = ea["geom"].centroid().asPoint()
+                best_score_fallback = (float("inf"), float("inf"))
+                for j, nb in enumerate(eas):
+                    if j == i or j in removed:
+                        continue
+                    if nb.get("from_split", False):
+                        continue
+                    if nb["parent_barangay"] != bar:
+                        continue
+                    if is_delineation_candidate(nb, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
+                        continue
+                    if nb.get("original_id") in delineation_candidate_ids:
+                        continue
+                    is_touch = ea["geom"].touches(nb["geom"]) or ea["geom"].intersects(nb["geom"])
+                    dist = up_centroid.distance(nb["geom"].centroid().asPoint())
+                    score = (0 if is_touch else 1, nb["hh_count"], dist)
+                    if score < best_score_fallback:
+                        best_score_fallback = score
+                        best_j = j
 
             if best_j != -1:
                 nb = eas[best_j]
