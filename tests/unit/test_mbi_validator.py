@@ -172,6 +172,33 @@ class TestMbiValidator(unittest.TestCase):
         cat4, reason4 = self.mod.evaluate_reference_case(feat, spatially_confirmed=False)
         self.assertEqual(cat4, "status_mismatch")
 
+        # Pending cases with remarks (with or without building points) -> pending_with_remarks
+        feat.setAttribute("mbi_status", "2_Pending")
+        feat.setAttribute("num_bldg_pts", 0)
+        feat.setAttribute("pso_remarks", "Pending boundary review by PSO")
+        cat5, reason5 = self.mod.evaluate_reference_case(feat, spatially_confirmed=True)
+        self.assertEqual(cat5, "pending_with_remarks")
+
+        feat.setAttribute("num_bldg_pts", 4)
+        feat.setAttribute("pso_remarks", "Pending dispute between Barangays")
+        cat6, reason6 = self.mod.evaluate_reference_case(feat, spatially_confirmed=True)
+        self.assertEqual(cat6, "pending_with_remarks")
+
+        # Remaining Cases: 2_Pending with bldg pts > 0, NO remarks, and detected by checker -> still_active
+        feat.setAttribute("num_bldg_pts", 4)
+        feat.setAttribute("pso_remarks", None)
+        cat7, reason7 = self.mod.evaluate_reference_case(feat, spatially_confirmed=True)
+        self.assertEqual(cat7, "still_active")
+
+        # 2_Pending with bldg pts > 0, NO remarks, and NOT detected by checker -> status_mismatch
+        cat8, reason8 = self.mod.evaluate_reference_case(feat, spatially_confirmed=False)
+        self.assertEqual(cat8, "status_mismatch")
+
+        # 2_Pending with bldg pts = 0 and NO remarks -> status_mismatch
+        feat.setAttribute("num_bldg_pts", 0)
+        cat9, reason9 = self.mod.evaluate_reference_case(feat, spatially_confirmed=True)
+        self.assertEqual(cat9, "status_mismatch")
+
     def test_process_algorithm_execution(self):
         """Test processAlgorithm execution on reference and checker layers."""
         try:
@@ -180,6 +207,8 @@ class TestMbiValidator(unittest.TestCase):
                 self.alg.CHK_GAP: self.chk_gap_layer,
                 self.alg.CHK_OVERLAP: None,
                 self.alg.OUT_MISMATCH: "TEMPORARY_OUTPUT",
+                self.alg.OUT_MISMATCH_REMARKS: "TEMPORARY_OUTPUT",
+                self.alg.OUT_PENDING_REMARKS: "TEMPORARY_OUTPUT",
                 self.alg.OUT_NEW: "TEMPORARY_OUTPUT",
                 self.alg.OUT_STILL: "TEMPORARY_OUTPUT",
                 self.alg.OUT_RESOLVED: "TEMPORARY_OUTPUT",
