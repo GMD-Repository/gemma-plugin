@@ -37,6 +37,7 @@ class TestMbiValidator(unittest.TestCase):
             QgsField("case_uuid", QVariant.String),
             QgsField("mbi_status", QVariant.String),
             QgsField("pso_remarks", QVariant.String),
+            QgsField("mbi_remarks", QVariant.String),
             QgsField("mbi_type", QVariant.String),
             QgsField("involved_bgys", QVariant.String),
             QgsField("num_bldg_pts", QVariant.Int),
@@ -64,7 +65,7 @@ class TestMbiValidator(unittest.TestCase):
         ]]))
         f2.setAttribute("case_uuid", "CASE-002")
         f2.setAttribute("mbi_status", "2_Pending")
-        f2.setAttribute("mbi_remarks", "Under boundary dispute review")
+        f2.setAttribute("pso_remarks", "Under boundary dispute review")
         f2.setAttribute("mbi_type", "2_Overlap")
         f2.setAttribute("num_bldg_pts", 2)
 
