@@ -91,6 +91,10 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
         """Returns the unique ID of the group."""
         return "1map"
 
+    def flags(self):
+        """Hides algorithm from Processing Toolbox while keeping it registered for custom UI dialog."""
+        return super().flags() | QgsProcessingAlgorithm.FlagHideFromToolbox
+
     def icon(self):
         """Returns the algorithm icon."""
         import os
@@ -201,30 +205,22 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
         default_road = None
         default_river = None
         
-        from qgis.core import QgsMessageLog, Qgis
         try:
             layers = QgsProject.instance().mapLayers().values()
-            QgsMessageLog.logMessage(f"Auto-detecting layers. Project has {len(layers)} layers.", "EA Creation", Qgis.Info)
             for layer in layers:
                 name_lower = layer.name().lower()
-                QgsMessageLog.logMessage(f"Checking layer: {layer.name()}", "EA Creation", Qgis.Info)
                 if "_bgy" in name_lower and default_bgy is None:
                     default_bgy = layer
-                    QgsMessageLog.logMessage(f"Selected {layer.name()} as Barangay default.", "EA Creation", Qgis.Info)
                 elif "_ea" in name_lower and default_ea is None:
                     default_ea = layer
-                    QgsMessageLog.logMessage(f"Selected {layer.name()} as EA default.", "EA Creation", Qgis.Info)
                 elif ("_bldgpts" in name_lower or "_bldg_point" in name_lower or "_bldg_points" in name_lower) and default_bldgpts is None:
                     default_bldgpts = layer
-                    QgsMessageLog.logMessage(f"Selected {layer.name()} as Building Points default.", "EA Creation", Qgis.Info)
                 elif "road" in name_lower and default_road is None:
                     default_road = layer
-                    QgsMessageLog.logMessage(f"Selected {layer.name()} as Road default.", "EA Creation", Qgis.Info)
                 elif "river" in name_lower and default_river is None:
                     default_river = layer
-                    QgsMessageLog.logMessage(f"Selected {layer.name()} as River default.", "EA Creation", Qgis.Info)
-        except Exception as e:
-            QgsMessageLog.logMessage(f"Error auto-detecting layers: {str(e)}", "EA Creation", Qgis.Critical)
+        except Exception:
+            pass
 
         # Barangay polygon input
         self.addParameter(

@@ -16,7 +16,7 @@ import os
 from qgis.core import (
     QgsApplication, QgsProject, QgsVectorLayer, QgsCoordinateTransform, QgsSpatialIndex,
     QgsFeature, QgsGeometry, QgsProcessingContext, QgsProcessingFeedback,
-    QgsCoordinateReferenceSystem, NULL, QgsMapLayerProxyModel
+    QgsCoordinateReferenceSystem, QgsWkbTypes, NULL, QgsMapLayerProxyModel
 )
 try:
     from qgis.gui import QgsMapLayerComboBox, QgsProjectionSelectionWidget, QgsCollapsibleGroupBox
@@ -1693,6 +1693,8 @@ class EALauncherDialog(QDialog):
             self._safe_set_layer(self.river_combo, candidates["river"])
         if candidates["gap"]:
             self._safe_set_layer(self.gap_combo, candidates["gap"])
+        if candidates["overlap"]:
+            self._safe_set_layer(self.overlap_combo, candidates["overlap"])
         self.validate_layer_inputs()
 
     def auto_arrange_and_detect_layers(self):
