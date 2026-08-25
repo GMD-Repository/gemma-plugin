@@ -36,7 +36,7 @@ class TestMbiValidator(unittest.TestCase):
         pr.addAttributes([
             QgsField("case_uuid", QVariant.String),
             QgsField("mbi_status", QVariant.String),
-            QgsField("mbi_remarks", QVariant.String),
+            QgsField("pso_remarks", QVariant.String),
             QgsField("mbi_type", QVariant.String),
             QgsField("involved_bgys", QVariant.String),
             QgsField("num_bldg_pts", QVariant.Int),
@@ -52,7 +52,7 @@ class TestMbiValidator(unittest.TestCase):
         ]]))
         f1.setAttribute("case_uuid", "CASE-001")
         f1.setAttribute("mbi_status", "1_Updated")
-        f1.setAttribute("mbi_remarks", "Boundary realigned")
+        f1.setAttribute("pso_remarks", "Boundary realigned")
         f1.setAttribute("mbi_type", "1_Gap")
         f1.setAttribute("num_bldg_pts", 0)
 
@@ -113,6 +113,32 @@ class TestMbiValidator(unittest.TestCase):
         self.assertFalse(self.mod.meaningful("a"))
         self.assertTrue(self.mod.meaningful("Resolved by Mayor"))
 
+    def test_find_matching_layer_id(self):
+        """Test layer auto-detection helper for ref_mbi_cases, Gaps, and Overlaps."""
+        # Clean up any existing project layers
+        QgsProject.instance().removeAllMapLayers()
+
+        # No layers in project -> returns None
+        found_id = self.mod.find_matching_layer_id(["ref_mbi_cases", "ref_mbi"])
+        self.assertIsNone(found_id)
+
+        # Add polygon layers named 'ref_mbi_cases', 'Gaps', 'Overlaps'
+        test_ref = QgsVectorLayer("Polygon?crs=EPSG:4326", "ref_mbi_cases_2026", "memory")
+        test_gaps = QgsVectorLayer("Polygon?crs=EPSG:4326", "Gaps", "memory")
+        test_overlaps = QgsVectorLayer("Polygon?crs=EPSG:4326", "Overlaps", "memory")
+        QgsProject.instance().addMapLayers([test_ref, test_gaps, test_overlaps])
+
+        found_ref = self.mod.find_matching_layer_id(["ref_mbi_cases", "ref_mbi"])
+        found_gaps = self.mod.find_matching_layer_id(["gaps", "gap"])
+        found_overlaps = self.mod.find_matching_layer_id(["overlaps", "overlap"])
+
+        self.assertEqual(found_ref, test_ref.id())
+        self.assertEqual(found_gaps, test_gaps.id())
+        self.assertEqual(found_overlaps, test_overlaps.id())
+
+        # Clean up
+        QgsProject.instance().removeAllMapLayers()
+
     def test_evaluate_reference_case(self):
         """Test evaluate_reference_case rules."""
         feat = list(self.ref_layer.getFeatures())[0]
@@ -124,6 +150,17 @@ class TestMbiValidator(unittest.TestCase):
         # Claimed resolved (1_Updated) and NOT detected -> confirmed_resolved
         cat2, reason2 = self.mod.evaluate_reference_case(feat, spatially_confirmed=False)
         self.assertEqual(cat2, "confirmed_resolved")
+
+        # Claimed resolved (1_Updated) w/ non-zero bldg pts AND remarks present -> mismatch_with_remarks
+        feat.setAttribute("num_bldg_pts", 3)
+        feat.setAttribute("pso_remarks", "Boundary adjustment ongoing")
+        cat3, reason3 = self.mod.evaluate_reference_case(feat, spatially_confirmed=False)
+        self.assertEqual(cat3, "mismatch_with_remarks")
+
+        # Claimed resolved (1_Updated) w/ non-zero bldg pts AND NO remarks -> status_mismatch
+        feat.setAttribute("pso_remarks", None)
+        cat4, reason4 = self.mod.evaluate_reference_case(feat, spatially_confirmed=False)
+        self.assertEqual(cat4, "status_mismatch")
 
     def test_process_algorithm_execution(self):
         """Test processAlgorithm execution on reference and checker layers."""
