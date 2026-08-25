@@ -34,7 +34,7 @@ class TestEAMergeProcessor(unittest.TestCase):
     """Unit test suite for EAMergeProcessor (Tab 3)."""
 
     def setUp(self):
-        # Base EA Layer (04340001 / San Mateo)
+        # Previous EA Layer (04340001 / San Mateo)
         self.ea_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "04340_ea2024", "memory")
         pr = self.ea_layer.dataProvider()
         pr.addAttributes([
@@ -58,18 +58,18 @@ class TestEAMergeProcessor(unittest.TestCase):
         pr.addFeatures([feat1, feat2])
         self.ea_layer.updateExtents()
 
-        # Replacement Layer 1: 14 digits (01001000000001), replaces (20,20) to (80,80)
-        self.repl_layer1 = QgsVectorLayer("Polygon?crs=EPSG:3857", "01001000000001", "memory")
+        # Replacement Layer 1: 8 digits (01001000), replaces (20,20) to (80,80)
+        self.repl_layer1 = QgsVectorLayer("Polygon?crs=EPSG:3857", "01001000", "memory")
         rpr1 = self.repl_layer1.dataProvider()
         rfeat1 = QgsFeature(self.repl_layer1.fields())
         rfeat1.setGeometry(make_square(20, 20, 60))
         rpr1.addFeatures([rfeat1])
         self.repl_layer1.updateExtents()
 
-    def test_14_digit_layer_name_validation(self):
-        """Test 14-digit numeric layer name validation rules."""
-        valid_names = ["01001000000001", "01001000000002", "17501000000001"]
-        invalid_names = ["010010000001", "010010000000001", "01001000000001_A", "01001_000000001", "ABC01001000000001"]
+    def test_8_digit_layer_name_validation(self):
+        """Test 8-digit numeric layer name validation rules."""
+        valid_names = ["01001000", "01001002", "17501000"]
+        invalid_names = ["0100100", "010010000", "01001000_A", "01001_000", "ABC01001000"]
 
         for name in valid_names:
             self.assertTrue(bool(_REPLACEMENT_NAME_RE.match(name)), f"Should be valid: {name}")
@@ -104,8 +104,8 @@ class TestEAMergeProcessor(unittest.TestCase):
             self.assertEqual(len(features), 3)
 
     def test_invalid_replacement_layer_name_fails(self):
-        """Test that invalid 14-digit replacement layer names cause validation failure."""
-        invalid_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "01001000000001_A", "memory")
+        """Test that invalid 8-digit replacement layer names cause validation failure."""
+        invalid_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "01001000_A", "memory")
         pr = invalid_layer.dataProvider()
         f = QgsFeature(invalid_layer.fields())
         f.setGeometry(make_square(0, 0, 10))
@@ -118,7 +118,7 @@ class TestEAMergeProcessor(unittest.TestCase):
         result = processor.run()
 
         self.assertFalse(result.success)
-        self.assertIn("14-digit", result.error_message)
+        self.assertIn("8-digit", result.error_message)
 
 
 if __name__ == "__main__":
