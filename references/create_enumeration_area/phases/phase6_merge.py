@@ -180,7 +180,8 @@ def process_barangay_merge(
                         continue
                     if neighbor.get('original_id') in delineation_candidate_ids:
                         continue
-                    if is_merge_candidate(neighbor, min_household, merge_candidate_ids):
+                    # Non-merge candidates must NOT be merged; only merge candidates can merge together
+                    if not is_merge_candidate(neighbor, min_household, merge_candidate_ids):
                         continue
 
                     is_adjacent = (
@@ -191,37 +192,10 @@ def process_barangay_merge(
                     if is_adjacent:
                         combined_hh = ea['hh_count'] + neighbor['hh_count']
                         if combined_hh <= max_household:
-                            score = (float(neighbor.get('hh_count', 0.0)), neighbor['geom'].area())
+                            score = (0 if combined_hh >= min_household else 1, float(neighbor.get('hh_count', 0.0)), neighbor['geom'].area())
                             if score < best_neighbor_score:
                                 best_neighbor_score = score
                                 best_neighbor_idx = j
-
-                if best_neighbor_idx == -1:
-                    for j in range(len(bar_eas)):
-                        if idx == j or j in merged_indices:
-                            continue
-                        neighbor = bar_eas[j]
-                        if neighbor.get('from_split', False):
-                            continue
-                        if is_delineation_candidate(neighbor, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
-                            continue
-                        if neighbor.get('original_id') in delineation_candidate_ids:
-                            continue
-                        if not allow_candidate_merge and is_merge_candidate(neighbor, min_household, merge_candidate_ids):
-                            continue
-
-                        is_adjacent = (
-                            ea['geom'].touches(neighbor['geom'])
-                            or ea['geom'].intersects(neighbor['geom'])
-                            or ea['geom'].buffer(0.001, 3).intersects(neighbor['geom'])
-                        )
-                        if is_adjacent:
-                            combined_hh = ea['hh_count'] + neighbor['hh_count']
-                            if combined_hh <= max_household:
-                                score = (0 if combined_hh >= min_household else 1, float(neighbor.get('hh_count', 0.0)), neighbor['geom'].area())
-                                if score < best_neighbor_score:
-                                    best_neighbor_score = score
-                                    best_neighbor_idx = j
 
                 if best_neighbor_idx == -1:
                     new_eas.append(ea)

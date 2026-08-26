@@ -226,8 +226,7 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
             merge_candidate_ids={201}
         )
 
-        self.assertEqual(len(merged), 1, "Small EA + normal reference EA should merge into 1 EA.")
-        self.assertEqual(merged[0]['hh_count'], 220.0, "Combined household count should be 40 + 180 = 220 HH.")
+        self.assertEqual(len(merged), 2, "Small EA and non-merge candidate normal reference EA must NOT be merged.")
 
     def test_delineated_split_eas_never_merged(self):
         """Verify that delineated (from_split=True) EAs are never selected as merge candidates or merged."""
@@ -498,7 +497,6 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
             'parent_barangay': "01737005"
         }
 
-        # With allow_candidate_merge=False, candidate EAs should NOT merge together
         merged = process_barangay_merge(
             bar_code="01737005",
             bar_eas=[ea1, ea2],
@@ -506,10 +504,10 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
             min_household=100.0,
             max_household=300.0,
             merge_candidate_ids={501, 502},
-            allow_candidate_merge=False
         )
 
-        self.assertEqual(len(merged), 2, "When allow_candidate_merge=False, small candidates must NOT merge together.")
+        self.assertEqual(len(merged), 1, "Adjacent merge candidates must merge together.")
+        self.assertEqual(merged[0]['hh_count'], 90.0)
 
     def test_refine_split_line_gap_and_prune(self):
         """Verify that refine_split_line bridges small gaps and prunes tiny isolated branches."""

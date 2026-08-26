@@ -114,53 +114,16 @@ def run_phase_7(
                     continue
                 if nb.get("original_id") in delineation_candidate_ids:
                     continue
+                # Non-merge candidates must NOT be merged; only merge candidates can merge together
+                if not is_merge_candidate(nb, min_household, merge_candidate_ids):
+                    continue
+
                 if ea["geom"].touches(nb["geom"]) or ea["geom"].intersects(nb["geom"]):
                     combined = ea["hh_count"] + nb["hh_count"]
-                    if min_household < combined < max_household:
+                    if combined <= max_household:
                         score = abs(combined - (max_household - 1))
                         if score < best_score:
                             best_score = score
-                            best_j = j
-
-            if best_j == -1:
-                for j, nb in enumerate(eas):
-                    if j == i or j in removed:
-                        continue
-                    if nb.get("from_split", False):
-                        continue
-                    if nb["parent_barangay"] != bar:
-                        continue
-                    if is_delineation_candidate(nb, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
-                        continue
-                    if nb.get("original_id") in delineation_candidate_ids:
-                        continue
-                    if ea["geom"].touches(nb["geom"]) or ea["geom"].intersects(nb["geom"]):
-                        combined = ea["hh_count"] + nb["hh_count"]
-                        if combined < max_household:
-                            score = abs(combined - (max_household - 1))
-                            if score < best_score:
-                                best_score = score
-                                best_j = j
-
-            if best_j == -1:
-                up_centroid = ea["geom"].centroid().asPoint()
-                best_dist = float("inf")
-                for j, nb in enumerate(eas):
-                    if j == i or j in removed:
-                        continue
-                    if nb.get("from_split", False):
-                        continue
-                    if nb["parent_barangay"] != bar:
-                        continue
-                    if is_delineation_candidate(nb, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
-                        continue
-                    if nb.get("original_id") in delineation_candidate_ids:
-                        continue
-                    combined = ea["hh_count"] + nb["hh_count"]
-                    if combined < max_household:
-                        dist = up_centroid.distance(nb["geom"].centroid().asPoint())
-                        if dist < best_dist:
-                            best_dist = dist
                             best_j = j
 
             if best_j != -1:
