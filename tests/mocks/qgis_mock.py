@@ -190,6 +190,11 @@ class QgsGeometry:
     def intersects(self, other):
         if hasattr(other, 'geom_type') and other.geom_type == "Point":
             return self.contains(other)
+        b1 = self.boundingBox()
+        b2 = other.boundingBox() if hasattr(other, 'boundingBox') else None
+        if b2:
+            return not (b1.xMaximum() < b2.xMinimum() or b1.xMinimum() > b2.xMaximum() or
+                        b1.yMaximum() < b2.yMinimum() or b1.yMinimum() > b2.yMaximum())
         return True
     def intersection(self, other):
         if self.geom_type in ("Polygon", "MultiPolygon") and hasattr(other, 'geom_type') and other.geom_type in ("Polygon", "MultiPolygon"):
@@ -207,9 +212,14 @@ class QgsGeometry:
         if hasattr(self, 'polygons') and self.polygons:
             other_polys = getattr(other, 'polygons', [])
             diff_rings = [p for p in self.polygons if p not in other_polys]
+            if other_polys and diff_rings == self.polygons:
+                # Mock difference: produce modified polygon with reduced area
+                diff_rings = [[QgsPointXY(p.x() + 1.0, p.y() + 1.0) for p in self.polygons[0]]]
             if diff_rings:
                 gtype = "MultiPolygon" if len(diff_rings) > 1 else "Polygon"
-                return QgsGeometry(gtype, diff_rings)
+                res = QgsGeometry(gtype, diff_rings)
+                res._mock_area = 60.0
+                return res
         return QgsGeometry("Polygon", [[QgsPointXY(80, 0), QgsPointXY(120, 0), QgsPointXY(120, 100), QgsPointXY(80, 100), QgsPointXY(80, 0)]])
     def mergeLines(self): return QgsGeometry("LineString")
     def simplify(self, tol): return self
@@ -236,7 +246,7 @@ class QgsGeometry:
         gtype = "MultiPolygon" if len(combined) > 1 else "Polygon"
         return QgsGeometry(gtype, combined)
     def buffer(self, distance, segments=3): return QgsGeometry("Polygon", self.polygons)
-    def area(self): return 100.0
+    def area(self): return getattr(self, '_mock_area', 100.0)
     def length(self): return 40.0
 
     def splitGeometry(self, split_line, preserve_input=False):
@@ -307,16 +317,20 @@ class QgsGeometry:
 
 
 class QgsField:
-    def __init__(self, name="", field_type=None, comment="", length=0, precision=0):
+    def __init__(self, name="", field_type=None, typeName="", len=0, prec=0, comment="", subType=None, length=0, precision=0, **kwargs):
         self._name = name
         self._type = field_type
-        self._length = length
-        self._precision = precision
+        self._typeName = typeName
+        self._length = len or length
+        self._precision = prec or precision
+        self._comment = comment
 
     def name(self): return self._name
     def type(self): return self._type
+    def typeName(self): return self._typeName
     def length(self): return self._length
     def precision(self): return self._precision
+    def comment(self): return self._comment
 
 
 class QgsFields:
@@ -364,6 +378,12 @@ class QgsFeature:
         self._geometry = None
         self._id = 0
         self._fields = fields
+
+    def isValid(self):
+        return True
+
+    def hasGeometry(self):
+        return self._geometry is not None
 
     def setAttributes(self, attrs):
         self._attributes = list(attrs)
