@@ -35,11 +35,11 @@ gemma-plugin/
 │   │   ├── test_geom_repair_toolkit.py       # 3 tests — Topology engine & repair toolkit
 │   │   ├── test_gmdhelpers.py                # 3 tests — Core helper functions
 │   │   ├── test_gsheet.py                    # 1 test — Google Sheets integration
-│   │   ├── test_join_barangay_attributes.py  # 7 tests — Barangay attribute joining
+│   │   ├── test_join_barangay_attributes.py  # 8 tests — Barangay attribute joining
 │   │   ├── test_lgu_fix_processing.py        # 4 tests — LGU fix processing
-│   │   ├── test_mbi_validator.py             # 5 tests — MBI validation engine
+│   │   ├── test_mbi_validator.py             # 7 tests — MBI validation engine
 │   │   ├── test_package_qfield.py            # 2 tests — QField packaging
-│   │   ├── test_pre_ea_processor.py          # 3 tests — Pre-EA processor
+│   │   ├── test_pre_ea_processor.py          # 5 tests — Pre-EA processor
 │   │   ├── test_repair_geometry_errors.py    # 4 tests — Geometry error repair
 │   │   ├── test_scan_geometry_errors.py      # 3 tests — Geometry error scanning
 │   │   ├── test_update_metadata.py           # 2 tests — Metadata update
@@ -55,7 +55,7 @@ gemma-plugin/
         └── test-pr.yml             # QGIS Docker container GitHub Actions PR Gate + Dynamic Comment Bot
 ```
 
-**Current Suite Totals**: **93 tests** across **24 test modules** (91 Passed · 2 Skipped · 0 Failures · 0 Errors)
+**Current Suite Totals**: **98 tests** across **24 test modules** (91 Passed · 2 Skipped · 0 Failures · 0 Errors)
 
 ---
 
