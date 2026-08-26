@@ -125,6 +125,8 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         ("special_type", QVariant.String),
         ("source_id", QVariant.String),
         ("indicator", QVariant.String),
+        ("gps", QVariant.String),
+        ("min_circle", QVariant.String),
     ):
         if out_fields.indexOf(fname) == -1:
             out_fields.append(QgsField(fname, ftype))
@@ -154,6 +156,12 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                 ftype = QVariant.Int
             export_fields.append(QgsField(fname, ftype))
 
+    # Build merged_export_fields for merge_ea output layer (includes indicator, gps, min_circle)
+    merged_export_fields = QgsFields(export_fields)
+    for fname in ("indicator", "gps", "min_circle"):
+        if merged_export_fields.indexOf(fname) == -1:
+            merged_export_fields.append(QgsField(fname, QVariant.String))
+
     out_wkb_type = QgsWkbTypes.multiType(previous_ea_source.wkbType())
 
     delineated_sink = None
@@ -175,7 +183,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             parameters,
             alg.MERGED_OUTPUT,
             context,
-            export_fields,
+            merged_export_fields,
             out_wkb_type,
             target_crs,
         )
@@ -1342,6 +1350,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         "outputs": outputs,
         "out_fields": out_fields,
         "export_fields": export_fields,
+        "merged_export_fields": merged_export_fields,
         "special_ea_export_fields": special_ea_export_fields,
         "out_wkb_type": out_wkb_type,
         "delineated_sink": delineated_sink,

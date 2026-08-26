@@ -433,6 +433,13 @@ def run_phase_8(
                     ftype = QVariant.Int
                 export_fields.append(QgsField(fname, ftype))
 
+    merged_export_fields = p2.get("merged_export_fields")
+    if not merged_export_fields:
+        merged_export_fields = QgsFields(export_fields)
+        for fname in ("indicator", "gps", "min_circle"):
+            if merged_export_fields.indexOf(fname) == -1:
+                merged_export_fields.append(QgsField(fname, QVariant.String))
+
     special_ea_export_fields = p2.get("special_ea_export_fields")
     if not special_ea_export_fields:
         special_ea_export_fields = QgsFields()
@@ -1192,7 +1199,11 @@ def run_phase_8(
             # 3. Add to Merged EAs sink if feature was generated from EA merging
             if ea.get('from_merge', False) and not ea.get('is_special_ea', False):
                 if merged_sink is not None:
-                    if merged_sink.addFeature(exp_feat, QgsFeatureSink.Flag.FastInsert):
+                    exp_feat_merged = make_export_feature(out_feat, merged_export_fields)
+                    indicator_merged_idx = merged_export_fields.indexOf("indicator")
+                    if indicator_merged_idx != -1:
+                        exp_feat_merged.setAttribute(indicator_merged_idx, "")
+                    if merged_sink.addFeature(exp_feat_merged, QgsFeatureSink.Flag.FastInsert):
                         merged_feat_count += 1
                     else:
                         feedback.reportError(f"Failed to add EA {i} to merged sink.")
