@@ -26,7 +26,7 @@ gemma-plugin/
 │   │   ├── test_clip_project_layers.py       # 3 tests — Layer clipping
 │   │   ├── test_create_enumeration_area.py   # 2 tests — EA creation
 │   │   ├── test_ea_merge_processor.py        # 3 tests — EA merge processor
-│   │   ├── test_ea_pipeline.py               # 20 tests — Full EA delineation pipeline
+│   │   ├── test_ea_pipeline.py               # 25 tests — Full EA delineation pipeline
 │   │   ├── test_ea_split_modes.py            # 5 tests — EA split mode strategies
 │   │   ├── test_export_preliminary_polygons.py# 3 tests — Preliminary polygon export
 │   │   ├── test_fill_polygon_gaps.py         # 3 tests — Gap filling
@@ -35,7 +35,7 @@ gemma-plugin/
 │   │   ├── test_geom_repair_toolkit.py       # 3 tests — Topology engine & repair toolkit
 │   │   ├── test_gmdhelpers.py                # 3 tests — Core helper functions
 │   │   ├── test_gsheet.py                    # 1 test — Google Sheets integration
-│   │   ├── test_join_barangay_attributes.py  # 8 tests — Barangay attribute joining
+│   │   ├── test_join_barangay_attributes.py  # 11 tests — Barangay attribute joining
 │   │   ├── test_lgu_fix_processing.py        # 4 tests — LGU fix processing
 │   │   ├── test_mbi_validator.py             # 7 tests — MBI validation engine
 │   │   ├── test_package_qfield.py            # 2 tests — QField packaging
@@ -55,7 +55,7 @@ gemma-plugin/
         └── test-pr.yml             # QGIS Docker container GitHub Actions PR Gate + Dynamic Comment Bot
 ```
 
-**Current Suite Totals**: **98 tests** across **24 test modules** (91 Passed · 2 Skipped · 0 Failures · 0 Errors)
+**Current Suite Totals**: **106 tests** across **24 test modules** (91 Passed · 2 Skipped · 0 Failures · 0 Errors)
 
 ---
 
