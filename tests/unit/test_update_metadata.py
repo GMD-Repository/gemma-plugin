@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Unit test module for update_metadata_modified.py (gmd_scripts/update_metadata_modified.py).
+Unit test module for update_metadata.py (gmd_scripts/update_metadata.py).
 Tests barangay name normalization and metadata update processing algorithm.
 """
 
@@ -12,16 +12,16 @@ from tests.mocks.sample_data import create_sample_polygon_layer
 setup_qgis_mock_if_needed()
 
 
-class TestUpdateMetadataModified(unittest.TestCase):
-    """Test suite for update_metadata_modified module."""
+class TestUpdateMetadata(unittest.TestCase):
+    """Test suite for update_metadata module."""
 
     def setUp(self):
-        self.mod = importlib.import_module("gmd_scripts.update_metadata_modified")
+        self.mod = importlib.import_module("gmd_scripts.update_metadata")
         self.sample_layer = create_sample_polygon_layer("Barangay_Boundaries", count=3)
 
     def test_module_import(self):
         """Verify module imports successfully."""
-        self.assertIsNotNone(self.mod, "Module gmd_scripts.update_metadata_modified should import successfully.")
+        self.assertIsNotNone(self.mod, "Module gmd_scripts.update_metadata should import successfully.")
 
     def test_normalize_barangay_name_function(self):
         """Test normalize_barangay_name helper function with abbreviations, roman numerals, and casing."""

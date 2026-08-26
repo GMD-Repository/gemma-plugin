@@ -1,9 +1,18 @@
 {
+<<<<<<< HEAD
   "tests_run": 75,
   "passed": 73,
   "errors": 0,
   "failures": 0,
   "skipped": 2,
   "elapsed_seconds": 0.166,
+=======
+  "tests_run": 103,
+  "passed": 99,
+  "errors": 0,
+  "failures": 0,
+  "skipped": 4,
+  "elapsed_seconds": 0.976,
+>>>>>>> 62f92be6f9bad85206314a4618be352516291f5b
   "success": true
 }
