@@ -15,6 +15,7 @@ console interface.
 
 import os
 from qgis.core import (
+    Qgis, QgsMessageLog,
     QgsApplication, QgsProject, QgsVectorLayer, QgsCoordinateTransform, QgsSpatialIndex,
     QgsFeature, QgsGeometry, QgsProcessingContext, QgsProcessingFeedback,
     QgsCoordinateReferenceSystem, QgsWkbTypes, NULL, QgsMapLayerProxyModel
