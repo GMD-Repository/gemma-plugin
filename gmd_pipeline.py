@@ -11,7 +11,7 @@ import shutil
 import datetime
 import processing
 
-from qgis.core import QgsApplication, QgsMessageLog, QgsProcessingProvider, QgsOfflineEditing, QgsProject
+from qgis.core import Qgis, QgsApplication, QgsMessageLog, QgsProcessingProvider, QgsOfflineEditing, QgsProject
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtCore import QCoreApplication, Qt
 
