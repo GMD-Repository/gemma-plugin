@@ -1,8 +1,18 @@
+# ***************************************************************************
+# *                                                                         *
+# *   This program is free software; you can redistribute it and/or modify  *
+# *   it under the terms of the GNU General Public License as published by  *
+# *   the Free Software Foundation; either version 2 of the License, or     *
+# *   (at your option) any later version.                                   *
+# *                                                                         *
+# ***************************************************************************
+
 import os
 import json
 from typing import Any, Optional, Dict, List
 
 from PyQt5.QtCore import QVariant
+# pyrefly: ignore [missing-import]
 from qgis.core import (
     NULL,
     QgsField,
@@ -22,14 +32,7 @@ from qgis.core import (
     QgsCoordinateReferenceSystem,
 )
 from PyQt5.QtGui import QIcon
-try:
-    from .. import gmdhelpers
-except (ImportError, ValueError):
-    try:
-        from gmd_scripts import gmdhelpers
-    except ImportError:
-        import gmdhelpers
-
+from .. import gmdhelpers
 
 
 class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
@@ -52,12 +55,12 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points with duplicate map_uuid. \n \n"
-            "The map_uuid should be unique.\n"
+            "List of geotagged points with duplicate longitude. \n \n"
+            "The longitude should be unique.\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):
-        
+
         self.addParameter(
             QgsProcessingParameterFile(
                 self.INPUT_DATA,
@@ -81,7 +84,7 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
-                "mv_2027_hp_4a_map_uuid__duplicate",
+                "mv_2027_hp_4a_longitude__duplicate",
                 QgsProcessing.TypeVectorAnyGeometry,
             )
         )
@@ -97,9 +100,20 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
 
         features = gmdhelpers.filter_geometry_validity(geojson_data, feedback)
-        features, fields = gmdhelpers.add_count(features, geojson_data.fields(), "map_uuid")
+        fields = geojson_data.fields()
+
+        # Add a field holding longitude rounded to 6 decimal places, as a string
+        # (avoids float precision issues when comparing/grouping values)
+        if fields.indexFromName("lon_key") == -1:
+            fields.append(QgsField("lon_key", QVariant.String))
+
+        for f in features:
+            f.setFields(fields, False)
+            f["lon_key"] = f"{float(f['longitude']):.6f}"
+
+        features, fields = gmdhelpers.add_count(features, fields, "lon_key")
         features = [f for f in features if f["n"] > 1]
-        features = gmdhelpers.arrange(features, "map_uuid")
+        features = gmdhelpers.arrange(features, "lon_key")
 
         return gmdhelpers.export_features_to_sink(
             self,
@@ -112,7 +126,6 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
             features,
             feedback,
         )
-
 
     def createInstance(self):
         return self.__class__()
