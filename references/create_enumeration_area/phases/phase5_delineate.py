@@ -234,6 +234,56 @@ def enforce_min_household_parts(parts, fback, min_household=100, max_household=3
     return parts
 
 
+def verify_point_cluster_alignment(bldgs, bbox=None, target_pop=200, k_val=2):
+    """
+    Verifies building point spatial alignment for EAs with clustered points in small areas.
+    Calculates weighted center of mass, spatial extent, and principal alignment direction (covariance).
+    Returns centroid points aligned along the principal cluster axis.
+    """
+    if not bldgs or len(bldgs) < 2:
+        return []
+
+    pts = []
+    wts = []
+    for b in bldgs:
+        pt = b.get('point')
+        if pt is None:
+            continue
+        pt_xy = pt if isinstance(pt, QgsPointXY) else QgsPointXY(pt[0], pt[1])
+        pts.append((pt_xy.x(), pt_xy.y()))
+        wts.append(float(b.get('pop', 1.0)))
+
+    if len(pts) < 2:
+        return []
+
+    N = len(pts)
+    sum_w = sum(wts) if sum(wts) > 0 else float(N)
+    cx = sum(p[0] * w for p, w in zip(pts, wts)) / sum_w
+    cy = sum(p[1] * w for p, w in zip(pts, wts)) / sum_w
+
+    var_x = sum(w * (p[0] - cx) ** 2 for p, w in zip(pts, wts)) / sum_w
+    var_y = sum(w * (p[1] - cy) ** 2 for p, w in zip(pts, wts)) / sum_w
+    cov_xy = sum(w * (p[0] - cx) * (p[1] - cy) for p, w in zip(pts, wts)) / sum_w
+
+    angle = 0.5 * math.atan2(2.0 * cov_xy, var_x - var_y + 1e-12)
+    cos_a, sin_a = math.cos(angle), math.sin(angle)
+
+    proj_coords = [(p[0] - cx) * cos_a + (p[1] - cy) * sin_a for p in pts]
+    min_u, max_u = min(proj_coords), max(proj_coords)
+    span_u = max_u - min_u
+
+    centroid_pts = []
+    if span_u > 1e-7 and k_val >= 2:
+        step = span_u / float(k_val)
+        for i in range(k_val):
+            u_i = min_u + (i + 0.5) * step
+            x_i = cx + u_i * cos_a
+            y_i = cy + u_i * sin_a
+            centroid_pts.append(QgsPointXY(x_i, y_i))
+
+    return centroid_pts
+
+
 def split_ea_voronoi_road_hybrid(ea_item, road_lines, river_lines, target_pop, fback, min_household=100, max_household=300):
     """
     Hybrid Voronoi Population Clustering + Road/River Boundary Alignment:
@@ -1453,6 +1503,12 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         labels, centroids = weighted_kmeans(pts, wts, k_val)
         centroid_pts = [QgsPointXY(c[0], c[1]) for c in centroids]
 
+        aligned_centroids = verify_point_cluster_alignment(bldgs, ea_item['geom'].boundingBox(), target, k_val)
+        if len(aligned_centroids) >= 2:
+            bbox = ea_item['geom'].boundingBox()
+            if bbox.width() < 1000.0 or bbox.height() < 1000.0 or len(centroid_pts) < 2:
+                centroid_pts = aligned_centroids
+
         unique_centroids = []
         seen_c = set()
         for cp in centroid_pts:
@@ -1689,14 +1745,19 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                                 _ea_ean = str(ea.get('original_code', '')).strip()
                                 _max_part_hh = max(p['hh_count'] for p in split_parts) if split_parts else 0
                                 if _max_part_hh > max_household:
-                                    _parent_hhdivthres = max_household / ea['hh_count'] if ea['hh_count'] > 0 else 1.0
                                     fback.pushWarning(
                                         f"[Barangay {bar_code}] [EA {ea['original_code']}] "
                                         f"Part exceeds max_household ({_max_part_hh} > {max_household}). "
-                                        f"Enforcing {min_household + 1}–{max_household - 1} HH range on parts."
+                                        f"Re-delineating over-threshold sub-polygons to enforce {min_household}–{max_household} HH range."
                                     )
-                                    split_parts = enforce_min_household(split_parts, fback, ea_geom=ea['geom'])
-                                    split_parts = enforce_bldgpv_threshold(split_parts, _parent_hhdivthres, fback, ea_geom=ea['geom'])
+                                    sub_divided = []
+                                    for p in split_parts:
+                                        if p['hh_count'] > max_household:
+                                            sub_p = split_ea_by_building_clusters(p, max_household, fback)
+                                            sub_divided.extend(sub_p)
+                                        else:
+                                            sub_divided.append(p)
+                                    split_parts = enforce_min_household(sub_divided, fback, ea_geom=ea['geom'])
                                 new_eas.extend(split_parts)
                                 changed = True
                                 fback.pushInfo(f"[Barangay {bar_code}] Split over-populated EA (code={ea['original_code']}, pop={ea['hh_count']}) into {len(split_parts)} sub-polygons.")
