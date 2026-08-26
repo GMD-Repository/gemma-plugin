@@ -78,7 +78,7 @@ DialogUi, _ = loadUiType(
 )
 
 BUILTIN_PRESETS = {
-    "EA Field Delineation": [
+    "EA Field Verification": [
         # Top-level parent group
         {
             "path": ["EA Field Verification"],
