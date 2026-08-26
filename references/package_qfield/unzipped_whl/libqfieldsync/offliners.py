@@ -20,7 +20,7 @@ from qgis.core import (
     QgsVectorLayer,
     edit,
 )
-from qgis.PyQt.QtCore import QFileInfo, QMetaType, QObject, pyqtSignal
+from qgis.PyQt.QtCore import QFileInfo, QObject, QVariant, pyqtSignal
 
 from .utils.logger import logger
 
@@ -180,22 +180,22 @@ class PythonMiniOffliner(BaseOffliner):
 
         field_type = field.type()
 
-        if field_type == QMetaType.Type.Int:
+        if field_type == QVariant.Int:
             ogr_type = ogr.OFTInteger
-        elif field_type == QMetaType.Type.LongLong:
+        elif field_type == QVariant.LongLong:
             ogr_type = ogr.OFTInteger64
-        elif field_type == QMetaType.Type.Double:
+        elif field_type == QVariant.Double:
             ogr_type = ogr.OFTReal
-        elif field_type == QMetaType.Type.QTime:
+        elif field_type == QVariant.Time:
             ogr_type = ogr.OFTTime
-        elif field_type == QMetaType.Type.QDate:
+        elif field_type == QVariant.Date:
             ogr_type = ogr.OFTDate
-        elif field_type == QMetaType.Type.QDateTime:
+        elif field_type == QVariant.DateTime:
             ogr_type = ogr.OFTDateTime
-        elif field_type == QMetaType.Type.Bool:
+        elif field_type == QVariant.Bool:
             ogr_type = ogr.OFTInteger
             ogr_sub_type = ogr.OFSTBoolean
-        elif field_type in (QMetaType.Type.QStringList, QMetaType.Type.QVariantList):
+        elif field_type in (QVariant.StringList, QVariant.List):
             ogr_type = ogr.OFTString
             ogr_sub_type = ogr.OFSTJSON
         else:
@@ -322,8 +322,8 @@ class PythonMiniOffliner(BaseOffliner):
                 for i in range(new_layer.fields().count()):
                     field_type = new_layer.fields().at(i).type()
                     if field_type in (
-                        QMetaType.Type.QStringList,
-                        QMetaType.Type.QVariantList,
+                        QVariant.StringList,
+                        QVariant.List,
                     ):
                         attrs[i] = QgsJsonUtils.encodeValue(attrs[i])
 
