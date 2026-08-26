@@ -1,8 +1,17 @@
+# ***************************************************************************
+# *                                                                         *
+# *   This program is free software; you can redistribute it and/or modify  *
+# *   it under the terms of the GNU General Public License as published by  *
+# *   the Free Software Foundation; either version 2 of the License, or     *
+# *   (at your option) any later version.                                   *
+# *                                                                         *
+# ***************************************************************************
+
 """
 Join Barangay Attributes — Enhanced Fuzzy Match
 
 Timestamp   : 2026-08-26
-Version     : 1.2.0
+Version     : 1.4.1
 Changelog   :
   v1.0.0 - Initial enhanced version (Python-based fuzzy matching, Roman
            numeral <-> Arabic number normalization, match_status and
@@ -24,34 +33,45 @@ Changelog   :
            column ('barangay name (Final Name)'), and 'error_detail' column
            in matched output. Removed all other intermediate diagnostic
            and exact/fuzzy candidate columns.
+  v1.3.0 - Embedded built-in PSGC reference dataset (references/PSGC Q4.xlsx)
+           directly into the script.
+  v1.4.0 - Full architectural refactor aligned with update_metadata_by_geocode.py.
+  v1.4.1 - Restored Filtered PSGC Table feature sink output with thread-safe
+           postProcessAlgorithm layer naming.
 """
 
 import os
 import re
-from difflib import SequenceMatcher
+import openpyxl
+from typing import Any, Optional, Dict, List, Tuple
+
+from PyQt5.QtCore import QVariant
 from qgis.core import (
-    QgsProcessing,
-    QgsProcessingAlgorithm,
-    QgsProcessingMultiStepFeedback,
-    QgsProcessingParameterVectorLayer,
-    QgsProcessingParameterField,
-    QgsProcessingParameterFeatureSink,
-    QgsProcessingParameterNumber,
-    QgsProcessingParameterDefinition,
-    QgsProcessingContext,
-    QgsProcessingUtils,
-    QgsProcessingOutputLayerDefinition,
-    QgsFeature,
+    NULL,
     QgsField,
     QgsFields,
+    QgsFeature,
+    QgsFeatureSink,
+    QgsProcessing,
+    QgsProcessingAlgorithm,
+    QgsProcessingContext,
+    QgsProcessingException,
+    QgsProcessingFeedback,
+    QgsProcessingParameterFeatureSink,
+    QgsProcessingParameterFeatureSource,
+    QgsProcessingParameterField,
+    QgsProcessingParameterNumber,
+    QgsProcessingParameterDefinition,
+    QgsCoordinateReferenceSystem,
+    QgsProject,
+    QgsVectorLayer,
+    QgsProcessingUtils,
     QgsWkbTypes,
 )
-from qgis.PyQt.QtCore import QVariant
-import processing
-from qgis.PyQt.QtGui import QIcon
+from PyQt5.QtGui import QIcon
 
 
-# ─── Roman Numeral Utilities ───────────────────────────────────────────────
+# ─── Roman Numeral & Name Utilities ────────────────────────────────────────
 
 ROMAN_TO_INT = {
     'I': 1, 'II': 2, 'III': 3, 'IV': 4, 'V': 5,
@@ -80,8 +100,9 @@ ABBREVIATIONS = {
 }
 
 
-def normalize_name(name):
-    if not name or str(name).strip() == '' or str(name) == 'NULL':
+def normalize_name(name: Any) -> str:
+    """Normalize barangay name by converting to lower case, expanding abbreviations, and removing dashes."""
+    if name is None or name == NULL or str(name).strip() == '' or str(name) == 'NULL':
         return ''
     text = str(name).strip().lower()
     for abbr, full in ABBREVIATIONS.items():
@@ -91,7 +112,8 @@ def normalize_name(name):
     return text
 
 
-def roman_to_arabic(name):
+def roman_to_arabic(name: str) -> str:
+    """Convert Roman numerals in string to Arabic numbers."""
     if not name:
         return ''
 
@@ -104,7 +126,8 @@ def roman_to_arabic(name):
     return ROMAN_PATTERN.sub(replace_roman, str(name).upper()).lower()
 
 
-def arabic_to_roman(name):
+def arabic_to_roman(name: str) -> str:
+    """Convert Arabic numbers in string to Roman numerals."""
     if not name:
         return ''
 
@@ -117,7 +140,8 @@ def arabic_to_roman(name):
     return re.sub(r'\b(\d{1,2})\b', replace_arabic, str(name)).lower()
 
 
-def levenshtein_distance(s1, s2):
+def levenshtein_distance(s1: str, s2: str) -> int:
+    """Compute exact Levenshtein edit distance between two strings."""
     if len(s1) < len(s2):
         return levenshtein_distance(s2, s1)
     if len(s2) == 0:
@@ -136,7 +160,58 @@ def levenshtein_distance(s1, s2):
     return prev_row[-1]
 
 
-def fuzzy_match_all(source_name, reference_names, max_distance=3):
+def _split_name_and_number(name: str) -> Tuple[str, Optional[str]]:
+    match = re.match(r'^(.+?)\s+(\d+)$', name.strip())
+    if match:
+        return match.group(1).strip(), match.group(2)
+    return name.strip(), None
+
+
+def fuzzy_match_roman_only(source_name: str, reference_names: List[str], max_distance: int = 3) -> Tuple[Optional[str], Optional[int]]:
+    """Match source name to reference names using Roman numeral normalization."""
+    if not source_name:
+        return None, None
+
+    no_num_max_dist = min(max_distance, 2)
+    norm_source = normalize_name(source_name)
+    arabic_source = roman_to_arabic(norm_source)
+    source_base, source_num = _split_name_and_number(arabic_source)
+
+    best_name = None
+    best_dist = max_distance + 1
+
+    for ref_name in reference_names:
+        norm_ref = normalize_name(ref_name)
+        if not norm_ref:
+            continue
+
+        arabic_ref = roman_to_arabic(norm_ref)
+        ref_base, ref_num = _split_name_and_number(arabic_ref)
+
+        if source_num is not None and ref_num is not None:
+            if source_num != ref_num:
+                continue
+            dist = levenshtein_distance(source_base, ref_base)
+        elif source_num is not None and ref_num is None:
+            dist = levenshtein_distance(arabic_source, arabic_ref)
+        elif source_num is None and ref_num is not None:
+            dist = levenshtein_distance(arabic_source, arabic_ref)
+        else:
+            dist = levenshtein_distance(arabic_source, arabic_ref)
+            if dist > no_num_max_dist:
+                continue
+
+        if dist < best_dist:
+            best_dist = dist
+            best_name = ref_name
+
+    if best_dist <= max_distance:
+        return best_name, best_dist
+    return None, None
+
+
+def fuzzy_match_all(source_name: str, reference_names: List[str], max_distance: int = 3) -> List[Tuple[str, int, str]]:
+    """Find all candidate matches within Levenshtein max_distance."""
     if not source_name:
         return []
 
@@ -196,62 +271,12 @@ def fuzzy_match_all(source_name, reference_names, max_distance=3):
     return candidates
 
 
-def _split_name_and_number(name):
-    match = re.match(r'^(.+?)\s+(\d+)$', name.strip())
-    if match:
-        return match.group(1).strip(), match.group(2)
-    return name.strip(), None
-
-
-def fuzzy_match_roman_only(source_name, reference_names, max_distance=3):
-    if not source_name:
-        return None, None
-
-    NO_NUMBER_MAX_DISTANCE = min(max_distance, 2)
-
-    norm_source = normalize_name(source_name)
-    arabic_source = roman_to_arabic(norm_source)
-    source_base, source_num = _split_name_and_number(arabic_source)
-
-    best_name = None
-    best_dist = max_distance + 1
-
-    for ref_name in reference_names:
-        norm_ref = normalize_name(ref_name)
-        if not norm_ref:
-            continue
-
-        arabic_ref = roman_to_arabic(norm_ref)
-        ref_base, ref_num = _split_name_and_number(arabic_ref)
-
-        if source_num is not None and ref_num is not None:
-            if source_num != ref_num:
-                continue
-            dist = levenshtein_distance(source_base, ref_base)
-        elif source_num is not None and ref_num is None:
-            dist = levenshtein_distance(arabic_source, arabic_ref)
-        elif source_num is None and ref_num is not None:
-            dist = levenshtein_distance(arabic_source, arabic_ref)
-        else:
-            dist = levenshtein_distance(arabic_source, arabic_ref)
-            if dist > NO_NUMBER_MAX_DISTANCE:
-                continue
-
-        if dist < best_dist:
-            best_dist = dist
-            best_name = ref_name
-
-    if best_dist <= max_distance:
-        return best_name, best_dist
-    return None, None
-
-
-def title_case_smart(name):
-    if not name or str(name).strip() == '':
-        return name
+def title_case_smart(name: Any) -> str:
+    """Smart title-case preserving Roman numerals."""
+    if name is None or name == NULL or str(name).strip() == '':
+        return ''
 
     text = str(name).strip()
-
     all_caps_pattern = r'^([(-]?(?:[A-Z][^ ]*|[IVXLCDM]+))( [(-]?(?:[A-Z][^ ]*|[IVXLCDM]+))*$'
     strict_caps_pattern = r'^([(-]?[A-Z]+)([ -()][(-]?[A-Z]+)*$'
 
@@ -264,335 +289,402 @@ def title_case_smart(name):
         return text.lower().title()
 
 
+# ─── Processing Algorithm Implementation ───────────────────────────────────
+
 class JoinBarangayAttributes(QgsProcessingAlgorithm):
+    """
+    Join Barangay Attributes Processing Algorithm.
+    Enhanced fuzzy matching against embedded PSGC Q4.xlsx reference table.
+    """
 
-    @staticmethod
-    def _static_sink_value(param):
-        if isinstance(param, QgsProcessingOutputLayerDefinition):
-            return param.sink.staticValue()
-        return param
+    INPUT = "citymun"
+    FIELD = "field"
+    MAX_DISTANCE = "max_distance"
+    OUTPUT = "Bgy_name"
+    OUTPUT_PSGC = "Filtered_PSGC"
 
-    @classmethod
-    def _is_temp_dest(cls, param):
-        val = cls._static_sink_value(param)
-        return val in (None, '', 'TEMPORARY_OUTPUT') or (
-            isinstance(val, str) and val.lower().startswith('memory:'))
+    def name(self) -> str:
+        return "join_barangay_attributes"
 
-    def initAlgorithm(self, config=None):
-        self.addParameter(QgsProcessingParameterVectorLayer(
-            'citymun', 'city/mun', defaultValue=None))
-        self.addParameter(QgsProcessingParameterField(
-            'field', 'field',
-            type=QgsProcessingParameterField.Any,
-            parentLayerParameterName='citymun',
-            allowMultiple=False, defaultValue=None))
-        self.addParameter(QgsProcessingParameterVectorLayer(
-            'psgc', 'psgc',
-            types=[QgsProcessing.TypeVector], defaultValue=None))
+    def displayName(self) -> str:
+        return "Join Barangay Attributes"
 
-        # Max Levenshtein Distance is now fully hidden from the dialog
-        # (was previously tucked under "Advanced Parameters"). The value
-        # stays fixed at its default of 3 internally.
-        max_distance_param = QgsProcessingParameterNumber(
-            'max_distance', 'Max Levenshtein Distance',
+    def group(self) -> str:
+        return "1Map"
+
+    def groupId(self) -> str:
+        return "1map"
+
+    def icon(self):
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', 'upload.svg')
+        if os.path.exists(icon_path):
+            return QIcon(icon_path)
+        return QIcon(":/images/themes/default/mActionFilter.svg")
+
+    def shortHelpString(self) -> str:
+        return (
+            "Enhanced Join Barangay Attributes with multi-stage fuzzy matching.\n\n"
+            "This algorithm matches and standardizes barangay names from an input city/municipality "
+            "vector layer against the embedded official PSGC reference dataset (references/PSGC Q4.xlsx).\n\n"
+            "Matching Engine Workflow:\n"
+            "  1. Exact Match — Direct 1:1 case-insensitive matching against the reference dataset.\n"
+            "  2. Roman Numeral Normalization — Converts Roman numerals to Arabic numbers "
+            "(e.g., 'Poblacion III' ↔ 'Poblacion 3') to pair equivalent names automatically.\n"
+            "  3. Levenshtein Fuzzy Matching — Computes character edit distance (threshold = 3) "
+            "for remaining unmatched barangays.\n\n"
+            "Output Layer Columns:\n"
+            "  • <field_name> — Original barangay attribute from source layer (converted to smart Title Case)\n"
+            "  • barangay name (Final Name) — Resolved official PSGC barangay name\n"
+            "  • error_detail — Diagnostic audit description (empty on clean matches; reports "
+            "Roman/Arabic transformations, ambiguous candidate collisions, or unmatched records)\n\n"
+            "Outputs Generated:\n"
+            "  • Matched Barangays — Resulting vector layer with original geometries, standard names, and audit trail\n"
+            "  • Filtered PSGC Table — Non-spatial attribute table of all reference PSGC records for the target LGU"
+        )
+
+    def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):
+        # 1. City/Municipality vector layer
+        self.addParameter(
+            QgsProcessingParameterFeatureSource(
+                self.INPUT,
+                "city/mun",
+                [QgsProcessing.SourceType.TypeVectorPolygon, QgsProcessing.SourceType.TypeVectorAnyGeometry],
+            )
+        )
+
+        # 2. Barangay attribute field
+        self.addParameter(
+            QgsProcessingParameterField(
+                self.FIELD,
+                "field",
+                parentLayerParameterName=self.INPUT,
+                type=QgsProcessingParameterField.Any,
+            )
+        )
+
+        # 3. Max Levenshtein Distance (hidden, fixed at 3)
+        max_dist_param = QgsProcessingParameterNumber(
+            self.MAX_DISTANCE,
+            "Max Levenshtein Distance",
             type=QgsProcessingParameterNumber.Integer,
-            defaultValue=3, minValue=1, maxValue=10)
-        max_distance_param.setHelp(
-            'Maximum number of character edits (insertions, deletions, '
-            'substitutions) allowed between a source barangay name and a '
-            'PSGC reference name for them to be considered a fuzzy match. '
-            'Fixed at 3 and hidden from the dialog — change only in code '
-            'if you understand this trade-off.')
-        max_distance_param.setFlags(
-            max_distance_param.flags() | QgsProcessingParameterDefinition.FlagHidden)
-        self.addParameter(max_distance_param)
+            defaultValue=3,
+            minValue=1,
+            maxValue=10,
+        )
+        max_dist_param.setFlags(max_dist_param.flags() | QgsProcessingParameterDefinition.FlagHidden)
+        self.addParameter(max_dist_param)
 
-        # NOTE: "Generate temporary layer of filtered PSGC data" checkbox
-        # has been removed — generating that layer is now mandatory and
-        # always happens, so there's no parameter for it anymore.
+        # 4. Output Feature Sink: Matched Barangays
+        self.addParameter(
+            QgsProcessingParameterFeatureSink(self.OUTPUT, "Matched Barangays")
+        )
 
-        self.addParameter(QgsProcessingParameterFeatureSink(
-            'Bgy_name', 'Matched Barangays',
-            type=QgsProcessing.TypeVectorAnyGeometry,
-            createByDefault=True, supportsAppend=True,
-            defaultValue='TEMPORARY_OUTPUT'))
+        # 5. Output Feature Sink: Filtered PSGC Table
+        self.addParameter(
+            QgsProcessingParameterFeatureSink(
+                self.OUTPUT_PSGC,
+                "Filtered PSGC Table",
+                type=QgsProcessing.TypeVector,
+            )
+        )
 
-        # NOTE: "Unmatched Barangays List" output has been removed entirely.
+    def processAlgorithm(
+        self,
+        parameters: Dict[str, Any],
+        context: QgsProcessingContext,
+        feedback: QgsProcessingFeedback,
+    ) -> Dict[str, Any]:
 
-    def processAlgorithm(self, parameters, context, model_feedback):
-        feedback = QgsProcessingMultiStepFeedback(7, model_feedback)
-        results = {}
-        outputs = {}
+        source = self.parameterAsSource(parameters, self.INPUT, context)
+        if source is None:
+            raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT))
 
-        # Force the Matched output to ALWAYS be a temporary/scratch memory
-        # layer, regardless of what the Processing dialog or the Batch
-        # Processing table has filled in, so single-run and batch-run
-        # behave identically.
-        parameters['Bgy_name'] = QgsProcessing.TEMPORARY_OUTPUT
+        field_name = self.parameterAsString(parameters, self.FIELD, context)
+        max_distance = self.parameterAsInt(parameters, self.MAX_DISTANCE, context)
 
-        max_distance = self.parameterAsInt(parameters, 'max_distance', context)
-        field_name = parameters['field']
+        field_names = [f.name() for f in source.fields()]
+        if field_name not in field_names:
+            raise QgsProcessingException(f"Field '{field_name}' not found in input layer.")
 
-        # Generating the filtered PSGC layer is now mandatory (no longer
-        # an optional checkbox).
-        generate_filtered = True
+        # Determine layer name and 5-digit code filter
+        input_layer = QgsProcessingUtils.mapLayerFromString(str(parameters.get(self.INPUT)), context)
+        citymun_name = input_layer.name() if input_layer and input_layer.isValid() else ""
+        if not citymun_name and hasattr(source, "sourceName"):
+            src_n = source.sourceName()
+            citymun_name = str(src_n) if src_n is not None else ""
+        if not citymun_name:
+            citymun_name = "LGU_Layer"
 
-        # ── Step 1: Title-case the barangay field ───────────────────
-        alg_params = {
-            'FIELD_LENGTH': 254,
-            'FIELD_NAME': field_name,
-            'FIELD_PRECISION': 0,
-            'FIELD_TYPE': 2,
-            'FORMULA': (
-                f'CASE\n'
-                f'  WHEN regexp_match(\n'
-                f'    "{field_name}",\n'
-                f'    \'^([(-]?(?:[A-Z][^ ]*|[IVXLCDM]+))( [(-]?(?:[A-Z][^ ]*|[IVXLCDM]+))*$\'\n'
-                f'  )\n'
-                f'  THEN\n'
-                f'    CASE\n'
-                f'      WHEN regexp_match(\n'
-                f'        "{field_name}",\n'
-                f'        \'^([(-]?[A-Z]+)([ -()][(-]?[A-Z]+)*$\'\n'
-                f'      )\n'
-                f'      THEN title(lower("{field_name}"))\n'
-                f'      ELSE "{field_name}"\n'
-                f'    END\n'
-                f'  ELSE title(lower("{field_name}"))\n'
-                f'END'
-            ),
-            'INPUT': parameters['citymun'],
-            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
-        }
-        outputs['FieldCalculator'] = processing.run(
-            'native:fieldcalculator', alg_params,
-            context=context, feedback=feedback, is_child_algorithm=True)
+        citymun_name = str(citymun_name)
+        code_filter = str(citymun_name[:5]) if len(citymun_name) >= 5 else citymun_name
 
-        feedback.pushInfo(f'Step 1 done. Checking title-case output...')
-        step1_layer = QgsProcessingUtils.mapLayerFromString(
-            outputs['FieldCalculator']['OUTPUT'], context)
-        if step1_layer:
-            first = next(step1_layer.getFeatures(), None)
-            if first:
-                feedback.pushInfo(f'  Step 1 first feature {field_name}: {first[field_name]}')
+        # ── Resolve Built-in PSGC Excel File ────────────────────────
+        psgc_file_path = os.path.abspath(
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "references", "PSGC Q4.xlsx")
+        )
+        if not os.path.exists(psgc_file_path):
+            rel_path = os.path.abspath(os.path.join(os.getcwd(), "references", "PSGC Q4.xlsx"))
+            if os.path.exists(rel_path):
+                psgc_file_path = rel_path
+            else:
+                raise QgsProcessingException(f"Built-in PSGC reference file not found at: '{psgc_file_path}'")
 
-        feedback.setCurrentStep(1)
-        if feedback.isCanceled():
-            return {}
+        feedback.pushInfo(f"Reading embedded PSGC reference file: {psgc_file_path}...")
 
-        # ── Step 2: Calculate lgu_code on PSGC table ────────────────────
-        alg_params = {
-            'FIELD_LENGTH': 254,
-            'FIELD_NAME': 'lgu_code',
-            'FIELD_PRECISION': 0,
-            'FIELD_TYPE': 2,
-            'FORMULA': 'concat("province_code","city_mun_code")',
-            'INPUT': parameters['psgc'],
-            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
-        }
-        outputs['LguCode'] = processing.run(
-            'native:fieldcalculator', alg_params,
-            context=context, feedback=feedback, is_child_algorithm=True)
+        # ── Read PSGC Records (Matching update_metadata_by_geocode pattern) ──
+        all_records = []
+        target_cols = [
+            "map_uuid", "geocode", "region", "province", "city_mun", "barangay",
+            "province_code", "city_mun_code", "barangay_code", "region_code",
+            "office_region", "office_pso"
+        ]
 
-        feedback.setCurrentStep(2)
-        if feedback.isCanceled():
-            return {}
+        def _clean_segment(v, length=0):
+            if v is None or v == NULL:
+                return ""
+            s = str(v).strip()
+            if s.endswith(".0"):
+                s = s[:-2]
+            s = "".join(c for c in s if c.isdigit())
+            if s and length > 0:
+                s = s.zfill(length)
+            return s
 
-        # ── Step 3: Extract by expression (Filter PSGC by city/mun code) ─
-        citymun_layer = QgsProcessingUtils.mapLayerFromString(parameters['citymun'], context)
-        citymun_name = citymun_layer.name() if citymun_layer else ''
-        code_filter = citymun_name[:5]
+        # Method 1: QgsVectorLayer via GDAL/OGR
+        psgc_layer = QgsVectorLayer(f"{psgc_file_path}|layername=PSGC", "psgc_ref", "ogr")
+        if not psgc_layer or not psgc_layer.isValid():
+            psgc_layer = QgsVectorLayer(psgc_file_path, "psgc_ref", "ogr")
 
-        feedback.pushInfo(f"Filtering PSGC layer where lgu_code = '{code_filter}'")
-
-        alg_params = {
-            'EXPRESSION': f"\"lgu_code\" = '{code_filter}'",
-            'INPUT': outputs['LguCode']['OUTPUT'],
-            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
-        }
-        outputs['ExtractByExpression'] = processing.run(
-            'native:extractbyexpression', alg_params,
-            context=context, feedback=feedback, is_child_algorithm=True)
-
-        feedback.setCurrentStep(3)
-        if feedback.isCanceled():
-            return {}
-
-        extract_layer_tmp = QgsProcessingUtils.mapLayerFromString(
-            outputs['ExtractByExpression']['OUTPUT'], context)
-        psgc_bgy_field_for_join = 'barangay'
-        if extract_layer_tmp:
-            for f in extract_layer_tmp.fields():
-                if f.name().lower() == 'barangay':
-                    psgc_bgy_field_for_join = f.name()
-                    break
-            feedback.pushInfo(f'PSGC barangay field for join: "{psgc_bgy_field_for_join}"')
-
-        # ── Step 4: Join by barangay name (exact match) ─────────────────
-        alg_params = {
-            'DISCARD_NONMATCHING': False,
-            'FIELD': field_name,
-            'FIELDS_TO_COPY': [psgc_bgy_field_for_join],
-            'FIELD_2': psgc_bgy_field_for_join,
-            'INPUT': outputs['FieldCalculator']['OUTPUT'],
-            'INPUT_2': outputs['ExtractByExpression']['OUTPUT'],
-            'METHOD': 1,
-            'PREFIX': 'psgc_',
-            'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
-        }
-        outputs['JoinAttributesByBarangayName'] = processing.run(
-            'native:joinattributestable', alg_params,
-            context=context, feedback=feedback, is_child_algorithm=True)
-
-        feedback.setCurrentStep(4)
-        if feedback.isCanceled():
-            return {}
-
-        # ── Step 7: Python-based fuzzy match with Roman numeral support ─
-        feedback.pushInfo('Starting enhanced fuzzy matching...')
-
-        extract_layer_id = outputs['ExtractByExpression']['OUTPUT']
-        feedback.pushInfo(f'Extract layer ID: {extract_layer_id}')
-        extract_layer = QgsProcessingUtils.mapLayerFromString(extract_layer_id, context)
-        if extract_layer is None:
-            feedback.reportError(f'Cannot load reference layer from ExtractByExpression (ID: {extract_layer_id})')
-            return {}
-
-        actual_city_name = ""
-        if extract_layer and extract_layer.featureCount() > 0:
-            feat = next(extract_layer.getFeatures())
-            for fname in ['city_mun', 'citymun', 'city_municipality', 'city', 'municipality', 'name', 'city_name', 'mun_name']:
-                idx = extract_layer.fields().indexOf(fname)
-                if idx != -1:
-                    actual_city_name = str(feat[idx]).strip()
-                    break
-
-            if not actual_city_name:
-                for field in extract_layer.fields():
-                    fname_lower = field.name().lower()
-                    if ('city' in fname_lower or 'mun' in fname_lower) and 'code' not in fname_lower:
-                        actual_city_name = str(feat[field.name()]).strip()
+        if psgc_layer and psgc_layer.isValid():
+            fields = psgc_layer.fields()
+            col_indices = {}
+            for col_name in target_cols:
+                col_norm = col_name.replace("_", "").lower()
+                for field in fields:
+                    if field.name().lower().replace("_", "").replace("/", "") == col_norm:
+                        col_indices[col_name] = field.name()
                         break
 
+            if "geocode" in col_indices or "province_code" in col_indices:
+                for feat in psgc_layer.getFeatures():
+                    if feedback.isCanceled():
+                        break
+
+                    prov_c = _clean_segment(feat.attribute(col_indices["province_code"])) if "province_code" in col_indices else ""
+                    city_c = _clean_segment(feat.attribute(col_indices["city_mun_code"]), 2) if "city_mun_code" in col_indices else ""
+                    bgy_c = _clean_segment(feat.attribute(col_indices["barangay_code"]), 3) if "barangay_code" in col_indices else ""
+
+                    lgu_c = f"{prov_c}{city_c}" if (prov_c and city_c) else ""
+
+                    def _get_val(k):
+                        if k in col_indices:
+                            v = feat.attribute(col_indices[k])
+                            return str(v).strip() if v is not None and v != NULL else ""
+                        return ""
+
+                    raw_geo = _get_val("geocode")
+                    geo_clean = "".join(c for c in raw_geo.split(".")[0] if c.isdigit())
+
+                    rec = {
+                        "map_uuid": _get_val("map_uuid"),
+                        "geocode": geo_clean,
+                        "lgu_code": lgu_c,
+                        "province_code": prov_c,
+                        "city_mun_code": city_c,
+                        "barangay_code": bgy_c,
+                        "region_code": _get_val("region_code"),
+                        "region": _get_val("region"),
+                        "province": _get_val("province"),
+                        "city_mun": _get_val("city_mun"),
+                        "barangay": _get_val("barangay"),
+                        "office_region": _get_val("office_region"),
+                        "office_pso": _get_val("office_pso"),
+                    }
+                    all_records.append(rec)
+
+        # Method 2: openpyxl fallback
+        if not all_records:
+            try:
+                wb = openpyxl.load_workbook(psgc_file_path, read_only=False, data_only=True)
+                sheet_name = "PSGC" if "PSGC" in wb.sheetnames else wb.sheetnames[0]
+                ws = wb[sheet_name]
+                rows_iter = ws.iter_rows(values_only=True)
+                header_row = next(rows_iter)
+                header_clean = [str(cell).strip().lower() if cell is not None else "" for cell in header_row]
+
+                col_indices = {}
+                for col_name in target_cols:
+                    if col_name in header_clean:
+                        col_indices[col_name] = header_clean.index(col_name)
+
+                if "geocode" in col_indices or "province_code" in col_indices:
+                    for row in rows_iter:
+                        if feedback.isCanceled():
+                            break
+
+                        prov_c = _clean_segment(row[col_indices["province_code"]]) if "province_code" in col_indices else ""
+                        city_c = _clean_segment(row[col_indices["city_mun_code"]], 2) if "city_mun_code" in col_indices else ""
+                        bgy_c = _clean_segment(row[col_indices["barangay_code"]], 3) if "barangay_code" in col_indices else ""
+
+                        lgu_c = f"{prov_c}{city_c}" if (prov_c and city_c) else ""
+
+                        def _row_val(k):
+                            if k in col_indices and row[col_indices[k]] is not None:
+                                return str(row[col_indices[k]]).strip()
+                            return ""
+
+                        raw_geo = _row_val("geocode")
+                        geo_clean = "".join(c for c in raw_geo.split(".")[0] if c.isdigit())
+
+                        rec = {
+                            "map_uuid": _row_val("map_uuid"),
+                            "geocode": geo_clean,
+                            "lgu_code": lgu_c,
+                            "province_code": prov_c,
+                            "city_mun_code": city_c,
+                            "barangay_code": bgy_c,
+                            "region_code": _row_val("region_code"),
+                            "region": _row_val("region"),
+                            "province": _row_val("province"),
+                            "city_mun": _row_val("city_mun"),
+                            "barangay": _row_val("barangay"),
+                            "office_region": _row_val("office_region"),
+                            "office_pso": _row_val("office_pso"),
+                        }
+                        all_records.append(rec)
+                wb.close()
+            except Exception as e:
+                raise QgsProcessingException(f"Failed to read PSGC file: {e}")
+
+        # ── Filter Records for Target City/Municipality ──────────────
+        filtered_records = []
+        if code_filter:
+            filtered_records = [r for r in all_records if str(r.get("lgu_code", "")) == code_filter or str(r.get("geocode", "")).startswith(code_filter)]
+
+        if not filtered_records and citymun_name:
+            clean_layer = citymun_name.lower().replace("_", " ")
+            for r in all_records:
+                city = r.get("city_mun", "")
+                if city and (city.lower() in clean_layer or clean_layer in city.lower()):
+                    filtered_records.append(r)
+
+        actual_city_name = filtered_records[0].get("city_mun", "") if filtered_records else ""
         if not actual_city_name:
             raw_name = citymun_name[5:].strip() if len(citymun_name) > 5 else citymun_name
             actual_city_name = raw_name if raw_name else "Unknown"
 
-        # Filtered PSGC layer is now always generated and loaded (no
-        # longer gated behind a checkbox).
-        if generate_filtered:
-            if code_filter:
-                filtered_name = f"{code_filter}_{actual_city_name} (Filtered PSGC)"
-            else:
-                filtered_name = f"{actual_city_name} (Filtered PSGC)"
-            details = QgsProcessingContext.LayerDetails(filtered_name, context.project(), 'Filtered_PSGC_Output')
-            context.addLayerToLoadOnCompletion(extract_layer_id, details)
-            feedback.pushInfo(f'Filtered PSGC layer scheduled to load on completion as "{filtered_name}".')
+        feedback.pushInfo(f"Filtered {len(filtered_records)} PSGC barangay records for '{actual_city_name}'.")
 
-        feedback.pushInfo(f'Extract layer fields: {[f.name() for f in extract_layer.fields()]}')
-        feedback.pushInfo(f'Extract layer feature count: {extract_layer.featureCount()}')
+        # ── Populate Filtered PSGC Table Sink ───────────────────────
+        psgc_fields = QgsFields()
+        psgc_cols = [
+            "map_uuid", "geocode", "lgu_code", "region_code", "province_code",
+            "city_mun_code", "barangay_code", "region", "province", "city_mun",
+            "barangay", "office_region", "office_pso"
+        ]
+        for col in psgc_cols:
+            psgc_fields.append(QgsField(col, QVariant.String, len=100))
 
-        psgc_bgy_field = None
-        for f in extract_layer.fields():
-            if f.name().lower() == 'barangay':
-                psgc_bgy_field = f.name()
-                break
-        if psgc_bgy_field is None:
-            feedback.reportError('Could not find a "barangay" field in the PSGC layer (checked case-insensitively)')
-            return {}
-        feedback.pushInfo(f'Detected PSGC barangay field name: "{psgc_bgy_field}"')
+        (psgc_sink, psgc_dest_id) = self.parameterAsSink(
+            parameters,
+            self.OUTPUT_PSGC,
+            context,
+            psgc_fields,
+            getattr(QgsWkbTypes, 'NoGeometry', getattr(QgsWkbTypes, 'NullGeometry', 0)),
+            source.sourceCrs(),
+        )
 
+        if psgc_sink is not None:
+            for r in filtered_records:
+                f_psgc = QgsFeature(psgc_fields)
+                for col in psgc_cols:
+                    f_psgc.setAttribute(col, str(r.get(col, "")))
+                psgc_sink.addFeature(f_psgc, QgsFeatureSink.FastInsert)
+
+        # ── Build Reference Maps ────────────────────────────────────
         reference_names = []
-        for feat in extract_layer.getFeatures():
-            bgy_val = feat[psgc_bgy_field]
-            if bgy_val and str(bgy_val).strip() and str(bgy_val) != 'NULL':
-                reference_names.append(str(bgy_val).strip())
+        exact_match_map = {}
+        for r in filtered_records:
+            bgy = r.get("barangay", "").strip()
+            if bgy and bgy != 'NULL':
+                reference_names.append(bgy)
+                exact_match_map[normalize_name(bgy)] = bgy
 
-        feedback.pushInfo(f'Loaded {len(reference_names)} reference barangay names')
-        if reference_names:
-            feedback.pushInfo(f'Sample references: {reference_names[:5]}')
+        # ── Create Output Feature Sink ──────────────────────────────
+        source_field_def = None
+        source_field_idx = source.fields().indexOf(field_name)
+        if source_field_idx != -1:
+            source_field_def = source.fields().at(source_field_idx)
 
-        joined_layer_id = outputs['JoinAttributesByBarangayName']['OUTPUT']
-        feedback.pushInfo(f'Joined layer ID: {joined_layer_id}')
-        joined_layer = QgsProcessingUtils.mapLayerFromString(joined_layer_id, context)
-        if joined_layer is None:
-            feedback.reportError(f'Cannot load joined layer (ID: {joined_layer_id})')
-            return {}
-
-        feedback.pushInfo(f'Joined layer fields: {[f.name() for f in joined_layer.fields()]}')
-        feedback.pushInfo(f'Joined layer feature count: {joined_layer.featureCount()}')
-
-        expected_joined_name = f'psgc_{psgc_bgy_field_for_join}'
-        joined_bgy_field = expected_joined_name
-
-        field_found = False
-        for f in joined_layer.fields():
-            if f.name().lower() == expected_joined_name.lower():
-                joined_bgy_field = f.name()
-                field_found = True
-                break
-
-        if not field_found:
-            feedback.pushWarning(f'Could not find expected joined field {expected_joined_name}')
-        feedback.pushInfo(f'Detected joined barangay field name: "{joined_bgy_field}"')
-
-        first_feat = next(joined_layer.getFeatures(), None)
-        if first_feat:
-            feedback.pushInfo(f'First feature {field_name}: {first_feat[field_name]}')
-            feedback.pushInfo(f'First feature barangay: {first_feat[joined_bgy_field]}')
+        output_fields = QgsFields()
+        if source_field_def:
+            output_fields.append(QgsField(source_field_def.name(), source_field_def.type(),
+                                          source_field_def.typeName(), source_field_def.length(),
+                                          source_field_def.precision()))
         else:
-            feedback.reportError('Joined layer has no features!')
-            return {}
+            output_fields.append(QgsField(field_name, QVariant.String, len=254))
 
-        orig_field_defs = {f.name().lower(): f for f in joined_layer.fields()}
-
-        out_fields = QgsFields()
-
-        if field_name.lower() in orig_field_defs:
-            f = orig_field_defs[field_name.lower()]
-            out_fields.append(QgsField(f.name(), f.type(), f.typeName(), f.length(), f.precision()))
-        else:
-            out_fields.append(QgsField(field_name, QVariant.String, len=254))
-
-        out_fields.append(QgsField('barangay name (Final Name)', QVariant.String, len=254))
-        out_fields.append(QgsField('error_detail', QVariant.String, len=500))
+        output_fields.append(QgsField('barangay name (Final Name)', QVariant.String, len=254))
+        output_fields.append(QgsField('error_detail', QVariant.String, len=500))
 
         (sink, dest_id) = self.parameterAsSink(
-            parameters, 'Bgy_name', context,
-            out_fields, joined_layer.wkbType(), joined_layer.sourceCrs())
-
+            parameters,
+            self.OUTPUT,
+            context,
+            output_fields,
+            source.wkbType(),
+            source.sourceCrs(),
+        )
         if sink is None:
-            feedback.reportError('Could not create output layer')
-            return {}
+            raise QgsProcessingException(self.invalidSinkError(parameters, self.OUTPUT))
 
+        self.dest_id = dest_id
+        self.psgc_dest_id = psgc_dest_id
+
+        if code_filter:
+            self.custom_name = f"{code_filter}_{actual_city_name} (Matched)"
+            self.psgc_custom_name = f"{code_filter}_{actual_city_name} (Filtered PSGC)"
+        else:
+            self.custom_name = f"{actual_city_name} (Matched)"
+            self.psgc_custom_name = f"{actual_city_name} (Filtered PSGC)"
+
+        # ── Process Features & Match ────────────────────────────────
         stats = {
             'total': 0, 'exact': 0, 'fuzzy': 0,
             'multiple': 0, 'roman': 0, 'no_match': 0
         }
 
-        features = list(joined_layer.getFeatures())
-        total = len(features)
+        total_feats = source.featureCount()
+        step = 100.0 / total_feats if total_feats else 0
+        current = 0
 
-        for i, feature in enumerate(features):
+        for feat in source.getFeatures():
             if feedback.isCanceled():
-                return {}
+                break
 
             stats['total'] += 1
-            source_name = feature[field_name]
-            exact_match = feature[joined_bgy_field]
+            current += 1
 
-            out_feat = QgsFeature(out_fields)
-            out_feat.setGeometry(feature.geometry())
-            out_feat.setAttribute(field_name, feature[field_name])
+            raw_val = feat.attribute(field_name)
+            source_name = str(raw_val).strip() if raw_val is not None and raw_val != NULL else ""
 
+            title_cased = title_case_smart(source_name)
+
+            out_feat = QgsFeature(output_fields)
+            out_feat.setGeometry(feat.geometry())
+            out_feat.setAttribute(field_name, title_cased if title_cased else source_name)
+
+            # 1. Exact match check
+            norm_source = normalize_name(source_name)
+            exact_match = exact_match_map.get(norm_source)
+
+            # 2. Roman numeral check
             roman_match, roman_dist = fuzzy_match_roman_only(
                 source_name, reference_names, max_distance)
 
-            has_exact = (exact_match and str(exact_match).strip() != ''
-                         and str(exact_match) != 'NULL')
-
-            final_name = str(exact_match) if has_exact else roman_match
-            out_feat.setAttribute('barangay name (Final Name)', final_name)
+            has_exact = bool(exact_match)
+            final_name = exact_match if has_exact else roman_match
+            out_feat.setAttribute('barangay name (Final Name)', final_name if final_name else "")
 
             if has_exact:
                 out_feat.setAttribute('error_detail', '')
@@ -602,18 +694,21 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
                     source_name, reference_names, max_distance)
 
                 if not candidates:
-                    out_feat.setAttribute('error_detail',
-                        f'No match found '
-                        f'for "{source_name}"')
+                    out_feat.setAttribute(
+                        'error_detail',
+                        f'No match found for "{source_name}"'
+                    )
                     stats['no_match'] += 1
 
                 elif len(candidates) == 1:
                     best_name, best_dist, method = candidates[0]
 
                     if method == 'ROMAN_NUMERAL':
-                        out_feat.setAttribute('error_detail',
+                        out_feat.setAttribute(
+                            'error_detail',
                             f'Matched via Roman/Arabic normalization: '
-                            f'"{source_name}" → "{best_name}" (dist={best_dist})')
+                            f'"{source_name}" → "{best_name}" (dist={best_dist})'
+                        )
                         stats['roman'] += 1
                     else:
                         out_feat.setAttribute('error_detail', '')
@@ -624,50 +719,27 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
                     same_dist = [c for c in candidates if c[1] == best_dist]
 
                     if len(same_dist) > 1:
-                        out_feat.setAttribute('error_detail',
+                        out_feat.setAttribute(
+                            'error_detail',
                             f'{len(same_dist)} candidates with same distance '
-                            f'{best_dist} for "{source_name}" — review needed')
+                            f'{best_dist} for "{source_name}" — review needed'
+                        )
                         stats['multiple'] += 1
                     elif method == 'ROMAN_NUMERAL':
-                        out_feat.setAttribute('error_detail',
+                        out_feat.setAttribute(
+                            'error_detail',
                             f'Matched via Roman/Arabic normalization: '
-                            f'"{source_name}" → "{best_name}" (dist={best_dist})')
+                            f'"{source_name}" → "{best_name}" (dist={best_dist})'
+                        )
                         stats['roman'] += 1
                     else:
                         out_feat.setAttribute('error_detail', '')
                         stats['fuzzy'] += 1
 
-            sink.addFeature(out_feat)
-            feedback.setProgress(int((i + 1) / total * 100))
+            sink.addFeature(out_feat, QgsFeatureSink.FastInsert)
+            if step > 0:
+                feedback.setProgress(int(current * step))
 
-        results['Bgy_name'] = dest_id
-
-        # ── Adjust Attribute Table Column Widths ────────────────────────
-        out_layer = QgsProcessingUtils.mapLayerFromString(dest_id, context)
-        if out_layer:
-            config = out_layer.attributeTableConfig()
-            widths = {
-                field_name: 170,
-                'barangay name (Final Name)': 170,
-                'error_detail': 250
-            }
-            for i, col in enumerate(config.columns()):
-                f_name = col.name
-                config.setColumnWidth(i, widths.get(f_name, 150))
-            out_layer.setAttributeTableConfig(config)
-
-            if code_filter:
-                new_name = f"{code_filter}_{actual_city_name} (Matched)"
-            else:
-                new_name = f"{actual_city_name} (Matched)"
-
-            out_layer.setName(new_name)
-
-            details = QgsProcessingContext.LayerDetails(
-                new_name, context.project(), 'Bgy_name')
-            context.addLayerToLoadOnCompletion(dest_id, details)
-
-        # ── Summary Report ──────────────────────────────────────────────
         feedback.pushInfo('')
         feedback.pushInfo('━' * 45)
         feedback.pushInfo('  FUZZY MATCH SUMMARY')
@@ -681,45 +753,35 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
         feedback.pushInfo(f"  Total features:          {stats['total']}")
         feedback.pushInfo('━' * 45)
 
+        results = {self.OUTPUT: dest_id}
+        if psgc_dest_id:
+            results[self.OUTPUT_PSGC] = psgc_dest_id
         return results
 
-    def name(self):
-        return 'join_barangay_attributes'
+    def postProcessAlgorithm(
+        self,
+        context: QgsProcessingContext,
+        feedback: QgsProcessingFeedback,
+    ) -> Dict[str, Any]:
+        matched_dest_id = getattr(self, "dest_id", None)
+        matched_name = getattr(self, "custom_name", "Matched_Barangays")
+        psgc_dest_id = getattr(self, "psgc_dest_id", None)
+        psgc_name = getattr(self, "psgc_custom_name", "Filtered_PSGC")
 
-    def displayName(self):
-        return 'Join Barangay Attributes'
+        if matched_dest_id and context.willLoadLayerOnCompletion(matched_dest_id):
+            details = context.layerToLoadOnCompletionDetails(matched_dest_id)
+            details.name = matched_name
 
-    def group(self):
-        return '1Map'
+        if psgc_dest_id and context.willLoadLayerOnCompletion(psgc_dest_id):
+            details = context.layerToLoadOnCompletionDetails(psgc_dest_id)
+            details.name = psgc_name
 
-    def groupId(self):
-        return '1map'
-
-    def icon(self):
-        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', 'upload.svg')
-        if os.path.exists(icon_path):
-            return QIcon(icon_path)
-        return QIcon(":/images/themes/default/mActionFilter.svg")
-
-    def shortHelpString(self):
-        return (
-            'Enhanced Join Barangay Attributes with fuzzy matching.\n\n'
-            'Matches barangay names from a city/municipality vector layer against '
-            'an official PSGC reference table using a multi-stage matching engine:\n'
-            '  1. Exact name matching\n'
-            '  2. Roman numeral ↔ Arabic number normalization (e.g., "Zone IV" ↔ "Zone 4")\n'
-            '  3. Levenshtein distance fuzzy matching\n\n'
-            'Output Layer Columns:\n'
-            '  • <field_name> — Original barangay attribute from source layer\n'
-            '  • barangay name (Final Name) — Resolved official PSGC barangay name\n'
-            '  • error_detail — Diagnostic audit trail (empty on clean matches; reports '
-            'Roman/Arabic transformations, ambiguous candidate collisions, or unmatched records)\n\n'
-            'Output Behavior:\n'
-            '  • Matched Barangays is always generated as a temporary memory scratch layer, '
-            'loading directly into the project in single and batch runs alike.\n'
-            '  • A filtered PSGC reference layer for the target city/municipality is also '
-            'automatically generated and loaded into the project.'
-        )
+        results = {}
+        if matched_dest_id:
+            results[self.OUTPUT] = matched_dest_id
+        if psgc_dest_id:
+            results[self.OUTPUT_PSGC] = psgc_dest_id
+        return results
 
     def createInstance(self):
         return JoinBarangayAttributes()
