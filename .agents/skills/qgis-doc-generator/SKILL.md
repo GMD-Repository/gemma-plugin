@@ -1,6 +1,6 @@
 ---
 name: qgis-doc-generator
-description: Standard operating procedure and protocol for generating, formatting, registering, and building high-quality VitePress documentation pages for QGIS PyQGIS tools, algorithms, and plugins. Always triggers automatically whenever changes occur in gmd_scripts, references, or qml styles.
+description: Standard operating procedure and protocol for generating, formatting, registering, and building high-quality VitePress documentation pages for QGIS PyQGIS tools, algorithms, and plugins. Always triggers automatically whenever changes occur in gmd_scripts (excluding cbms_mv and deprecated modules), references, or qml styles.
 ---
 
 # QGIS Tool Documentation Generator Skill
@@ -12,11 +12,15 @@ This skill documents the mandatory end-to-end workflow for authoring, structurin
 ## Mandatory Code Change Trigger Policy
 
 Documentation MUST always be generated, updated, or verified whenever changes occur in:
-1. `gmd_scripts/` (PyQGIS processing algorithms, scripts, tool logic, dialogs)
+1. `gmd_scripts/` (PyQGIS processing algorithms, scripts, tool logic, dialogs) — **EXCLUDING `cbms_mv/` (`gmd_scripts/cbms_mv/`) and `deprecated/` folders**
 2. `references/` (Technical references, data schemas, guidelines)
 3. `qml styles/` (Layer style definitions, symbology QML templates)
 
-Whenever any code or asset in these target directories is created, modified, or deleted:
+> [!IMPORTANT]
+> **Exclusion for `cbms_mv` & `deprecated`:**
+> Do **NOT** trigger, run, or generate VitePress tool documentation, feature cards, navigation links, or sidebar entries for scripts or modules located in `cbms_mv/` (e.g. `gmd_scripts/cbms_mv/`) or `deprecated/`.
+
+Whenever any code or asset in the non-exempt target directories is created, modified, or deleted:
 1. Create or update the markdown guide in `docs/user-guide/tools/<tool-slug>.md`.
 2. Register the tool in `docs/.vitepress/config.mts` (under both `nav` dropdown items and `sidebar` categories).
 3. Register the feature card in `docs/user-guide/index.md` (with SVG/PNG icon path).
@@ -81,7 +85,7 @@ graph TD
 ## Step-by-Step Execution Guide
 
 ### Step 1: Extract Source Metadata from PyQGIS Script
-Inspect the Python Processing Algorithm (`gmd_scripts/<script_name>.py`) and extract:
+Inspect the Python Processing Algorithm (`gmd_scripts/<script_name>.py`, excluding `cbms_mv/` and `deprecated/`) and extract:
 - `displayName()`: User-visible tool title.
 - `group()` / `groupId()`: Toolbox category.
 - `name()`: Algorithm ID string (`gmd_pipeline:<id>`).

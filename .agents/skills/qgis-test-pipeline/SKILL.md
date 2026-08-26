@@ -1,6 +1,6 @@
 ---
 name: qgis-test-pipeline
-description: Standard operating procedure and protocol for authoring, mocking, scaffolding, generating unit tests for new or updated gmd_scripts, and enforcing GitHub Actions PR test gating with sticky PR comment bot updates.
+description: Standard operating procedure and protocol for authoring, mocking, scaffolding, generating unit tests for new or updated gmd_scripts (excluding cbms_mv and deprecated modules), and enforcing GitHub Actions PR test gating with sticky PR comment bot updates.
 ---
 
 # QGIS Test Pipeline — Standard Operating Procedure (SOP)
@@ -26,7 +26,7 @@ gemma-plugin/
 │   │   ├── test_clip_project_layers.py       # 3 tests — Layer clipping
 │   │   ├── test_create_enumeration_area.py   # 2 tests — EA creation
 │   │   ├── test_ea_merge_processor.py        # 3 tests — EA merge processor
-│   │   ├── test_ea_pipeline.py               # 20 tests — Full EA delineation pipeline
+│   │   ├── test_ea_pipeline.py               # 25 tests — Full EA delineation pipeline
 │   │   ├── test_ea_split_modes.py            # 5 tests — EA split mode strategies
 │   │   ├── test_export_preliminary_polygons.py# 3 tests — Preliminary polygon export
 │   │   ├── test_fill_polygon_gaps.py         # 3 tests — Gap filling
@@ -35,7 +35,7 @@ gemma-plugin/
 │   │   ├── test_geom_repair_toolkit.py       # 3 tests — Topology engine & repair toolkit
 │   │   ├── test_gmdhelpers.py                # 3 tests — Core helper functions
 │   │   ├── test_gsheet.py                    # 1 test — Google Sheets integration
-│   │   ├── test_join_barangay_attributes.py  # 8 tests — Barangay attribute joining
+│   │   ├── test_join_barangay_attributes.py  # 11 tests — Barangay attribute joining
 │   │   ├── test_lgu_fix_processing.py        # 4 tests — LGU fix processing
 │   │   ├── test_mbi_validator.py             # 7 tests — MBI validation engine
 │   │   ├── test_package_qfield.py            # 2 tests — QField packaging
@@ -55,16 +55,20 @@ gemma-plugin/
         └── test-pr.yml             # QGIS Docker container GitHub Actions PR Gate + Dynamic Comment Bot
 ```
 
-**Current Suite Totals**: **98 tests** across **24 test modules** (91 Passed · 2 Skipped · 0 Failures · 0 Errors)
+**Current Suite Totals**: **106 tests** across **24 test modules** (91 Passed · 2 Skipped · 0 Failures · 0 Errors)
 
 ---
 
 ## 2. Developer Protocol: Adding or Updating `gmd_scripts/`
 
-Whenever a new script is added or an existing script is modified in `gmd_scripts/`:
+> [!IMPORTANT]
+> **Module Exclusions (`cbms_mv` & `deprecated`)**:
+> Scripts in `gmd_scripts/cbms_mv/` and `gmd_scripts/deprecated/` are strictly excluded from automated unit test generation, unit test coverage enforcement, and CI test gating. Do **NOT** scaffold or require unit test files for `cbms_mv/` scripts.
+
+Whenever a new script is added or an existing script is modified in `gmd_scripts/` (excluding `cbms_mv/` and `deprecated/`):
 
 ### Step 1: Auto-Generate Test Stubs for New/Updated Scripts
-Run `generate_test_stubs.py` to scan `gmd_scripts/` and automatically scaffold corresponding test files in `tests/unit/`:
+Run `generate_test_stubs.py` to scan `gmd_scripts/` (automatically ignoring `cbms_mv/` and `deprecated/`) and scaffold corresponding test files in `tests/unit/`:
 
 ```bash
 python scripts/testing/generate_test_stubs.py
@@ -179,6 +183,7 @@ python scripts/testing/generate_test_stubs.py --check
 ```text
 [CHECK PASSED] All scripts in gmd_scripts/ have corresponding unit test files.
 ```
+*(Note: Excludes `cbms_mv/` and `deprecated/`)*
 
 ### Command 3: Run Individual Test File
 ```bash
@@ -195,7 +200,7 @@ Every Pull Request submitted to `main`, `master`, `develop`, or `enhance/**` bra
 - **Matrix Versions**: `['3.38', '3.40.10']` (Runs parallel test suites on QGIS 3.38 and QGIS 3.40.10 containers).
 - **Headless Display & QgsApplication**: Enforces `QT_QPA_PLATFORM=offscreen` and initializes `QgsApplication([], True)` with dynamic `/usr` SRS resource path resolving.
 - **Automated Workflow**:
-  1. **Coverage Check**: Runs `python3 scripts/testing/generate_test_stubs.py --check` (Fails if any script in `gmd_scripts/` lacks a unit test).
+  1. **Coverage Check**: Runs `python3 scripts/testing/generate_test_stubs.py --check` (Fails if any non-exempt script in `gmd_scripts/` lacks a unit test; ignores `cbms_mv/` and `deprecated/`).
   2. **Full QGIS Execution**: Runs `python3 tests/run_tests.py` against the native QGIS engine inside the GitHub runner container.
   3. **Artifact Upload**: Uploads `tests/test_results.json` as a GitHub Actions artifact keyed by QGIS version.
   4. **Dynamic Sticky PR Comment Bot**: Downloads the test results artifact from the QGIS 3.40.10 run, parses the JSON, and automatically posts or updates a PR comment table with **real test counts** dynamically extracted from the test run.
