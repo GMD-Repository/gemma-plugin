@@ -8,7 +8,7 @@ and renders HTML execution summary tables.
 import math
 import os
 from typing import Dict, Any, List
-from PyQt5.QtCore import QVariant, QMetaType
+from PyQt5.QtCore import QVariant
 from qgis.core import (
     QgsFeatureSink,
     QgsProcessingException,
@@ -424,14 +424,21 @@ def run_phase_8(
             if idx != -1:
                 export_fields.append(out_fields.at(idx))
             else:
-                ftype = QMetaType.Type.QString
+                ftype = QVariant.String
                 if fname == "fid":
-                    ftype = QMetaType.Type.Int
+                    ftype = QVariant.Int
                 elif fname == "hhcount":
-                    ftype = QMetaType.Type.Double
+                    ftype = QVariant.Double
                 elif fname in ("bldgcount", "bldg_count", "hh_count"):
-                    ftype = QMetaType.Type.Int
+                    ftype = QVariant.Int
                 export_fields.append(QgsField(fname, ftype))
+
+    merged_export_fields = p2.get("merged_export_fields")
+    if not merged_export_fields:
+        merged_export_fields = QgsFields(export_fields)
+        for fname in ("indicator", "gps", "min_circle"):
+            if merged_export_fields.indexOf(fname) == -1:
+                merged_export_fields.append(QgsField(fname, QVariant.String))
 
     special_ea_export_fields = p2.get("special_ea_export_fields")
     if not special_ea_export_fields:
@@ -993,8 +1000,8 @@ def run_phase_8(
         if sy_idx != -1:
             out_feat.setAttribute(sy_idx, "2026")
 
-        # Delineated EA hhcount and bldgcount inherit directly from original_hhcount / parent feature
-        if ea.get('is_special_ea', False):
+        # Merged EAs and Special EAs inherit the new combined hh_count and bldg_count
+        if ea.get('is_special_ea', False) or ea.get('from_merge', False):
             val_hh = safe_float(ea.get('hh_count', ea.get('original_hhcount', 0.0)), 0.0)
         else:
             val_hh = ea.get('original_hhcount')
@@ -1024,11 +1031,13 @@ def run_phase_8(
             if out_fields.at(j).name().lower() == "hh_count":
                 out_feat.setAttribute(j, new_hh_val)
 
-        # For Special EAs, ensure bldg_count and bldgcount get the total building point count within its geometry
+        # For Merged EAs and Special EAs, ensure bldgcount gets the new combined building count
         if ea.get('is_special_ea', False):
             special_bldgs = ea.get('buildings', [])
             ea['bldg_count'] = len(special_bldgs)
             val_bldg = len(special_bldgs)
+        elif ea.get('from_merge', False):
+            val_bldg = safe_int(ea.get('bldg_count', len(ea.get('buildings', []))), 0)
         else:
             # Delineated EA bldgcount inherits directly from original_bldgcount / parent feature
             val_bldg = ea.get('original_bldgcount')
@@ -1190,7 +1199,11 @@ def run_phase_8(
             # 3. Add to Merged EAs sink if feature was generated from EA merging
             if ea.get('from_merge', False) and not ea.get('is_special_ea', False):
                 if merged_sink is not None:
-                    if merged_sink.addFeature(exp_feat, QgsFeatureSink.Flag.FastInsert):
+                    exp_feat_merged = make_export_feature(out_feat, merged_export_fields)
+                    indicator_merged_idx = merged_export_fields.indexOf("indicator")
+                    if indicator_merged_idx != -1:
+                        exp_feat_merged.setAttribute(indicator_merged_idx, "")
+                    if merged_sink.addFeature(exp_feat_merged, QgsFeatureSink.Flag.FastInsert):
                         merged_feat_count += 1
                     else:
                         feedback.reportError(f"Failed to add EA {i} to merged sink.")
@@ -1199,20 +1212,20 @@ def run_phase_8(
         if extracted_buildings_sink is not None:
             bldg_out_fields = QgsFields(building_source.fields())
             if bldg_out_fields.indexOf("parent_ean") == -1:
-                bldg_out_fields.append(QgsField("parent_ean", QMetaType.Type.QString))
+                bldg_out_fields.append(QgsField("parent_ean", QVariant.String))
 
             bldgpts_idx = bldg_out_fields.indexOf("bldgpoints_value")
             if bldgpts_idx == -1:
                 bldgpts_idx = bldg_out_fields.indexOf("bldgpts_val")
             if bldgpts_idx == -1:
-                bldg_out_fields.append(QgsField("bldgpoints_value", QMetaType.Type.Double))
+                bldg_out_fields.append(QgsField("bldgpoints_value", QVariant.Double))
                 bldgpts_idx = bldg_out_fields.count() - 1
 
             pop_out_idx = bldg_out_fields.indexOf("pop")
             if pop_out_idx == -1:
                 pop_out_idx = bldg_out_fields.indexOf(bldg_hh_field)
             if pop_out_idx == -1:
-                bldg_out_fields.append(QgsField("pop", QMetaType.Type.Double))
+                bldg_out_fields.append(QgsField("pop", QVariant.Double))
                 pop_out_idx = bldg_out_fields.count() - 1
 
             parent_ean_idx = bldg_out_fields.indexOf("parent_ean")

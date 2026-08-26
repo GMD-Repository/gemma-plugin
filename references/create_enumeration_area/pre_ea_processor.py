@@ -49,7 +49,7 @@ from qgis.core import (
     QgsVectorLayer,
     QgsWkbTypes,
 )
-from qgis.PyQt.QtCore import QVariant, QMetaType
+from qgis.PyQt.QtCore import QVariant
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -177,6 +177,7 @@ class PreEAProcessor:
             "All fields from the original EA layer are preserved. Additional/updated fields:</li>"
             "<li><i>hhcount</i> — Household count for the EA polygon.</li>"
             "<li><i>bldgcount</i> — Building count for the EA polygon.</li>"
+            "<li><i>sy</i> — Statistical/survey year (set to <i>2026</i>).</li>"
             "<li><i>original_area</i> — Original surface area of the EA polygon in square metres.</li>"
             "<li><i>corrected_area</i> — Corrected surface area of the EA polygon after clipping and gap assignment.</li>"
             "<li><i>area_change</i> — Net area change (square metres) after pre-processing.</li>"
@@ -188,7 +189,7 @@ class PreEAProcessor:
     def run(
         self,
         barangay_layer: QgsVectorLayer,
-        ea_layer: QgsVectorLayer,
+        ea_layer: Optional[QgsVectorLayer] = None,
         gap_tolerance: float = 1.0,
         snap_tolerance: float = 25.0,
         clip_to_bgy: bool = True,
@@ -202,7 +203,7 @@ class PreEAProcessor:
         Run the full Pre-EA Processing workflow.
 
         :param barangay_layer: Polygon vector layer of Barangays.
-        :param ea_layer: Polygon vector layer of EAs.
+        :param ea_layer: Polygon vector layer of EAs. Optional; if omitted, a new EA layer is created from barangay_layer.
         :param gap_tolerance: Minimum area (m²) for a gap to be considered meaningful.
         :param snap_tolerance: Distance (m) to snap boundary vertices onto Barangay & adjacent EA edges.
         :param clip_to_bgy: Whether to clip EAs extending outside their parent Barangay.
@@ -231,8 +232,8 @@ class PreEAProcessor:
 
         try:
             _log("[INFO] Starting EA Preprocessing...")
-            _log(f"[INFO] Barangay Layer: {barangay_layer.name()}")
-            _log(f"[INFO] EA Layer: {ea_layer.name()}")
+            bgy_name = barangay_layer.name() if barangay_layer else "None"
+            _log(f"[INFO] Barangay Layer: {bgy_name}")
             _log("[INFO] Validating input layers...")
 
             # -- Input validation -------------------------------------------------
@@ -248,6 +249,12 @@ class PreEAProcessor:
                     success=False,
                     error_message=validation_error,
                 )
+
+            if ea_layer is None:
+                _log("[INFO] No EA layer provided. Creating a new EA layer from Barangay layer...")
+                ea_layer = self.create_ea_layer_from_barangay(barangay_layer)
+
+            _log(f"[INFO] EA Layer: {ea_layer.name()}")
 
             # -- Repair input geometries ------------------------------------------
             _log("[INFO] Checking and repairing input geometries...")
@@ -465,35 +472,127 @@ class PreEAProcessor:
                 error_message=error_msg,
             )
 
+    @staticmethod
+    def create_ea_layer_from_barangay(barangay_layer: QgsVectorLayer) -> QgsVectorLayer:
+        """
+        Create a new in-memory EA polygon layer based on the input Barangay layer.
+
+        Copies features from the Barangay layer and ensures standard EA fields
+        ('ean', 'hhcount', 'bldgcount') exist.
+        """
+        if not barangay_layer or not barangay_layer.isValid():
+            raise ValueError("Invalid Barangay layer provided for EA layer creation.")
+
+        base_name = barangay_layer.name()
+        layer_name = f"{base_name}_ea"
+        for pat in ("_bgy", "_barangay", "_brgy"):
+            if base_name.lower().endswith(pat):
+                layer_name = base_name[: -len(pat)] + "_ea"
+                break
+
+        crs_auth = barangay_layer.crs().authid() if barangay_layer.crs().isValid() else "EPSG:4326"
+        geom_type = QgsWkbTypes.displayString(barangay_layer.wkbType())
+        uri = f"{geom_type}?crs={crs_auth}"
+
+        ea_layer = QgsVectorLayer(uri, layer_name, "memory")
+        dp = ea_layer.dataProvider()
+
+        bgy_fields = barangay_layer.fields()
+        fields = QgsFields()
+        for i in range(bgy_fields.count()):
+            f = bgy_fields.at(i)
+            if f.name().lower() == "source":
+                continue
+            fields.append(f)
+
+        existing_names = [fields.at(i).name().lower() for i in range(fields.count())]
+
+        ean_field_name = None
+        for name in ("ean", "ea_code", "ea_no", "ea_number"):
+            if name in existing_names:
+                ean_field_name = name
+                break
+
+        if ean_field_name is None:
+            fields.append(QgsField("ean", QVariant.String))
+            existing_names.append("ean")
+            ean_field_name = "ean"
+
+        if "hhcount" not in existing_names and "hh_count" not in existing_names:
+            fields.append(QgsField("hhcount", QVariant.Double))
+            existing_names.append("hhcount")
+
+        if "bldgcount" not in existing_names and "bldg_count" not in existing_names:
+            fields.append(QgsField("bldgcount", QVariant.Int))
+            existing_names.append("bldgcount")
+
+        if "sy" not in existing_names:
+            fields.append(QgsField("sy", QVariant.String))
+            existing_names.append("sy")
+
+        dp.addAttributes(fields)
+        ea_layer.updateFields()
+
+        ean_idx = ea_layer.fields().indexOf(ean_field_name)
+        hh_idx = ea_layer.fields().indexOf("hhcount") if "hhcount" in existing_names else ea_layer.fields().indexOf("hh_count")
+        bldg_idx = ea_layer.fields().indexOf("bldgcount") if "bldgcount" in existing_names else ea_layer.fields().indexOf("bldg_count")
+        sy_idx = ea_layer.fields().indexOf("sy")
+
+        new_features = []
+        for i, bgy_feat in enumerate(barangay_layer.getFeatures()):
+            ea_feat = QgsFeature(ea_layer.fields())
+            ea_feat.setGeometry(bgy_feat.geometry())
+
+            for bgy_i in range(bgy_fields.count()):
+                bgy_field_name = bgy_fields.at(bgy_i).name()
+                if bgy_field_name.lower() == "source":
+                    continue
+                ea_field_idx = ea_layer.fields().indexOf(bgy_field_name)
+                if ea_field_idx != -1:
+                    ea_feat.setAttribute(ea_field_idx, bgy_feat.attribute(bgy_i))
+
+            if ean_idx != -1 and (ea_feat.attribute(ean_idx) is None or str(ea_feat.attribute(ean_idx)).strip() in ("", "NULL", "None")):
+                ea_feat.setAttribute(ean_idx, "000000")
+
+            if hh_idx != -1 and (ea_feat.attribute(hh_idx) is None or str(ea_feat.attribute(hh_idx)).strip() in ("NULL", "None")):
+                ea_feat.setAttribute(hh_idx, 0.0)
+
+            if bldg_idx != -1 and (ea_feat.attribute(bldg_idx) is None or str(ea_feat.attribute(bldg_idx)).strip() in ("NULL", "None")):
+                ea_feat.setAttribute(bldg_idx, 0)
+
+            if sy_idx != -1:
+                ea_feat.setAttribute(sy_idx, "2026")
+
+            new_features.append(ea_feat)
+
+        dp.addFeatures(new_features)
+        ea_layer.updateExtents()
+        return ea_layer
+
     # -------------------------------------------------------------------------
     # Validation
     # -------------------------------------------------------------------------
 
     def _validate_inputs(
-        self, barangay_layer: QgsVectorLayer, ea_layer: QgsVectorLayer
+        self, barangay_layer: QgsVectorLayer, ea_layer: Optional[QgsVectorLayer] = None
     ) -> Optional[str]:
         """Return an error string if inputs are invalid, else None."""
         if not barangay_layer:
             return "Barangay Layer is required."
-        if not ea_layer:
-            return "EA Layer is required."
         if not barangay_layer.isValid():
             return "Barangay Layer is not a valid layer."
-        if not ea_layer.isValid():
-            return "EA Layer is not a valid layer."
-
-        bgy_geom_type = barangay_layer.geometryType()
-        if bgy_geom_type != QgsWkbTypes.PolygonGeometry:
+        if barangay_layer.geometryType() != QgsWkbTypes.PolygonGeometry:
             return "Barangay Layer must be a polygon layer."
-
-        ea_geom_type = ea_layer.geometryType()
-        if ea_geom_type != QgsWkbTypes.PolygonGeometry:
-            return "EA Layer must be a polygon layer."
-
         if barangay_layer.featureCount() == 0:
             return "Barangay Layer contains no features."
-        if ea_layer.featureCount() == 0:
-            return "EA Layer contains no features."
+
+        if ea_layer is not None:
+            if not ea_layer.isValid():
+                return "EA Layer is not a valid layer."
+            if ea_layer.geometryType() != QgsWkbTypes.PolygonGeometry:
+                return "EA Layer must be a polygon layer."
+            if ea_layer.featureCount() == 0:
+                return "EA Layer contains no features."
 
         return None
 
@@ -533,6 +632,31 @@ class PreEAProcessor:
                 features.append(feat)
         return features
 
+    def _remove_interior_rings(self, geom: Optional[QgsGeometry]) -> Optional[QgsGeometry]:
+        """Remove all interior rings (holes) from a Polygon or MultiPolygon geometry."""
+        if geom is None or geom.isEmpty():
+            return geom
+        flat_type = QgsWkbTypes.flatType(geom.wkbType())
+        try:
+            if flat_type == QgsWkbTypes.Polygon:
+                poly_xy = geom.asPolygon()
+                if poly_xy and len(poly_xy) > 1:
+                    return QgsGeometry.fromPolygonXY([poly_xy[0]])
+            elif flat_type == QgsWkbTypes.MultiPolygon:
+                mpoly_xy = geom.asMultiPolygon()
+                cleaned_mpoly = []
+                has_holes = False
+                for poly_xy in mpoly_xy:
+                    if poly_xy:
+                        if len(poly_xy) > 1:
+                            has_holes = True
+                        cleaned_mpoly.append([poly_xy[0]])
+                if has_holes:
+                    return QgsGeometry.fromMultiPolygonXY(cleaned_mpoly)
+        except Exception:
+            pass
+        return geom
+
     def _clean_geometry(
         self,
         geom: Optional[QgsGeometry],
@@ -545,10 +669,11 @@ class PreEAProcessor:
         if not geom.isGeosValid():
             repaired = geom.makeValid()
             if repaired and not repaired.isEmpty():
-                return repaired
-            log_fn(f"[WARNING] Could not repair geometry for {label}.")
-            return None
-        return geom
+                geom = repaired
+            else:
+                log_fn(f"[WARNING] Could not repair geometry for {label}.")
+                return None
+        return self._remove_interior_rings(geom)
 
     def _eliminate_sliver_parts(
         self,
@@ -643,17 +768,17 @@ class PreEAProcessor:
     def _get_effective_snap_tolerance(
         self,
         crs: Optional[QgsCoordinateReferenceSystem],
-        snap_tolerance: float = 25.0,
+        snap_tolerance: float = 1.0,
     ) -> float:
         """
         Compute effective snapping tolerance in native CRS map units.
-        For Projected CRS: snap_tolerance in metres (default 25.0 m).
+        For Projected CRS: snap_tolerance in metres (default 1.0 m).
         For Geographic CRS (EPSG:4326): converts metres to degrees (~1m ≈ 0.000009 deg).
         """
         is_geo = bool(crs and crs.isValid() and crs.isGeographic())
         if is_geo:
-            return max(snap_tolerance * 0.000009, 0.0003)
-        return max(snap_tolerance, 25.0)
+            return max(snap_tolerance * 0.000009, 0.000001)
+        return max(snap_tolerance, 0.1)
 
     def _snap_ring_vertices_to_line(
         self,
@@ -713,7 +838,12 @@ class PreEAProcessor:
                     snapped_ring = self._snap_ring_vertices_to_line(ring, ref_line, snap_tolerance)
                     snapped_poly.append(snapped_ring)
                 snapped = QgsGeometry.fromPolygonXY(snapped_poly)
-                return snapped if snapped and not snapped.isEmpty() else geom
+                if snapped and not snapped.isEmpty():
+                    snapped = snapped.makeValid()
+                    if geom.area() > 0 and snapped.area() < geom.area() * 0.8:
+                        return geom
+                    return snapped
+                return geom
 
             elif flat_type == QgsWkbTypes.MultiPolygon:
                 mpoly_xy = geom.asMultiPolygon()
@@ -725,7 +855,12 @@ class PreEAProcessor:
                         snapped_poly.append(snapped_ring)
                     snapped_mpoly.append(snapped_poly)
                 snapped = QgsGeometry.fromMultiPolygonXY(snapped_mpoly)
-                return snapped if snapped and not snapped.isEmpty() else geom
+                if snapped and not snapped.isEmpty():
+                    snapped = snapped.makeValid()
+                    if geom.area() > 0 and snapped.area() < geom.area() * 0.8:
+                        return geom
+                    return snapped
+                return geom
         except Exception:
             return geom
 
@@ -1255,16 +1390,23 @@ class PreEAProcessor:
             log_fn("[ERROR] Failed to create output memory layer.")
             return None
 
-        # Copy field schema from input EA layer and ensure hhcount & bldgcount exist
+        # Copy field schema from input EA layer (excluding 'source') and ensure hhcount, bldgcount & sy exist
         dp = output_layer.dataProvider()
         ea_fields: QgsFields = ea_layer.fields()
-        fields_to_add = QgsFields(ea_fields)
+        fields_to_add = QgsFields()
+        for i in range(ea_fields.count()):
+            f = ea_fields.at(i)
+            if f.name().lower() == "source":
+                continue
+            fields_to_add.append(f)
 
         existing_names = [fields_to_add.at(i).name().lower() for i in range(fields_to_add.count())]
         if "hhcount" not in existing_names:
-            fields_to_add.append(QgsField("hhcount", QMetaType.Type.Double))
+            fields_to_add.append(QgsField("hhcount", QVariant.Double))
         if "bldgcount" not in existing_names:
-            fields_to_add.append(QgsField("bldgcount", QMetaType.Type.Int))
+            fields_to_add.append(QgsField("bldgcount", QVariant.Int))
+        if "sy" not in existing_names:
+            fields_to_add.append(QgsField("sy", QVariant.String))
 
         dp.addAttributes(fields_to_add)
         output_layer.updateFields()
@@ -1371,12 +1513,15 @@ class PreEAProcessor:
         out_fields = output_layer.fields()
         hhcount_idx = -1
         bldgcount_idx = -1
+        sy_idx = -1
         for i in range(out_fields.count()):
             name_lower = out_fields.at(i).name().lower()
             if name_lower == "hhcount":
                 hhcount_idx = i
             elif name_lower == "bldgcount":
                 bldgcount_idx = i
+            elif name_lower == "sy":
+                sy_idx = i
 
         new_features: List[QgsFeature] = []
         for ea_feat in ea_features:
@@ -1393,15 +1538,21 @@ class PreEAProcessor:
 
             # Eliminate sliver polygon parts below gap_tolerance
             geom = self._eliminate_sliver_parts(geom, gap_tolerance, crs)
+            geom = self._remove_interior_rings(geom)
             if geom is None or geom.isEmpty():
                 continue
 
             new_feat = QgsFeature(out_fields)
             new_feat.setGeometry(geom)
 
-            # Copy existing fields from input EA
+            # Copy existing fields from input EA (matching by field name, excluding 'source')
             for i in range(ea_fields.count()):
-                new_feat.setAttribute(i, ea_feat.attribute(i))
+                src_field_name = ea_fields.at(i).name()
+                if src_field_name.lower() == "source":
+                    continue
+                out_idx = out_fields.indexOf(src_field_name)
+                if out_idx != -1:
+                    new_feat.setAttribute(out_idx, ea_feat.attribute(i))
 
             # Ensure hhcount field is populated
             if hhcount_idx != -1:
@@ -1416,6 +1567,10 @@ class PreEAProcessor:
                     ea_feat, ("bldgcount", "new_bldgcount", "bldg_count", "bldg_cnt", "bldgpts_cnt", "bldg_points")
                 )
                 new_feat.setAttribute(bldgcount_idx, int(round(bldg_val)) if bldg_val is not None else 0)
+
+            # Ensure sy field is populated with "2026"
+            if sy_idx != -1:
+                new_feat.setAttribute(sy_idx, "2026")
 
             new_features.append(new_feat)
 
