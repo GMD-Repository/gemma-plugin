@@ -37,10 +37,9 @@ def run_phase_7(
     multi_feedback.setProgressText(f"{_PHASE_LABELS[6]}...")
     feedback.pushInfo("Running compliance sweep...")
 
-    compliance_changed = False
+    compliance_changed = True
     compliance_pass = 0
     max_compliance_passes = 10
-    feedback.pushInfo("TEMPORARY BYPASS: Skipping Phase 8 Final Compliance Sweep as requested.")
 
     while compliance_changed and compliance_pass < max_compliance_passes:
         if multi_feedback.isCanceled():

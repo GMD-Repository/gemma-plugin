@@ -176,11 +176,14 @@ Replacement polygons take precedence over the previous EA layer: any overlapping
    - Spatially joins building points to starting EAs and sums building counts (`bldgcount`) and household load (`hhcount`).
 
 3. **Single-Pass EA Delineation (Splitting)**:
-   - Overpopulated EAs (>300 HH) are split using weighted K-Means clustering on building points in a single pass.
+   - Overpopulated EAs (>300 HH) are split using weighted K-Means clustering and principal component point alignment verification on building points.
+   - For clustered points in small areas, point alignment analysis calculates covariance matrices and aligns cut planes perpendicular to the principal cluster axis.
    - Generated cut lines are buffered and snapped to nearest road or river centrelines within snapping tolerance.
+   - Strict threshold bounds check ensures that no resulting sub-polygon falls below `min_household` (100 HH) or increases above `max_household` (300 HH).
 
-4. **Iterative Spatial Merging**:
-   - Underpopulated EAs (<=100 HH) undergo up to 5 iterative passes of spatial adjacency merging strictly within the same parent Barangay.
+4. **Iterative Spatial Merging & Compliance Sweep**:
+   - Underpopulated EAs (<=100 HH) undergo spatial adjacency merging strictly within the same parent Barangay.
+   - Phase 7 global compliance sweep iterates over all post-delineation and post-merge EAs to enforce threshold bounds (`min_household <= hh_count <= max_household`).
 
 5. **Enumeration Area Merge (Tab 3)**:
    - Takes previous EA layer and multiple 8-digit replacement polygon layers.
