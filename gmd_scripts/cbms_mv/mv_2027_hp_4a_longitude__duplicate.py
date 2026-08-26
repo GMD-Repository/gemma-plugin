@@ -88,12 +88,7 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
             )
         )
 
-    def processAlgorithm(
-        self,
-        parameters: Dict[str, Any],
-        context: QgsProcessingContext,
-        feedback: QgsProcessingFeedback,
-    ) -> Dict[str, Any]:
+    def processAlgorithm(self, parameters, context, feedback):
 
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
@@ -101,18 +96,27 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
         features = gmdhelpers.filter_geometry_validity(geojson_data, feedback)
         fields = geojson_data.fields()
 
-        # Add a field holding longitude rounded to 6 decimal places, as a string
-        # (avoids float precision issues when comparing/grouping values)
         if fields.indexFromName("lon_key") == -1:
             fields.append(QgsField("lon_key", QVariant.String))
 
+        valid_features = []
         for f in features:
             f.setFields(fields, False)
             lon_value = f["longitude"]
 
-# Skip or handle null/invalid longitude values
-if lon_value is None or isinstance(lon_value, QVariant) and not lon_value.isValid() if False else False:
-    pass  # placeholder, see cleaner version below
+            if lon_value is None or lon_value == NULL:
+                feedback.pushWarning(f"Feature id {f.id()} has a null longitude value, skipping.")
+                continue
+
+            try:
+                f["lon_key"] = f"{float(lon_value):.6f}"
+            except (TypeError, ValueError) as e:
+                feedback.pushWarning(f"Feature id {f.id()} has invalid longitude '{lon_value}': {e}")
+                continue
+
+            valid_features.append(f)
+
+        features = valid_features
 
         features, fields = gmdhelpers.add_count(features, fields, "lon_key")
         features = [f for f in features if f["n"] > 1]
