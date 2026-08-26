@@ -120,7 +120,7 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
                 continue
 
             try:
-                f["lon_key"] = "{:.6f}".format(float(lon_value))
+                f["lon_key"] = "{:.7f}".format(float(lon_value))
             except (TypeError, ValueError) as e:
                 feedback.pushWarning(
                     "Feature id " + str(f.id()) + " has invalid longitude '" + str(lon_value) + "': " + str(e)
