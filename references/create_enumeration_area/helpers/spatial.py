@@ -1,6 +1,24 @@
 from typing import Optional, Dict, Any
-from qgis.core import QgsFeature, QgsGeometry, QgsSpatialIndex
+from qgis.core import QgsFeature, QgsGeometry, QgsSpatialIndex, NULL
 from PyQt5.QtCore import QVariant
+
+
+def normalize_to_8_digits(val: Any) -> str:
+    """Standardize a barangay / geocode identifier to an 8-digit numeric string."""
+    if val is None or val == NULL or str(val).strip() in ('', 'NULL', 'None'):
+        return ""
+    if isinstance(val, QVariant) and val.isNull():
+        return ""
+    val_str = str(val).strip()
+    if val_str.endswith(".0"):
+        val_str = val_str[:-2]
+    digits = "".join([c for c in val_str if c.isdigit()])
+    if len(digits) >= 8:
+        return digits[:8]
+    elif len(digits) > 0:
+        return digits.zfill(8)
+    return val_str[:8] if len(val_str) >= 8 else val_str
+
 
 def get_parent_barangay(
     ea_geom: QgsGeometry,
@@ -31,27 +49,19 @@ def resolve_ea_parent_barangay(
     barangay_index: QgsSpatialIndex,
     barangay_by_id: Dict[int, QgsFeature]
 ) -> str:
-    """Resolve barangay code for an EA feature via spatial overlay (primary) or field attribute fallback."""
+    """Resolve barangay code for an EA feature standardized to 8 digits via spatial overlay (primary) or field attribute fallback."""
     # 1. Primary: Spatial overlay with Barangay Layer
     parent_feat = get_parent_barangay(ea_feat.geometry(), barangay_index, barangay_by_id)
     if parent_feat:
         val = parent_feat.attribute(barangay_id_field)
-        if val is not None and not (isinstance(val, QVariant) and val.isNull()):
-            val_str = str(val).strip()
-            if val_str.endswith(".0"):
-                val_str = val_str[:-2]
-            if val_str:
-                return val_str
+        res = normalize_to_8_digits(val)
+        if res:
+            return res
 
     # 2. Fallback: Attribute from EA layer
     if dc_geo_idx != -1:
         val = ea_feat.attribute(dc_geo_idx)
-        if val is not None and not (isinstance(val, QVariant) and val.isNull()):
-            val_str = str(val).strip()
-            if val_str.endswith(".0"):
-                val_str = val_str[:-2]
-            if val_str:
-                if len(val_str) > 5 and len(val_str) in (9, 10, 11, 12):
-                    return val_str[:5]
-                return val_str
+        res = normalize_to_8_digits(val)
+        if res:
+            return res
     return "Unknown"

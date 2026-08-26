@@ -11,7 +11,7 @@ import shutil
 import datetime
 import processing
 
-from qgis.core import QgsApplication, QgsMessageLog, QgsProcessingProvider, QgsOfflineEditing, QgsProject
+from qgis.core import Qgis, QgsApplication, QgsMessageLog, QgsProcessingProvider, QgsOfflineEditing, QgsProject
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtCore import QCoreApplication, Qt
 
@@ -322,9 +322,22 @@ class GMDPipeline(object):
 
     def show_create_ea_dialog(self):
         """Open the Create Enumeration Areas dialog."""
-        from .gmd_scripts.create_enumeration_area import show_create_ea_dialog
+        from .references.create_enumeration_area.dialog import EALauncherDialog
 
-        self.ea_dlg = show_create_ea_dialog(self.iface)
+        # Guard against stale C++ wrapper from a previously closed dialog
+        try:
+            if self.ea_dlg is not None:
+                self.ea_dlg.isVisible()
+        except RuntimeError:
+            self.ea_dlg = None
+
+        if self.ea_dlg is None:
+            self.ea_dlg = EALauncherDialog(self.iface.mainWindow())
+
+        self.ea_dlg.showNormal()
+        self.ea_dlg.show()
+        self.ea_dlg.raise_()
+        self.ea_dlg.activateWindow()
 
     def push_dialog_finished(self):
         """
