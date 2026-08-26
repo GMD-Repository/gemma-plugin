@@ -12,7 +12,6 @@ import json
 from typing import Any, Optional, Dict, List
 
 from PyQt5.QtCore import QVariant
-# pyrefly: ignore [missing-import]
 from qgis.core import (
     NULL,
     QgsField,
@@ -41,25 +40,25 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
     INPUT_LAYER = "INPUT_LAYER"
     OUTPUT = "OUTPUT"
 
-    def name(self) -> str:
+    def name(self):
         return "mv_2027_hp_4a_longitude__duplicate"
 
-    def displayName(self) -> str:
+    def displayName(self):
         return "mv_2027_hp_4a_longitude__duplicate"
 
-    def group(self) -> str:
+    def group(self):
         return "2027 CBMS"
 
-    def groupId(self) -> str:
+    def groupId(self):
         return "cbms_mv"
 
-    def shortHelpString(self) -> str:
+    def shortHelpString(self):
         return (
             "List of geotagged points with duplicate longitude. \n \n"
             "The longitude should be unique.\n"
         )
 
-    def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):
+    def initAlgorithm(self, config=None):
 
         self.addParameter(
             QgsProcessingParameterFile(
@@ -89,12 +88,7 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
             )
         )
 
-    def processAlgorithm(
-        self,
-        parameters: Dict[str, Any],
-        context: QgsProcessingContext,
-        feedback: QgsProcessingFeedback,
-    ) -> Dict[str, Any]:
+    def processAlgorithm(self, parameters, context, feedback):
 
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
@@ -107,12 +101,46 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
         if fields.indexFromName("lon_key") == -1:
             fields.append(QgsField("lon_key", QVariant.String))
 
+        valid_features = []
         for f in features:
             f.setFields(fields, False)
-            f["lon_key"] = f"{float(f['longitude']):.6f}"
+            # Ensure the attribute array actually matches the new field count.
+            # setFields() alone does not resize/pad the attribute values,
+            # which can leave some features misaligned once a field is added.
+            f.resizeAttributes(fields.count())
+
+            lon_value = f["longitude"]
+
+            # Guard against null/invalid longitude values (QGIS returns
+            # NULL / QVariant() for missing attributes, not Python None)
+            if lon_value is None or lon_value == NULL:
+                feedback.pushWarning(
+                    "Feature id " + str(f.id()) + " has a null longitude value, skipping."
+                )
+                continue
+
+            try:
+                f["lon_key"] = "{:.7f}".format(float(lon_value))
+            except (TypeError, ValueError) as e:
+                feedback.pushWarning(
+                    "Feature id " + str(f.id()) + " has invalid longitude '" + str(lon_value) + "': " + str(e)
+                )
+                continue
+
+            valid_features.append(f)
+
+        features = valid_features
 
         features, fields = gmdhelpers.add_count(features, fields, "lon_key")
-        features = [f for f in features if f["n"] > 1]
+
+        # Defensive filter: skip any feature where the count came back null
+        # rather than a real integer (shouldn't happen after the fix above,
+        # but keeps the algorithm from crashing if it ever does).
+        features = [
+            f for f in features
+            if f["n"] is not None and f["n"] != NULL and f["n"] > 1
+        ]
+
         features = gmdhelpers.arrange(features, "lon_key")
 
         return gmdhelpers.export_features_to_sink(
