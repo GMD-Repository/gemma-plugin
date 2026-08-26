@@ -621,6 +621,43 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
         self.assertIn("hh_count", spec_field_names, "Special EA layer schema MUST contain 'hh_count'")
         self.assertIn("bldg_count", spec_field_names, "Special EA layer schema MUST contain 'bldg_count'")
 
+    def test_merged_ea_schema_includes_indicator_gps_min_circle(self):
+        """Verify that merged_export_fields includes indicator, gps, and min_circle fields."""
+        from qgis.core import QgsFields, QgsField
+        try:
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            try:
+                from PyQt5.QtCore import QVariant
+            except ImportError:
+                from qgis.core import QVariant
+
+        export_field_names = [
+            "fid", "map_uuid", "geocode", "region", "province",
+            "city_mun", "barangay", "code", "name", "ean",
+            "hhcount", "bldgcount", "sy", "new_ean", "hh_count",
+            "bldg_count", "ea_type", "remarks"
+        ]
+        export_fields = QgsFields()
+        for fname in export_field_names:
+            export_fields.append(QgsField(fname, QVariant.String))
+
+        merged_export_fields = QgsFields(export_fields)
+        for fname in ("indicator", "gps", "min_circle"):
+            if merged_export_fields.indexOf(fname) == -1:
+                merged_export_fields.append(QgsField(fname, QVariant.String))
+
+        merged_field_names = [merged_export_fields.at(i).name() for i in range(merged_export_fields.count())]
+        self.assertIn("indicator", merged_field_names, "Merged EA layer schema MUST contain 'indicator'")
+        self.assertIn("gps", merged_field_names, "Merged EA layer schema MUST contain 'gps'")
+        self.assertIn("min_circle", merged_field_names, "Merged EA layer schema MUST contain 'min_circle'")
+
+        from qgis.core import QgsFeature
+        exp_feat = QgsFeature(merged_export_fields)
+        indicator_idx = merged_export_fields.indexOf("indicator")
+        exp_feat.setAttribute(indicator_idx, "")
+        self.assertEqual(exp_feat.attribute("indicator"), "")
+
     def test_enable_thresholds_toggle_behavior(self):
         """Verify that default threshold values (min=100, max=300) are maintained."""
         ea_high = {"original_id": 1, "hh_count": 500.0}

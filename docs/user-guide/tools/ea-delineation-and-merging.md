@@ -127,6 +127,14 @@ The output layers `<geocode>_delineated_ea2026`, `<geocode>_merged_ea2026`, and 
 | **ea_type** | String | EA classification type (`STANDARD` or `SPECIAL`). |
 | **remarks** | String | Processing note detailing action or split strategy (e.g. `Split along road network`, `Merged EA`, `Generated from Gap layer`). |
 
+In addition, the **`merge_ea2026`** (`<geocode>_merged_ea2026`) output layer includes the following 3 additional fields:
+
+| Field Name | Type | Description |
+|------------|------|-------------|
+| **indicator** | String | Verification status indicator (e.g. `0` = Not Verified, `1` = Verified, Accessible, `2` = Verified, Not Accessible). |
+| **gps** | String | Distance metric to GNSS/GPS position coordinates evaluated against minimum bounding circle. |
+| **min_circle** | String | Minimum bounding circle radius calculated from geometry for QField verification checks. |
+
 ---
 
 ## Tab 3 — Enumeration Area Merge
