@@ -28,6 +28,10 @@ def run_phase_7(
     eas = list(p6["merged_eas"])
     min_household = p1["min_household"]
     max_household = p1["max_household"]
+    delineation_candidate_ids = p2.get("delineation_candidate_ids", set())
+    merge_candidate_ids = p2.get("merge_candidate_ids", set())
+    eadel_indi_col_idx = p1.get("eadel_indi_col_idx", -1)
+    full_ea_by_id = p2.get("full_ea_by_id", {})
 
     multi_feedback.setCurrentStep(6)
     multi_feedback.setProgressText(f"{_PHASE_LABELS[6]}...")
@@ -50,8 +54,8 @@ def run_phase_7(
             f"{_PHASE_LABELS[6]} [pass {compliance_pass}/{max_compliance_passes}]..."
         )
 
-        over_idx = [i for i, ea in enumerate(eas) if is_delineation_candidate(ea)]
-        under_idx = [i for i, ea in enumerate(eas) if is_merge_candidate(ea)]
+        over_idx = [i for i, ea in enumerate(eas) if is_delineation_candidate(ea, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids)]
+        under_idx = [i for i, ea in enumerate(eas) if is_merge_candidate(ea, min_household, merge_candidate_ids)]
 
         if not over_idx and not under_idx:
             break
@@ -64,11 +68,13 @@ def run_phase_7(
         removed = set()
         added = []
 
-        # Fix over-threshold EAs via forced geometric split
+        # Fix over-threshold EAs via forced geometric split (only for genuine delineation candidates)
         for i in over_idx:
             if i in removed:
                 continue
             ea = eas[i]
+            if ea.get("original_id") not in delineation_candidate_ids:
+                continue
             if ea.get("from_merge", False):
                 continue
             parts = force_geometric_split(ea, max_household, feedback)
@@ -91,6 +97,8 @@ def run_phase_7(
             if i in removed:
                 continue
             ea = eas[i]
+            if ea.get("from_split", False):
+                continue
             bar = ea["parent_barangay"]
 
             best_j = -1
@@ -98,11 +106,13 @@ def run_phase_7(
             for j, nb in enumerate(eas):
                 if j == i or j in removed:
                     continue
+                if nb.get("from_split", False):
+                    continue
                 if nb["parent_barangay"] != bar:
                     continue
-                if is_delineation_candidate(nb):
+                if is_delineation_candidate(nb, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
                     continue
-                if nb.get("is_special_ea", False) and not is_merge_candidate(nb):
+                if nb.get("original_id") in delineation_candidate_ids:
                     continue
                 if ea["geom"].touches(nb["geom"]) or ea["geom"].intersects(nb["geom"]):
                     combined = ea["hh_count"] + nb["hh_count"]
@@ -116,11 +126,13 @@ def run_phase_7(
                 for j, nb in enumerate(eas):
                     if j == i or j in removed:
                         continue
+                    if nb.get("from_split", False):
+                        continue
                     if nb["parent_barangay"] != bar:
                         continue
-                    if is_delineation_candidate(nb):
+                    if is_delineation_candidate(nb, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
                         continue
-                    if nb.get("is_special_ea", False) and not is_merge_candidate(nb):
+                    if nb.get("original_id") in delineation_candidate_ids:
                         continue
                     if ea["geom"].touches(nb["geom"]) or ea["geom"].intersects(nb["geom"]):
                         combined = ea["hh_count"] + nb["hh_count"]
@@ -136,11 +148,13 @@ def run_phase_7(
                 for j, nb in enumerate(eas):
                     if j == i or j in removed:
                         continue
+                    if nb.get("from_split", False):
+                        continue
                     if nb["parent_barangay"] != bar:
                         continue
-                    if is_delineation_candidate(nb):
+                    if is_delineation_candidate(nb, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
                         continue
-                    if nb.get("is_special_ea", False) and not is_merge_candidate(nb):
+                    if nb.get("original_id") in delineation_candidate_ids:
                         continue
                     combined = ea["hh_count"] + nb["hh_count"]
                     if combined < max_household:
@@ -157,6 +171,7 @@ def run_phase_7(
                     "buildings": ea.get("buildings", []) + nb.get("buildings", []),
                     "hh_count": ea["hh_count"] + nb["hh_count"],
                     "original_hhcount": dominant.get("original_hhcount", 0),
+                    "original_bldgcount": dominant.get("original_bldgcount", 0),
                     "bldg_count": ea.get("bldg_count", 0) + nb.get("bldg_count", 0),
                     "attributes": list(dominant["attributes"]),
                     "original_id": dominant["original_id"],
