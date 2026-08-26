@@ -41,8 +41,11 @@ graph TD
 ---
 
 ### Step 3: Update `icon(self)` Method in PyQGIS Scripts & Algorithms
+> [!NOTE]
+> Scripts in `cbms_mv/` (`gmd_scripts/cbms_mv/`) and `deprecated/` are excluded from the mandatory icon synchronization protocol.
+
 * **Target Locations:** 
-  * `gmd_scripts/<script_name>.py` (Scripts in `gmd_scripts/`)
+  * `gmd_scripts/<script_name>.py` (Scripts in `gmd_scripts/`, excluding `cbms_mv/` and `deprecated/`)
   * `references/<tool_name>/algorithm.py`, `provider.py`, `plugin.py`, `dialog.py` (Subdirectory algorithms)
   * `gmd_pipeline.py` (Central toolbar/menu icon registry)
 * **Implementation Standards:**

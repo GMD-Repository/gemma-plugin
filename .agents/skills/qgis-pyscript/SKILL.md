@@ -28,7 +28,8 @@ Always apply the **Documentation First Policy**:
 * Analyze requirements before implementation.
 * Create an implementation plan before coding.
 * Validate assumptions against official documentation.
-* **Documentation & Code Auto-Trigger Policy:** Always trigger `qgis-doc-generator` whenever changes (additions, modifications, or deletions) are made to code or resources in `gmd_scripts/`, `references/`, or `qml styles/`.
+* **Documentation & Code Auto-Trigger Policy:** Always trigger `qgis-doc-generator` whenever changes (additions, modifications, or deletions) are made to code or resources in `gmd_scripts/` (strictly excluding `cbms_mv/` and `deprecated/`), `references/`, or `qml styles/`.
+* **Module Skill Exemption (`cbms_mv` & `deprecated`):** Scripts and processing algorithms in `cbms_mv/` (e.g. `gmd_scripts/cbms_mv/`) or `deprecated/` are strictly exempt from automated skills workflows. When authoring, debugging, or modifying code within `cbms_mv/`, do **NOT** invoke, require, or run `qgis-doc-generator`, `qgis-test-pipeline`, or `qgis-icon-updater` skills.
 * **Architectural & Target Disambiguation (Mandatory First Question):** Before generating code, **always confirm the exact QGIS deliverable type and menu preferences** with the user:
   * **Deliverable Type:**
     1. **Standalone PyQGIS Console Script** (Python script executed in QGIS Python Console Editor tabs)
