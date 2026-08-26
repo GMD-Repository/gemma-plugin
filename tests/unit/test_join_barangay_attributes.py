@@ -55,6 +55,17 @@ class TestJoinBarangayAttributes(unittest.TestCase):
         self.assertEqual(self.mod.title_case_smart("BARANGAY ONE"), "Barangay One")
         self.assertIsNotNone(self.mod.title_case_smart("POBLACION III"))
 
+    def test_algorithm_metadata(self):
+        """Test algorithm metadata methods and instantiation."""
+        alg = self.mod.JoinBarangayAttributes()
+        self.assertEqual(alg.name(), "join_barangay_attributes")
+        self.assertEqual(alg.displayName(), "Join Barangay Attributes")
+        self.assertEqual(alg.group(), "1Map")
+        self.assertEqual(alg.groupId(), "1map")
+        self.assertIn("barangay name (Final Name)", alg.shortHelpString())
+        self.assertIn("error_detail", alg.shortHelpString())
+        self.assertIsInstance(alg.createInstance(), self.mod.JoinBarangayAttributes)
+
 
 if __name__ == "__main__":
     unittest.main()
