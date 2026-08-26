@@ -110,9 +110,9 @@ def run_phase_7(
                     continue
                 if nb["parent_barangay"] != bar:
                     continue
-                if is_delineation_candidate(nb):
+                if is_delineation_candidate(nb, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
                     continue
-                if nb.get("is_special_ea", False) and not is_merge_candidate(nb):
+                if nb.get("original_id") in delineation_candidate_ids:
                     continue
                 if ea["geom"].touches(nb["geom"]) or ea["geom"].intersects(nb["geom"]):
                     combined = ea["hh_count"] + nb["hh_count"]
@@ -130,9 +130,9 @@ def run_phase_7(
                         continue
                     if nb["parent_barangay"] != bar:
                         continue
-                    if is_delineation_candidate(nb):
+                    if is_delineation_candidate(nb, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
                         continue
-                    if nb.get("is_special_ea", False) and not is_merge_candidate(nb):
+                    if nb.get("original_id") in delineation_candidate_ids:
                         continue
                     if ea["geom"].touches(nb["geom"]) or ea["geom"].intersects(nb["geom"]):
                         combined = ea["hh_count"] + nb["hh_count"]
@@ -152,9 +152,9 @@ def run_phase_7(
                         continue
                     if nb["parent_barangay"] != bar:
                         continue
-                    if is_delineation_candidate(nb):
+                    if is_delineation_candidate(nb, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
                         continue
-                    if nb.get("is_special_ea", False) and not is_merge_candidate(nb):
+                    if nb.get("original_id") in delineation_candidate_ids:
                         continue
                     combined = ea["hh_count"] + nb["hh_count"]
                     if combined < max_household:
