@@ -563,6 +563,9 @@ class QgsProcessingAlgorithm:
             return val
         return QgsVectorLayer(name="MockVectorLayer")
 
+    def parameterAsInt(self, parameters, name, context):
+        return int(parameters.get(name, 0))
+
     def parameterAsEnum(self, parameters, name, context):
         return int(parameters.get(name, 0))
 
