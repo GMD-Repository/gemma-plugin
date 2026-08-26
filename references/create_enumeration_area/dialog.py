@@ -3,9 +3,10 @@
 EA Delineation and Merging -- Custom Processing UI Dialog
 ---------------------------------------------------------
 Provides a comprehensive custom user interface for the EA Delineation and Merging
-processing workflow. Houses two main tabs:
-  Tab 1 — Pre-EA Processing   : clips EAs to their Barangay and fills coverage gaps.
+processing workflow. Houses three main tabs:
+  Tab 1 — EA Preprocessing         : clips EAs to their Barangay and fills coverage gaps.
   Tab 2 — Create Enumeration Areas : existing EA delineation and merging algorithm.
+  Tab 3 — Enumeration Area Merge   : updates previous EAs with 8-digit replacement polygons.
 
 Adapts to dynamic light and dark themes (defaulting to white) and features validation
 indicators, layer auto-detection, KPI cards, candidate table filters, and a stylized
@@ -14,9 +15,10 @@ console interface.
 
 import os
 from qgis.core import (
+    Qgis, QgsMessageLog,
     QgsApplication, QgsProject, QgsVectorLayer, QgsCoordinateTransform, QgsSpatialIndex,
     QgsFeature, QgsGeometry, QgsProcessingContext, QgsProcessingFeedback,
-    QgsCoordinateReferenceSystem, NULL, QgsMapLayerProxyModel
+    QgsCoordinateReferenceSystem, QgsWkbTypes, NULL, QgsMapLayerProxyModel
 )
 try:
     from qgis.gui import QgsMapLayerComboBox, QgsProjectionSelectionWidget, QgsCollapsibleGroupBox
@@ -28,7 +30,8 @@ from qgis.PyQt.QtWidgets import (
     QSizePolicy, QSpacerItem, QWidget, QSpinBox, QDoubleSpinBox, QCheckBox,
     QComboBox, QLineEdit, QFileDialog, QTabWidget, QTableWidget, QTableWidgetItem,
     QHeaderView, QProgressBar, QTextEdit, QScrollArea, QSplitter, QGridLayout,
-    QTextBrowser, QMessageBox, QGroupBox, QToolButton
+    QTextBrowser, QMessageBox, QGroupBox, QToolButton, QListWidget, QListWidgetItem,
+    QDialogButtonBox, QAbstractItemView
 )
 from qgis.PyQt.QtGui import QFont, QPixmap, QColor, QIcon, QTextCursor
 from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication, QThread, QObject, pyqtSignal, QVariant, QTimer
@@ -185,14 +188,15 @@ class EALauncherDialog(QDialog):
         and not during invisible construction or in response to subsequent
         project layer additions.
 
-        Runs both Tab 1 (Pre-EA Processing) and Tab 2 (Create Enumeration Areas)
-        auto-detection on first display.
+        Runs Tab 1 (EA Preprocessing), Tab 2 (Create Enumeration Areas), and
+        Tab 3 (Enumeration Area Merge) auto-detection on first display.
         """
         super().showEvent(event)
         if not self._initial_detect_done:
             self._initial_detect_done = True
             self._pre_ea_auto_detect_layers()
             self.auto_detect_layers()
+            self._ea_merge_auto_detect_ea_layer()
 
     # ── UI Construction ─────────────────────────────────────────────────────
 
@@ -215,7 +219,7 @@ class EALauncherDialog(QDialog):
         title_label.setStyleSheet("font-size: 15px; font-weight: bold; color: #2C3E50; padding: 0;")
         text_layout.addWidget(title_label)
 
-        sub_label = QLabel("Step-by-step workflow to prepare boundary layers, create enumeration areas, and merge small zones.")
+        sub_label = QLabel("Step-by-step workflow to prepare boundary layers, create enumeration areas, and merge replacement EA geometries.")
         sub_label.setWordWrap(True)
         sub_label.setStyleSheet("color: #7F8C8D; font-size: 11px;")
         text_layout.addWidget(sub_label)
@@ -263,7 +267,7 @@ class EALauncherDialog(QDialog):
         line.setStyleSheet("color: #BDC3C7;")
         root.addWidget(line)
 
-        # Top-level tab widget: Tab 1 = Pre-EA Processing, Tab 2 = Create Enumeration Areas
+        # Top-level tab widget: Tab 1 = EA Preprocessing, Tab 2 = Create Enumeration Areas, Tab 3 = Enumeration Area Merge
         self.main_tabs = QTabWidget()
         self.main_tabs.setObjectName("mainTabs")
         self.main_tabs.tabBar().setElideMode(Qt.ElideNone)
@@ -291,6 +295,7 @@ class EALauncherDialog(QDialog):
 
         self._build_pre_ea_tab()
         self._build_create_ea_tab()
+        self._build_ea_merge_tab()
 
         self.main_tabs.currentChanged.connect(self._on_main_tab_changed)
 
@@ -298,17 +303,31 @@ class EALauncherDialog(QDialog):
 
     def _toggle_current_tab_description(self):
         """Toggle the description panel for whichever main tab is currently active."""
-        if self.main_tabs.currentIndex() == 0:
+        idx = self.main_tabs.currentIndex()
+        if idx == 0:
             self._pre_ea_toggle_description()
-        else:
+        elif idx == 1:
             self.toggle_help()
+        elif idx == 2:
+            self._ea_merge_toggle_description()
 
     def _on_main_tab_changed(self, index):
         """Update toggle button icon state when switching tabs."""
         show_icon = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "icons", "show_description.svg"))
         hide_icon = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "icons", "hide_description.svg"))
         
-        is_vis = self.pre_ea_desc_panel.isVisible() if index == 0 else self.help_panel.isVisible()
+        if index == 0:
+            is_vis = self.pre_ea_desc_panel.isVisible()
+        elif index == 1:
+            is_vis = self.help_panel.isVisible()
+        elif index == 2:
+            is_vis = self.ea_merge_desc_panel.isVisible() if hasattr(self, 'ea_merge_desc_panel') else False
+            self._ea_merge_auto_detect_ea_layer()
+        else:
+            is_vis = False
+
+        self.toggle_desc_btn.setEnabled(True)
+
         if is_vis:
             self.toggle_desc_btn.setIcon(QIcon(hide_icon))
             self.toggle_desc_btn.setToolTip("Hide Description Panel")
@@ -317,11 +336,11 @@ class EALauncherDialog(QDialog):
             self.toggle_desc_btn.setToolTip("Show Description Panel")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Tab 1 — Pre-EA Processing
+    # Tab 1 — EA Preprocessing
     # ─────────────────────────────────────────────────────────────────────────
 
     def _build_pre_ea_tab(self):
-        """Build the Pre-EA Processing tab (Tab 1) and add it to main_tabs."""
+        """Build the EA Preprocessing tab (Tab 1) and add it to main_tabs."""
         tab_widget = QWidget()
         tab_layout = QVBoxLayout(tab_widget)
         tab_layout.setContentsMargins(6, 6, 6, 6)
@@ -370,7 +389,7 @@ class EALauncherDialog(QDialog):
         inputs_layout.addWidget(self.pre_ea_bgy_status_lbl)
 
         # EA Layer
-        inputs_layout.addWidget(QLabel("EA Layer (Polygon)*"))
+        inputs_layout.addWidget(QLabel("EA Layer (Polygon, Optional)"))
         self.pre_ea_ea_combo = QgsMapLayerComboBox()
         self.pre_ea_ea_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
         self.pre_ea_ea_combo.setAllowEmptyLayer(True)
@@ -471,7 +490,7 @@ class EALauncherDialog(QDialog):
         summary_layout.setContentsMargins(10, 10, 10, 10)
         summary_layout.setSpacing(8)
 
-        summary_title = QLabel("Pre-EA Processing Summary")
+        summary_title = QLabel("EA Preprocessing Summary")
         summary_title.setFont(QFont("Segoe UI", 11, QFont.Bold))
         summary_layout.addWidget(summary_title)
 
@@ -600,10 +619,10 @@ class EALauncherDialog(QDialog):
         bottom_layout.addLayout(controls_row)
         tab_layout.addWidget(bottom)
 
-        self.main_tabs.addTab(tab_widget, "Pre-EA Processing")
+        self.main_tabs.addTab(tab_widget, "EA Preprocessing")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Tab 1 — Pre-EA Processing Slots
+    # Tab 1 — EA Preprocessing Slots
     # ─────────────────────────────────────────────────────────────────────────
 
     def _pre_ea_auto_detect_layers(self):
@@ -651,6 +670,8 @@ class EALauncherDialog(QDialog):
             from ...gmd_scripts.auto_arrange import auto_arrange_layers
             res = auto_arrange_layers(iface=getattr(self, 'iface', None))
             self._pre_ea_auto_detect_layers()
+            self.auto_detect_layers()
+            self._ea_merge_auto_detect_ea_layer()
             if hasattr(self, 'pre_ea_log_console'):
                 self.pre_ea_log_console.append(
                     f"<span style='color: #0969da; font-weight: bold;'>[INFO]</span> "
@@ -659,6 +680,7 @@ class EALauncherDialog(QDialog):
         except Exception as e:
             QgsMessageLog.logMessage(f"Auto Arrange error: {e}", "GEMMA", Qgis.Warning)
             self._pre_ea_auto_detect_layers()
+            self._ea_merge_auto_detect_ea_layer()
 
     def _pre_ea_validate_inputs(self):
         """Validate selected layers and update status labels."""
@@ -673,13 +695,18 @@ class EALauncherDialog(QDialog):
             )
 
         if not ea_layer:
-            self.pre_ea_ea_status_lbl.setText("EA Layer is required.")
+            if bgy_layer:
+                self.pre_ea_ea_status_lbl.setText(
+                    "No EA layer selected. A new EA layer will be created from the Barangay layer."
+                )
+            else:
+                self.pre_ea_ea_status_lbl.setText("No layer selected.")
         else:
             self.pre_ea_ea_status_lbl.setText(
                 f"Active: {ea_layer.featureCount()} EA polygons ({ea_layer.crs().authid()})."
             )
 
-        can_run = bool(bgy_layer and ea_layer)
+        can_run = bool(bgy_layer)
         self.pre_ea_run_btn.setEnabled(can_run)
 
     def _pre_ea_cancel(self):
@@ -741,7 +768,8 @@ class EALauncherDialog(QDialog):
 
     def _pre_ea_run(self):
         """Validate inputs and launch the Pre-EA Processing workflow."""
-        from qgis.core import QgsApplication
+        from qgis.core import QgsApplication, QgsProject
+        from .pre_ea_processor import PreEAProcessor
 
         bgy_layer = self.pre_ea_bgy_combo.currentLayer()
         ea_layer = self.pre_ea_ea_combo.currentLayer()
@@ -749,11 +777,6 @@ class EALauncherDialog(QDialog):
         if not bgy_layer:
             self._pre_ea_append_log(
                 "<span style='color:#cf222e; font-weight:bold;'>[ERROR] Barangay Layer is required.</span>"
-            )
-            return
-        if not ea_layer:
-            self._pre_ea_append_log(
-                "<span style='color:#cf222e; font-weight:bold;'>[ERROR] EA Layer is required.</span>"
             )
             return
 
@@ -1673,6 +1696,8 @@ class EALauncherDialog(QDialog):
             self._safe_set_layer(self.river_combo, candidates["river"])
         if candidates["gap"]:
             self._safe_set_layer(self.gap_combo, candidates["gap"])
+        if candidates["overlap"]:
+            self._safe_set_layer(self.overlap_combo, candidates["overlap"])
         self.validate_layer_inputs()
 
     def auto_arrange_and_detect_layers(self):
@@ -1680,7 +1705,9 @@ class EALauncherDialog(QDialog):
         try:
             from .auto_arrange import auto_arrange_layers
             res = auto_arrange_layers(iface=getattr(self, 'iface', None))
+            self._pre_ea_auto_detect_layers()
             self.auto_detect_layers()
+            self._ea_merge_auto_detect_ea_layer()
             if hasattr(self, 'log_console'):
                 self.log_console.append(
                     f"<span style='color: #0969da; font-weight: bold;'>[INFO]</span> "
@@ -1688,7 +1715,9 @@ class EALauncherDialog(QDialog):
                 )
         except Exception as e:
             QgsMessageLog.logMessage(f"Auto Arrange error: {e}", "GEMMA", Qgis.Warning)
+            self._pre_ea_auto_detect_layers()
             self.auto_detect_layers()
+            self._ea_merge_auto_detect_ea_layer()
 
     def validate_layer_inputs(self):
         """Perform validation on selected layers and show dynamic status subtitles."""
@@ -1833,7 +1862,7 @@ class EALauncherDialog(QDialog):
         merge_indi_idx = -1
         for i in range(fields.count()):
             name_lower = fields.at(i).name().lower()
-            if name_lower == "eadel_indi":
+            if name_lower in ("eadel_indi", "indicator"):
                 eadel_indi_idx = i
             elif name_lower == "merge_indi":
                 merge_indi_idx = i
@@ -1880,9 +1909,14 @@ class EALauncherDialog(QDialog):
 
             # Classify candidates:
             #   HH >= max_hh  → Delineation candidate (over-populated EA)
+            #   Explicit field indicator ("for delineation") → Delineation candidate
             #   HH <= min_hh  → Merge candidate (under-populated EA)
             #   Explicit field indicator ("for merging") → Merge candidate
             is_delin = (hh >= max_hh)
+            if not is_delin and eadel_indi_idx != -1:
+                val = feat.attribute(eadel_indi_idx)
+                if val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"):
+                    is_delin = True
 
             is_merge = False
             if not is_delin and merge_indi_idx != -1:
@@ -2224,10 +2258,713 @@ class EALauncherDialog(QDialog):
                 self.status_banner.setText(banner_text)
 
         except Exception as e:
+            import traceback
+            tb_str = traceback.format_exc()
             self.log_console.append(f"<span style='color:#cf222e; font-weight:bold;'>[FATAL] Error executing pipeline: {str(e)}</span>")
+            self.log_console.append(f"<pre style='color:#cf222e; font-size:11px; font-family:Consolas, monospace;'>{tb_str}</pre>")
             self.status_banner.setText(f"Error: Pipeline execution failed — {str(e)}")
         
         finally:
             self.run_btn.setEnabled(True)
             self.cancel_btn.setEnabled(False)
             self.feedback = None
+
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Tab 3 — Enumeration Area Merge
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _build_ea_merge_tab(self):
+        """Build the Enumeration Area Merge tab (Tab 3) and add it to main_tabs."""
+        tab_widget = QWidget()
+        tab_layout = QVBoxLayout(tab_widget)
+        tab_layout.setContentsMargins(6, 6, 6, 6)
+        tab_layout.setSpacing(6)
+
+        self._ea_merge_replacement_layers = []
+        self._ea_merge_cancelled = False
+
+        # ── Main Splitter: left (inputs+options) / right (summary+log) ────
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setObjectName("eaMergeSplitter")
+
+        # ── LEFT PANEL ──────────────────────────────────────────────────
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(2, 2, 2, 2)
+        left_layout.setSpacing(8)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 5, 0)
+        scroll_layout.setSpacing(10)
+
+        # ── 1. Previous EA Layer Group ────────────────────────────────────
+        ea_group = QGroupBox("Previous EA Layer")
+        ea_layout = QVBoxLayout(ea_group)
+        ea_layout.setContentsMargins(8, 8, 8, 8)
+        ea_layout.setSpacing(6)
+
+        self.ea_merge_detect_btn = QPushButton("Auto-detect Layers")
+        self.ea_merge_detect_btn.setToolTip(
+            "Scan project layers and auto-select Previous EA (*_ea*, *_ea2024, *_ea2026) layer."
+        )
+        self.ea_merge_detect_btn.clicked.connect(self._ea_merge_auto_detect_ea_layer)
+        ea_layout.addWidget(self.ea_merge_detect_btn)
+
+        ea_layout.addWidget(QLabel("Previous EA Layer (Polygon)*"))
+        self.ea_merge_ea_combo = QgsMapLayerComboBox(self)
+        self.ea_merge_ea_combo.setAllowEmptyLayer(True)
+        self.ea_merge_ea_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
+        ea_layout.addWidget(self.ea_merge_ea_combo)
+
+        self.ea_merge_ea_status_lbl = QLabel("No layer selected.")
+        self.ea_merge_ea_status_lbl.setWordWrap(True)
+        ea_layout.addWidget(self.ea_merge_ea_status_lbl)
+
+        scroll_layout.addWidget(ea_group)
+
+        # ── 2. Replacement Polygon Layers (Multi Input) ───────────────────
+        repl_group = QGroupBox("Replacement Polygon Layers — Multi Input")
+        repl_layout = QVBoxLayout(repl_group)
+        repl_layout.setContentsMargins(8, 8, 8, 8)
+        repl_layout.setSpacing(6)
+
+        repl_layout.addWidget(QLabel("Selected Replacement Layers (8-digit numeric names):"))
+
+        self.ea_merge_layers_list = QListWidget()
+        self.ea_merge_layers_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.ea_merge_layers_list.setMinimumHeight(120)
+        self.ea_merge_layers_list.setMaximumHeight(180)
+        self.ea_merge_layers_list.setStyleSheet("""
+            QListWidget {
+                border: 1px solid #BDC3C7;
+                border-radius: 4px;
+                background-color: white;
+                font-family: Consolas, monospace;
+                font-size: 11px;
+            }
+            QListWidget::item {
+                padding: 4px 6px;
+            }
+        """)
+        repl_layout.addWidget(self.ea_merge_layers_list)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(6)
+
+        self.ea_merge_select_btn = QPushButton("Select Multiple Layers")
+        self.ea_merge_select_btn.setToolTip("Open layer picker to select one or more 8-digit replacement polygon layers.")
+        self.ea_merge_select_btn.clicked.connect(self._ea_merge_select_layers)
+        btn_row.addWidget(self.ea_merge_select_btn)
+
+        self.ea_merge_clear_btn = QPushButton("Clear")
+        self.ea_merge_clear_btn.setToolTip("Clear selected replacement layers list.")
+        self.ea_merge_clear_btn.clicked.connect(self._ea_merge_clear_layers)
+        btn_row.addWidget(self.ea_merge_clear_btn)
+
+        repl_layout.addLayout(btn_row)
+
+        # Validation Checklist Indicators
+        val_frame = QFrame()
+        val_frame.setFrameShape(QFrame.StyledPanel)
+        val_frame.setStyleSheet("background-color: #F8F9FA; border: 1px solid #E2E8F0; border-radius: 4px; padding: 4px;")
+        val_layout = QVBoxLayout(val_frame)
+        val_layout.setContentsMargins(6, 4, 6, 4)
+        val_layout.setSpacing(2)
+
+        val_title = QLabel("<b>Validation Checklist:</b>")
+        val_layout.addWidget(val_title)
+
+        self.ea_merge_val_poly_lbl = QLabel("• Polygon layers: -")
+        self.ea_merge_val_poly_lbl.setStyleSheet("color: #7F8C8D; font-size: 11px;")
+        val_layout.addWidget(self.ea_merge_val_poly_lbl)
+
+        self.ea_merge_val_name_lbl = QLabel("• 8-digit layer names: -")
+        self.ea_merge_val_name_lbl.setStyleSheet("color: #7F8C8D; font-size: 11px;")
+        val_layout.addWidget(self.ea_merge_val_name_lbl)
+
+        self.ea_merge_val_geom_lbl = QLabel("• Valid geometries: -")
+        self.ea_merge_val_geom_lbl.setStyleSheet("color: #7F8C8D; font-size: 11px;")
+        val_layout.addWidget(self.ea_merge_val_geom_lbl)
+
+        repl_layout.addWidget(val_frame)
+        scroll_layout.addWidget(repl_group)
+
+        # ── 3. Output Preview Group ───────────────────────────────────────
+        out_group = QGroupBox("Output Preview")
+        out_layout = QVBoxLayout(out_group)
+        out_layout.setContentsMargins(8, 8, 8, 8)
+        out_layout.setSpacing(4)
+
+        grid = QGridLayout()
+        grid.setSpacing(4)
+        grid.addWidget(QLabel("Geographic Code:"), 0, 0)
+        self.ea_merge_out_geocode_lbl = QLabel("-")
+        self.ea_merge_out_geocode_lbl.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        grid.addWidget(self.ea_merge_out_geocode_lbl, 0, 1)
+
+        grid.addWidget(QLabel("Output Layer:"), 1, 0)
+        self.ea_merge_out_layer_lbl = QLabel("-")
+        self.ea_merge_out_layer_lbl.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        grid.addWidget(self.ea_merge_out_layer_lbl, 1, 1)
+
+        grid.addWidget(QLabel("Excel Output:"), 2, 0)
+        self.ea_merge_out_excel_lbl = QLabel("-")
+        self.ea_merge_out_excel_lbl.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        grid.addWidget(self.ea_merge_out_excel_lbl, 2, 1)
+
+        out_layout.addLayout(grid)
+        scroll_layout.addWidget(out_group)
+
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        left_layout.addWidget(scroll)
+        left_widget.setMinimumWidth(330)
+        splitter.addWidget(left_widget)
+
+        # ── RIGHT PANEL ─────────────────────────────────────────────────
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(2, 2, 2, 2)
+        right_layout.setSpacing(8)
+
+        right_tabs = QTabWidget()
+        right_tabs.setObjectName("eaMergeRightTabs")
+
+        # ── Summary Tab ─────────────────────────────────────────────────
+        summary_tab = QWidget()
+        summary_layout = QVBoxLayout(summary_tab)
+        summary_layout.setContentsMargins(10, 10, 10, 10)
+        summary_layout.setSpacing(8)
+
+        summary_title = QLabel("Enumeration Area Merge Summary")
+        summary_title.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        summary_layout.addWidget(summary_title)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        summary_layout.addWidget(sep)
+
+        sum_grid = QGridLayout()
+        sum_grid.setSpacing(4)
+        sum_grid.setColumnStretch(1, 1)
+
+        def _add_ea_merge_sum_row(label_text, row_idx):
+            lbl = QLabel(label_text)
+            val = QLabel("-")
+            val.setFont(QFont("Segoe UI", 9, QFont.Bold))
+            val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            sum_grid.addWidget(lbl, row_idx, 0)
+            sum_grid.addWidget(val, row_idx, 1)
+            return val
+
+        self._ea_merge_sum_geocode_val = _add_ea_merge_sum_row("Geographic Code:", 0)
+        self._ea_merge_sum_ea_input_val = _add_ea_merge_sum_row("Previous EA Layer:", 1)
+        self._ea_merge_sum_repl_layers_val = _add_ea_merge_sum_row("Replacement Layers:", 2)
+        self._ea_merge_sum_repl_feats_val = _add_ea_merge_sum_row("Replacement Features:", 3)
+        self._ea_merge_sum_mod_eas_val = _add_ea_merge_sum_row("Modified EA Features:", 4)
+        self._ea_merge_sum_final_eas_val = _add_ea_merge_sum_row("Final EA Features:", 5)
+        self._ea_merge_sum_output_val = _add_ea_merge_sum_row("Output Layer:", 6)
+        self._ea_merge_sum_excel_val = _add_ea_merge_sum_row("Excel Output:", 7)
+
+        summary_layout.addLayout(sum_grid)
+
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.HLine)
+        sep2.setFrameShadow(QFrame.Sunken)
+        summary_layout.addWidget(sep2)
+
+        self._ea_merge_sum_status_lbl = QLabel("Status: READY")
+        self._ea_merge_sum_status_lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        summary_layout.addWidget(self._ea_merge_sum_status_lbl)
+        summary_layout.addStretch()
+
+        right_tabs.addTab(summary_tab, "Summary")
+
+        # ── Log Tab ─────────────────────────────────────────────────────
+        log_tab = QWidget()
+        log_layout = QVBoxLayout(log_tab)
+        log_layout.setContentsMargins(6, 6, 6, 6)
+        log_layout.setSpacing(4)
+
+        log_controls = QHBoxLayout()
+        log_controls.addWidget(QLabel("Processing Log:"))
+        log_controls.addStretch()
+        self.ea_merge_copy_log_btn = QPushButton("Copy Log")
+        self.ea_merge_copy_log_btn.setToolTip("Copy processing log to clipboard.")
+        self.ea_merge_copy_log_btn.clicked.connect(self._ea_merge_copy_log)
+        log_controls.addWidget(self.ea_merge_copy_log_btn)
+        self.ea_merge_clear_log_btn = QPushButton("Clear")
+        self.ea_merge_clear_log_btn.setToolTip("Clear the processing log.")
+        self.ea_merge_clear_log_btn.clicked.connect(lambda: self.ea_merge_log_console.clear())
+        log_controls.addWidget(self.ea_merge_clear_log_btn)
+        log_layout.addLayout(log_controls)
+
+        self.ea_merge_log_console = QTextEdit()
+        self.ea_merge_log_console.setObjectName("eaMergeLogConsole")
+        self.ea_merge_log_console.setReadOnly(True)
+        log_layout.addWidget(self.ea_merge_log_console)
+
+        right_tabs.addTab(log_tab, "Processing Log")
+
+        right_layout.addWidget(right_tabs)
+        right_widget.setMinimumWidth(480)
+        splitter.addWidget(right_widget)
+
+        # ── Description Panel (third splitter pane) ──────────────────────
+        self.ea_merge_desc_panel = QWidget()
+        desc_panel_layout = QVBoxLayout(self.ea_merge_desc_panel)
+        desc_panel_layout.setContentsMargins(4, 4, 4, 4)
+        desc_panel_layout.setSpacing(0)
+
+        self.ea_merge_desc_browser = QTextBrowser()
+        self.ea_merge_desc_browser.setObjectName("eaMergeDescBrowser")
+        self.ea_merge_desc_browser.setOpenExternalLinks(True)
+        self.ea_merge_desc_browser.setHtml(self._ea_merge_help_html())
+        desc_panel_layout.addWidget(self.ea_merge_desc_browser)
+
+        self.ea_merge_desc_panel.setMinimumWidth(240)
+        splitter.addWidget(self.ea_merge_desc_panel)
+        splitter.setSizes([310, 640, 260])
+
+        tab_layout.addWidget(splitter, 1)
+
+        # ── Bottom Bar ───────────────────────────────────────────────────
+        bottom = QWidget()
+        bottom_layout = QVBoxLayout(bottom)
+        bottom_layout.setContentsMargins(10, 4, 10, 6)
+        bottom_layout.setSpacing(4)
+
+        self.ea_merge_status_banner = QLabel("Ready.")
+        self.ea_merge_status_banner.setWordWrap(True)
+        self.ea_merge_status_banner.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        bottom_layout.addWidget(self.ea_merge_status_banner)
+
+        controls_row = QHBoxLayout()
+        self.ea_merge_progress_bar = QProgressBar()
+        self.ea_merge_progress_bar.setRange(0, 100)
+        self.ea_merge_progress_bar.setValue(0)
+        self.ea_merge_progress_bar.setFixedHeight(26)
+        controls_row.addWidget(self.ea_merge_progress_bar)
+
+        self.ea_merge_cancel_btn = QPushButton("Cancel")
+        self.ea_merge_cancel_btn.setMinimumWidth(80)
+        self.ea_merge_cancel_btn.setFixedHeight(26)
+        self.ea_merge_cancel_btn.setEnabled(False)
+        self.ea_merge_cancel_btn.clicked.connect(self._ea_merge_cancel)
+        controls_row.addWidget(self.ea_merge_cancel_btn)
+
+        self.ea_merge_run_btn = QPushButton("Run")
+        self.ea_merge_run_btn.setMinimumWidth(120)
+        self.ea_merge_run_btn.setFixedHeight(26)
+        self.ea_merge_run_btn.clicked.connect(self._ea_merge_run)
+        controls_row.addWidget(self.ea_merge_run_btn)
+
+        bottom_layout.addLayout(controls_row)
+        tab_layout.addWidget(bottom)
+
+        # Connect signals
+        self.ea_merge_ea_combo.currentIndexChanged.connect(self._ea_merge_validate_inputs)
+
+        self.main_tabs.addTab(tab_widget, "Enumeration Area Merge")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Tab 3 — Slots & Validation
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _ea_merge_toggle_description(self):
+        """Toggle the visibility of the Enumeration Area Merge description panel."""
+        if not hasattr(self, 'ea_merge_desc_panel'):
+            return
+        is_visible = not self.ea_merge_desc_panel.isVisible()
+        self.ea_merge_desc_panel.setVisible(is_visible)
+
+        show_icon_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "icons", "show_description.svg")
+        )
+        hide_icon_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "icons", "hide_description.svg")
+        )
+        if is_visible:
+            icon = QIcon(hide_icon_path) if os.path.exists(hide_icon_path) else QIcon()
+            self.toggle_desc_btn.setIcon(icon)
+            self.toggle_desc_btn.setToolTip("Hide Description Panel")
+        else:
+            icon = QIcon(show_icon_path) if os.path.exists(show_icon_path) else QIcon()
+            self.toggle_desc_btn.setIcon(icon)
+            self.toggle_desc_btn.setToolTip("Show Description Panel")
+
+    @staticmethod
+    def _ea_merge_help_html() -> str:
+        """Return the HTML description string for the Enumeration Area Merge description panel."""
+        from .ea_merge_processor import EAMergeProcessor
+        return EAMergeProcessor.short_help_string()
+
+    def _ea_merge_auto_detect_ea_layer(self):
+        """Auto-detect Previous EA layer from the QGIS project for Tab 3."""
+        import re
+        pat_8 = re.compile(r"^\d{8}$")
+
+        layers = list(QgsProject.instance().mapLayers().values())
+
+        ea_patterns = ["_ea2024", "_ea2026", "_ea2025", "_ea2023", "_ea2022", "_ea_preprocessed", "_ea", "previous", "prev", "enumeration"]
+        non_ea_keywords = ["_bgy", "barangay", "brgy", "boundary", "road", "river", "bldg", "building", "point", "gap", "overlap"]
+
+        ea_match = None
+
+        for layer in layers:
+            if not isinstance(layer, QgsVectorLayer):
+                continue
+            if layer.geometryType() not in (2, QgsWkbTypes.PolygonGeometry):  # Polygon
+                continue
+            name_lower = layer.name().lower()
+            if pat_8.match(layer.name()):
+                continue
+            if any(k in name_lower for k in non_ea_keywords) and not any(pat in name_lower for pat in ea_patterns):
+                continue
+
+            for pat in ea_patterns:
+                if pat in name_lower:
+                    ea_match = layer
+                    break
+            if ea_match:
+                break
+
+        self._safe_set_layer(self.ea_merge_ea_combo, ea_match)
+
+        # Also auto-detect 8-digit replacement layers if none are selected yet
+        if not self._ea_merge_replacement_layers:
+            auto_repl = []
+            for layer in layers:
+                if not isinstance(layer, QgsVectorLayer):
+                    continue
+                if layer.geometryType() not in (2, QgsWkbTypes.PolygonGeometry):
+                    continue
+                if pat_8.match(layer.name()):
+                    auto_repl.append(layer)
+            if auto_repl:
+                self._ea_merge_replacement_layers = auto_repl
+                self._ea_merge_update_replacement_list()
+
+        self._ea_merge_validate_inputs()
+
+    def _ea_merge_select_layers(self):
+        """Open the multi-layer selection dialog for Tab 3 replacement polygon layers."""
+        dlg = MultiLayerSelectDialog(self, selected_layers=self._ea_merge_replacement_layers)
+        if dlg.exec_() == QDialog.Accepted:
+            self._ea_merge_replacement_layers = dlg.selected_layers
+            self._ea_merge_update_replacement_list()
+            self._ea_merge_validate_inputs()
+
+    def _ea_merge_clear_layers(self):
+        """Clear all selected replacement polygon layers for Tab 3."""
+        self._ea_merge_replacement_layers = []
+        self._ea_merge_update_replacement_list()
+        self._ea_merge_validate_inputs()
+
+    def _ea_merge_update_replacement_list(self):
+        """Refresh the QListWidget showing the selected replacement layers."""
+        self.ea_merge_layers_list.clear()
+        import re
+        pat = re.compile(r"^\d{8}$")
+        for layer in self._ea_merge_replacement_layers:
+            if not layer:
+                continue
+            is_valid_name = bool(pat.match(layer.name()))
+            badge = "✓" if is_valid_name else "✗ [INVALID NAME]"
+            item_text = f"{badge}  {layer.name()}  ({layer.featureCount()} feats)"
+            item = QListWidgetItem(item_text)
+            if not is_valid_name:
+                item.setForeground(QColor("#CF222E"))
+            else:
+                item.setForeground(QColor("#1A7F37"))
+            self.ea_merge_layers_list.addItem(item)
+
+    def _ea_merge_validate_inputs(self):
+        """Validate EA Input Layer and Replacement Polygon Layers and update UI indicators."""
+        import re
+        pat = re.compile(r"^\d{8}$")
+
+        ea_layer = self.ea_merge_ea_combo.currentLayer()
+        repl_layers = self._ea_merge_replacement_layers
+
+        # 1. EA Input Layer validation
+        geo_code = None
+        citymun = None
+        if not ea_layer:
+            self.ea_merge_ea_status_lbl.setText("<span style='color:#cf222e;'>Previous EA Layer is required.</span>")
+        else:
+            fc = ea_layer.featureCount()
+            crs_str = ea_layer.crs().authid()
+            self.ea_merge_ea_status_lbl.setText(f"Active: {fc} EA polygons ({crs_str}).")
+
+            # Extract 5-digit geocode
+            from .ea_merge_processor import _field_index_ci, _first_nonempty_value, _GEOCODE_FIELDS, _CITYMUN_FIELDS, _unique_values
+            geo_idx = _field_index_ci(ea_layer, _GEOCODE_FIELDS)
+            raw_geo = _first_nonempty_value(ea_layer, geo_idx)
+            if raw_geo:
+                digits = re.sub(r"\D", "", raw_geo)
+                if len(digits) >= 5:
+                    geo_code = digits[:5]
+
+            # Extract CityMun
+            citymun_idx = _field_index_ci(ea_layer, _CITYMUN_FIELDS)
+            if citymun_idx != -1:
+                vals = _unique_values(ea_layer, citymun_idx)
+                if len(vals) == 1:
+                    citymun = vals[0]
+
+        # 2. Replacement Layers validation
+        all_poly = True
+        all_8digits = True
+        all_valid_geom = True
+        has_repl = len(repl_layers) > 0
+
+        if not has_repl:
+            all_poly = False
+            all_8digits = False
+            all_valid_geom = False
+        else:
+            for lyr in repl_layers:
+                if not lyr or lyr.geometryType() != QgsWkbTypes.PolygonGeometry:
+                    all_poly = False
+                if not lyr or not pat.match(lyr.name()):
+                    all_8digits = False
+                if not lyr or lyr.featureCount() == 0 or not lyr.crs().isValid():
+                    all_valid_geom = False
+
+        # Update checklist labels
+        def _check_text(label_name, ok, active):
+            if not active:
+                return f"• {label_name}: <span style='color:#7F8C8D;'>-</span>"
+            if ok:
+                return f"• {label_name}: <span style='color:#1A7F37; font-weight:bold;'>✓ Valid</span>"
+            return f"• {label_name}: <span style='color:#CF222E; font-weight:bold;'>✗ Failed</span>"
+
+        self.ea_merge_val_poly_lbl.setText(_check_text("Polygon layers", all_poly, has_repl))
+        self.ea_merge_val_name_lbl.setText(_check_text("8-digit layer names", all_8digits, has_repl))
+        self.ea_merge_val_geom_lbl.setText(_check_text("Valid geometries", all_valid_geom, has_repl))
+
+        # Update Output Preview
+        if geo_code:
+            self.ea_merge_out_geocode_lbl.setText(geo_code)
+            self.ea_merge_out_layer_lbl.setText(f"{geo_code}_ea2026")
+            if citymun:
+                self.ea_merge_out_excel_lbl.setText(f"{geo_code}_earf_{citymun}.xlsx")
+            else:
+                self.ea_merge_out_excel_lbl.setText(f"{geo_code}_earf_Unknown.xlsx")
+        else:
+            self.ea_merge_out_geocode_lbl.setText("-")
+            self.ea_merge_out_layer_lbl.setText("-")
+            self.ea_merge_out_excel_lbl.setText("-")
+
+        # Enable/Disable Run button
+        can_run = bool(ea_layer and has_repl and all_poly and all_8digits and geo_code)
+        self.ea_merge_run_btn.setEnabled(can_run)
+
+    def _ea_merge_cancel(self):
+        """Request cancellation of the running EA Merge task."""
+        self._ea_merge_cancelled = True
+        self._ea_merge_append_log(
+            "<span style='color:#d17a00; font-weight:bold;'>[CANCEL] Cancellation requested by user...</span>"
+        )
+
+    def _ea_merge_copy_log(self):
+        """Copy the EA Merge processing log to clipboard."""
+        clipboard = QCoreApplication.instance().clipboard()
+        clipboard.setText(self.ea_merge_log_console.toPlainText())
+        self.ea_merge_copy_log_btn.setText("Copied!")
+        QTimer.singleShot(1500, lambda: self.ea_merge_copy_log_btn.setText("Copy Log"))
+
+    def _ea_merge_append_log(self, html: str):
+        """Append an HTML-formatted line to the EA Merge log console."""
+        self.ea_merge_log_console.append(html)
+        self.ea_merge_log_console.ensureCursorVisible()
+        QCoreApplication.processEvents()
+
+    def _ea_merge_format_log(self, msg: str) -> str:
+        """Format a plain log message string into colored HTML."""
+        msg_lower = msg.lower()
+        if msg.startswith("[ERROR]"):
+            return f"<span style='color:#cf222e; font-weight:bold;'>{msg}</span>"
+        if msg.startswith("[WARNING]"):
+            return f"<span style='color:#d17a00; font-weight:bold;'>{msg}</span>"
+        if msg.startswith("[INFO]") and ("complete" in msg_lower or "pass" in msg_lower or "success" in msg_lower):
+            return f"<span style='color:#1a7f37; font-weight:bold;'>{msg}</span>"
+        return f"<span style='color:#0969da;'>{msg}</span>"
+
+    def _ea_merge_run(self):
+        """Validate inputs and launch the Enumeration Area Merge processor."""
+        ea_layer = self.ea_merge_ea_combo.currentLayer()
+        repl_layers = self._ea_merge_replacement_layers
+
+        if not ea_layer:
+            self._ea_merge_append_log("<span style='color:#cf222e; font-weight:bold;'>[ERROR] Previous EA Layer is required.</span>")
+            return
+        if not repl_layers:
+            self._ea_merge_append_log("<span style='color:#cf222e; font-weight:bold;'>[ERROR] At least one Replacement Polygon Layer is required.</span>")
+            return
+
+        # UI state — running
+        self.ea_merge_run_btn.setEnabled(False)
+        self.ea_merge_cancel_btn.setEnabled(True)
+        self.ea_merge_progress_bar.setValue(0)
+        self.ea_merge_log_console.clear()
+        self.ea_merge_status_banner.setText("Processing Enumeration Area Merge...")
+
+        # Switch to log tab so user sees progress
+        right_tabs = self.ea_merge_log_console.parent().parent()
+        if hasattr(right_tabs, "setCurrentIndex"):
+            right_tabs.setCurrentIndex(1)  # Log tab
+
+        self._ea_merge_cancelled = False
+
+        def is_cancelled_fn():
+            return self._ea_merge_cancelled
+
+        def feedback_callback(msg):
+            self._ea_merge_append_log(self._ea_merge_format_log(msg))
+
+        def progress_callback(pct):
+            self.ea_merge_progress_bar.setValue(pct)
+            QCoreApplication.processEvents()
+
+        from .ea_merge_processor import EAMergeProcessor
+
+        processor = EAMergeProcessor(
+            ea_layer=ea_layer,
+            replacement_layers=repl_layers,
+            feedback_callback=feedback_callback,
+            progress_callback=progress_callback,
+            is_cancelled_fn=is_cancelled_fn,
+        )
+
+        result = processor.run()
+        self._ea_merge_on_finished(result)
+
+    def _ea_merge_on_finished(self, result):
+        """Handle completion of the Enumeration Area Merge run and update UI."""
+        self.ea_merge_run_btn.setEnabled(True)
+        self.ea_merge_cancel_btn.setEnabled(False)
+
+        summary = result.summary
+
+        if not result.success:
+            self.ea_merge_status_banner.setText(f"Error: {result.error_message}")
+            self._ea_merge_sum_status_lbl.setText("<span style='color:#cf222e; font-weight:bold;'>Status: ERROR</span>")
+            return
+
+        # Populate summary tab
+        self._ea_merge_sum_geocode_val.setText(summary.geographic_code)
+        self._ea_merge_sum_ea_input_val.setText(summary.ea_input_layer_name)
+        self._ea_merge_sum_repl_layers_val.setText(str(summary.replacement_layer_count))
+        self._ea_merge_sum_repl_feats_val.setText(str(summary.replacement_feature_count))
+        self._ea_merge_sum_mod_eas_val.setText(str(summary.modified_ea_count))
+        self._ea_merge_sum_final_eas_val.setText(str(summary.final_ea_feature_count))
+        self._ea_merge_sum_output_val.setText(summary.output_layer_name)
+        self._ea_merge_sum_excel_val.setText(summary.excel_file_name if summary.excel_generated else "Failed")
+
+        status_colors = {"PASS": "#1a7f37", "WARNING": "#d17a00", "ERROR": "#cf222e"}
+        status_color = status_colors.get(summary.overall_status, "#333")
+        self._ea_merge_sum_status_lbl.setText(
+            f"<span style='color:{status_color}; font-weight:bold;'>Status: {summary.overall_status}</span>"
+        )
+        self._ea_merge_sum_status_lbl.setTextFormat(Qt.RichText)
+
+        # Status banner
+        self.ea_merge_status_banner.setText(
+            f"Merge completed — Final EA Features: {summary.final_ea_feature_count} | Output: {summary.output_layer_name} | Status: PASS"
+        )
+
+        self.ea_merge_progress_bar.setValue(100)
+
+        # Switch to Summary tab
+        right_tabs = self.ea_merge_log_console.parent().parent()
+        if hasattr(right_tabs, "setCurrentIndex"):
+            right_tabs.setCurrentIndex(0)  # Summary tab
+
+
+class MultiLayerSelectDialog(QDialog):
+    """Modal dialog allowing selection of multiple polygon layers from the current QGIS project."""
+
+    def __init__(self, parent=None, selected_layers=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Replacement Polygon Layers")
+        self.setMinimumSize(450, 380)
+        self.selected_layers = list(selected_layers or [])
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        info_lbl = QLabel(
+            "Select one or more polygon layers with 8-digit numeric names\n"
+            "to use as replacement geometries:"
+        )
+        info_lbl.setWordWrap(True)
+        layout.addWidget(info_lbl)
+
+        # Quick selection buttons
+        btn_row = QHBoxLayout()
+        sel_all_btn = QPushButton("Select All")
+        sel_all_btn.clicked.connect(self._select_all)
+        btn_row.addWidget(sel_all_btn)
+
+        desel_all_btn = QPushButton("Deselect All")
+        desel_all_btn.clicked.connect(self._deselect_all)
+        btn_row.addWidget(desel_all_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        self.list_widget = QListWidget()
+        self.list_widget.setSelectionMode(QAbstractItemView.NoSelection)
+        self._populate_layers()
+        layout.addWidget(self.list_widget)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self._on_accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def _populate_layers(self):
+        selected_ids = {lyr.id() for lyr in self.selected_layers if lyr}
+        all_layers = list(QgsProject.instance().mapLayers().values())
+        for layer in all_layers:
+            if not isinstance(layer, QgsVectorLayer):
+                continue
+            if layer.geometryType() != QgsWkbTypes.PolygonGeometry:
+                continue
+            item = QListWidgetItem(self.list_widget)
+            item.setText(f"{layer.name()} ({layer.featureCount()} features)")
+            item.setData(Qt.UserRole, layer.id())
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            if layer.id() in selected_ids:
+                item.setCheckState(Qt.Checked)
+            else:
+                item.setCheckState(Qt.Unchecked)
+
+    def _select_all(self):
+        for i in range(self.list_widget.count()):
+            self.list_widget.item(i).setCheckState(Qt.Checked)
+
+    def _deselect_all(self):
+        for i in range(self.list_widget.count()):
+            self.list_widget.item(i).setCheckState(Qt.Unchecked)
+
+    def _on_accept(self):
+        self.selected_layers = []
+        project = QgsProject.instance()
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item.checkState() == Qt.Checked:
+                lid = item.data(Qt.UserRole)
+                lyr = project.mapLayer(lid)
+                if lyr:
+                    self.selected_layers.append(lyr)
+        self.accept()
+
