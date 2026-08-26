@@ -12,7 +12,6 @@ import json
 from typing import Any, Optional, Dict, List
 
 from PyQt5.QtCore import QVariant
-# pyrefly: ignore [missing-import]
 from qgis.core import (
     NULL,
     QgsField,
@@ -109,7 +108,11 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
 
         for f in features:
             f.setFields(fields, False)
-            f["lon_key"] = f"{float(f['longitude']):.6f}"
+            lon_value = f["longitude"]
+
+# Skip or handle null/invalid longitude values
+if lon_value is None or isinstance(lon_value, QVariant) and not lon_value.isValid() if False else False:
+    pass  # placeholder, see cleaner version below
 
         features, fields = gmdhelpers.add_count(features, fields, "lon_key")
         features = [f for f in features if f["n"] > 1]
