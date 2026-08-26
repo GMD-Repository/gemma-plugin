@@ -1,8 +1,8 @@
 """
 Join Barangay Attributes — Enhanced Fuzzy Match
 
-Timestamp   : 2026-08-20
-Version     : 1.1.0
+Timestamp   : 2026-08-26
+Version     : 1.2.0
 Changelog   :
   v1.0.0 - Initial enhanced version (Python-based fuzzy matching, Roman
            numeral <-> Arabic number normalization, match_status and
@@ -20,6 +20,10 @@ Changelog   :
            including its processing parameter, sink creation, and the
            logic that scheduled it to load into the project. Only the
            "Matched Barangays" output remains.
+  v1.2.0 - Retained only the first column (input barangay field), second
+           column ('barangay name (Final Name)'), and 'error_detail' column
+           in matched output. Removed all other intermediate diagnostic
+           and exact/fuzzy candidate columns.
 """
 
 import os
@@ -547,28 +551,10 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
         if field_name.lower() in orig_field_defs:
             f = orig_field_defs[field_name.lower()]
             out_fields.append(QgsField(f.name(), f.type(), f.typeName(), f.length(), f.precision()))
+        else:
+            out_fields.append(QgsField(field_name, QVariant.String, len=254))
 
         out_fields.append(QgsField('barangay name (Final Name)', QVariant.String, len=254))
-
-        if joined_bgy_field.lower() in orig_field_defs:
-            f = orig_field_defs[joined_bgy_field.lower()]
-            out_fields.append(QgsField('barangay (Exact Matched)', f.type(), f.typeName(), f.length(), f.precision()))
-        else:
-            out_fields.append(QgsField('barangay (Exact Matched)', QVariant.String, len=254))
-
-        out_fields.append(QgsField('psgc_bgy_2 (fuzzy matched)', QVariant.String, len=254))
-
-        area_field_name = None
-        for f in joined_layer.fields():
-            if f.name().lower() == 'area':
-                area_field_name = f.name()
-                out_fields.append(QgsField(f.name(), f.type(), f.typeName(), f.length(), f.precision()))
-                break
-
-        out_fields.append(QgsField('match_status', QVariant.String, len=50))
-        out_fields.append(QgsField('psgc_bgy (fuzzy matched)', QVariant.String, len=254))
-        out_fields.append(QgsField('match_distance', QVariant.Int))
-        out_fields.append(QgsField('all_candidates', QVariant.String, len=500))
         out_fields.append(QgsField('error_detail', QVariant.String, len=500))
 
         (sink, dest_id) = self.parameterAsSink(
@@ -598,13 +584,9 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
             out_feat = QgsFeature(out_fields)
             out_feat.setGeometry(feature.geometry())
             out_feat.setAttribute(field_name, feature[field_name])
-            out_feat.setAttribute('barangay (Exact Matched)', feature.attribute(joined_bgy_field))
-            if area_field_name:
-                out_feat.setAttribute(area_field_name, feature.attribute(area_field_name))
 
             roman_match, roman_dist = fuzzy_match_roman_only(
                 source_name, reference_names, max_distance)
-            out_feat.setAttribute('psgc_bgy_2 (fuzzy matched)', roman_match)
 
             has_exact = (exact_match and str(exact_match).strip() != ''
                          and str(exact_match) != 'NULL')
@@ -613,10 +595,6 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
             out_feat.setAttribute('barangay name (Final Name)', final_name)
 
             if has_exact:
-                out_feat.setAttribute('psgc_bgy (fuzzy matched)', str(exact_match))
-                out_feat.setAttribute('match_distance', 0)
-                out_feat.setAttribute('match_status', 'EXACT')
-                out_feat.setAttribute('all_candidates', str(exact_match))
                 out_feat.setAttribute('error_detail', '')
                 stats['exact'] += 1
             else:
@@ -624,61 +602,40 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
                     source_name, reference_names, max_distance)
 
                 if not candidates:
-                    out_feat.setAttribute('psgc_bgy (fuzzy matched)', None)
-                    out_feat.setAttribute('match_distance', None)
-                    out_feat.setAttribute('match_status', 'NO_MATCH')
-                    out_feat.setAttribute('all_candidates', '')
                     out_feat.setAttribute('error_detail',
-                        f'No match found within distance {max_distance} '
+                        f'No match found '
                         f'for "{source_name}"')
                     stats['no_match'] += 1
 
                 elif len(candidates) == 1:
                     best_name, best_dist, method = candidates[0]
-                    out_feat.setAttribute('psgc_bgy (fuzzy matched)', best_name)
-                    out_feat.setAttribute('match_distance', best_dist)
 
                     if method == 'ROMAN_NUMERAL':
-                        out_feat.setAttribute('match_status', 'ROMAN_NUMERAL_FIX')
                         out_feat.setAttribute('error_detail',
                             f'Matched via Roman/Arabic normalization: '
                             f'"{source_name}" → "{best_name}" (dist={best_dist})')
                         stats['roman'] += 1
                     else:
-                        out_feat.setAttribute('match_status', 'FUZZY_MATCH')
                         out_feat.setAttribute('error_detail', '')
                         stats['fuzzy'] += 1
 
-                    out_feat.setAttribute('all_candidates',
-                        f'{best_name} (dist={best_dist})')
-
                 else:
                     best_name, best_dist, method = candidates[0]
-                    out_feat.setAttribute('psgc_bgy (fuzzy matched)', best_name)
-                    out_feat.setAttribute('match_distance', best_dist)
-
                     same_dist = [c for c in candidates if c[1] == best_dist]
 
                     if len(same_dist) > 1:
-                        out_feat.setAttribute('match_status', 'MULTIPLE_MATCHES')
                         out_feat.setAttribute('error_detail',
                             f'{len(same_dist)} candidates with same distance '
                             f'{best_dist} for "{source_name}" — review needed')
                         stats['multiple'] += 1
                     elif method == 'ROMAN_NUMERAL':
-                        out_feat.setAttribute('match_status', 'ROMAN_NUMERAL_FIX')
                         out_feat.setAttribute('error_detail',
                             f'Matched via Roman/Arabic normalization: '
                             f'"{source_name}" → "{best_name}" (dist={best_dist})')
                         stats['roman'] += 1
                     else:
-                        out_feat.setAttribute('match_status', 'FUZZY_MATCH')
                         out_feat.setAttribute('error_detail', '')
                         stats['fuzzy'] += 1
-
-                    cand_str = ', '.join(
-                        f'{c[0]} (dist={c[1]})' for c in candidates[:10])
-                    out_feat.setAttribute('all_candidates', cand_str)
 
             sink.addFeature(out_feat)
             feedback.setProgress(int((i + 1) / total * 100))
@@ -690,14 +647,9 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
         if out_layer:
             config = out_layer.attributeTableConfig()
             widths = {
+                field_name: 170,
                 'barangay name (Final Name)': 170,
-                'barangay (Exact Matched)': 170,
-                'psgc_bgy (fuzzy matched)': 185,
-                'psgc_bgy_2 (fuzzy matched)': 185,
-                'match_distance': 100,
-                'match_status': 100,
-                'all_candidates': 120,
-                'error_detail': 120
+                'error_detail': 250
             }
             for i, col in enumerate(config.columns()):
                 f_name = col.name
@@ -752,23 +704,21 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
     def shortHelpString(self):
         return (
             'Enhanced Join Barangay Attributes with fuzzy matching.\n\n'
-            'Matches barangay names from a city/municipality layer against '
-            'a PSGC reference table using:\n'
-            '  • Exact name matching\n'
-            '  • Levenshtein distance fuzzy matching\n'
-            '  • Roman numeral ↔ Arabic number normalization\n\n'
-            'Output columns:\n'
-            '  • psgc_bgy — Best matching PSGC barangay name\n'
-            '  • match_distance — Levenshtein distance (0 = exact)\n'
-            '  • match_status — EXACT / FUZZY_MATCH / MULTIPLE_MATCHES / '
-            'ROMAN_NUMERAL_FIX / NO_MATCH\n'
-            '  • all_candidates — All matches within threshold\n'
-            '  • error_detail — Description of issues needing review\n\n'
-            'The Matched Barangays output is always a temporary scratch '
-            'layer, in a single run and in Batch Processing alike, so it '
-            'loads straight into the project instead of being written to '
-            'disk. A filtered PSGC layer for the target city/municipality '
-            'is always generated and loaded alongside it.'
+            'Matches barangay names from a city/municipality vector layer against '
+            'an official PSGC reference table using a multi-stage matching engine:\n'
+            '  1. Exact name matching\n'
+            '  2. Roman numeral ↔ Arabic number normalization (e.g., "Zone IV" ↔ "Zone 4")\n'
+            '  3. Levenshtein distance fuzzy matching\n\n'
+            'Output Layer Columns:\n'
+            '  • <field_name> — Original barangay attribute from source layer\n'
+            '  • barangay name (Final Name) — Resolved official PSGC barangay name\n'
+            '  • error_detail — Diagnostic audit trail (empty on clean matches; reports '
+            'Roman/Arabic transformations, ambiguous candidate collisions, or unmatched records)\n\n'
+            'Output Behavior:\n'
+            '  • Matched Barangays is always generated as a temporary memory scratch layer, '
+            'loading directly into the project in single and batch runs alike.\n'
+            '  • A filtered PSGC reference layer for the target city/municipality is also '
+            'automatically generated and loaded into the project.'
         )
 
     def createInstance(self):
