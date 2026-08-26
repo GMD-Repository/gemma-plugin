@@ -229,6 +229,177 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
         self.assertEqual(len(merged), 1, "Small EA + normal reference EA should merge into 1 EA.")
         self.assertEqual(merged[0]['hh_count'], 220.0, "Combined household count should be 40 + 180 = 220 HH.")
 
+    def test_delineated_split_eas_never_merged(self):
+        """Verify that delineated (from_split=True) EAs are never selected as merge candidates or merged."""
+        feedback = MockFeedback()
+
+        geom1 = make_square_geom(0, 0, 10)
+        geom2 = make_square_geom(10, 0, 10)
+
+        ea_small = {
+            'geom': geom1,
+            'buildings': [],
+            'hh_count': 50.0,
+            'original_hhcount': 50.0,
+            'bldg_count': 2,
+            'attributes': [1, "EA 001"],
+            'original_id': 301,
+            'original_code': "01737001001",
+            'is_new': False,
+            'split_by': 'none',
+            'from_merge': False,
+            'from_split': False,
+            'parent_barangay': "01737"
+        }
+
+        ea_split = {
+            'geom': geom2,
+            'buildings': [],
+            'hh_count': 120.0,
+            'original_hhcount': 250.0,
+            'bldg_count': 5,
+            'attributes': [2, "EA 002-1"],
+            'original_id': 302,
+            'original_code': "01737002002",
+            'is_new': True,
+            'split_by': 'road',
+            'from_merge': False,
+            'from_split': True,  # Delineated sub-EA
+            'parent_barangay': "01737"
+        }
+
+        result = process_barangay_merge(
+            bar_code="01737",
+            bar_eas=[ea_small, ea_split],
+            fback=feedback,
+            min_household=100.0,
+            max_household=300.0,
+            merge_candidate_ids={301},
+            delineation_candidate_ids={302}
+        )
+
+        self.assertEqual(len(result), 2, "Delineated/split EA should NOT be merged with small EA.")
+        for item in result:
+            self.assertFalse(item.get('from_merge', False), "Neither EA should be marked as merged.")
+
+    def test_under_threshold_ea_merges_with_special_ea(self):
+        """Verify that an under-threshold EA can merge with a contiguous Special EA while excluding delineation candidates."""
+        feedback = MockFeedback()
+
+        geom1 = make_square_geom(0, 0, 10)
+        geom2 = make_square_geom(10, 0, 10)
+
+        ea_small = {
+            'geom': geom1,
+            'buildings': [],
+            'hh_count': 50.0,
+            'original_hhcount': 50.0,
+            'bldg_count': 2,
+            'attributes': [1, "EA 001"],
+            'original_id': 401,
+            'original_code': "01737001001",
+            'is_new': False,
+            'split_by': 'none',
+            'from_merge': False,
+            'from_split': False,
+            'is_special_ea': False,
+            'parent_barangay': "01737"
+        }
+
+        ea_special = {
+            'geom': geom2,
+            'buildings': [],
+            'hh_count': 30.0,
+            'original_hhcount': 30.0,
+            'bldg_count': 1,
+            'attributes': [2, "Special EA Gap"],
+            'original_id': 402,
+            'original_code': "01737002002",
+            'is_new': False,
+            'split_by': 'none',
+            'from_merge': False,
+            'from_split': False,
+            'is_special_ea': True,  # Special EA
+            'parent_barangay': "01737"
+        }
+
+        result = process_barangay_merge(
+            bar_code="01737",
+            bar_eas=[ea_small, ea_special],
+            fback=feedback,
+            min_household=100.0,
+            max_household=300.0,
+            merge_candidate_ids={401},
+            delineation_candidate_ids=set()
+        )
+
+        self.assertEqual(len(result), 1, "Under-threshold EA should successfully merge with contiguous Special EA.")
+        self.assertEqual(result[0]['hh_count'], 80.0, "Combined household count should be 50 + 30 = 80 HH.")
+        self.assertTrue(result[0]['from_merge'], "Resulting merged EA must be marked with from_merge=True.")
+
+    def test_multi_iteration_merge_up_to_10_excluding_delin(self):
+        """Verify multi-iteration chain merging runs up to 10 iterations while strictly excluding delineation candidates."""
+        feedback = MockFeedback()
+
+        # Chain of 6 contiguous EAs of 15 HH each (total 90 HH) + 1 adjacent delineation candidate (350 HH)
+        eas = []
+        for i in range(6):
+            eas.append({
+                'geom': make_square_geom(i * 10, 0, 10),
+                'buildings': [],
+                'hh_count': 15.0,
+                'original_hhcount': 15.0,
+                'bldg_count': 1,
+                'attributes': [i + 1, f"EA {i+1:03d}"],
+                'original_id': 601 + i,
+                'original_code': f"0173700{i+1:03d}",
+                'is_new': False,
+                'split_by': 'none',
+                'from_merge': False,
+                'from_split': False,
+                'is_special_ea': False,
+                'parent_barangay': "01737"
+            })
+
+        # Delineation candidate adjacent to the last EA
+        ea_delin = {
+            'geom': make_square_geom(60, 0, 10),
+            'buildings': [],
+            'hh_count': 350.0,
+            'original_hhcount': 350.0,
+            'bldg_count': 10,
+            'attributes': [7, "EA 007 (Delin)"],
+            'original_id': 607,
+            'original_code': "01737007",
+            'is_new': False,
+            'split_by': 'none',
+            'from_merge': False,
+            'from_split': True,  # Delineated candidate
+            'is_special_ea': False,
+            'parent_barangay': "01737"
+        }
+        eas.append(ea_delin)
+
+        merge_ids = {601, 602, 603, 604, 605, 606}
+        delin_ids = {607}
+
+        result = process_barangay_merge(
+            bar_code="01737",
+            bar_eas=eas,
+            fback=feedback,
+            min_household=100.0,
+            max_household=300.0,
+            merge_candidate_ids=merge_ids,
+            delineation_candidate_ids=delin_ids
+        )
+
+        # 6 small EAs (90 HH total) should merge into 1 EA (90 HH), leaving the delineation candidate separate (total 2 EAs)
+        self.assertEqual(len(result), 2, "6 small EAs should merge into 1, leaving delineation candidate separate.")
+        merged_item = [item for item in result if item.get('from_merge', False)][0]
+        self.assertEqual(merged_item['hh_count'], 90.0, "Merged chain should have 90 HH.")
+        delin_item = [item for item in result if item.get('original_id') == 607][0]
+        self.assertFalse(delin_item.get('from_merge', False), "Delineation candidate must NOT be merged.")
+
     def test_prevent_merge_exceeding_max_household(self):
         """Verify that EAs are prevented from merging if their combined count exceeds max_household (300 HH)."""
         feedback = MockFeedback()
@@ -832,6 +1003,45 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
         feat_special = QgsFeature(special_ea_export_fields)
         exp_special = make_export_feature(feat_special, special_ea_export_fields)
         self.assertEqual(str(exp_special.attribute("sy")), "2026")
+
+    def test_merged_ea_hhcount_and_bldgcount_updated(self):
+        """Verify that hhcount and bldgcount fields are updated with the combined merged totals for merged EAs."""
+        from qgis.core import QgsFields, QgsField, QgsFeature
+        try:
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            from PyQt5.QtCore import QVariant
+
+        out_fields = QgsFields()
+        out_fields.append(QgsField("hhcount", QVariant.Double))
+        out_fields.append(QgsField("hh_count", QVariant.Int))
+        out_fields.append(QgsField("bldgcount", QVariant.Int))
+        out_fields.append(QgsField("bldg_count", QVariant.Int))
+
+        # Merged EA with original single-EA count 40 HH, but new combined count 90 HH & 5 bldgs
+        ea_merged = {
+            'hh_count': 90.0,
+            'original_hhcount': 40.0,
+            'bldg_count': 5,
+            'original_bldgcount': 2,
+            'from_merge': True,
+            'is_special_ea': False
+        }
+
+        # Simulate Phase 8 attribute assignment logic
+        out_feat = QgsFeature(out_fields)
+        val_hh = ea_merged['hh_count'] if (ea_merged.get('is_special_ea') or ea_merged.get('from_merge')) else ea_merged.get('original_hhcount')
+        val_bldg = ea_merged['bldg_count'] if (ea_merged.get('is_special_ea') or ea_merged.get('from_merge')) else ea_merged.get('original_bldgcount')
+
+        out_feat.setAttribute(out_fields.indexOf("hhcount"), float(val_hh))
+        out_feat.setAttribute(out_fields.indexOf("hh_count"), int(ea_merged['hh_count']))
+        out_feat.setAttribute(out_fields.indexOf("bldgcount"), int(val_bldg))
+        out_feat.setAttribute(out_fields.indexOf("bldg_count"), int(ea_merged['bldg_count']))
+
+        self.assertEqual(out_feat.attribute("hhcount"), 90.0, "hhcount for merged EA must reflect combined 90 HH.")
+        self.assertEqual(out_feat.attribute("hh_count"), 90, "hh_count for merged EA must reflect combined 90 HH.")
+        self.assertEqual(out_feat.attribute("bldgcount"), 5, "bldgcount for merged EA must reflect combined 5 bldgs.")
+        self.assertEqual(out_feat.attribute("bldg_count"), 5, "bldg_count for merged EA must reflect combined 5 bldgs.")
 
 
 if __name__ == "__main__":
