@@ -12,6 +12,7 @@ from qgis.core import (
     QgsPolygon,
     QgsFields,
     QgsField,
+    QgsVectorLayer,
 )
 
 from references.create_enumeration_area.helpers.classification import (
@@ -1184,9 +1185,137 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
         self.assertEqual(out_feat.attribute("bldgcount"), 2, "bldgcount for merged EA must preserve original bldgcount (2 bldgs).")
         self.assertEqual(out_feat.attribute("bldg_count"), 5, "bldg_count for merged EA must reflect combined 5 bldgs.")
 
+    def test_all_gaps_and_overlaps_in_special_ea_output(self):
+        """Verify that all gaps and overlaps are exported to the Special EA sink with appropriate fields."""
+        from qgis.core import QgsFields, QgsField, QgsFeature, QgsGeometry, QgsPointXY
+        try:
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            try:
+                from PyQt5.QtCore import QVariant
+            except ImportError:
+                from qgis.core import QVariant
+
+        from references.create_enumeration_area.helpers.geometry import allocate_gaps_to_parts
+
+        export_field_names = [
+            "fid", "map_uuid", "geocode", "region", "province",
+            "city_mun", "barangay", "code", "name", "ean",
+            "hhcount", "bldgcount", "sy", "new_ean", "hh_count",
+            "bldg_count", "ea_type", "remarks"
+        ]
+        export_fields = QgsFields()
+        for fname in export_field_names:
+            export_fields.append(QgsField(fname, QVariant.String))
+
+        special_ea_export_fields = QgsFields()
+        for f in export_fields:
+            if f.name() in ("hhcount", "bldgcount"):
+                continue
+            special_ea_export_fields.append(f)
+        if special_ea_export_fields.indexOf("special_type") == -1:
+            special_ea_export_fields.append(QgsField("special_type", QVariant.String))
+
+        # 1. Verify schema
+        spec_names = [special_ea_export_fields.at(i).name() for i in range(special_ea_export_fields.count())]
+        self.assertIn("special_type", spec_names)
+        self.assertIn("ea_type", spec_names)
+        self.assertIn("sy", spec_names)
+
+        # 2. Test gap detection via allocate_gaps_to_parts
+        # Create a parent polygon (0,0 to 10,10) and an EA part (0,0 to 5,10) leaving a gap (5,0 to 10,10)
+        parent_geom = QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]])
+        part1 = {
+            'geom': QgsGeometry.fromPolygonXY([[
+                QgsPointXY(0, 0), QgsPointXY(5, 0), QgsPointXY(5, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+            ]])
+        }
+
+        updated_parts, detected_gaps = allocate_gaps_to_parts([part1], parent_geom, min_gap_area=1.0)
+        self.assertEqual(len(detected_gaps), 1, "Should detect exactly 1 gap polygon.")
+        self.assertAlmostEqual(detected_gaps[0].area(), 50.0, places=1, msg="Gap area should be 50 m².")
+
+        # 3. Test building special_ea features for gap and overlap
+        gap_feat = QgsFeature(special_ea_export_fields)
+        gap_feat.setGeometry(detected_gaps[0])
+        gap_feat.setAttribute("geocode", "043404001")
+        gap_feat.setAttribute("ea_type", "GAP")
+        gap_feat.setAttribute("special_type", "GAP")
+        gap_feat.setAttribute("sy", "2026")
+        gap_feat.setAttribute("remarks", "Internal Barangay Gap")
+
+        self.assertEqual(gap_feat.attribute("special_type"), "GAP")
+        self.assertEqual(gap_feat.attribute("ea_type"), "GAP")
+
+        overlap_geom = QgsGeometry.fromPolygonXY([[
+            QgsPointXY(4, 0), QgsPointXY(6, 0), QgsPointXY(6, 10), QgsPointXY(4, 10), QgsPointXY(4, 0)
+        ]])
+        overlap_feat = QgsFeature(special_ea_export_fields)
+        overlap_feat.setGeometry(overlap_geom)
+        overlap_feat.setAttribute("geocode", "043404001")
+        overlap_feat.setAttribute("ea_type", "OVERLAP")
+        overlap_feat.setAttribute("special_type", "OVERLAP")
+        overlap_feat.setAttribute("sy", "2026")
+        overlap_feat.setAttribute("remarks", "Internal EA Overlap")
+
+        self.assertEqual(overlap_feat.attribute("special_type"), "OVERLAP")
+        self.assertEqual(overlap_feat.attribute("ea_type"), "OVERLAP")
+
+    def test_phase8_output_empty_layers_omitted(self):
+        """Verify that phase 8 returns only outputs with featureCount > 0."""
+        from references.create_enumeration_area.phases.phase8_output import run_phase_8
+
+        class DummyAlg:
+            DELINEATED_OUTPUT = "DELINEATED_OUTPUT"
+            MERGED_OUTPUT = "MERGED_OUTPUT"
+            SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
+            DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
+            MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
+            EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
+
+        alg = DummyAlg()
+        mock_feedback = MockFeedback()
+
+        p1 = {
+            "previous_ea_source": QgsVectorLayer("Polygon?crs=EPSG:4326", "test_ea", "memory"),
+            "building_source": QgsVectorLayer("Point?crs=EPSG:4326", "test_bldg", "memory"),
+            "target_crs": QgsVectorLayer("Polygon?crs=EPSG:4326", "test_ea", "memory").crs(),
+            "area_threshold": 1.0,
+            "max_household": 300,
+            "min_household": 100,
+            "bldg_hh_field": "hhcount",
+            "ea_id_field": "ean",
+            "barangay_by_id": {},
+        }
+        p2 = {
+            "out_fields": QgsFields(),
+            "delineation_candidate_ids": set(),
+            "merge_candidate_ids": set(),
+            "adjacent_ea_ids": set(),
+            "delineated_dest_id": "dest_delin",
+            "merged_dest_id": "dest_merged",
+            "special_ea_dest_id": "dest_special",
+            "delin_candidate_dest_id": "dest_delin_cand",
+            "merge_candidate_dest_id": "dest_merge_cand",
+            "extracted_buildings_dest_id": "dest_bldg",
+            "delin_candidate_feat_count": 0,
+            "merge_candidate_feat_count": 0,
+            "extracted_bldg_feat_count": 0,
+        }
+        p3 = {"road_geoms": {}, "river_geoms": {}}
+        p4 = {}
+        p7 = {"eas": []}
+
+        outputs = run_phase_8(alg, {}, None, mock_feedback, None, p1, p2, p3, p4, p7)
+        # All feature counts are 0, so outputs must be empty!
+        self.assertEqual(outputs, {}, "Expected empty outputs when all output layer feature counts are 0.")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

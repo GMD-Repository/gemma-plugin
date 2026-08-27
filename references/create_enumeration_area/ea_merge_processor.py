@@ -379,12 +379,19 @@ class EAMergeProcessor:
             self._progress(85)
 
             # ── Phase 11: Add to QGIS project ──────────────────────────────
-            QgsProject.instance().addMapLayer(output_layer)
-            self._log(
-                f"[INFO] Output layer '{self._output_layer_name}' added "
-                "to QGIS project."
-            )
-            self._result.output_layer = output_layer
+            if output_layer.featureCount() == 0:
+                self._log(
+                    f"[INFO] Output layer '{self._output_layer_name}' has 0 features; "
+                    "skipping adding layer to QGIS project."
+                )
+                self._result.output_layer = None
+            else:
+                QgsProject.instance().addMapLayer(output_layer)
+                self._log(
+                    f"[INFO] Output layer '{self._output_layer_name}' added "
+                    "to QGIS project."
+                )
+                self._result.output_layer = output_layer
             self._progress(90)
 
             # ── Phase 12: Read final attribute table for Excel ─────────────

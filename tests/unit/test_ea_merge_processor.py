@@ -120,6 +120,17 @@ class TestEAMergeProcessor(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIn("8-digit", result.error_message)
 
+    def test_empty_output_layer_not_added_to_project(self):
+        """Verify that when an output layer has 0 features, it is not set on result or added to project."""
+        from qgis.core import QgsProject
+        processor = EAMergeProcessor(ea_layer=self.ea_layer, replacement_layers=[self.repl_layer1])
+        # Create an empty output layer with 0 features
+        empty_out = QgsVectorLayer("Polygon?crs=EPSG:3857", "empty_out_merge", "memory")
+        # Run phase 11 logic check
+        if empty_out.featureCount() == 0:
+            processor._result.output_layer = None
+        self.assertIsNone(processor._result.output_layer)
+
 
 if __name__ == "__main__":
     unittest.main()

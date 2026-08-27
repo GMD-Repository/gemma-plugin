@@ -380,7 +380,7 @@ def run_phase_8(
     eas = list(p7.get("eas") or p7.get("split_eas", []))
     previous_ea_source = p1["previous_ea_source"]
     building_source = p1["building_source"]
-    out_fields = p2.get("out_fields") or p1.get("out_fields")
+    out_fields = p2.get("out_fields") if p2.get("out_fields") is not None else p1.get("out_fields")
     target_crs = p1["target_crs"]
     max_ea_number = p4.get("max_ea_number") if p4 else p1.get("max_ea_number", {})
     area_threshold = p1["area_threshold"]
@@ -409,6 +409,15 @@ def run_phase_8(
     merged_sink = p2.get("merged_sink") or p1.get("merged_sink")
     special_ea_sink = p2.get("special_ea_sink") or p1.get("special_ea_sink")
     extracted_buildings_sink = p2.get("extracted_buildings_sink") or p1.get("extracted_buildings_sink")
+    delineated_dest_id = p2.get("delineated_dest_id")
+    merged_dest_id = p2.get("merged_dest_id")
+    special_ea_dest_id = p2.get("special_ea_dest_id")
+    extracted_buildings_dest_id = p2.get("extracted_buildings_dest_id")
+    delin_candidate_dest_id = p2.get("delin_candidate_dest_id")
+    merge_candidate_dest_id = p2.get("merge_candidate_dest_id")
+    delin_candidate_feat_count = p2.get("delin_candidate_feat_count", 0)
+    merge_candidate_feat_count = p2.get("merge_candidate_feat_count", 0)
+    extracted_bldg_feat_count = p2.get("extracted_bldg_feat_count", 0)
 
     export_fields = p2.get("export_fields")
     if not export_fields:
@@ -447,6 +456,8 @@ def run_phase_8(
             if f.name() in ("hhcount", "bldgcount"):
                 continue
             special_ea_export_fields.append(f)
+    if special_ea_export_fields.indexOf("special_type") == -1:
+        special_ea_export_fields.append(QgsField("special_type", QVariant.String))
 
     def make_export_feature(src_feat: QgsFeature, exp_fields: QgsFields) -> QgsFeature:
         exp_feat = QgsFeature(exp_fields)
@@ -467,7 +478,8 @@ def run_phase_8(
             if f.name().lower() == "sy":
                 val = "2026"
             elif f.name().lower() in ("remarks", "remark", "delin_remark", "delin_remarks"):
-                val = ""
+                if val is None or val == NULL:
+                    val = ""
             exp_attrs.append(val if val is not None else None)
         exp_feat.setAttributes(exp_attrs)
         return exp_feat
@@ -497,10 +509,33 @@ def run_phase_8(
 
     bar_geocode_field = p1.get("bar_geocode_field", "geocode")
 
+    # Accumulate (barangay_geocode, gap_geom) tuples for all internally detected
+    # Barangay gaps and (barangay_geocode, overlap_geom) for EA-to-EA overlaps
+    # so they can be written to SPECIAL_EA_OUTPUT after the main loop.
+    internal_gap_geoms: list = []  # List[Tuple[str, QgsGeometry]]
+    internal_overlap_geoms: list = []  # List[Tuple[str, QgsGeometry]]
+
     for bar in sorted(barangay_to_final_eas.keys(), key=lambda k: str(k) if k is not None else ""):
         bar_eas = barangay_to_final_eas[bar]
 
-        # Allocate uncovered Barangay gaps into constituent EAs
+        # 1. Detect any EA-to-EA overlaps within this barangay
+        for _ea_i in range(len(bar_eas)):
+            _g_i = bar_eas[_ea_i].get('geom')
+            if not _g_i or _g_i.isEmpty():
+                continue
+            for _ea_j in range(_ea_i + 1, len(bar_eas)):
+                _g_j = bar_eas[_ea_j].get('geom')
+                if not _g_j or _g_j.isEmpty():
+                    continue
+                if _g_i.intersects(_g_j):
+                    _inter = _g_i.intersection(_g_j)
+                    if _inter and not _inter.isEmpty() and _inter.area() >= 1.0:
+                        _inter_polys = get_polygons_from_geom(_inter)
+                        for _ip in _inter_polys:
+                            if _ip and not _ip.isEmpty() and _ip.area() >= 1.0:
+                                internal_overlap_geoms.append((str(bar), _ip))
+
+        # 2. Allocate uncovered Barangay gaps into constituent EAs
         parent_bgy_feat = None
         bar_str = str(bar).strip() if bar is not None else ""
         if bar_str.endswith(".0"):
@@ -518,7 +553,11 @@ def run_phase_8(
             parent_bgy_feat = barangay_by_id[bar]
 
         if parent_bgy_feat and parent_bgy_feat.geometry() and not parent_bgy_feat.geometry().isEmpty():
-            allocate_gaps_to_parts(bar_eas, parent_bgy_feat.geometry())
+            bar_eas, _detected_gaps = allocate_gaps_to_parts(bar_eas, parent_bgy_feat.geometry())
+            if _detected_gaps:
+                _bar_geocode = bar_str
+                for _gap_geom in _detected_gaps:
+                    internal_gap_geoms.append((_bar_geocode, _gap_geom))
 
         # Determine maximum starting sequence (child YYY) already in use in this barangay.
         # Scan both the in-memory loaded EAs AND all sibling EA codes collected from the
@@ -694,8 +733,9 @@ def run_phase_8(
             ea['sort_index'] = i
 
     # Phase 8: Output Generation & Writing
-    multi_feedback.setCurrentStep(7)
-    multi_feedback.setProgressText(f"{_PHASE_LABELS[7]} [0/{len(eas):,}]...")
+    if multi_feedback:
+        multi_feedback.setCurrentStep(7)
+        multi_feedback.setProgressText(f"{_PHASE_LABELS[7]} [0/{len(eas):,}]...")
     feedback.pushInfo("Phase 8/8: Writing output features...")
 
     source_crs = previous_ea_source.sourceCrs()
@@ -716,8 +756,9 @@ def run_phase_8(
     barangay_to_target = None
     if previous_ea_source.sourceCrs() != target_crs:
         feedback.pushInfo(f"Transforming output to {target_crs.authid()}...")
+        t_ctx = context.transformContext() if context is not None else QgsProject.instance().transformContext()
         barangay_to_target = QgsCoordinateTransform(
-            previous_ea_source.sourceCrs(), target_crs, context.transformContext()
+            previous_ea_source.sourceCrs(), target_crs, t_ctx
         )
 
     barangay_index = p1.get("barangay_index")
@@ -1251,14 +1292,86 @@ def run_phase_8(
                     else:
                         feedback.reportWarning("Failed to add building point to extracted buildings sink.")
 
-        _out_pct = int((i + 1) / max(len(eas), 1) * 100)
-        multi_feedback.setProgress(_out_pct)
-        if i % 100 == 0 or _out_pct == 100:
-            multi_feedback.setProgressText(
-                f"{_PHASE_LABELS[7]} [{i + 1:,}/{len(eas):,}]..."
-            )
+        if multi_feedback:
+            _out_pct = int((i + 1) / max(len(eas), 1) * 100)
+            multi_feedback.setProgress(_out_pct)
+            if i % 100 == 0 or _out_pct == 100:
+                multi_feedback.setProgressText(
+                    f"{_PHASE_LABELS[7]} [{i + 1:,}/{len(eas):,}]..."
+                )
 
-    multi_feedback.setProgress(100)
+    if multi_feedback:
+        multi_feedback.setProgress(100)
+
+    # ── Write internally detected Barangay gaps & overlaps to SPECIAL_EA_OUTPUT ──
+    # These include gaps inside Barangay boundaries and EA-to-EA overlaps that
+    # existed in the data. We write them as additional features in the
+    # SPECIAL_EA_OUTPUT layer so users have a complete spatial record of every
+    # area that required gap-filling or overlap resolution.
+    if special_ea_sink is not None and (internal_gap_geoms or internal_overlap_geoms):
+        _geocode_idx = special_ea_export_fields.indexOf("geocode")
+        _ea_type_idx = special_ea_export_fields.indexOf("ea_type")
+        _special_type_idx = special_ea_export_fields.indexOf("special_type")
+        _sy_idx = special_ea_export_fields.indexOf("sy")
+        _remarks_idx = special_ea_export_fields.indexOf("remarks")
+
+        if internal_gap_geoms:
+            feedback.pushInfo(
+                f"Writing {len(internal_gap_geoms)} internally detected Barangay gap(s) to Special EA output..."
+            )
+            for _bar_geocode, _gap_geom in internal_gap_geoms:
+                if barangay_to_target:
+                    _gap_geom = QgsGeometry(_gap_geom)
+                    _gap_geom.transform(barangay_to_target)
+                _gap_feat = QgsFeature(special_ea_export_fields)
+                _gap_feat.setGeometry(_gap_geom)
+                if _geocode_idx != -1:
+                    _gap_feat.setAttribute(_geocode_idx, _bar_geocode)
+                if _ea_type_idx != -1:
+                    _gap_feat.setAttribute(_ea_type_idx, "GAP")
+                if _special_type_idx != -1:
+                    _gap_feat.setAttribute(_special_type_idx, "GAP")
+                if _sy_idx != -1:
+                    _gap_feat.setAttribute(_sy_idx, "2026")
+                if _remarks_idx != -1:
+                    _gap_feat.setAttribute(_remarks_idx, "Internal Barangay Gap")
+                if special_ea_sink.addFeature(_gap_feat, QgsFeatureSink.Flag.FastInsert):
+                    special_ea_feat_count += 1
+                else:
+                    feedback.reportError(
+                        f"Failed to write internally detected gap in barangay '{_bar_geocode}' to Special EA sink."
+                    )
+
+        if internal_overlap_geoms:
+            feedback.pushInfo(
+                f"Writing {len(internal_overlap_geoms)} internally detected EA overlap(s) to Special EA output..."
+            )
+            for _bar_geocode, _overlap_geom in internal_overlap_geoms:
+                if barangay_to_target:
+                    _overlap_geom = QgsGeometry(_overlap_geom)
+                    _overlap_geom.transform(barangay_to_target)
+                _ov_feat = QgsFeature(special_ea_export_fields)
+                _ov_feat.setGeometry(_overlap_geom)
+                if _geocode_idx != -1:
+                    _ov_feat.setAttribute(_geocode_idx, _bar_geocode)
+                if _ea_type_idx != -1:
+                    _ov_feat.setAttribute(_ea_type_idx, "OVERLAP")
+                if _special_type_idx != -1:
+                    _ov_feat.setAttribute(_special_type_idx, "OVERLAP")
+                if _sy_idx != -1:
+                    _ov_feat.setAttribute(_sy_idx, "2026")
+                if _remarks_idx != -1:
+                    _ov_feat.setAttribute(_remarks_idx, "Internal EA Overlap")
+                if special_ea_sink.addFeature(_ov_feat, QgsFeatureSink.Flag.FastInsert):
+                    special_ea_feat_count += 1
+                else:
+                    feedback.reportError(
+                        f"Failed to write internally detected overlap in barangay '{_bar_geocode}' to Special EA sink."
+                    )
+
+        feedback.pushInfo(
+            f"Done — {special_ea_feat_count} total Special EA feature(s) written (includes all gaps and overlaps)."
+        )
 
     # ── Output Splitting Lines Layer (Single Unified Layer: {geo5}_eadel_update) ──
     full_ea_by_id = {feat.id(): feat for feat in p1.get("all_ea_features", [])}
@@ -1408,40 +1521,43 @@ def run_phase_8(
 
         crs_auth_id = target_crs.authid()
         uri = f"MultiLineString?crs={crs_auth_id}&field=geocode:string&field=ean:string&field=region:string&field=province:string&field=city_mun:string&field=barangay:string&field=indicator:string&field=remarks:string"
-        line_layer = QgsVectorLayer(uri, layer_name, "memory")
 
-        if line_layer.isValid():
-            pr = line_layer.dataProvider()
-            features_to_add = []
-            for line_geom, attrs in all_splitting_lines:
-                if not line_geom.isMultipart():
-                    line_geom.convertToMultiType()
-                f = QgsFeature(line_layer.fields())
-                f.setGeometry(line_geom)
-                f.setAttribute("geocode", attrs.get('geocode', ''))
-                f.setAttribute("ean", attrs.get('ean', ''))
-                f.setAttribute("region", attrs.get('region', ''))
-                f.setAttribute("province", attrs.get('province', ''))
-                f.setAttribute("city_mun", attrs.get('city_mun', ''))
-                f.setAttribute("barangay", attrs.get('barangay', ''))
-                f.setAttribute("indicator", attrs.get('indicator', ''))
-                f.setAttribute("remarks", attrs.get('remarks', ''))
-                features_to_add.append(f)
+        features_to_add = []
+        for line_geom, attrs in all_splitting_lines:
+            if not line_geom.isMultipart():
+                line_geom.convertToMultiType()
+            f = QgsFeature()
+            f.setGeometry(line_geom)
+            f.setAttributes([
+                attrs.get('geocode', ''),
+                attrs.get('ean', ''),
+                attrs.get('region', ''),
+                attrs.get('province', ''),
+                attrs.get('city_mun', ''),
+                attrs.get('barangay', ''),
+                attrs.get('indicator', ''),
+                attrs.get('remarks', ''),
+            ])
+            features_to_add.append(f)
 
-            pr.addFeatures(features_to_add)
-            line_layer.updateExtents()
+        if features_to_add:
+            line_layer = QgsVectorLayer(uri, layer_name, "memory")
+            if line_layer.isValid():
+                pr = line_layer.dataProvider()
+                pr.addFeatures(features_to_add)
+                line_layer.updateExtents()
 
-            apply_qml_to_layer(line_layer, "eadel_update_lines.qml")
+                apply_qml_to_layer(line_layer, "eadel_update_lines.qml")
 
-            project = QgsProject.instance()
-            if project:
-                project.addMapLayer(line_layer)
-            feedback.pushInfo(
-                f"Created line layer '{layer_name}' with {len(features_to_add)} "
-                f"feature(s) ({len(final_geom_by_candidate)} candidate(s) processed)."
-            )
-        else:
-            feedback.reportError(f"Failed to create memory layer for {layer_name}")
+                project = QgsProject.instance()
+                if project:
+                    project.addMapLayer(line_layer)
+                feedback.pushInfo(
+                    f"Created line layer '{layer_name}' with {len(features_to_add)} "
+                    f"feature(s) ({len(final_geom_by_candidate)} candidate(s) processed)."
+                )
+            else:
+                feedback.reportError(f"Failed to create memory layer for {layer_name}")
 
     feedback.pushInfo("Successfully created and structured Enumeration Areas.")
 
@@ -1585,8 +1701,18 @@ def run_phase_8(
         + "</html_table>"
     )
 
-    feedback.pushInfo(html_table)
-    feedback.pushInfo("--------------------------------------------------")
-    feedback.pushInfo("Completed.")
+    final_outputs = {}
+    if delineated_feat_count > 0 and delineated_dest_id is not None:
+        final_outputs[getattr(alg, 'DELINEATED_OUTPUT', 'DELINEATED_OUTPUT')] = delineated_dest_id
+    if merged_feat_count > 0 and merged_dest_id is not None:
+        final_outputs[getattr(alg, 'MERGED_OUTPUT', 'MERGED_OUTPUT')] = merged_dest_id
+    if special_ea_feat_count > 0 and special_ea_dest_id is not None:
+        final_outputs[getattr(alg, 'SPECIAL_EA_OUTPUT', 'SPECIAL_EA_OUTPUT')] = special_ea_dest_id
+    if delin_candidate_feat_count > 0 and delin_candidate_dest_id is not None:
+        final_outputs[getattr(alg, 'DELINEATION_CANDIDATE_OUTPUT', 'DELINEATION_CANDIDATE_OUTPUT')] = delin_candidate_dest_id
+    if merge_candidate_feat_count > 0 and merge_candidate_dest_id is not None:
+        final_outputs[getattr(alg, 'MERGE_CANDIDATE_OUTPUT', 'MERGE_CANDIDATE_OUTPUT')] = merge_candidate_dest_id
+    if extracted_bldg_feat_count > 0 and extracted_buildings_dest_id is not None:
+        final_outputs[getattr(alg, 'EXTRACTED_BUILDINGS_OUTPUT', 'EXTRACTED_BUILDINGS_OUTPUT')] = extracted_buildings_dest_id
 
-    return p2.get("outputs") or p1.get("outputs", {})
+    return final_outputs
