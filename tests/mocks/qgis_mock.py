@@ -498,11 +498,20 @@ class QgsProcessingFeedback:
 
 
 class QgsProcessingContext:
+    class LayerDetails:
+        def __init__(self, name="", project=None, output_name="", **kwargs):
+            self.name = name
+            self.project = project
+            self.output_name = output_name
+
     def project(self):
         return QgsProject.instance()
 
     def transformContext(self):
         return MockGenericClass()
+
+    def addLayerToLoadOnCompletion(self, layer_id, details=None):
+        pass
 
 
 try:
@@ -538,12 +547,33 @@ class QgsSpatialIndex:
 
 
 class QgsProcessingAlgorithm:
+    def __init__(self, *args, **kwargs):
+        self._parameters = {}
+
     @classmethod
     def flags(cls): return 0
     @classmethod
     def group(cls): return "GMD Pipeline"
     @classmethod
     def groupId(cls): return "gmd_pipeline"
+
+    def addParameter(self, param, *args, **kwargs):
+        if not hasattr(self, "_parameters"):
+            self._parameters = {}
+        if hasattr(param, "name") and callable(param.name):
+            try:
+                name = param.name()
+                if isinstance(name, str):
+                    self._parameters[name] = param
+            except Exception:
+                pass
+        return param
+
+    def parameterDefinition(self, name):
+        if not hasattr(self, "_parameters"):
+            self._parameters = {}
+        return self._parameters.get(name, MockGenericClass())
+
 
     def parameterAsLayerList(self, parameters, name, context):
         val = parameters.get(name, [])
@@ -575,6 +605,12 @@ class QgsProcessingAlgorithm:
     def parameterAsString(self, parameters, name, context):
         return str(parameters.get(name, ""))
 
+    def parameterAsFile(self, parameters, name, context):
+        return str(parameters.get(name, "") or "")
+
+    def parameterAsFileOutput(self, parameters, name, context):
+        return str(parameters.get(name, "") or "")
+
     def parameterAsBool(self, parameters, name, context):
         return bool(parameters.get(name, False))
 
@@ -592,6 +628,7 @@ class QgsProcessingAlgorithm:
             def addFeature(self, *args, **kwargs): pass
             def addFeatures(self, *args, **kwargs): return (True, [])
         return (MockSink(), "mock_dest_id")
+
 
 
 class QgsProject:

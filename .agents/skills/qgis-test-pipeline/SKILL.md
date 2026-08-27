@@ -35,7 +35,7 @@ gemma-plugin/
 │   │   ├── test_geom_repair_toolkit.py       # 3 tests — Topology engine & repair toolkit
 │   │   ├── test_gmdhelpers.py                # 3 tests — Core helper functions
 │   │   ├── test_gsheet.py                    # 1 test — Google Sheets integration
-│   │   ├── test_join_barangay_attributes.py  # 11 tests — Barangay attribute joining
+│   │   ├── test_join_barangay_attributes.py  # 9 tests — Barangay attribute joining
 │   │   ├── test_lgu_fix_processing.py        # 4 tests — LGU fix processing
 │   │   ├── test_mbi_validator.py             # 7 tests — MBI validation engine
 │   │   ├── test_package_qfield.py            # 2 tests — QField packaging
@@ -55,7 +55,7 @@ gemma-plugin/
         └── test-pr.yml             # QGIS Docker container GitHub Actions PR Gate + Dynamic Comment Bot
 ```
 
-**Current Suite Totals**: **106 tests** across **24 test modules** (91 Passed · 2 Skipped · 0 Failures · 0 Errors)
+**Current Suite Totals**: **104 tests** across **24 test modules** (91 Passed · 2 Skipped · 0 Failures · 0 Errors)
 
 ---
 
