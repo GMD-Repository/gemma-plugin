@@ -68,8 +68,12 @@ def get_target_scripts():
         return scripts
 
     for file_path in gmd_dir.rglob("*.py"):
-        # Ignore __init__.py and deprecated subdirectories
-        if file_path.name == "__init__.py" or "deprecated" in file_path.parts:
+        # Ignore __init__.py, deprecated subdirectories, and cbms_mv module
+        if (
+            file_path.name == "__init__.py"
+            or "deprecated" in file_path.parts
+            or "cbms_mv" in file_path.parts
+        ):
             continue
         scripts.append(file_path)
 
