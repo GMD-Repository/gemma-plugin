@@ -124,18 +124,33 @@ def run_phase_7(
 
             if best_j != -1:
                 nb = eas[best_j]
-                dominant = nb if nb["hh_count"] >= ea["hh_count"] else ea
+                ea_orig_hh = ea.get('original_hhcount', 0.0)
+                nb_orig_hh = nb.get('original_hhcount', 0.0)
+                ea_max_orig = ea.get('max_orig_hh', ea_orig_hh)
+                nb_max_orig = nb.get('max_orig_hh', nb_orig_hh)
+                ea_code = ea.get('new_ea_code') or ea.get('original_code')
+                nb_code = nb.get('new_ea_code') or nb.get('original_code')
+
+                if ea_max_orig >= nb_max_orig:
+                    prevailing_ean = ea_code
+                    max_orig_hh = ea_max_orig
+                else:
+                    prevailing_ean = nb_code
+                    max_orig_hh = nb_max_orig
+
                 merged_ea = {
                     "geom": ea["geom"].combine(nb["geom"]).buffer(0.0, 3),
                     "buildings": ea.get("buildings", []) + nb.get("buildings", []),
                     "hh_count": ea["hh_count"] + nb["hh_count"],
-                    "original_hhcount": dominant.get("original_hhcount", 0),
-                    "original_bldgcount": dominant.get("original_bldgcount", 0),
+                    "original_hhcount": ea.get("original_hhcount", ea.get("hh_count", 0.0)),
+                    "original_bldgcount": ea.get("original_bldgcount", ea.get("bldg_count", 0)),
                     "bldg_count": ea.get("bldg_count", 0) + nb.get("bldg_count", 0),
-                    "attributes": list(dominant["attributes"]),
-                    "original_id": dominant["original_id"],
-                    "original_code": dominant["original_code"],
-                    "is_new": True,
+                    "attributes": list(ea["attributes"]),
+                    "original_id": ea["original_id"],
+                    "original_code": ea["original_code"],
+                    "new_ea_code": prevailing_ean,
+                    "max_orig_hh": max_orig_hh,
+                    "is_new": False,
                     "from_split": False,
                     "split_by": ea.get("split_by", "none"),
                     "from_merge": True,

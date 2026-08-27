@@ -637,7 +637,10 @@ def run_phase_8(
             if len(group) == 1:
                 ea = group[0]
                 code_6, orig_last3 = extract_parent_code_and_prefix(ea)
-                if ea.get('is_new', False):
+                if ea.get('from_merge', False):
+                    if not ea.get('new_ea_code'):
+                        ea['new_ea_code'] = ea.get('original_code', '000000')
+                elif ea.get('is_new', False):
                     max_seq += 1
                     seq_str = f"{max_seq:03d}"
                     ea['new_ea_code'] = (seq_str + "000") if orig_last3 == "000" else (orig_last3 + seq_str)
