@@ -89,6 +89,9 @@ class PreEASummary:
     eas_processed: int = 0
     eas_requiring_correction: int = 0
     eas_clipped: int = 0
+    overlaps_detected: int = 0
+    overlaps_resolved: int = 0
+    final_ea_overlaps: int = 0
     gaps_detected: int = 0
     gaps_assigned: int = 0
     unresolved_gaps: int = 0
@@ -155,6 +158,7 @@ class PreEAProcessor:
             "<li><b>Gap Area Tolerance (m²)</b> — Minimum area threshold (default 1.0 m²) for a gap to be processed; "
             "smaller gaps are treated as geometry precision slivers and skipped.</li>"
             "<li><b>Clip EA to Barangay Boundary</b> — When enabled (default: True), clips any portion of an EA extending outside its parent Barangay boundary.</li>"
+            "<li><b>Resolve EA Overlaps</b> — When enabled (default: True), detects and eliminates overlapping polygon regions between adjacent EAs within each Barangay.</li>"
             "<li><b>Detect Uncovered Barangay Areas</b> — When enabled (default: True), identifies uncovered gaps within each Barangay after clipping.</li>"
             "<li><b>Assign Gaps to Contiguous EA</b> — When enabled (default: True), assigns each detected gap to the adjacent EA sharing the longest boundary.</li>"
             "</ul>"
@@ -164,16 +168,17 @@ class PreEAProcessor:
             "<li>Validates input Barangay and EA vector layers and repairs invalid geometries.</li>"
             "<li>Matches each EA to its parent Barangay using attribute geocode prefix matching, centroid containment, or largest spatial overlap.</li>"
             "<li>Clips EAs extending beyond parent Barangay boundaries by computing spatial intersections.</li>"
+            "<li>Detects and resolves spatial overlaps between adjacent EA polygons by partitioning overlapping regions cleanly based on proximity.</li>"
             "<li>Computes uncovered Barangay coverage gaps by taking the spatial difference between the Barangay polygon and the union of constituent EAs.</li>"
             "<li>Decomposes gap geometries and assigns each gap polygon to the adjacent contiguous EA sharing the longest boundary (or nearest/largest EA).</li>"
-            "<li>Performs final topological validation to ensure zero EAs extend outside Barangays and no uncovered gaps remain.</li>"
+            "<li>Performs final topological validation to ensure zero EAs extend outside Barangays, zero overlaps remain, and no uncovered gaps exist.</li>"
             "<li>Generates pre-processed output polygon features preserving original fields and adding process summary metadata.</li>"
             "</ol>"
 
             "<h4>Output</h4>"
             "<ul>"
             "<li><b>Pre-Processed EA Layer</b> (polygon, named <i>&lt;5-digit geocode&gt;_ea2026_preprocessed</i>) — "
-            "In-memory vector layer containing pre-processed EAs fully aligned with Barangay boundaries and gap-filled. "
+            "In-memory vector layer containing pre-processed EAs fully aligned with Barangay boundaries, overlap-free, and gap-filled. "
             "All fields from the original EA layer are preserved. Additional/updated fields:</li>"
             "<li><i>hhcount</i> — Household count for the EA polygon.</li>"
             "<li><i>bldgcount</i> — Building count for the EA polygon.</li>"
@@ -181,7 +186,7 @@ class PreEAProcessor:
             "<li><i>original_area</i> — Original surface area of the EA polygon in square metres.</li>"
             "<li><i>corrected_area</i> — Corrected surface area of the EA polygon after clipping and gap assignment.</li>"
             "<li><i>area_change</i> — Net area change (square metres) after pre-processing.</li>"
-            "<li><i>pre_action</i> — Pre-processing action applied to the feature (e.g. <i>No Change</i>, <i>Clipped</i>, <i>Gap Assigned</i>).</li>"
+            "<li><i>pre_action</i> — Pre-processing action applied to the feature (e.g. <i>No Change</i>, <i>Clipped</i>, <i>Overlap Resolved</i>, <i>Gap Assigned</i>).</li>"
             "<li><i>pre_status</i> — Pre-processing validation status (e.g. <i>Valid</i>, <i>Corrected</i>, <i>Unresolved</i>).</li>"
             "</ul>"
         )
@@ -193,6 +198,7 @@ class PreEAProcessor:
         gap_tolerance: float = 1.0,
         snap_tolerance: float = 25.0,
         clip_to_bgy: bool = True,
+        resolve_overlaps: bool = True,
         detect_gaps: bool = True,
         assign_gaps: bool = True,
         feedback_callback: Optional[Callable[[str], None]] = None,
@@ -207,6 +213,7 @@ class PreEAProcessor:
         :param gap_tolerance: Minimum area (m²) for a gap to be considered meaningful.
         :param snap_tolerance: Distance (m) to snap boundary vertices onto Barangay & adjacent EA edges.
         :param clip_to_bgy: Whether to clip EAs extending outside their parent Barangay.
+        :param resolve_overlaps: Whether to detect and eliminate overlapping polygon areas between EAs.
         :param detect_gaps: Whether to detect uncovered areas within each Barangay.
         :param assign_gaps: Whether to assign detected gaps to contiguous EAs.
         :param feedback_callback: Optional callable receiving log message strings.
@@ -391,6 +398,17 @@ class PreEAProcessor:
                                 status="Corrected",
                             ))
 
+                # ---- Phase 2.5: Resolve EA Overlaps within Barangay ----------
+                if resolve_overlaps:
+                    ea_fids_in_bgy = [f.id() for f in eas_in_bgy]
+                    num_resolved = self._resolve_ea_overlaps(
+                        ea_fids=ea_fids_in_bgy,
+                        geoms=corrected_geoms,
+                        log_fn=_log,
+                        crs=barangay_layer.crs(),
+                    )
+                    summary.overlaps_resolved += num_resolved
+
                 # ---- Phase 3+4: Fill Barangay gaps (unconditional) -----------
                 # Always compute gap = bgy_geom - union(EAs) and fill every
                 # uncovered area into the adjacent EA.  The Barangay polygon is
@@ -431,6 +449,7 @@ class PreEAProcessor:
                 crs=barangay_layer.crs(),
                 snap_tolerance=snap_tolerance,
                 gap_tolerance=gap_tolerance,
+                resolve_overlaps=resolve_overlaps,
             )
 
             if output_layer is None:
@@ -443,7 +462,7 @@ class PreEAProcessor:
             _progress(100)
 
             # Determine overall status
-            if summary.unresolved_gaps > 0 or summary.final_eas_outside_bgy > 0:
+            if summary.unresolved_gaps > 0 or summary.final_eas_outside_bgy > 0 or summary.final_ea_overlaps > 0:
                 summary.overall_status = "WARNING"
             else:
                 summary.overall_status = "PASS"
@@ -608,7 +627,22 @@ class PreEAProcessor:
     ) -> List[QgsFeature]:
         """Load all features from a layer, repairing invalid geometries."""
         features: List[QgsFeature] = []
+        seen_ids: Set[int] = set()
+        next_id = 1
+
         for feat in layer.getFeatures():
+            fid = feat.id()
+            if fid in seen_ids or fid <= 0:
+                while next_id in seen_ids:
+                    next_id += 1
+                if hasattr(feat, "setId"):
+                    feat.setId(next_id)
+                else:
+                    setattr(feat, "_id", next_id)
+                seen_ids.add(next_id)
+            else:
+                seen_ids.add(fid)
+
             geom = feat.geometry()
             if geom is None or geom.isEmpty():
                 log_fn(
@@ -1171,6 +1205,22 @@ class PreEAProcessor:
                     if clipped and not clipped.isEmpty():
                         merged_geom = clipped
 
+                # Ensure gap merging does not overlap other EAs in the Barangay
+                other_geoms = [
+                    corrected_geoms[of.id()]
+                    for of in eas_in_bgy
+                    if of.id() != best_ea_fid
+                    and of.id() in corrected_geoms
+                    and corrected_geoms[of.id()]
+                    and not corrected_geoms[of.id()].isEmpty()
+                ]
+                if other_geoms:
+                    other_union = QgsGeometry.unaryUnion(other_geoms)
+                    if other_union and not other_union.isEmpty():
+                        non_overlap = merged_geom.difference(other_union)
+                        if non_overlap and not non_overlap.isEmpty():
+                            merged_geom = non_overlap
+
             corrected_geoms[best_ea_fid] = merged_geom
 
             if gap_area_m2 >= gap_tolerance:
@@ -1279,6 +1329,91 @@ class PreEAProcessor:
 
         return best_fid
 
+    def _resolve_ea_overlaps(
+        self,
+        ea_fids: List[int],
+        geoms: Dict[int, QgsGeometry],
+        log_fn: Callable[[str], None],
+        crs: Optional[QgsCoordinateReferenceSystem] = None,
+    ) -> int:
+        """
+        Detect and resolve spatial overlaps between EA geometries in ea_fids.
+
+        For each pair of overlapping EAs, the overlapping area is decomposed into
+        polygon parts and each part is assigned to the EA whose centroid is closest
+        to the overlap part's centroid, subtracting it from the other EA.
+
+        :returns: Total count of resolved overlap occurrences.
+        """
+        if len(ea_fids) <= 1:
+            return 0
+
+        resolved_count = 0
+        for iteration in range(3):
+            overlap_found_in_pass = False
+            for i in range(len(ea_fids)):
+                fid1 = ea_fids[i]
+                g1 = geoms.get(fid1)
+                if g1 is None or g1.isEmpty():
+                    continue
+                for j in range(i + 1, len(ea_fids)):
+                    fid2 = ea_fids[j]
+                    g2 = geoms.get(fid2)
+                    if g2 is None or g2.isEmpty():
+                        continue
+
+                    if not g1.intersects(g2):
+                        continue
+
+                    inter = g1.intersection(g2)
+                    inter = self._clean_geometry(inter, log_fn, "EA overlap")
+                    if inter is None or inter.isEmpty():
+                        continue
+
+                    overlap_parts = self._explode_to_polygons(inter)
+                    inter_area = sum(self._measure_area(p, crs) for p in overlap_parts)
+                    if inter_area < 0.001:
+                        continue
+
+                    overlap_found_in_pass = True
+                    resolved_count += 1
+                    log_fn(
+                        f"[INFO] Detected overlap ({inter_area:.2f} m²) between EA fid={fid1} and EA fid={fid2}. Resolving..."
+                    )
+
+                    for part in overlap_parts:
+                        part_area = self._measure_area(part, crs)
+                        if part_area < 0.0001:
+                            continue
+
+                        part_c = part.centroid()
+                        c1 = g1.centroid()
+                        c2 = g2.centroid()
+                        dist1 = part_c.distance(c1) if c1 and not c1.isEmpty() else float("inf")
+                        dist2 = part_c.distance(c2) if c2 and not c2.isEmpty() else float("inf")
+
+                        if dist1 <= dist2:
+                            # Keep in g1, subtract from g2
+                            g2_sub = g2.difference(part)
+                            g2_sub = self._clean_geometry(g2_sub, log_fn, f"EA fid={fid2} post-overlap")
+                            if g2_sub and not g2_sub.isEmpty():
+                                g2 = g2_sub
+                                geoms[fid2] = g2
+                        else:
+                            # Keep in g2, subtract from g1
+                            g1_sub = g1.difference(part)
+                            g1_sub = self._clean_geometry(g1_sub, log_fn, f"EA fid={fid1} post-overlap")
+                            if g1_sub and not g1_sub.isEmpty():
+                                g1 = g1_sub
+                                geoms[fid1] = g1
+                                # Refresh g1 for remaining j iterations
+                                break
+
+            if not overlap_found_in_pass:
+                break
+
+        return resolved_count
+
     # -------------------------------------------------------------------------
     # Final validation
     # -------------------------------------------------------------------------
@@ -1296,6 +1431,7 @@ class PreEAProcessor:
         """Run post-processing spatial validation checks."""
         outside_count = 0
         uncovered_total = 0.0
+        overlap_count = 0
 
         for bgy_fid, eas_in_bgy in bgy_to_eas.items():
             bgy_feat = bgy_by_fid[bgy_fid]
@@ -1325,7 +1461,32 @@ class PreEAProcessor:
                             f"outside Barangay {bgy_label} (area={outside_area_m2:.4f} m²)."
                         )
 
-            # Validation 2: No meaningful uncovered Barangay area
+            # Validation 2: No EA-to-EA overlaps within Barangay
+            valid_ea_fids = [
+                ea_feat.id() for ea_feat in eas_in_bgy
+                if ea_feat.id() in corrected_geoms and corrected_geoms[ea_feat.id()] and not corrected_geoms[ea_feat.id()].isEmpty()
+            ]
+            for i in range(len(valid_ea_fids)):
+                fid1 = valid_ea_fids[i]
+                g1 = corrected_geoms[fid1]
+                for j in range(i + 1, len(valid_ea_fids)):
+                    fid2 = valid_ea_fids[j]
+                    g2 = corrected_geoms[fid2]
+                    if g1.intersects(g2):
+                        inter = g1.intersection(g2)
+                        if inter and not inter.isEmpty():
+                            inter_parts = self._explode_to_polygons(inter)
+                            inter_area = sum(self._measure_area(p, crs) for p in inter_parts)
+                            if inter_area > 0.001:
+                                overlap_count += 1
+                                lbl1 = self._ea_label_by_fid(fid1, eas_in_bgy)
+                                lbl2 = self._ea_label_by_fid(fid2, eas_in_bgy)
+                                log_fn(
+                                    f"[WARNING] Validation: EA {lbl1} and EA {lbl2} "
+                                    f"overlap in Barangay {bgy_label} (area={inter_area:.4f} m²)."
+                                )
+
+            # Validation 3: No meaningful uncovered Barangay area
             if ea_geoms_in_bgy:
                 ea_union = QgsGeometry.unaryUnion(ea_geoms_in_bgy)
                 if ea_union:
@@ -1341,13 +1502,14 @@ class PreEAProcessor:
 
         summary.final_eas_outside_bgy = outside_count
         summary.final_uncovered_area = uncovered_total
+        summary.final_ea_overlaps = overlap_count
 
-        if outside_count == 0 and uncovered_total == 0.0:
+        if outside_count == 0 and uncovered_total == 0.0 and overlap_count == 0:
             log_fn("[INFO] Final validation passed.")
         else:
             log_fn(
                 f"[WARNING] Final validation: {outside_count} EA(s) outside Barangay, "
-                f"{uncovered_total:.2f} m² uncovered area."
+                f"{overlap_count} EA overlap(s), {uncovered_total:.2f} m² uncovered area."
             )
 
     # -------------------------------------------------------------------------
@@ -1366,6 +1528,7 @@ class PreEAProcessor:
         crs: Optional[QgsCoordinateReferenceSystem] = None,
         snap_tolerance: float = 25.0,
         gap_tolerance: float = 1.0,
+        resolve_overlaps: bool = True,
     ) -> Optional[QgsVectorLayer]:
         """
         Construct the output in-memory polygon layer.
@@ -1432,13 +1595,19 @@ class PreEAProcessor:
 
             final_geoms[ea_fid] = geom
 
-        # ── Pass 2: reconcile — ensure every Barangay is fully covered ────────
-        # Group EAs by Barangay to check coverage
+        # Group EAs by Barangay to check coverage & resolve overlaps
         bgy_to_ea_fids: Dict[int, List[int]] = {}
         for ea_fid, bgy_fid in ea_to_bgy.items():
             if ea_fid in final_geoms:
                 bgy_to_ea_fids.setdefault(bgy_fid, []).append(ea_fid)
 
+        # ── Pass 1.5: resolve EA overlaps before reconciliation ───────────────
+        if resolve_overlaps:
+            for bgy_fid, ea_fids in bgy_to_ea_fids.items():
+                if len(ea_fids) > 1:
+                    self._resolve_ea_overlaps(ea_fids, final_geoms, log_fn, crs)
+
+        # ── Pass 2: reconcile — ensure every Barangay is fully covered ────────
         for bgy_fid, ea_fids in bgy_to_ea_fids.items():
             bgy_feat = bgy_by_fid.get(bgy_fid)
             if bgy_feat is None or not ea_fids:
@@ -1493,6 +1662,22 @@ class PreEAProcessor:
                                 clipped = merged.intersection(bgy_geom)
                                 if clipped and not clipped.isEmpty():
                                     merged = clipped
+
+                            # Ensure zero overlap with other EAs in the Barangay
+                            other_geoms = [
+                                final_geoms[other_fid]
+                                for other_fid in ea_fids
+                                if other_fid != best_fid
+                                and final_geoms.get(other_fid)
+                                and not final_geoms[other_fid].isEmpty()
+                            ]
+                            if other_geoms:
+                                other_union = QgsGeometry.unaryUnion(other_geoms)
+                                if other_union and not other_union.isEmpty():
+                                    non_overlap = merged.difference(other_union)
+                                    if non_overlap and not non_overlap.isEmpty():
+                                        merged = non_overlap
+
                             final_geoms[best_fid] = merged
                             merged_any = True
                             log_fn(
@@ -1508,6 +1693,12 @@ class PreEAProcessor:
         for bgy_fid, ea_fids in bgy_to_ea_fids.items():
             if len(ea_fids) > 1:
                 self._snap_eas_to_each_other(ea_fids, final_geoms, snap_tol)
+
+        # ── Pass 2.6: final pass of overlap resolution after snapping ──────────
+        if resolve_overlaps:
+            for bgy_fid, ea_fids in bgy_to_ea_fids.items():
+                if len(ea_fids) > 1:
+                    self._resolve_ea_overlaps(ea_fids, final_geoms, log_fn, crs)
 
         # ── Pass 3: write output features ──────────────────────────────────────
         out_fields = output_layer.fields()
