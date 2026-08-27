@@ -208,12 +208,32 @@ def run_phase_1(
                             max_bar_overlap = overlap_area
                             best_bar_feat = bar_feat
 
+                # Fallback: if strict intersects() fails (edge precision issue),
+                # pick the candidate barangay that contains the gap centroid
+                if best_bar_feat is None and candidates:
+                    centroid = go_geom.centroid()
+                    for cid in candidates:
+                        bar_feat = barangay_by_id[cid]
+                        if bar_feat.geometry().contains(centroid):
+                            best_bar_feat = bar_feat
+                            break
+                    # Last resort: pick the nearest candidate by distance
+                    if best_bar_feat is None:
+                        min_dist = float('inf')
+                        for cid in candidates:
+                            bar_feat = barangay_by_id[cid]
+                            d = bar_feat.geometry().distance(go_geom)
+                            if d < min_dist:
+                                min_dist = d
+                                best_bar_feat = bar_feat
+
                 if best_bar_feat is None:
+                    feedback.pushInfo(f"[WARNING] Gap feature FID={go_feat.id()} skipped: no intersecting barangay found.")
                     continue
 
-                go_geom = go_geom.intersection(best_bar_feat.geometry()).makeValid()
-                if go_geom.isEmpty():
-                    continue
+                clipped_geom = go_geom.intersection(best_bar_feat.geometry()).makeValid()
+                if not clipped_geom.isEmpty():
+                    go_geom = clipped_geom
 
                 parent_bar_geo = normalize_to_8_digits(best_bar_feat.attribute(bar_geocode_field))
 

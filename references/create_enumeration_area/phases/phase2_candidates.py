@@ -193,6 +193,8 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         if f.name() in ("hhcount", "bldgcount"):
             continue
         special_ea_export_fields.append(f)
+    if special_ea_export_fields.indexOf("special_type") == -1:
+        special_ea_export_fields.append(QgsField("special_type", QVariant.String))
 
     special_ea_sink = None
     special_ea_dest_id = None

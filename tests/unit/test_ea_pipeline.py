@@ -1184,9 +1184,88 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
         self.assertEqual(out_feat.attribute("bldgcount"), 2, "bldgcount for merged EA must preserve original bldgcount (2 bldgs).")
         self.assertEqual(out_feat.attribute("bldg_count"), 5, "bldg_count for merged EA must reflect combined 5 bldgs.")
 
+    def test_all_gaps_and_overlaps_in_special_ea_output(self):
+        """Verify that all gaps and overlaps are exported to the Special EA sink with appropriate fields."""
+        from qgis.core import QgsFields, QgsField, QgsFeature, QgsGeometry, QgsPointXY
+        try:
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            try:
+                from PyQt5.QtCore import QVariant
+            except ImportError:
+                from qgis.core import QVariant
+
+        from references.create_enumeration_area.helpers.geometry import allocate_gaps_to_parts
+
+        export_field_names = [
+            "fid", "map_uuid", "geocode", "region", "province",
+            "city_mun", "barangay", "code", "name", "ean",
+            "hhcount", "bldgcount", "sy", "new_ean", "hh_count",
+            "bldg_count", "ea_type", "remarks"
+        ]
+        export_fields = QgsFields()
+        for fname in export_field_names:
+            export_fields.append(QgsField(fname, QVariant.String))
+
+        special_ea_export_fields = QgsFields()
+        for f in export_fields:
+            if f.name() in ("hhcount", "bldgcount"):
+                continue
+            special_ea_export_fields.append(f)
+        if special_ea_export_fields.indexOf("special_type") == -1:
+            special_ea_export_fields.append(QgsField("special_type", QVariant.String))
+
+        # 1. Verify schema
+        spec_names = [special_ea_export_fields.at(i).name() for i in range(special_ea_export_fields.count())]
+        self.assertIn("special_type", spec_names)
+        self.assertIn("ea_type", spec_names)
+        self.assertIn("sy", spec_names)
+
+        # 2. Test gap detection via allocate_gaps_to_parts
+        # Create a parent polygon (0,0 to 10,10) and an EA part (0,0 to 5,10) leaving a gap (5,0 to 10,10)
+        parent_geom = QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]])
+        part1 = {
+            'geom': QgsGeometry.fromPolygonXY([[
+                QgsPointXY(0, 0), QgsPointXY(5, 0), QgsPointXY(5, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+            ]])
+        }
+
+        updated_parts, detected_gaps = allocate_gaps_to_parts([part1], parent_geom, min_gap_area=1.0)
+        self.assertEqual(len(detected_gaps), 1, "Should detect exactly 1 gap polygon.")
+        self.assertAlmostEqual(detected_gaps[0].area(), 50.0, places=1, msg="Gap area should be 50 m².")
+
+        # 3. Test building special_ea features for gap and overlap
+        gap_feat = QgsFeature(special_ea_export_fields)
+        gap_feat.setGeometry(detected_gaps[0])
+        gap_feat.setAttribute("geocode", "043404001")
+        gap_feat.setAttribute("ea_type", "GAP")
+        gap_feat.setAttribute("special_type", "GAP")
+        gap_feat.setAttribute("sy", "2026")
+        gap_feat.setAttribute("remarks", "Internal Barangay Gap")
+
+        self.assertEqual(gap_feat.attribute("special_type"), "GAP")
+        self.assertEqual(gap_feat.attribute("ea_type"), "GAP")
+
+        overlap_geom = QgsGeometry.fromPolygonXY([[
+            QgsPointXY(4, 0), QgsPointXY(6, 0), QgsPointXY(6, 10), QgsPointXY(4, 10), QgsPointXY(4, 0)
+        ]])
+        overlap_feat = QgsFeature(special_ea_export_fields)
+        overlap_feat.setGeometry(overlap_geom)
+        overlap_feat.setAttribute("geocode", "043404001")
+        overlap_feat.setAttribute("ea_type", "OVERLAP")
+        overlap_feat.setAttribute("special_type", "OVERLAP")
+        overlap_feat.setAttribute("sy", "2026")
+        overlap_feat.setAttribute("remarks", "Internal EA Overlap")
+
+        self.assertEqual(overlap_feat.attribute("special_type"), "OVERLAP")
+        self.assertEqual(overlap_feat.attribute("ea_type"), "OVERLAP")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

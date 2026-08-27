@@ -447,6 +447,8 @@ def run_phase_8(
             if f.name() in ("hhcount", "bldgcount"):
                 continue
             special_ea_export_fields.append(f)
+    if special_ea_export_fields.indexOf("special_type") == -1:
+        special_ea_export_fields.append(QgsField("special_type", QVariant.String))
 
     def make_export_feature(src_feat: QgsFeature, exp_fields: QgsFields) -> QgsFeature:
         exp_feat = QgsFeature(exp_fields)
@@ -467,7 +469,8 @@ def run_phase_8(
             if f.name().lower() == "sy":
                 val = "2026"
             elif f.name().lower() in ("remarks", "remark", "delin_remark", "delin_remarks"):
-                val = ""
+                if val is None or val == NULL:
+                    val = ""
             exp_attrs.append(val if val is not None else None)
         exp_feat.setAttributes(exp_attrs)
         return exp_feat
@@ -497,10 +500,33 @@ def run_phase_8(
 
     bar_geocode_field = p1.get("bar_geocode_field", "geocode")
 
+    # Accumulate (barangay_geocode, gap_geom) tuples for all internally detected
+    # Barangay gaps and (barangay_geocode, overlap_geom) for EA-to-EA overlaps
+    # so they can be written to SPECIAL_EA_OUTPUT after the main loop.
+    internal_gap_geoms: list = []  # List[Tuple[str, QgsGeometry]]
+    internal_overlap_geoms: list = []  # List[Tuple[str, QgsGeometry]]
+
     for bar in sorted(barangay_to_final_eas.keys(), key=lambda k: str(k) if k is not None else ""):
         bar_eas = barangay_to_final_eas[bar]
 
-        # Allocate uncovered Barangay gaps into constituent EAs
+        # 1. Detect any EA-to-EA overlaps within this barangay
+        for _ea_i in range(len(bar_eas)):
+            _g_i = bar_eas[_ea_i].get('geom')
+            if not _g_i or _g_i.isEmpty():
+                continue
+            for _ea_j in range(_ea_i + 1, len(bar_eas)):
+                _g_j = bar_eas[_ea_j].get('geom')
+                if not _g_j or _g_j.isEmpty():
+                    continue
+                if _g_i.intersects(_g_j):
+                    _inter = _g_i.intersection(_g_j)
+                    if _inter and not _inter.isEmpty() and _inter.area() >= 1.0:
+                        _inter_polys = get_polygons_from_geom(_inter)
+                        for _ip in _inter_polys:
+                            if _ip and not _ip.isEmpty() and _ip.area() >= 1.0:
+                                internal_overlap_geoms.append((str(bar), _ip))
+
+        # 2. Allocate uncovered Barangay gaps into constituent EAs
         parent_bgy_feat = None
         bar_str = str(bar).strip() if bar is not None else ""
         if bar_str.endswith(".0"):
@@ -518,7 +544,11 @@ def run_phase_8(
             parent_bgy_feat = barangay_by_id[bar]
 
         if parent_bgy_feat and parent_bgy_feat.geometry() and not parent_bgy_feat.geometry().isEmpty():
-            allocate_gaps_to_parts(bar_eas, parent_bgy_feat.geometry())
+            bar_eas, _detected_gaps = allocate_gaps_to_parts(bar_eas, parent_bgy_feat.geometry())
+            if _detected_gaps:
+                _bar_geocode = bar_str
+                for _gap_geom in _detected_gaps:
+                    internal_gap_geoms.append((_bar_geocode, _gap_geom))
 
         # Determine maximum starting sequence (child YYY) already in use in this barangay.
         # Scan both the in-memory loaded EAs AND all sibling EA codes collected from the
@@ -1259,6 +1289,76 @@ def run_phase_8(
             )
 
     multi_feedback.setProgress(100)
+
+    # ── Write internally detected Barangay gaps & overlaps to SPECIAL_EA_OUTPUT ──
+    # These include gaps inside Barangay boundaries and EA-to-EA overlaps that
+    # existed in the data. We write them as additional features in the
+    # SPECIAL_EA_OUTPUT layer so users have a complete spatial record of every
+    # area that required gap-filling or overlap resolution.
+    if special_ea_sink is not None and (internal_gap_geoms or internal_overlap_geoms):
+        _geocode_idx = special_ea_export_fields.indexOf("geocode")
+        _ea_type_idx = special_ea_export_fields.indexOf("ea_type")
+        _special_type_idx = special_ea_export_fields.indexOf("special_type")
+        _sy_idx = special_ea_export_fields.indexOf("sy")
+        _remarks_idx = special_ea_export_fields.indexOf("remarks")
+
+        if internal_gap_geoms:
+            feedback.pushInfo(
+                f"Writing {len(internal_gap_geoms)} internally detected Barangay gap(s) to Special EA output..."
+            )
+            for _bar_geocode, _gap_geom in internal_gap_geoms:
+                if barangay_to_target:
+                    _gap_geom = QgsGeometry(_gap_geom)
+                    _gap_geom.transform(barangay_to_target)
+                _gap_feat = QgsFeature(special_ea_export_fields)
+                _gap_feat.setGeometry(_gap_geom)
+                if _geocode_idx != -1:
+                    _gap_feat.setAttribute(_geocode_idx, _bar_geocode)
+                if _ea_type_idx != -1:
+                    _gap_feat.setAttribute(_ea_type_idx, "GAP")
+                if _special_type_idx != -1:
+                    _gap_feat.setAttribute(_special_type_idx, "GAP")
+                if _sy_idx != -1:
+                    _gap_feat.setAttribute(_sy_idx, "2026")
+                if _remarks_idx != -1:
+                    _gap_feat.setAttribute(_remarks_idx, "Internal Barangay Gap")
+                if special_ea_sink.addFeature(_gap_feat, QgsFeatureSink.Flag.FastInsert):
+                    special_ea_feat_count += 1
+                else:
+                    feedback.reportError(
+                        f"Failed to write internally detected gap in barangay '{_bar_geocode}' to Special EA sink."
+                    )
+
+        if internal_overlap_geoms:
+            feedback.pushInfo(
+                f"Writing {len(internal_overlap_geoms)} internally detected EA overlap(s) to Special EA output..."
+            )
+            for _bar_geocode, _overlap_geom in internal_overlap_geoms:
+                if barangay_to_target:
+                    _overlap_geom = QgsGeometry(_overlap_geom)
+                    _overlap_geom.transform(barangay_to_target)
+                _ov_feat = QgsFeature(special_ea_export_fields)
+                _ov_feat.setGeometry(_overlap_geom)
+                if _geocode_idx != -1:
+                    _ov_feat.setAttribute(_geocode_idx, _bar_geocode)
+                if _ea_type_idx != -1:
+                    _ov_feat.setAttribute(_ea_type_idx, "OVERLAP")
+                if _special_type_idx != -1:
+                    _ov_feat.setAttribute(_special_type_idx, "OVERLAP")
+                if _sy_idx != -1:
+                    _ov_feat.setAttribute(_sy_idx, "2026")
+                if _remarks_idx != -1:
+                    _ov_feat.setAttribute(_remarks_idx, "Internal EA Overlap")
+                if special_ea_sink.addFeature(_ov_feat, QgsFeatureSink.Flag.FastInsert):
+                    special_ea_feat_count += 1
+                else:
+                    feedback.reportError(
+                        f"Failed to write internally detected overlap in barangay '{_bar_geocode}' to Special EA sink."
+                    )
+
+        feedback.pushInfo(
+            f"Done — {special_ea_feat_count} total Special EA feature(s) written (includes all gaps and overlaps)."
+        )
 
     # ── Output Splitting Lines Layer (Single Unified Layer: {geo5}_eadel_update) ──
     full_ea_by_id = {feat.id(): feat for feat in p1.get("all_ea_features", [])}
