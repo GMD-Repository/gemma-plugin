@@ -97,7 +97,7 @@ class mv_2027_hp_1a_map_uuid__missing(QgsProcessingAlgorithm):
             if flds.indexOf(name) == -1:
                 flds.append(QgsField(name, ftype))
 
-        ensure_field(fields, "geoid", QVariant.String)
+        ensure_field(fields, "map_uuid", QVariant.String)
         ensure_field(fields, "status", QVariant.String)
 
         # Helper to find field name case-insensitively from list of candidates
@@ -115,15 +115,15 @@ class mv_2027_hp_1a_map_uuid__missing(QgsProcessingAlgorithm):
                 return True
             return False
 
-        # Collect all valid GeoIDs present in the geotagged point features (GeoJSON)
+        # Collect all valid Map UUIDs present in the geotagged point features (GeoJSON)
         geotagged_ids = set()
-        geoid_field = resolve_field_name(source_fields, ["geoid", "geo_id", "map_uuid", "case_id", "id"])
+        uuid_field = resolve_field_name(source_fields, ["map_uuid"])
 
         for f in geojson_data.getFeatures():
             if feedback and feedback.isCanceled():
                 break
-            if geoid_field:
-                val = f.attribute(geoid_field)
+            if uuid_field:
+                val = f.attribute(uuid_field)
                 if not is_null(val):
                     geotagged_ids.add(str(val).strip())
 
@@ -154,17 +154,14 @@ class mv_2027_hp_1a_map_uuid__missing(QgsProcessingAlgorithm):
             else:
                 rec_props = rec_dict
 
-            # Look up GeoID in record properties
+            # Look up map_uuid in record properties
             rec_id = None
-            for key in ["geoid", "geo_id", "map_uuid", "case_id", "id", "RECORD_ID"]:
-                for k, v in rec_props.items():
-                    if k.lower() == key.lower() and not is_null(v):
-                        rec_id = str(v).strip()
-                        break
-                if rec_id:
+            for k, v in rec_props.items():
+                if k.lower() == "map_uuid" and not is_null(v):
+                    rec_id = str(v).strip()
                     break
 
-            # If Form 2 record has no matching geotagged point (or no ID), flag it
+            # If Form 2 record has no matching geotagged point (or no map_uuid), flag it
             if not rec_id or rec_id not in geotagged_ids:
                 out_feat = QgsFeature(fields)
 
@@ -179,7 +176,7 @@ class mv_2027_hp_1a_map_uuid__missing(QgsProcessingAlgorithm):
                         out_feat.setAttribute(fld_name, val)
 
                 if rec_id:
-                    out_feat.setAttribute("geoid", rec_id)
+                    out_feat.setAttribute("map_uuid", rec_id)
                 out_feat.setAttribute("status", "Missing Geotagged Point")
 
                 invalid_features.append(out_feat)
