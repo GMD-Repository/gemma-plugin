@@ -469,10 +469,12 @@ class PreEAProcessor:
                     output_file_path = os.path.join(output_folder, f"{output_name}.gpkg")
                 else:
                     proj = QgsProject.instance() if QgsProject.instance() else None
-                    if proj and proj.fileName():
-                        output_file_path = os.path.join(os.path.dirname(proj.fileName()), f"{output_name}.gpkg")
-                    elif proj and proj.homePath():
-                        output_file_path = os.path.join(proj.homePath(), f"{output_name}.gpkg")
+                    proj_fn = proj.fileName() if proj and hasattr(proj, 'fileName') else None
+                    proj_hp = proj.homePath() if proj and hasattr(proj, 'homePath') else None
+                    if isinstance(proj_fn, str) and proj_fn.strip():
+                        output_file_path = os.path.join(os.path.dirname(proj_fn), f"{output_name}.gpkg")
+                    elif isinstance(proj_hp, str) and proj_hp.strip():
+                        output_file_path = os.path.join(proj_hp, f"{output_name}.gpkg")
                     else:
                         output_file_path = os.path.join(tempfile.gettempdir(), f"{output_name}.gpkg")
 
@@ -614,10 +616,14 @@ class PreEAProcessor:
         bldg_idx = ea_layer.fields().indexOf("bldgcount") if "bldgcount" in existing_names else ea_layer.fields().indexOf("bldg_count")
         sy_idx = ea_layer.fields().indexOf("sy")
 
+        fid_idx = ea_layer.fields().indexOf("fid")
         new_features = []
         for i, bgy_feat in enumerate(barangay_layer.getFeatures()):
             ea_feat = QgsFeature(ea_layer.fields())
             ea_feat.setGeometry(bgy_feat.geometry())
+            if fid_idx != -1:
+                ea_feat.setAttribute(fid_idx, i + 1)
+            ea_feat.setId(i + 1)
 
             for bgy_i in range(bgy_fields.count()):
                 bgy_field_name = bgy_fields.at(bgy_i).name()
@@ -1759,6 +1765,7 @@ class PreEAProcessor:
 
         # ── Pass 3: write output features ──────────────────────────────────────
         out_fields = output_layer.fields()
+        fid_idx = out_fields.indexOf("fid")
         hhcount_idx = -1
         bldgcount_idx = -1
         sy_idx = -1
@@ -1819,6 +1826,11 @@ class PreEAProcessor:
             # Ensure sy field is populated with "2026"
             if sy_idx != -1:
                 new_feat.setAttribute(sy_idx, "2026")
+
+            out_fid = len(new_features) + 1
+            if fid_idx != -1:
+                new_feat.setAttribute(fid_idx, out_fid)
+            new_feat.setId(out_fid)
 
             new_features.append(new_feat)
 

@@ -529,6 +529,12 @@ class UpdateLguByGeocodeAlgorithm(QgsProcessingAlgorithm):
             out_feat = QgsFeature(output_fields)
             out_feat.setGeometry(geom)
 
+            fid_idx = output_fields.indexOf("fid")
+            fid_val = current + 1
+            if fid_idx != -1:
+                out_feat.setAttribute(fid_idx, fid_val)
+            out_feat.setId(fid_val)
+
             out_feat.setAttribute("map_uuid", _attr_or_null(psgc_match.get("map_uuid")))
             out_feat.setAttribute("geocode", _attr_or_null(lgu_geo_str if lgu_geo_str else norm_geo_val))
             out_feat.setAttribute("region", _attr_or_null(psgc_match.get("region")))

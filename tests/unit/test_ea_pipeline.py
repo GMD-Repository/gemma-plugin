@@ -1312,6 +1312,180 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
         # All feature counts are 0, so outputs must be empty!
         self.assertEqual(outputs, {}, "Expected empty outputs when all output layer feature counts are 0.")
 
+    def test_phase8_output_unique_fids(self):
+        """Verify that all features written across phase 8 sinks receive unique sequential FIDs."""
+        from references.create_enumeration_area.phases.phase8_output import run_phase_8
+        from qgis.core import QgsFields, QgsField, QgsFeature, QgsGeometry, QgsPointXY, QgsVectorLayer
+        try:
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            try:
+                from PyQt5.QtCore import QVariant
+            except ImportError:
+                from qgis.core import QVariant
+
+        class MockSink:
+            def __init__(self):
+                self.features = []
+
+            def addFeature(self, feat, flags=None):
+                self.features.append(QgsFeature(feat))
+                return True
+
+        delin_sink = MockSink()
+        merged_sink = MockSink()
+        spec_sink = MockSink()
+        bldg_sink = MockSink()
+
+        class DummyAlg:
+            DELINEATED_OUTPUT = "DELINEATED_OUTPUT"
+            MERGED_OUTPUT = "MERGED_OUTPUT"
+            SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
+            DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
+            MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
+            EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
+
+        alg = DummyAlg()
+        mock_feedback = MockFeedback()
+
+        # Build schema
+        fields = QgsFields()
+        for f in ["fid", "map_uuid", "geocode", "region", "province", "city_mun", "barangay", "code", "name", "ean", "hhcount", "bldgcount", "sy", "new_ean", "hh_count", "bldg_count", "ea_type", "remarks"]:
+            fields.append(QgsField(f, QVariant.Int if f == "fid" else QVariant.String))
+
+        bldg_fields = QgsFields()
+        for f in ["fid", "bldg_id", "bldgpoints_value", "pop"]:
+            fields_type = QVariant.Int if f in ("fid", "bldg_id") else QVariant.Double
+            bldg_fields.append(QgsField(f, fields_type))
+
+        bldg_layer = QgsVectorLayer("Point?crs=EPSG:4326", "bldg", "memory")
+        for i in range(bldg_fields.count()):
+            bldg_layer.dataProvider().addAttributes([bldg_fields.at(i)])
+        bldg_layer.updateFields()
+
+        # EAs: 2 split parts from parent 100, 1 merged EA, 1 special EA
+        poly1 = QgsGeometry.fromPolygonXY([[QgsPointXY(0,0), QgsPointXY(5,0), QgsPointXY(5,5), QgsPointXY(0,5), QgsPointXY(0,0)]])
+        poly2 = QgsGeometry.fromPolygonXY([[QgsPointXY(5,0), QgsPointXY(10,0), QgsPointXY(10,5), QgsPointXY(5,5), QgsPointXY(5,0)]])
+        poly3 = QgsGeometry.fromPolygonXY([[QgsPointXY(0,5), QgsPointXY(5,5), QgsPointXY(5,10), QgsPointXY(0,10), QgsPointXY(0,5)]])
+        poly4 = QgsGeometry.fromPolygonXY([[QgsPointXY(5,5), QgsPointXY(10,5), QgsPointXY(10,10), QgsPointXY(5,10), QgsPointXY(5,5)]])
+
+        bldgs = [
+            {'point': QgsPointXY(1, 1), 'attributes': [999, 1, 1.0, 3.0], 'bldgpoints_value': 1.0, 'pop': 3.0},
+            {'point': QgsPointXY(2, 2), 'attributes': [999, 2, 1.0, 4.0], 'bldgpoints_value': 1.0, 'pop': 4.0},
+        ]
+
+        eas = [
+            # Split parts from candidate 100
+            {'geom': poly1, 'original_id': 100, 'original_code': '001', 'new_ea_code': '001A', 'parent_barangay': '043404001', 'from_split': True, 'hh_count': 150.0, 'bldg_count': 20, 'original_hhcount': 350.0, 'original_bldgcount': 50, 'buildings': bldgs},
+            {'geom': poly2, 'original_id': 100, 'original_code': '001', 'new_ea_code': '001B', 'parent_barangay': '043404001', 'from_split': True, 'hh_count': 200.0, 'bldg_count': 30, 'original_hhcount': 350.0, 'original_bldgcount': 50, 'buildings': []},
+            # Merged EA
+            {'geom': poly3, 'original_id': 200, 'original_code': '002', 'new_ea_code': '002', 'parent_barangay': '043404001', 'from_merge': True, 'hh_count': 80.0, 'bldg_count': 10, 'original_hhcount': 40.0, 'original_bldgcount': 5, 'buildings': []},
+            # Special EA
+            {'geom': poly4, 'original_id': 300, 'original_code': '003', 'new_ea_code': '003', 'parent_barangay': '043404001', 'is_special_ea': True, 'special_type': 'GAP', 'ea_type': 'GAP', 'hh_count': 0.0, 'bldg_count': 0, 'original_hhcount': 0.0, 'original_bldgcount': 0, 'buildings': []},
+        ]
+
+        p1 = {
+            "previous_ea_source": QgsVectorLayer("Polygon?crs=EPSG:4326", "test_ea", "memory"),
+            "building_source": bldg_layer,
+            "target_crs": QgsVectorLayer("Polygon?crs=EPSG:4326", "test_ea", "memory").crs(),
+            "area_threshold": 1.0,
+            "max_household": 300,
+            "min_household": 100,
+            "bldg_hh_field": "pop",
+            "ea_id_field": "ean",
+            "barangay_by_id": {},
+            "all_ea_features": [],
+        }
+        p2 = {
+            "out_fields": fields,
+            "export_fields": fields,
+            "delineation_candidate_ids": {100},
+            "merge_candidate_ids": {200},
+            "adjacent_ea_ids": set(),
+            "delineated_sink": delin_sink,
+            "delineated_dest_id": "dest_delin",
+            "merged_sink": merged_sink,
+            "merged_dest_id": "dest_merged",
+            "special_ea_sink": spec_sink,
+            "special_ea_dest_id": "dest_special",
+            "extracted_buildings_sink": bldg_sink,
+            "extracted_buildings_dest_id": "dest_bldg",
+            "delin_candidate_feat_count": 0,
+            "merge_candidate_feat_count": 0,
+            "extracted_bldg_feat_count": 0,
+        }
+        p3 = {"road_geoms": {}, "river_geoms": {}}
+        p4 = {}
+        p7 = {"eas": eas}
+
+        outputs = run_phase_8(alg, {}, None, mock_feedback, None, p1, p2, p3, p4, p7)
+
+        # 1. Verify Delineated Sink FIDs are unique and sequential (1, 2)
+        self.assertEqual(len(delin_sink.features), 2)
+        delin_fids = [f.attribute("fid") for f in delin_sink.features]
+        self.assertEqual(delin_fids, [1, 2], "Delineated output features must have unique sequential FIDs [1, 2].")
+        self.assertEqual([f.id() for f in delin_sink.features], [1, 2])
+
+        # 2. Verify Merged Sink FIDs are unique and sequential (1)
+        self.assertEqual(len(merged_sink.features), 1)
+        self.assertEqual(merged_sink.features[0].attribute("fid"), 1)
+        self.assertEqual(merged_sink.features[0].id(), 1)
+
+        # 3. Verify Special EA Sink FIDs are unique and sequential (1)
+        self.assertEqual(len(spec_sink.features), 1)
+        self.assertEqual(spec_sink.features[0].attribute("fid"), 1)
+        self.assertEqual(spec_sink.features[0].id(), 1)
+
+        # 4. Verify Extracted Buildings Sink FIDs are unique and sequential (1, 2)
+        self.assertEqual(len(bldg_sink.features), 2)
+        bldg_fids = [f.attribute("fid") for f in bldg_sink.features]
+        self.assertEqual(bldg_fids, [1, 2], "Extracted buildings features must have unique sequential FIDs [1, 2].")
+        self.assertEqual([f.id() for f in bldg_sink.features], [1, 2])
+
+    def test_ea_merge_processor_unique_fids(self):
+        """Verify that EAMergeProcessor assigns unique sequential FIDs across replacement and remaining features."""
+        from references.create_enumeration_area.ea_merge_processor import EAMergeProcessor
+        from qgis.core import QgsVectorLayer, QgsFields, QgsField, QgsFeature, QgsGeometry, QgsPointXY
+        try:
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            try:
+                from PyQt5.QtCore import QVariant
+            except ImportError:
+                from qgis.core import QVariant
+
+        ea_layer = QgsVectorLayer("Polygon?crs=EPSG:4326", "ea_layer", "memory")
+        fields = QgsFields()
+        fields.append(QgsField("fid", QVariant.Int))
+        fields.append(QgsField("ean", QVariant.String))
+        fields.append(QgsField("geocode", QVariant.String))
+        ea_layer.dataProvider().addAttributes([fields.at(i) for i in range(fields.count())])
+        ea_layer.updateFields()
+
+        poly1 = QgsGeometry.fromPolygonXY([[QgsPointXY(0,0), QgsPointXY(10,0), QgsPointXY(10,10), QgsPointXY(0,10), QgsPointXY(0,0)]])
+        poly2 = QgsGeometry.fromPolygonXY([[QgsPointXY(10,0), QgsPointXY(20,0), QgsPointXY(20,10), QgsPointXY(10,10), QgsPointXY(10,0)]])
+        f1 = QgsFeature(ea_layer.fields())
+        f1.setGeometry(poly1)
+        f1.setAttributes([99, "001", "043404001"])
+        f2 = QgsFeature(ea_layer.fields())
+        f2.setGeometry(poly2)
+        f2.setAttributes([99, "002", "043404001"])
+        ea_layer.dataProvider().addFeatures([f1, f2])
+
+        # Replacement layer
+        repl_layer = QgsVectorLayer("Polygon?crs=EPSG:4326", "04340401", "memory")
+        poly_rep = QgsGeometry.fromPolygonXY([[QgsPointXY(5,0), QgsPointXY(15,0), QgsPointXY(15,10), QgsPointXY(5,10), QgsPointXY(5,0)]])
+        f_rep = QgsFeature()
+        f_rep.setGeometry(poly_rep)
+        repl_layer.dataProvider().addFeatures([f_rep])
+
+        processor = EAMergeProcessor(ea_layer, [repl_layer], None)
+        out_layer = processor._create_output_layer([f_rep, f1, f2])
+        self.assertIsNotNone(out_layer)
+        fids = [feat.attribute("fid") for feat in out_layer.getFeatures()]
+        self.assertEqual(fids, [1, 2, 3], "All output features in merged layer must have unique sequential FIDs.")
+        self.assertEqual([feat.id() for feat in out_layer.getFeatures()], [1, 2, 3])
+
 
 if __name__ == "__main__":
     unittest.main()

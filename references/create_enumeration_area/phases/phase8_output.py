@@ -818,7 +818,7 @@ def run_phase_8(
     final_geom_by_candidate = {}
 
     for i, ea in enumerate(eas):
-        if multi_feedback.isCanceled():
+        if (multi_feedback and multi_feedback.isCanceled()) or (feedback and feedback.isCanceled()):
             raise QgsProcessingException("Algorithm cancelled by user.")
         yield_to_ui(i, 50)
 
@@ -899,21 +899,10 @@ def run_phase_8(
             out_feat.setAttribute(pop_idx, final_pop)
 
         fid_idx = out_fields.indexOf("fid")
+        cur_fid = i + 1
         if fid_idx != -1:
-            cur_fid = out_feat.attribute(fid_idx)
-            if cur_fid is None or cur_fid == NULL or str(cur_fid).strip() in ('', 'NULL', 'None'):
-                if parent_feat and parent_feat.isValid():
-                    p_fid = parent_feat.attribute("fid") if parent_feat.fields().indexOf("fid") != -1 else None
-                    if p_fid is None or p_fid == NULL or str(p_fid).strip() in ('', 'NULL', 'None'):
-                        p_fid = parent_feat.id()
-                    try:
-                        cur_fid = int(p_fid)
-                    except (ValueError, TypeError):
-                        cur_fid = p_fid
-                elif _ea_id is not None and isinstance(_ea_id, int) and _ea_id > 0:
-                    cur_fid = _ea_id
-            if cur_fid is not None and cur_fid != NULL and str(cur_fid).strip() not in ('', 'NULL', 'None'):
-                out_feat.setAttribute(fid_idx, cur_fid)
+            out_feat.setAttribute(fid_idx, cur_fid)
+        out_feat.setId(cur_fid)
 
         new_ea_idx = out_fields.indexOf("new_ean")
         if new_ea_idx == -1:
@@ -1204,6 +1193,11 @@ def run_phase_8(
             if ea.get('is_special_ea', False):
                 if special_ea_sink is not None:
                     exp_feat_special = make_export_feature(out_feat, special_ea_export_fields)
+                    special_ea_fid = special_ea_feat_count + 1
+                    fid_idx_spec = special_ea_export_fields.indexOf("fid")
+                    if fid_idx_spec != -1:
+                        exp_feat_special.setAttribute(fid_idx_spec, special_ea_fid)
+                    exp_feat_special.setId(special_ea_fid)
                     if special_ea_sink.addFeature(exp_feat_special, QgsFeatureSink.Flag.FastInsert):
                         special_ea_feat_count += 1
                     else:
@@ -1215,6 +1209,11 @@ def run_phase_8(
                 sb = ea.get('split_by', 'point_based')
                 split_by_counts[sb] = split_by_counts.get(sb, 0) + 1
                 if delineated_sink is not None:
+                    delin_fid = delineated_feat_count + 1
+                    fid_idx_delin = export_fields.indexOf("fid")
+                    if fid_idx_delin != -1:
+                        exp_feat.setAttribute(fid_idx_delin, delin_fid)
+                    exp_feat.setId(delin_fid)
                     if delineated_sink.addFeature(exp_feat, QgsFeatureSink.Flag.FastInsert):
                         delineated_feat_count += 1
                     else:
@@ -1224,6 +1223,11 @@ def run_phase_8(
             if ea.get('from_merge', False) and not ea.get('is_special_ea', False):
                 if merged_sink is not None:
                     exp_feat_merged = make_export_feature(out_feat, merged_export_fields)
+                    merged_fid = merged_feat_count + 1
+                    fid_idx_merged = merged_export_fields.indexOf("fid")
+                    if fid_idx_merged != -1:
+                        exp_feat_merged.setAttribute(fid_idx_merged, merged_fid)
+                    exp_feat_merged.setId(merged_fid)
                     indicator_merged_idx = merged_export_fields.indexOf("indicator")
                     if indicator_merged_idx != -1:
                         exp_feat_merged.setAttribute(indicator_merged_idx, "")
@@ -1286,7 +1290,13 @@ def run_phase_8(
                     if parent_ean_idx != -1:
                         b_attrs[parent_ean_idx] = str(parent_ean_val)
 
+                    bldg_fid = extracted_bldg_feat_count + 1
+                    fid_idx_bldg = bldg_out_fields.indexOf("fid")
+                    if fid_idx_bldg != -1:
+                        b_attrs[fid_idx_bldg] = bldg_fid
+
                     b_feat.setAttributes(b_attrs)
+                    b_feat.setId(bldg_fid)
                     if extracted_buildings_sink.addFeature(b_feat, QgsFeatureSink.Flag.FastInsert):
                         extracted_bldg_feat_count += 1
                     else:
@@ -1309,6 +1319,7 @@ def run_phase_8(
     # SPECIAL_EA_OUTPUT layer so users have a complete spatial record of every
     # area that required gap-filling or overlap resolution.
     if special_ea_sink is not None and (internal_gap_geoms or internal_overlap_geoms):
+        _fid_idx = special_ea_export_fields.indexOf("fid")
         _geocode_idx = special_ea_export_fields.indexOf("geocode")
         _ea_type_idx = special_ea_export_fields.indexOf("ea_type")
         _special_type_idx = special_ea_export_fields.indexOf("special_type")
@@ -1325,6 +1336,10 @@ def run_phase_8(
                     _gap_geom.transform(barangay_to_target)
                 _gap_feat = QgsFeature(special_ea_export_fields)
                 _gap_feat.setGeometry(_gap_geom)
+                _gap_fid = special_ea_feat_count + 1
+                if _fid_idx != -1:
+                    _gap_feat.setAttribute(_fid_idx, _gap_fid)
+                _gap_feat.setId(_gap_fid)
                 if _geocode_idx != -1:
                     _gap_feat.setAttribute(_geocode_idx, _bar_geocode)
                 if _ea_type_idx != -1:
@@ -1352,6 +1367,10 @@ def run_phase_8(
                     _overlap_geom.transform(barangay_to_target)
                 _ov_feat = QgsFeature(special_ea_export_fields)
                 _ov_feat.setGeometry(_overlap_geom)
+                _ov_fid = special_ea_feat_count + 1
+                if _fid_idx != -1:
+                    _ov_feat.setAttribute(_fid_idx, _ov_fid)
+                _ov_feat.setId(_ov_fid)
                 if _geocode_idx != -1:
                     _ov_feat.setAttribute(_geocode_idx, _bar_geocode)
                 if _ea_type_idx != -1:
@@ -1520,15 +1539,17 @@ def run_phase_8(
         layer_name = f"{geo5}_eadel_update"
 
         crs_auth_id = target_crs.authid()
-        uri = f"MultiLineString?crs={crs_auth_id}&field=geocode:string&field=ean:string&field=region:string&field=province:string&field=city_mun:string&field=barangay:string&field=indicator:string&field=remarks:string"
+        uri = f"MultiLineString?crs={crs_auth_id}&field=fid:int&field=geocode:string&field=ean:string&field=region:string&field=province:string&field=city_mun:string&field=barangay:string&field=indicator:string&field=remarks:string"
 
         features_to_add = []
-        for line_geom, attrs in all_splitting_lines:
+        for line_idx, (line_geom, attrs) in enumerate(all_splitting_lines, start=1):
             if not line_geom.isMultipart():
                 line_geom.convertToMultiType()
             f = QgsFeature()
             f.setGeometry(line_geom)
+            f.setId(line_idx)
             f.setAttributes([
+                line_idx,
                 attrs.get('geocode', ''),
                 attrs.get('ean', ''),
                 attrs.get('region', ''),
