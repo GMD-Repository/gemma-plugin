@@ -26,8 +26,9 @@ Use this tool when you need to:
 | **Reference layer** | Feature Source (Polygon) | The combined Reference MBI polygon layer containing baseline cases, `mbi_status`, `pso_remarks`, `mbi_type`, and `num_bldg_pts`. Required. Automatically pre-selects matching `ref_mbi_cases` layer loaded in active QGIS project. |
 | **Checker GAP layer** | Feature Source (Polygon) | Topological checker output layer containing detected boundary gaps. Optional. Automatically pre-selects matching `Gaps` layer loaded in active QGIS project. |
 | **Checker OVERLAP layer** | Feature Source (Polygon) | Topological checker output layer containing detected boundary overlaps. Optional. Automatically pre-selects matching `Overlaps` layer loaded in active QGIS project. |
-| **Save outputs as GeoPackage** | Boolean | Option to consolidate all non-empty audit result categories into a single GeoPackage file. Default is `False`. |
+| **Save outputs as GeoPackage** | Boolean | Option to consolidate non-empty audit result categories into a single GeoPackage file. Default is `False`. |
 | **Save Path** | Folder Directory | Destination folder where the GeoPackage will be saved. Optional unless **Save outputs as GeoPackage** is checked. The filename is automatically generated as `ref_mbi_reviewed-YYYY-MM-DD_HH-MM-SS.gpkg`. |
+| **Layers to include in GeoPackage** | Enum (Multiple) | Multi-select choice of which audit result layers/categories to write into the GeoPackage. All categories are selected by default. |
 
 ### Outputs
 
@@ -43,6 +44,7 @@ Outputs are generated conditionally and will only create output layers when at l
 | **Confirmed Resolved** | Feature Sink (Polygon) | Reference cases marked `1_Updated` with 0 building points that are no longer detected by topological checkers. |
 | **Manual Review** | Feature Sink (Polygon) | Ambiguous cases where a single checker polygon overlaps multiple reference polygons. |
 | **No Status** | Feature Sink (Polygon) | Reference boundary cases where the `mbi_status` field is blank or NULL. |
+| **Disputed Areas** | Feature Sink (Polygon) | Reference boundary cases marked with `mbi_type` as Disputed (e.g. `3_Disputed`). |
 | **GeoPackage File** | File (GeoPackage) | Timestamped `.gpkg` file containing each non-empty result category as an individual layer table. |
 
 ## How It Works
@@ -61,9 +63,10 @@ Outputs are generated conditionally and will only create output layers when at l
    - **Remaining Cases**: Cases in the reference layer confirmed detected by the checker that remain legitimately open for other non-Pending status codes.
    - **Confirmed Resolved**: Reference cases marked `1_Updated` with zero building points that no longer spatially intersect any active checker polygon.
    - **New Cases**: Active checker polygons that have zero interior area overlap against reference cases.
+   - **Disputed Areas**: Reference layer boundary cases flagged as `3_Disputed` extracted directly for administrative tracking.
 
 4. **Timestamped GeoPackage Consolidation**:
-   - If enabled (by checking **Save outputs as GeoPackage**), non-empty result categories are automatically saved into a single `.gpkg` file formatted as `ref_mbi_reviewed-YYYY-MM-DD_HH-MM-SS.gpkg`. A **Save Path** destination folder is required only when this option is checked; if unchecked, the algorithm runs without requiring an output folder.
+   - If enabled (by checking **Save outputs as GeoPackage**), selected non-empty result categories are automatically saved into a single `.gpkg` file formatted as `ref_mbi_reviewed-YYYY-MM-DD_HH-MM-SS.gpkg`. A **Save Path** destination folder is required only when this option is checked; if unchecked, the algorithm runs without requiring an output folder.
 
 ## Classification Rules
 
@@ -93,17 +96,25 @@ Outputs are generated conditionally and will only create output layers when at l
 8. **No Status (`NO_STATUS`)**:
    - Reference boundary cases where the `mbi_status` field is empty or NULL.
 
+9. **Disputed Areas (`DISPUTED_AREAS`)**:
+   - Reference layer boundary cases where `mbi_type` matches `3_Disputed` (or contains `disputed`).
+
 ## Output Fields
 
 | Field Name | Type | Description |
 |------------|------|-------------|
 | `case_uuid` | String (100) | Unique identifier of the boundary case |
-| `case_type` | String (20) | Type of boundary case (`Gap` or `Overlap`) |
-| `remarks` | String (255) | Automated audit finding explanation |
+| `geocode` | String (50) | Standard 9/10-digit PSGC geographic code |
+| `region` | String (100) | Region name |
+| `province` | String (100) | Province name |
+| `city_mun` | String (100) | City or Municipality name |
+| `barangay` | String (100) | Barangay name |
+| `mbi_type` | String (50) | Type of boundary case (`Gap`, `Overlap`, or `Disputed` / `1_Gap`, `2_Overlap`, `3_Disputed`) |
 | `ref_status` | String (60) | Original status reported in Reference layer |
 | `ref_remarks` | String (255) | Original remarks from Reference layer |
 | `ref_involved_bgys` | String (255) | Involved barangays listed in Reference layer |
 | `ref_num_bldg_pts` | Integer | Count of building points inside reference polygon |
+| `remarks` | String (255) | Automated audit finding explanation |
 
 ## Supported Geometry Types
 
