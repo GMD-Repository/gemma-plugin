@@ -51,7 +51,7 @@ RESOLVED_STATUSES = {"1_Updated"}
 CATEGORY_GPKG_LAYER_NAMES = {
     "status_mismatch": "status_mismatch",
     "mismatch_with_remarks": "mismatch_with_remarks",
-    "pending_with_remarks": "pending_with_remarks",
+    "pending_cases": "pending_cases",
     "new_cases": "new_cases",
     "still_active": "remaining_cases",
     "confirmed_resolved": "confirmed_resolved",
@@ -218,36 +218,43 @@ def evaluate_reference_case(rf, spatially_confirmed):
     """
     Runs attribute-based rules on a single reference feature.
     Returns (category, reason) where category is one of:
-      "status_mismatch", "mismatch_with_remarks", "pending_with_remarks",
+      "status_mismatch", "mismatch_with_remarks", "pending_cases",
       "still_active", "confirmed_resolved", "no_status"
 
     Categories:
-      - pending_with_remarks: '2_Pending' cases that have remarks present
-        (with or without building points)
+      - pending_cases: ALL '2_Pending' cases, EXCEPT the one specific
+        case below (0 building points + no remarks), which is a
+        Status Mismatch instead.
       - status_mismatch: claimed resolved but detected by checker,
-        '2_Pending' w/ 0 bldg pts and no remarks, '1_Updated' w/ nonzero
-        bldg pts and no remarks, or '2_Pending' w/ nonzero bldg pts & no
-        remarks that is no longer detected by checker.
+        '2_Pending' w/ 0 bldg pts and NO remarks (the only Pending
+        case that does NOT go to Pending Cases), '1_Updated' w/
+        nonzero bldg pts and no remarks, or not detected without
+        justification.
       - mismatch_with_remarks: '1_Updated' with nonzero building points
         where remarks ARE present (review justification)
       - confirmed_resolved: '1_Updated' with 0 building points, not detected
       - no_status: status field is blank
-      - still_active: in reference layer and detected by checker, open case
-        without remarks (Remaining Case).
+      - still_active: legitimately open case that isn't Pending
+        (kept for any other non-Pending, non-Updated status values)
     """
     status = safe_get(rf, STATUS_FIELD)
     bp = get_num_bldg_pts(rf)
     rem = rf[REMARKS_FIELD] if layer_has_field(rf, REMARKS_FIELD) else None
     has_remarks = meaningful(rem)
+    is_pending = (status == "2_Pending") or ("pending" in status.lower())
 
     if status == "":
         return "no_status", "Reference case has no status value."
 
-    # Pending cases with remarks (with or without building points)
-    if (status == "2_Pending" or "pending" in status.lower()) and has_remarks:
+    # Pending cases: ALL go here, EXCEPT bp==0 with no remarks (-> Status Mismatch)
+    if is_pending:
+        if bp == 0 and not has_remarks:
+            return "status_mismatch", "'2_Pending' with 0 num_bldg_pts and no justifying remarks."
         if bp == 0:
-            return "pending_with_remarks", "'2_Pending' with 0 num_bldg_pts; remarks present, please verify justification."
-        return "pending_with_remarks", f"Status='{status}' with {bp} building point(s) and remarks."
+            return "pending_cases", "'2_Pending' with 0 num_bldg_pts; remarks present, please verify justification."
+        if has_remarks:
+            return "pending_cases", f"Status='{status}' with {bp} building point(s) and remarks."
+        return "pending_cases", f"Status='{status}' with {bp} building point(s), no remarks."
 
     plain_reasons = []
     remarks_reasons = []
@@ -255,10 +262,6 @@ def evaluate_reference_case(rf, spatially_confirmed):
     # Rule A: claimed resolved, but checker still finds it
     if status in RESOLVED_STATUSES and spatially_confirmed:
         plain_reasons.append(f"'{status}' but case still detected by Checker.")
-
-    # Rule B: 2_Pending, zero building points (and no remarks)
-    if (status == "2_Pending" or "pending" in status.lower()) and bp == 0 and not has_remarks:
-        plain_reasons.append("'2_Pending' with 0 num_bldg_pts and no justifying remarks.")
 
     # Rule C: 1_Updated but still has building points
     if status in RESOLVED_STATUSES and bp != 0:
@@ -283,7 +286,6 @@ def evaluate_reference_case(rf, spatially_confirmed):
     if not spatially_confirmed:
         return "status_mismatch", f"Status='{status}' but case no longer detected by Checker."
 
-    # Spatially confirmed remaining case (e.g. 2_Pending with bp > 0 and no remarks, detected by Checker)
     return "still_active", f"Status='{status}', case remains open (Remaining Case)."
 
 
@@ -292,7 +294,7 @@ def classify(checker_layer, reference_features, reference_crs):
     Classifies cases into:
       - status_mismatch: attribute rules failed, no justification on record
       - mismatch_with_remarks: 1_Updated with building points, remarks present
-      - pending_with_remarks: 2_Pending cases with remarks (with/without building points)
+      - pending_cases: ALL 2_Pending cases except bp==0+no remarks
       - no_status: reference case has a blank/missing status
       - still_active: matched by checker, legitimately open (Remaining Case)
       - new_cases: checker case has no genuine reference overlap at all
@@ -301,7 +303,7 @@ def classify(checker_layer, reference_features, reference_crs):
     """
     matches = spatial_match(checker_layer, reference_features, reference_crs)
 
-    status_mismatch, mismatch_with_remarks, pending_with_remarks, still_active, new_cases, ambiguous, no_status = [], [], [], [], [], [], []
+    status_mismatch, mismatch_with_remarks, pending_cases, still_active, new_cases, ambiguous, no_status = [], [], [], [], [], [], []
     matched_ref_ids = set()
 
     for cf, matched_refs in matches:
@@ -315,8 +317,8 @@ def classify(checker_layer, reference_features, reference_crs):
                 status_mismatch.append((cf, rf, reason))
             elif category == "mismatch_with_remarks":
                 mismatch_with_remarks.append((cf, rf, reason))
-            elif category == "pending_with_remarks":
-                pending_with_remarks.append((cf, rf, reason))
+            elif category == "pending_cases":
+                pending_cases.append((cf, rf, reason))
             elif category == "no_status":
                 no_status.append((cf, rf, reason))
             else:
@@ -335,8 +337,8 @@ def classify(checker_layer, reference_features, reference_crs):
             status_mismatch.append((None, rf, reason))
         elif category == "mismatch_with_remarks":
             mismatch_with_remarks.append((None, rf, reason))
-        elif category == "pending_with_remarks":
-            pending_with_remarks.append((None, rf, reason))
+        elif category == "pending_cases":
+            pending_cases.append((None, rf, reason))
         elif category == "confirmed_resolved":
             confirmed_resolved.append((rf, reason))
         elif category == "no_status":
@@ -347,7 +349,7 @@ def classify(checker_layer, reference_features, reference_crs):
     return {
         "status_mismatch": status_mismatch,
         "mismatch_with_remarks": mismatch_with_remarks,
-        "pending_with_remarks": pending_with_remarks,
+        "pending_cases": pending_cases,
         "still_active": still_active,
         "new_cases": new_cases,
         "ambiguous": ambiguous,
@@ -404,7 +406,7 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
 
     OUT_MISMATCH = "OUT_MISMATCH"
     OUT_MISMATCH_REMARKS = "OUT_MISMATCH_REMARKS"
-    OUT_PENDING_REMARKS = "OUT_PENDING_REMARKS"
+    OUT_PENDING_CASES = "OUT_PENDING_CASES"
     OUT_NEW = "OUT_NEW"
     OUT_STILL = "OUT_STILL"
     OUT_RESOLVED = "OUT_RESOLVED"
@@ -461,9 +463,9 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
             "Outputs (only generated when containing at least one feature):\n"
             "- Status Mismatch: claimed resolved but still detected, Pending w/ 0 bldg pts and no remarks, or Updated w/ nonzero bldg pts and no remarks\n"
             "- Mismatch with Remarks: Updated w/ nonzero bldg pts but remarks ARE present (verify justification)\n"
-            "- Pending with Remarks: Pending cases with remarks (with or without building points)\n"
+            "- Pending Cases: all Pending status cases, except Pending w/ 0 bldg pts and no remarks (which goes to Status Mismatch instead)\n"
             "- New Cases: Checker case with no genuine Reference overlap\n"
-            "- Remaining Cases: in Reference layer and detected by Checker (open cases without remarks)\n"
+            "- Remaining Cases: in Reference layer and detected by Checker (open cases, non-Pending)\n"
             "- Confirmed Resolved: claimed resolved and Checker agrees\n"
             "- No Status: Reference case with blank status\n"
             "- Manual Review: one Checker case overlaps multiple Reference cases"
@@ -548,7 +550,7 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
         # on completion, so they still appear as temporary layers.
         self.addParameter(self._hidden_sink(self.OUT_MISMATCH, self.tr("Status Mismatch")))
         self.addParameter(self._hidden_sink(self.OUT_MISMATCH_REMARKS, self.tr("Mismatch with Remarks")))
-        self.addParameter(self._hidden_sink(self.OUT_PENDING_REMARKS, self.tr("Pending with Remarks")))
+        self.addParameter(self._hidden_sink(self.OUT_PENDING_CASES, self.tr("Pending Cases")))
         self.addParameter(self._hidden_sink(self.OUT_NEW, self.tr("New Cases")))
         self.addParameter(self._hidden_sink(self.OUT_STILL, self.tr("Remaining Cases")))
         self.addParameter(self._hidden_sink(self.OUT_RESOLVED, self.tr("Confirmed Resolved")))
@@ -595,7 +597,7 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
         collected = {
             "status_mismatch": [],
             "mismatch_with_remarks": [],
-            "pending_with_remarks": [],
+            "pending_cases": [],
             "new_cases": [],
             "still_active": [],
             "confirmed_resolved": [],
@@ -630,10 +632,10 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
                 remarks = reason
                 collected["mismatch_with_remarks"].append((geom, case_type, remarks, "", rf))
 
-            for cf, rf, reason in result["pending_with_remarks"]:
+            for cf, rf, reason in result["pending_cases"]:
                 geom = cf.geometry() if cf is not None else rf.geometry()
                 remarks = reason
-                collected["pending_with_remarks"].append((geom, case_type, remarks, "", rf))
+                collected["pending_cases"].append((geom, case_type, remarks, "", rf))
 
             for cf in result["new_cases"]:
                 remarks = "No matching reference case found."
@@ -674,9 +676,9 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
                     elif category == "mismatch_with_remarks":
                         remarks = reason
                         collected["mismatch_with_remarks"].append((rf.geometry(), case_type, remarks, "", rf))
-                    elif category == "pending_with_remarks":
+                    elif category == "pending_cases":
                         remarks = reason
-                        collected["pending_with_remarks"].append((rf.geometry(), case_type, remarks, "", rf))
+                        collected["pending_cases"].append((rf.geometry(), case_type, remarks, "", rf))
                     elif category == "confirmed_resolved":
                         remarks = reason
                         collected["confirmed_resolved"].append((rf.geometry(), case_type, remarks, "", rf))
@@ -697,7 +699,7 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
         output_map = (
             (self.OUT_MISMATCH, "status_mismatch", self.tr("Status Mismatch")),
             (self.OUT_MISMATCH_REMARKS, "mismatch_with_remarks", self.tr("Mismatch with Remarks")),
-            (self.OUT_PENDING_REMARKS, "pending_with_remarks", self.tr("Pending with Remarks")),
+            (self.OUT_PENDING_CASES, "pending_cases", self.tr("Pending Cases")),
             (self.OUT_NEW, "new_cases", self.tr("New Cases")),
             (self.OUT_STILL, "still_active", self.tr("Remaining Cases")),
             (self.OUT_RESOLVED, "confirmed_resolved", self.tr("Confirmed Resolved")),
@@ -782,7 +784,7 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
 
         feedback.pushInfo(
             f"Status Mismatch: {counts['status_mismatch']} | Mismatch with Remarks: {counts['mismatch_with_remarks']} | "
-            f"Pending with Remarks: {counts['pending_with_remarks']} | "
+            f"Pending Cases: {counts['pending_cases']} | "
             f"New Cases: {counts['new_cases']} | "
             f"Remaining Cases: {counts['still_active']} | No Status: {counts['no_status']} | "
             f"Confirmed Resolved: {counts['confirmed_resolved']} | Manual Review: {counts['ambiguous']}"
