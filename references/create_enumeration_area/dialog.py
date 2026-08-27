@@ -431,6 +431,13 @@ class EALauncherDialog(QDialog):
         )
         options_layout.addWidget(self.pre_ea_clip_chk)
 
+        self.pre_ea_resolve_overlaps_chk = QCheckBox("Resolve EA Overlaps")
+        self.pre_ea_resolve_overlaps_chk.setChecked(True)
+        self.pre_ea_resolve_overlaps_chk.setToolTip(
+            "Detect and eliminate overlapping polygon regions between adjacent EAs within each Barangay."
+        )
+        options_layout.addWidget(self.pre_ea_resolve_overlaps_chk)
+
         self.pre_ea_detect_gaps_chk = QCheckBox("Detect Uncovered Barangay Areas")
         self.pre_ea_detect_gaps_chk.setChecked(True)
         self.pre_ea_detect_gaps_chk.setToolTip(
@@ -795,6 +802,7 @@ class EALauncherDialog(QDialog):
 
         gap_tolerance = self.pre_ea_gap_tol_spin.value()
         clip_to_bgy = self.pre_ea_clip_chk.isChecked()
+        resolve_overlaps = self.pre_ea_resolve_overlaps_chk.isChecked()
         detect_gaps = self.pre_ea_detect_gaps_chk.isChecked()
         assign_gaps = self.pre_ea_assign_gaps_chk.isChecked()
 
@@ -821,6 +829,7 @@ class EALauncherDialog(QDialog):
             ea_layer=ea_layer,
             gap_tolerance=gap_tolerance,
             clip_to_bgy=clip_to_bgy,
+            resolve_overlaps=resolve_overlaps,
             detect_gaps=detect_gaps,
             assign_gaps=assign_gaps,
             feedback_callback=feedback_callback,
@@ -869,6 +878,7 @@ class EALauncherDialog(QDialog):
         action_colors = {
             "No Change": ("#f6f8fa", "#333"),
             "Clipped": ("#fff8c5", "#7d4e00"),
+            "Overlap Resolved": ("#e6ffec", "#1a7f37"),
             "Gap Assigned": ("#dafbe1", "#1a7f37"),
             "Geometry Fixed": ("#ddf4ff", "#0969da"),
             "Unresolved": ("#ffebe9", "#cf222e"),
@@ -878,6 +888,7 @@ class EALauncherDialog(QDialog):
             action_colors = {
                 "No Change": ("#2d333b", "#adbac7"),
                 "Clipped": ("#3d3300", "#e3b341"),
+                "Overlap Resolved": ("#133a1e", "#3fb950"),
                 "Gap Assigned": ("#1e3f28", "#2ecc71"),
                 "Geometry Fixed": ("#0e2235", "#79c0ff"),
                 "Unresolved": ("#3d1f1f", "#ff6b6b"),
