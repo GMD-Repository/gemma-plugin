@@ -1,9 +1,9 @@
 {
-  "version": "1.0.6-r680",
-  "tag": "r680",
+  "version": "1.0.6-r688",
+  "tag": "r688",
   "releaseDate": "2026-08-27",
   "repositoryUrl": "https://gemma-plugin.vercel.app/gemma-beta.xml",
-  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r680/gemma-plugin-r680.zip",
-  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r680",
-  "changelogUrl": "https://gemma-plugin.vercel.app/changelog/r680"
+  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r688/gemma-plugin-r688.zip",
+  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r688",
+  "changelogUrl": "https://gemma-plugin.vercel.app/changelog/r688"
 }
