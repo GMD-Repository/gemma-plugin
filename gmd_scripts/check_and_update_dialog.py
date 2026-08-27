@@ -200,6 +200,10 @@ class DigitizeDockWidget(QDockWidget):
         if hasattr(self.parent_dialog.iface, 'removeDockWidget'):
             self.parent_dialog.iface.removeDockWidget(self)
         self.close()
+        # removeDockWidget detaches this dock from the main window, so a later
+        # show() on it would never reappear -- drop the reference and let the
+        # next Edit build and re-add a fresh dock.
+        self.parent_dialog.digitize_dock = None
         self.parent_dialog.showNormal()
         self.parent_dialog.raise_()
         self.parent_dialog.activateWindow()
