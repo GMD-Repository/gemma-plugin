@@ -31,13 +31,7 @@ from qgis.core import (
     QgsCoordinateReferenceSystem,
 )
 from PyQt5.QtGui import QIcon
-try:
-    from .. import gmdhelpers
-except (ImportError, ValueError):
-    try:
-        from gmd_scripts import gmdhelpers
-    except ImportError:
-        import gmdhelpers
+from .. import gmdhelpers
 
 
 

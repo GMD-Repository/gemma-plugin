@@ -78,7 +78,11 @@ DialogUi, _ = loadUiType(
 )
 
 BUILTIN_PRESETS = {
+<<<<<<< HEAD
+    "EA Delineation": [
+=======
     "EA Field Verification": [
+>>>>>>> 62f92be6f9bad85206314a4618be352516291f5b
         # Top-level parent group
         {
             "path": ["EA Field Verification"],
@@ -87,13 +91,21 @@ BUILTIN_PRESETS = {
         },
         # Sub-folder inside "For Verification"
         {
+<<<<<<<<< Temporary merge branch 1
+            "path": ["EA Field Verification", "Delineated EA"],
+=========
             "path": ["For Verification", "Delineated EA"],
+>>>>>>>>> Temporary merge branch 2
             "is_group": True,
             "checked": True
         },
         # Sub-folder inside "For Verification"
         {
+<<<<<<<<< Temporary merge branch 1
+            "path": ["EA Field Verification", "Merged EA"],
+=========
             "path": ["For Verification", "Merged EA"],
+>>>>>>>>> Temporary merge branch 2
             "is_group": True,
             "checked": True
         },
