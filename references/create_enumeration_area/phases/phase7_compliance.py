@@ -96,7 +96,7 @@ def run_phase_7(
             if i in removed:
                 continue
             ea = eas[i]
-            if ea.get("from_split", False):
+            if ea.get("from_split", False) or ea.get("is_special_ea", False):
                 continue
             bar = ea["parent_barangay"]
 
@@ -105,16 +105,13 @@ def run_phase_7(
             for j, nb in enumerate(eas):
                 if j == i or j in removed:
                     continue
-                if nb.get("from_split", False):
+                if nb.get("from_split", False) or nb.get("is_special_ea", False):
                     continue
                 if nb["parent_barangay"] != bar:
                     continue
                 if is_delineation_candidate(nb, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
                     continue
                 if nb.get("original_id") in delineation_candidate_ids:
-                    continue
-                # Non-merge candidates must NOT be merged; only merge candidates can merge together
-                if not is_merge_candidate(nb, min_household, merge_candidate_ids):
                     continue
 
                 if ea["geom"].touches(nb["geom"]) or ea["geom"].intersects(nb["geom"]):
