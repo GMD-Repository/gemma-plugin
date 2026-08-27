@@ -1,3 +1,4 @@
+from gmd_scripts.cbms_mv import mv_2027_hp_4b_longitude__invalid
 from qgis.core import (
     QgsProcessingProvider,
     QgsApplication,
