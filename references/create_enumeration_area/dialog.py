@@ -2439,6 +2439,14 @@ class EALauncherDialog(QDialog):
         self.ea_merge_ea_status_lbl.setWordWrap(True)
         ea_layout.addWidget(self.ea_merge_ea_status_lbl)
 
+        # Designated Output Folder
+        ea_layout.addWidget(QLabel("Designated Output Folder*"))
+        self.ea_merge_output_folder_widget = QgsFileWidget()
+        self.ea_merge_output_folder_widget.setStorageMode(QgsFileWidget.GetDirectory)
+        self.ea_merge_output_folder_widget.setDialogTitle("Designate Output Folder for Enumeration Area Merge")
+        ea_layout.addWidget(self.ea_merge_output_folder_widget)
+        self.ea_merge_output_folder_widget.fileChanged.connect(self._ea_merge_validate_inputs)
+
         scroll_layout.addWidget(ea_group)
 
         # ── 2. Replacement Polygon Layers (Multi Input) ───────────────────
@@ -2767,6 +2775,14 @@ class EALauncherDialog(QDialog):
                 self._ea_merge_replacement_layers = auto_repl
                 self._ea_merge_update_replacement_list()
 
+        if ea_match and hasattr(self, 'ea_merge_output_folder_widget'):
+            current_out = self.ea_merge_output_folder_widget.filePath().strip()
+            if not current_out:
+                src = getattr(ea_match, 'source', lambda: '')() if hasattr(ea_match, 'source') else ''
+                clean_src = src.split("|")[0].strip() if src else ""
+                if clean_src and os.path.exists(clean_src):
+                    self.ea_merge_output_folder_widget.setFilePath(os.path.dirname(clean_src))
+
         self._ea_merge_validate_inputs()
 
     def _ea_merge_select_layers(self):
@@ -2896,7 +2912,8 @@ class EALauncherDialog(QDialog):
             self.ea_merge_out_excel_lbl.setText("-")
 
         # Enable/Disable Run button
-        can_run = bool(ea_layer and has_repl and all_poly and all_8digits and geo_code)
+        has_output = bool(self.ea_merge_output_folder_widget.filePath().strip()) if hasattr(self, 'ea_merge_output_folder_widget') else False
+        can_run = bool(ea_layer and has_repl and all_poly and all_8digits and geo_code and has_output)
         self.ea_merge_run_btn.setEnabled(can_run)
 
     def _ea_merge_cancel(self):
@@ -2963,6 +2980,17 @@ class EALauncherDialog(QDialog):
         def is_cancelled_fn():
             return self._ea_merge_cancelled
 
+        # Determine designated output folder
+        out_folder = self.ea_merge_output_folder_widget.filePath().strip() if hasattr(self, 'ea_merge_output_folder_widget') else ""
+        if not out_folder:
+            QMessageBox.warning(self, "Missing Output Folder", "Please designate an output folder before running.")
+            self.ea_merge_run_btn.setEnabled(False)
+            return
+
+        self._ea_merge_append_log(
+            f"<span style='color: #0969da; font-weight: bold;'>[INFO]</span> Designated Output Folder: {out_folder}"
+        )
+
         # --- Create worker and thread ---
         from .ea_merge_processor import EAMergeProcessor
 
@@ -2971,6 +2999,7 @@ class EALauncherDialog(QDialog):
         processor = EAMergeProcessor(
             ea_layer=ea_layer,
             replacement_layers=repl_layers,
+            output_dir=out_folder,
             # Callbacks emit Qt signals — safe to call from the worker thread
             # because cross-thread signals are queued to the main event loop.
             feedback_callback=self._ea_merge_worker.feedback_signal.emit,
@@ -3007,10 +3036,16 @@ class EALauncherDialog(QDialog):
         # Add the output layer to the project here, on the main thread
         if result.success and result.output_layer is not None:
             try:
-                QgsProject.instance().addMapLayer(result.output_layer)
+                proj = QgsProject.instance()
+                if proj:
+                    for old_lyr in list(proj.mapLayersByName(result.summary.output_layer_name)):
+                        proj.removeMapLayer(old_lyr.id())
+                    proj.addMapLayer(result.output_layer)
+                    from .helpers.style import apply_qml_to_layer
+                    apply_qml_to_layer(result.output_layer, "12. Merged EA Polygon.qml")
                 self._ea_merge_append_log(
                     self._ea_merge_format_log(
-                        f"[INFO] Output layer '{result.summary.output_layer_name}' added to QGIS project."
+                        f"[INFO] Permanent GeoPackage layer (.gpkg) added to QGIS canvas: {result.summary.output_layer_name}"
                     )
                 )
             except Exception as exc:

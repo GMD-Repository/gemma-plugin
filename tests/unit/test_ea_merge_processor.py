@@ -91,7 +91,7 @@ class TestEAMergeProcessor(unittest.TestCase):
 
     def test_processor_runs_and_merges_replacement_polygons(self):
         """Test full merge workflow: EA subtraction + replacement addition."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             processor = EAMergeProcessor(
                 ea_layer=self.ea_layer,
                 replacement_layers=[self.repl_layer1],
@@ -134,7 +134,7 @@ class TestEAMergeProcessor(unittest.TestCase):
         pr.addFeatures([f])
         simple_ea_layer.updateExtents()
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             processor = EAMergeProcessor(
                 ea_layer=simple_ea_layer,
                 replacement_layers=[self.repl_layer1],
@@ -161,7 +161,7 @@ class TestEAMergeProcessor(unittest.TestCase):
     def test_hhcount_and_hh_count_follow_respective_lineages(self):
         """Verify hhcount/bldgcount follow previous/replacement hhcount/bldgcount,
         and hh_count/bldg_count follow previous/replacement hh_count/bldg_count."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             processor = EAMergeProcessor(
                 ea_layer=self.ea_layer,
                 replacement_layers=[self.repl_layer1],
@@ -171,22 +171,27 @@ class TestEAMergeProcessor(unittest.TestCase):
             self.assertTrue(result.success)
 
             features = list(result.output_layer.getFeatures())
-            # Find replacement feature (the 3rd feature)
-            repl_feat = features[2]
+            self.assertEqual(len(features), 3)
+
+            # Find replacement feature (the one with hh_count == 85.0)
+            repl_feat = next((f for f in features if float(f.attribute("hh_count")) == 85.0), None)
+            self.assertIsNotNone(repl_feat)
             self.assertEqual(float(repl_feat.attribute("hhcount")), 150.0)
             self.assertEqual(int(repl_feat.attribute("bldgcount")), 30)
             self.assertEqual(float(repl_feat.attribute("hh_count")), 85.0)
             self.assertEqual(int(repl_feat.attribute("bldg_count")), 18)
 
-            # Remaining EA 1 feature (1st feature)
-            ea1_feat = features[0]
+            # Remaining EA 1 feature
+            ea1_feat = next((f for f in features if str(f.attribute("GEOCODE")) == "0434000001" and f != repl_feat), None)
+            self.assertIsNotNone(ea1_feat)
             self.assertEqual(float(ea1_feat.attribute("hhcount")), 150.0)
             self.assertEqual(int(ea1_feat.attribute("bldgcount")), 30)
             self.assertEqual(float(ea1_feat.attribute("hh_count")), 150.0)
             self.assertEqual(int(ea1_feat.attribute("bldg_count")), 30)
 
-            # Untouched EA 2 feature (2nd feature)
-            ea2_feat = features[1]
+            # Untouched EA 2 feature
+            ea2_feat = next((f for f in features if str(f.attribute("GEOCODE")) == "0434000002"), None)
+            self.assertIsNotNone(ea2_feat)
             self.assertEqual(float(ea2_feat.attribute("hhcount")), 200.0)
             self.assertEqual(int(ea2_feat.attribute("bldgcount")), 45)
             self.assertEqual(float(ea2_feat.attribute("hh_count")), 200.0)
@@ -202,7 +207,7 @@ class TestEAMergeProcessor(unittest.TestCase):
         pr.addFeatures([f])
         plain_layer.updateExtents()
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             processor = EAMergeProcessor(
                 ea_layer=self.ea_layer,
                 replacement_layers=[plain_layer],
@@ -212,7 +217,9 @@ class TestEAMergeProcessor(unittest.TestCase):
             self.assertTrue(result.success)
 
             features = list(result.output_layer.getFeatures())
-            repl_feat = features[-1]
+            repl_feat = next((f for f in features if str(f.attribute("GEOCODE")) == "0434000002" and f.geometry().area() < 5000), None)
+            if repl_feat is None:
+                repl_feat = features[-1]
             # Inherited from EA 2
             self.assertEqual(float(repl_feat.attribute("hhcount")), 200.0)
             self.assertEqual(int(repl_feat.attribute("bldgcount")), 45)
@@ -235,6 +242,29 @@ class TestEAMergeProcessor(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertIn("8-digit", result.error_message)
+
+    def test_permanent_geopackage_output_creation(self):
+        """Verify that permanent GeoPackage (.gpkg) file and Excel file are created in designated output_dir."""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            processor = EAMergeProcessor(
+                ea_layer=self.ea_layer,
+                replacement_layers=[self.repl_layer1],
+                output_dir=tmpdir,
+            )
+            result = processor.run()
+            self.assertTrue(result.success)
+
+            # Verify GeoPackage file on disk
+            gpkg_path = result.summary.output_file_path
+            self.assertTrue(gpkg_path.endswith(".gpkg"))
+            self.assertTrue(os.path.exists(gpkg_path))
+            self.assertGreater(os.path.getsize(gpkg_path), 0)
+
+            # Verify Excel file on disk
+            excel_path = result.summary.excel_file_path
+            self.assertTrue(excel_path.endswith(".xlsx"))
+            self.assertTrue(os.path.exists(excel_path))
+            self.assertGreater(os.path.getsize(excel_path), 0)
 
     def test_empty_output_layer_not_added_to_project(self):
         """Verify that when an output layer has 0 features, it is not set on result or added to project."""
