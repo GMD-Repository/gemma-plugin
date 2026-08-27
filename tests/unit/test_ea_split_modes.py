@@ -153,6 +153,49 @@ class TestEASplitModes(unittest.TestCase):
         total_result_hh = sum(p['hh_count'] for p in parts)
         self.assertEqual(total_result_hh, 309.0, "Resulting sub-EAs must preserve exact HH count (309).")
 
+    def test_verify_point_cluster_alignment_small_area(self):
+        """Verify point cluster alignment and threshold enforcement for clustered points in small areas."""
+        from references.create_enumeration_area.phases.phase5_delineate import (
+            verify_point_cluster_alignment,
+            split_ea_voronoi_road_hybrid,
+        )
+        feedback = MockFeedback()
+
+        # Clustered points in a small 50x50m area along diagonal
+        bldgs = [
+            {'point': QgsPointXY(10.0, 10.0), 'pop': 120.0},
+            {'point': QgsPointXY(20.0, 20.0), 'pop': 110.0},
+            {'point': QgsPointXY(30.0, 30.0), 'pop': 130.0},
+        ]
+        parent_geom = make_square_geom(0, 0, 50)
+
+        # 1. Test verify_point_cluster_alignment computes valid aligned centroids
+        aligned = verify_point_cluster_alignment(bldgs, parent_geom.boundingBox(), target_pop=180, k_val=2)
+        self.assertEqual(len(aligned), 2, "Point cluster alignment should yield k_val aligned centroids.")
+
+        # 2. Test split_ea_voronoi_road_hybrid on clustered points in small area with splitting line
+        ea = {
+            'geom': parent_geom,
+            'buildings': bldgs,
+            'hh_count': 360.0,
+            'original_hhcount': 360.0,
+            'bldg_count': 3,
+            'attributes': [1, "EA 002"],
+            'original_id': 1002,
+            'original_code': "01716001002",
+            'is_new': False,
+            'from_split': False,
+            'split_by': 'none',
+            'parent_barangay': "01716"
+        }
+
+        road_line = QgsGeometry.fromPolylineXY([QgsPointXY(25, -10), QgsPointXY(25, 60)])
+        parts = split_ea_voronoi_road_hybrid(ea, [road_line], [], target_pop=180, fback=feedback, min_household=100, max_household=300)
+        self.assertGreaterEqual(len(parts), 2, "Clustered points delineation in small area should split EA into >= 2 parts.")
+        for p in parts:
+            self.assertGreaterEqual(p['hh_count'], 100.0, f"Resulting EA ({p['hh_count']} HH) must not fall below min threshold (100).")
+            self.assertLessEqual(p['hh_count'], 300.0, f"Resulting EA ({p['hh_count']} HH) must not increase above max threshold (300).")
+
 
 if __name__ == "__main__":
     unittest.main()
