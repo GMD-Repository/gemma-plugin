@@ -752,6 +752,7 @@ class FillPolygonGapsAlgorithm(QgsProcessingAlgorithm):
         geom_res = QgsGeometry(new_geom)
         geom_res.convertToMultiType()
         f_res.setGeometry(geom_res)
+        f_res.setId(1)
         f_res.setAttributes([
             'result',
             target_feature.id(),
@@ -765,6 +766,7 @@ class FillPolygonGapsAlgorithm(QgsProcessingAlgorithm):
         geom_orig = QgsGeometry(target_geom)
         geom_orig.convertToMultiType()
         f_orig.setGeometry(geom_orig)
+        f_orig.setId(2)
         f_orig.setAttributes([
             'original',
             target_feature.id(),
@@ -779,6 +781,7 @@ class FillPolygonGapsAlgorithm(QgsProcessingAlgorithm):
             geom_gap = QgsGeometry(all_adjacent_gaps)
             geom_gap.convertToMultiType()
             f_gap.setGeometry(geom_gap)
+            f_gap.setId(3)
             f_gap.setAttributes([
                 'gap_fill',
                 target_feature.id(),

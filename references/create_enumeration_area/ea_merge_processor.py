@@ -739,6 +739,19 @@ class EAMergeProcessor:
         provider.addAttributes(fields_list)
         layer.updateFields()
 
+        # Ensure all output features have unique sequential FIDs
+        fid_idx = layer.fields().indexOf("fid")
+        for idx, feat in enumerate(features, start=1):
+            if feat.fields() is None or feat.fields().count() != layer.fields().count():
+                attrs = list(feat.attributes()) if feat.attributes() else []
+                if len(attrs) < layer.fields().count():
+                    attrs.extend([None] * (layer.fields().count() - len(attrs)))
+                feat.setFields(layer.fields())
+                feat.setAttributes(attrs)
+            if fid_idx != -1:
+                feat.setAttribute(fid_idx, idx)
+            feat.setId(idx)
+
         # Add features in bulk
         provider.addFeatures(features)
         layer.updateExtents()
