@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
 
@@ -102,6 +103,7 @@ class EAMergeSummary:
     modified_ea_count: int = 0
     final_ea_feature_count: int = 0
     output_layer_name: str = ""
+    output_file_path: str = ""
     excel_file_path: str = ""
     excel_file_name: str = ""
     citymun_name: str = ""
@@ -447,28 +449,83 @@ class EAMergeProcessor:
             self._validate_output(output_layer)
             self._progress(85)
 
-            # ── Phase 11: Add to QGIS project ──────────────────────────────
+            # ── Phase 11: Export to GeoPackage and Add to QGIS project ─────
+            saved_to_gpkg = False
+
             if output_layer.featureCount() == 0:
                 self._log(
                     f"[INFO] Output layer '{self._output_layer_name}' has 0 features; "
                     "skipping adding layer to QGIS project."
                 )
                 self._result.output_layer = None
-            elif self._skip_add_to_project:
-                # Caller (e.g. threaded dialog) will add the layer on the main
-                # thread once the worker finishes.
-                self._result.output_layer = output_layer
-                self._log(
-                    f"[INFO] Output layer '{self._output_layer_name}' ready; "
-                    "will be added to QGIS project by the calling thread."
-                )
             else:
-                QgsProject.instance().addMapLayer(output_layer)
-                self._log(
-                    f"[INFO] Output layer '{self._output_layer_name}' added "
-                    "to QGIS project."
-                )
-                self._result.output_layer = output_layer
+                if self.output_dir:
+                    output_file_path = os.path.join(self.output_dir, f"{self._output_layer_name}.gpkg")
+                else:
+                    proj = QgsProject.instance() if QgsProject.instance() else None
+                    proj_fn = proj.fileName() if proj and hasattr(proj, 'fileName') else None
+                    proj_hp = proj.homePath() if proj and hasattr(proj, 'homePath') else None
+                    if isinstance(proj_fn, str) and proj_fn.strip():
+                        output_file_path = os.path.join(os.path.dirname(proj_fn), f"{self._output_layer_name}.gpkg")
+                    elif isinstance(proj_hp, str) and proj_hp.strip():
+                        output_file_path = os.path.join(proj_hp, f"{self._output_layer_name}.gpkg")
+                    else:
+                        output_file_path = os.path.join(tempfile.gettempdir(), f"{self._output_layer_name}.gpkg")
+
+                from .helpers.pre_ea_detector import get_unique_filepath
+                out_dir = os.path.dirname(output_file_path)
+                base_fn = os.path.splitext(os.path.basename(output_file_path))[0]
+                if not out_dir:
+                    out_dir = tempfile.gettempdir()
+                output_file_path = get_unique_filepath(out_dir, base_fn, ".gpkg")
+                final_layer_name = os.path.splitext(os.path.basename(output_file_path))[0]
+
+                try:
+                    os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
+                    if self._export_layer_to_gpkg(output_layer, output_file_path, final_layer_name):
+                        self._log(f"[INFO] Output layer successfully saved to GeoPackage (.gpkg): {output_file_path}")
+                        gpkg_layer = QgsVectorLayer(f"{output_file_path}|layername={final_layer_name}", final_layer_name, "ogr")
+                        if not gpkg_layer.isValid():
+                            gpkg_layer = QgsVectorLayer(output_file_path, final_layer_name, "ogr")
+
+                        if gpkg_layer.isValid():
+                            from .helpers.style import apply_qml_to_layer
+                            apply_qml_to_layer(gpkg_layer, "12. Merged EA Polygon.qml")
+                            output_layer = gpkg_layer
+                            self._output_layer_name = final_layer_name
+                            summary.output_layer_name = final_layer_name
+                            summary.output_file_path = output_file_path
+                            saved_to_gpkg = True
+                        else:
+                            self._log(f"[ERROR] Could not load saved GeoPackage layer from: {output_file_path}")
+                    else:
+                        self._log(f"[ERROR] Failed to save GeoPackage (.gpkg) to {output_file_path}")
+                except Exception as save_err:
+                    self._log(f"[ERROR] Output layer GeoPackage export failed with exception: {save_err}")
+
+                if self._skip_add_to_project:
+                    # Caller (e.g. threaded dialog) will add the layer on the main
+                    # thread once the worker finishes.
+                    self._result.output_layer = output_layer
+                    self._log(
+                        f"[INFO] Output layer '{self._output_layer_name}' ready; "
+                        "will be added to QGIS project by the calling thread."
+                    )
+                else:
+                    proj = QgsProject.instance()
+                    if proj:
+                        for old_lyr in list(proj.mapLayersByName(self._output_layer_name)):
+                            proj.removeMapLayer(old_lyr.id())
+                        proj.addMapLayer(output_layer)
+                    if saved_to_gpkg:
+                        self._log(
+                            f"[INFO] Permanent GeoPackage layer (.gpkg) added to QGIS canvas: {self._output_layer_name}"
+                        )
+                    else:
+                        self._log(
+                            f"[WARNING] Falling back to temporary in-memory layer: {self._output_layer_name}"
+                        )
+                    self._result.output_layer = output_layer
             self._progress(90)
 
             # ── Phase 12: Read final attribute table for Excel ─────────────
@@ -1009,6 +1066,84 @@ class EAMergeProcessor:
             f"{layer.featureCount()} features."
         )
         return True
+
+    def _export_layer_to_gpkg(
+        self, layer: QgsVectorLayer, file_path: str, layer_name: str
+    ) -> bool:
+        """Export a vector layer to a permanent GeoPackage (.gpkg) file on disk."""
+        try:
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+            # Method 1: QGIS Processing native:savefeatures (fast C++ engine)
+            try:
+                import processing
+                params = {
+                    "INPUT": layer,
+                    "OUTPUT": file_path,
+                    "LAYER_NAME": layer_name,
+                }
+                res = processing.run("native:savefeatures", params)
+                if res and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                    self._log(f"[INFO] Layer successfully written to GeoPackage via QGIS Processing: {file_path}")
+                    return True
+            except Exception as pe:
+                self._log(f"[DEBUG] QGIS Processing native:savefeatures fallback: {pe}")
+
+            from qgis.core import (
+                QgsCoordinateTransformContext,
+                QgsVectorFileWriter,
+            )
+
+            # Method 2: SaveVectorOptions with writeAsVectorFormatV3 / V2
+            save_options = QgsVectorFileWriter.SaveVectorOptions()
+            save_options.driverName = "GPKG"
+            save_options.layerName = layer_name
+            save_options.fileEncoding = "UTF-8"
+            if os.path.exists(file_path):
+                save_options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+            else:
+                save_options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteFile
+
+            ctx = (
+                QgsProject.instance().transformContext()
+                if (QgsProject.instance() and hasattr(QgsProject.instance(), 'transformContext'))
+                else QgsCoordinateTransformContext()
+            )
+
+            if hasattr(QgsVectorFileWriter, 'writeAsVectorFormatV3'):
+                res = QgsVectorFileWriter.writeAsVectorFormatV3(layer, file_path, ctx, save_options)
+                if res[0] == QgsVectorFileWriter.NoError:
+                    return True
+                self._log(f"[DEBUG] writeAsVectorFormatV3 code={res[0]}: {res[1] if len(res) > 1 else ''}")
+
+            if hasattr(QgsVectorFileWriter, 'writeAsVectorFormatV2'):
+                res = QgsVectorFileWriter.writeAsVectorFormatV2(layer, file_path, ctx, save_options)
+                if res[0] == QgsVectorFileWriter.NoError:
+                    return True
+                self._log(f"[DEBUG] writeAsVectorFormatV2 code={res[0]}: {res[1] if len(res) > 1 else ''}")
+
+            # Method 3: Legacy writeAsVectorFormat
+            if hasattr(QgsVectorFileWriter, 'writeAsVectorFormat'):
+                res = QgsVectorFileWriter.writeAsVectorFormat(layer, file_path, "UTF-8", layer.crs(), "GPKG")
+                if res == QgsVectorFileWriter.NoError:
+                    return True
+                self._log(f"[DEBUG] writeAsVectorFormat code={res}")
+
+            # Method 4: Direct writer feature-by-feature
+            writer = QgsVectorFileWriter(file_path, "UTF-8", layer.fields(), layer.wkbType(), layer.crs(), "GPKG")
+            if writer.hasError() == QgsVectorFileWriter.NoError:
+                for feat in layer.getFeatures():
+                    writer.addFeature(feat)
+                del writer
+                return True
+            else:
+                self._log(f"[DEBUG] Direct QgsVectorFileWriter error={writer.errorMessage()}")
+
+        except Exception as e:
+            self._log(f"[ERROR] Exception during GeoPackage export: {e}")
+            return False
+
+        return os.path.exists(file_path) and os.path.getsize(file_path) > 0
 
     def _export_attribute_table_to_excel(
         self, layer: QgsVectorLayer, path: str
