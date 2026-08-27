@@ -50,7 +50,7 @@ class mv_2027_hp_4c_remarks__invalid(QgsProcessingAlgorithm):
     def shortHelpString(self):
         return (
             "List of geotagged points with deletion or review remarks. \n \n"
-            "Features with a non-null remarks value are flagged for review.\n"
+            "Features with remarks value are flagged for review.\n"
             "A separate table lists each unique remarks value \n"
             "and how many features share it, for cross-validation.\n"
         )
