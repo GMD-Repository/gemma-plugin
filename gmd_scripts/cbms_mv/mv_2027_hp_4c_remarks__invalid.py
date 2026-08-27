@@ -23,7 +23,7 @@ from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsProject,
 )
-# pyrefly: ignore [missing-import]
+
 from PyQt5.QtGui import QIcon
 from .. import gmdhelpers
 

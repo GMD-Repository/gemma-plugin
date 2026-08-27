@@ -687,12 +687,6 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     alg.total_ea_processed = total_ea_processed
     alg.total_delin_candidates = total_delin_candidates
 
-    if gap_source is not None or overlap_source is not None:
-        for special_fid in special_ea_info.keys():
-            s_hh = special_ea_hh.get(special_fid, 0.0)
-            if s_hh < min_household or s_hh == 0.0:
-                merge_candidate_ids.add(special_fid)
-
     barangay_index = p1.get("barangay_index")
 
     def get_text_attr(feat: QgsFeature, candidate_names: list, prefer_text: bool = True):

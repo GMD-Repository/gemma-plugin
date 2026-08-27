@@ -270,7 +270,7 @@ def run_phase_1(
                 special_ea_info[new_fid] = {
                     'special_type': special_type,
                     'source_id': go_source_id,
-                    'remarks': 'Generated from Gap layer',
+                    'remarks': '',
                     'original_code': str(primary_ea_feat.attribute(ea_id_field)) if primary_ea_feat else (str(fallback_ea_feat.attribute(ea_id_field)) if fallback_ea_feat else "000")
                 }
                 special_ea_ids.add(new_fid)
@@ -398,7 +398,7 @@ def run_phase_1(
                 special_ea_info[new_fid] = {
                     'special_type': special_type,
                     'source_id': go_source_id,
-                    'remarks': 'Generated from Overlap layer',
+                    'remarks': '',
                     'original_code': str(primary_ea_feat.attribute(ea_id_field)) if primary_ea_feat else (str(fallback_ea_feat.attribute(ea_id_field)) if fallback_ea_feat else "000"),
                     'parent_ea_ids': [ea_f.id() for ea_f, _ in intersecting_eas],
                     'intersecting_eas': [(ea_f.id(), o_area) for ea_f, o_area in intersecting_eas],
