@@ -42,6 +42,12 @@ The algorithm normalizes barangay strings to ensure high-accuracy joining agains
 ### Cascading Administrative Hierarchy
 Selecting a **Region** updates available **Provinces**, and selecting a **Province** dynamically populates the **City/Municipality** list. When layer names match standard naming conventions, administrative filters auto-detect corresponding values.
 
+### Automatic Census Count Enrichment (`2024 Barangay Layers`)
+The tool automatically connects to the built-in `2024 Barangay Layers` repository dataset to populate census baseline figures:
+- **`hhcount`**: Enriched with the official total household count for the matched barangay.
+- **`bldgcount`**: Enriched with the official total building count for the matched barangay.
+- For **`Contested`** boundaries or unmatched features, `hhcount` and `bldgcount` remain `NULL`.
+
 ### Unified Single-Layer Classification
 Rather than splitting output files, all features are saved into a single permanent GeoPackage with a dedicated `boundary` attribute:
 - **`Barangay`**: Successfully matched to an official PSGC record.
@@ -59,12 +65,16 @@ Rather than splitting output files, all features are saved into a single permane
 | `city_mun` | String | City or Municipality name |
 | `barangay` | String | Official standardized barangay name |
 | `code` | String | Administrative boundary code |
-| `boundary` | String | Boundary classification (`Barangay` or `Contested`) |
 | `remarks` | String | Audit notes, match quality, or dispute comments |
 | `source` | String | Data source attribution |
-| `hhcount` | Integer | Total household count |
-| `bldgcount` | Integer | Total building point count |
+| `hhcount` | Integer | Total household count (from `2024 Barangay Layers`) |
+| `bldgcount` | Integer | Total building point count (from `2024 Barangay Layers`) |
+| `sy` | String | Source year |
+| `boundary` | String | Boundary classification (`Barangay` or `Contested`) |
+| `lgu_bgy_name` | String | Raw or join field barangay name as provided by LGU |
+| `bdry_status` | String | Boundary status (dropdown: Adjusted / Retained) |
 
 ::: tip
 Specify a dedicated target directory under **Output Directory**. The tool automatically creates the output `.gpkg` file with standardized naming conventions based on the selected LGU.
 :::
+
