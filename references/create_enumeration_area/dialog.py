@@ -21,9 +21,9 @@ from qgis.core import (
     QgsCoordinateReferenceSystem, QgsWkbTypes, NULL, QgsMapLayerProxyModel
 )
 try:
-    from qgis.gui import QgsMapLayerComboBox, QgsProjectionSelectionWidget, QgsCollapsibleGroupBox
+    from qgis.gui import QgsMapLayerComboBox, QgsProjectionSelectionWidget, QgsCollapsibleGroupBox, QgsFileWidget
 except ImportError:
-    from qgis.gui import QgsMapLayerComboBox, QgsProjectionSelectionWidget
+    from qgis.gui import QgsMapLayerComboBox, QgsProjectionSelectionWidget, QgsFileWidget
     QgsCollapsibleGroupBox = QGroupBox
 from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
@@ -399,6 +399,14 @@ class EALauncherDialog(QDialog):
         self.pre_ea_ea_status_lbl.setWordWrap(True)
         inputs_layout.addWidget(self.pre_ea_ea_status_lbl)
 
+        # Designated Output Folder
+        inputs_layout.addWidget(QLabel("Designated Output Folder*"))
+        self.pre_ea_output_folder_widget = QgsFileWidget()
+        self.pre_ea_output_folder_widget.setStorageMode(QgsFileWidget.GetDirectory)
+        self.pre_ea_output_folder_widget.setDialogTitle("Designate Output Folder for EA Preprocessing")
+        inputs_layout.addWidget(self.pre_ea_output_folder_widget)
+        self.pre_ea_output_folder_widget.fileChanged.connect(self._pre_ea_validate_inputs)
+
         # Connect validation
         self.pre_ea_bgy_combo.currentIndexChanged.connect(self._pre_ea_validate_inputs)
         self.pre_ea_ea_combo.currentIndexChanged.connect(self._pre_ea_validate_inputs)
@@ -430,6 +438,13 @@ class EALauncherDialog(QDialog):
             "Remove any EA area that extends outside its parent Barangay polygon."
         )
         options_layout.addWidget(self.pre_ea_clip_chk)
+
+        self.pre_ea_resolve_overlaps_chk = QCheckBox("Resolve EA Overlaps")
+        self.pre_ea_resolve_overlaps_chk.setChecked(True)
+        self.pre_ea_resolve_overlaps_chk.setToolTip(
+            "Detect and eliminate overlapping polygon regions between adjacent EAs within each Barangay."
+        )
+        options_layout.addWidget(self.pre_ea_resolve_overlaps_chk)
 
         self.pre_ea_detect_gaps_chk = QCheckBox("Detect Uncovered Barangay Areas")
         self.pre_ea_detect_gaps_chk.setChecked(True)
@@ -683,7 +698,7 @@ class EALauncherDialog(QDialog):
             self._ea_merge_auto_detect_ea_layer()
 
     def _pre_ea_validate_inputs(self):
-        """Validate selected layers and update status labels."""
+        """Validate selected layers and designated output folder."""
         bgy_layer = self.pre_ea_bgy_combo.currentLayer()
         ea_layer = self.pre_ea_ea_combo.currentLayer()
 
@@ -706,7 +721,8 @@ class EALauncherDialog(QDialog):
                 f"Active: {ea_layer.featureCount()} EA polygons ({ea_layer.crs().authid()})."
             )
 
-        can_run = bool(bgy_layer)
+        has_output = bool(self.pre_ea_output_folder_widget.filePath().strip()) if hasattr(self, 'pre_ea_output_folder_widget') else False
+        can_run = bool(bgy_layer) and has_output
         self.pre_ea_run_btn.setEnabled(can_run)
 
     def _pre_ea_cancel(self):
@@ -749,38 +765,35 @@ class EALauncherDialog(QDialog):
         from .pre_ea_processor import PreEAProcessor
         return PreEAProcessor.short_help_string()
 
-    def _pre_ea_append_log(self, html: str) -> None:
-        """Append an HTML-formatted line to the Pre-EA log console."""
-        self.pre_ea_log_console.append(html)
+    def _pre_ea_append_log(self, html_msg: str):
+        """Thread-safe append of HTML message to the Pre-EA log console."""
+        self.pre_ea_log_console.append(html_msg)
         self.pre_ea_log_console.ensureCursorVisible()
-        QCoreApplication.processEvents()
 
-    def _pre_ea_format_log(self, msg: str) -> str:
-        """Format a plain log message string as styled HTML."""
-        msg_lower = msg.lower()
-        if msg.startswith("[ERROR]"):
-            return f"<span style='color:#cf222e; font-weight:bold;'>{msg}</span>"
-        if msg.startswith("[WARNING]"):
-            return f"<span style='color:#d17a00; font-weight:bold;'>{msg}</span>"
-        if msg.startswith("[INFO]") and ("complete" in msg_lower or "pass" in msg_lower or "success" in msg_lower):
-            return f"<span style='color:#1a7f37; font-weight:bold;'>{msg}</span>"
-        return f"<span style='color:#0969da;'>{msg}</span>"
+    def _pre_ea_format_log(self, text: str) -> str:
+        """Format plain text log messages with HTML colors based on prefixes."""
+        if "[ERROR]" in text:
+            return f"<span style='color: #cf222e;'>{text}</span>"
+        elif "[WARNING]" in text:
+            return f"<span style='color: #d17a00;'>{text}</span>"
+        elif "[SUCCESS]" in text or "[PASS]" in text:
+            return f"<span style='color: #1a7f37; font-weight: bold;'>{text}</span>"
+        elif "[INFO]" in text or "[PHASE" in text:
+            return f"<span style='color: #0969da;'>{text}</span>"
+        elif "[DEBUG]" in text:
+            return f"<span style='color: #8c959f;'>{text}</span>"
+        return text
 
     def _pre_ea_run(self):
-        """Validate inputs and launch the Pre-EA Processing workflow."""
-        from qgis.core import QgsApplication, QgsProject
-        from .pre_ea_processor import PreEAProcessor
-
+        """Execute the EA Preprocessing workflow."""
         bgy_layer = self.pre_ea_bgy_combo.currentLayer()
         ea_layer = self.pre_ea_ea_combo.currentLayer()
 
         if not bgy_layer:
-            self._pre_ea_append_log(
-                "<span style='color:#cf222e; font-weight:bold;'>[ERROR] Barangay Layer is required.</span>"
-            )
+            QMessageBox.warning(self, "Missing Input", "Please select a Barangay Layer.")
             return
 
-        # UI state — running
+        # Prepare UI for processing
         self.pre_ea_run_btn.setEnabled(False)
         self.pre_ea_cancel_btn.setEnabled(True)
         self.pre_ea_progress_bar.setValue(0)
@@ -795,6 +808,7 @@ class EALauncherDialog(QDialog):
 
         gap_tolerance = self.pre_ea_gap_tol_spin.value()
         clip_to_bgy = self.pre_ea_clip_chk.isChecked()
+        resolve_overlaps = self.pre_ea_resolve_overlaps_chk.isChecked()
         detect_gaps = self.pre_ea_detect_gaps_chk.isChecked()
         assign_gaps = self.pre_ea_assign_gaps_chk.isChecked()
 
@@ -811,18 +825,32 @@ class EALauncherDialog(QDialog):
             self.pre_ea_progress_bar.setValue(pct)
             QCoreApplication.processEvents()
 
-        # Run synchronously on the main thread (processor is fast for typical
-        # datasets; for very large data a QgsTask wrapper can be added later).
-        from .pre_ea_processor import PreEAProcessor
 
+        # Determine designated output folder
+        out_folder = self.pre_ea_output_folder_widget.filePath().strip() if hasattr(self, 'pre_ea_output_folder_widget') else ""
+        if not out_folder:
+            QMessageBox.warning(self, "Missing Output Folder", "Please designate an output folder before running.")
+            self.pre_ea_run_btn.setEnabled(False)
+            return
+
+        from .helpers.pre_ea_detector import resolve_target_output_folder
+        out_folder = resolve_target_output_folder(out_folder, bool(ea_layer))
+
+        self._pre_ea_append_log(
+            f"<span style='color: #0969da; font-weight: bold;'>[INFO]</span> Designated Output Folder: {out_folder}"
+        )
+
+        from .pre_ea_processor import PreEAProcessor
         processor = PreEAProcessor()
         result = processor.run(
             barangay_layer=bgy_layer,
             ea_layer=ea_layer,
             gap_tolerance=gap_tolerance,
             clip_to_bgy=clip_to_bgy,
+            resolve_overlaps=resolve_overlaps,
             detect_gaps=detect_gaps,
             assign_gaps=assign_gaps,
+            output_folder=out_folder,
             feedback_callback=feedback_callback,
             progress_callback=progress_callback,
             is_cancelled_fn=is_cancelled_fn,
@@ -869,6 +897,7 @@ class EALauncherDialog(QDialog):
         action_colors = {
             "No Change": ("#f6f8fa", "#333"),
             "Clipped": ("#fff8c5", "#7d4e00"),
+            "Overlap Resolved": ("#e6ffec", "#1a7f37"),
             "Gap Assigned": ("#dafbe1", "#1a7f37"),
             "Geometry Fixed": ("#ddf4ff", "#0969da"),
             "Unresolved": ("#ffebe9", "#cf222e"),
@@ -878,6 +907,7 @@ class EALauncherDialog(QDialog):
             action_colors = {
                 "No Change": ("#2d333b", "#adbac7"),
                 "Clipped": ("#3d3300", "#e3b341"),
+                "Overlap Resolved": ("#133a1e", "#3fb950"),
                 "Gap Assigned": ("#1e3f28", "#2ecc71"),
                 "Geometry Fixed": ("#0e2235", "#79c0ff"),
                 "Unresolved": ("#3d1f1f", "#ff6b6b"),
@@ -923,6 +953,12 @@ class EALauncherDialog(QDialog):
             )
 
         self.pre_ea_progress_bar.setValue(100)
+
+        # Update layer combo with the newly generated permanent layer
+        if result.output_layer and result.output_layer.isValid():
+            self.pre_ea_ea_combo.blockSignals(True)
+            self.pre_ea_ea_combo.setLayer(result.output_layer)
+            self.pre_ea_ea_combo.blockSignals(False)
 
         # Switch to Summary tab
         right_tabs_widget = table.parent().parent().parent()
@@ -2178,6 +2214,11 @@ class EALauncherDialog(QDialog):
                                 layer = layer_ref
                             
                             if layer:
+                                if layer.featureCount() == 0:
+                                    # If there are no values in the output layer, do not generate/keep it
+                                    QgsProject.instance().removeMapLayer(layer.id())
+                                    continue
+
                                 layer.setName(target_name)
                                 apply_qml_to_layer(layer, qml_filename)
                                 lnode = root.findLayer(layer.id())
@@ -2189,18 +2230,31 @@ class EALauncherDialog(QDialog):
 
                 # Group any generated splitting line layers (ending with _eadel_update) into Splitting Lines
                 has_splitting_lines = False
-                for layer_id, proj_layer in QgsProject.instance().mapLayers().items():
+                for layer_id, proj_layer in list(QgsProject.instance().mapLayers().items()):
                     if proj_layer.name().endswith("_eadel_update"):
-                        has_splitting_lines = True
-                        lnode = root.findLayer(layer_id)
-                        if lnode and lnode.parent() != splitting_lines_group:
-                            clone = lnode.clone()
-                            splitting_lines_group.addChildNode(clone)
-                            lnode.parent().removeChildNode(lnode)
+                        if proj_layer.featureCount() == 0:
+                            QgsProject.instance().removeMapLayer(layer_id)
+                        else:
+                            has_splitting_lines = True
+                            lnode = root.findLayer(layer_id)
+                            if lnode and lnode.parent() != splitting_lines_group:
+                                clone = lnode.clone()
+                                splitting_lines_group.addChildNode(clone)
+                                lnode.parent().removeChildNode(lnode)
 
-                # Clean up empty Splitting Lines group if no splitting lines were generated
-                if not has_splitting_lines and len(splitting_lines_group.children()) == 0:
-                    main_group.removeChildNode(splitting_lines_group)
+                # Clean up empty sub-groups if no layers were added to them
+                for g_name, g_node in [
+                    ("Reference Layers", reference_group),
+                    ("Splitting Lines", splitting_lines_group),
+                    ("EAs", eas_group),
+                    ("Candidates", candidates_group),
+                ]:
+                    if g_node and len(g_node.children()) == 0:
+                        main_group.removeChildNode(g_node)
+
+                # Clean up main group if it contains no child nodes
+                if len(main_group.children()) == 0:
+                    root.removeChildNode(main_group)
 
                 self.progress_bar.setValue(100)
                 self.log_console.append("<span style='color:#1a7f37; font-weight:bold;'>[COMPLETE] Pipeline execution complete! Results loaded to map.</span>")
