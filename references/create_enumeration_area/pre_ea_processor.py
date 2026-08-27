@@ -409,21 +409,19 @@ class PreEAProcessor:
                     )
                     summary.overlaps_resolved += num_resolved
 
-                # ---- Phase 3+4: Fill Barangay gaps (unconditional) -----------
-                # Always compute gap = bgy_geom - union(EAs) and fill every
-                # uncovered area into the adjacent EA.  The Barangay polygon is
-                # the definitive outer boundary; no area inside it is left unfilled.
-                self._fill_barangay_gaps(
-                    bgy_geom=bgy_geom,
-                    bgy_label=bgy_label,
-                    eas_in_bgy=eas_in_bgy,
-                    corrected_geoms=corrected_geoms,
-                    gap_tolerance=gap_tolerance,
-                    summary=summary,
-                    result_rows=result_rows,
-                    log_fn=_log,
-                    crs=barangay_layer.crs(),
-                )
+                # ---- Phase 3+4: Fill Barangay gaps ---------------------------
+                if detect_gaps and assign_gaps:
+                    self._fill_barangay_gaps(
+                        bgy_geom=bgy_geom,
+                        bgy_label=bgy_label,
+                        eas_in_bgy=eas_in_bgy,
+                        corrected_geoms=corrected_geoms,
+                        gap_tolerance=gap_tolerance,
+                        summary=summary,
+                        result_rows=result_rows,
+                        log_fn=_log,
+                        crs=barangay_layer.crs(),
+                    )
 
                 bgy_step_pct = 15 + int((bgy_step + 1) / max(total_bgys, 1) * 70)
                 _progress(bgy_step_pct)
@@ -452,9 +450,11 @@ class PreEAProcessor:
                 resolve_overlaps=resolve_overlaps,
             )
 
-            if output_layer is None:
-                summary.overall_status = "ERROR"
-                return PreEAResult(None, summary, result_rows, log_lines, False, "Failed to build output layer.")
+            if output_layer is None or output_layer.featureCount() == 0:
+                _log(f"[INFO] Output layer '{output_name}' has 0 features; skipping layer generation.")
+                summary.overall_status = "PASS" if (summary.unresolved_gaps == 0 and summary.final_eas_outside_bgy == 0) else "WARNING"
+                _progress(100)
+                return PreEAResult(None, summary, result_rows, log_lines, True, "")
 
             # Add to QGIS project
             QgsProject.instance().addMapLayer(output_layer)
@@ -1764,6 +1764,10 @@ class PreEAProcessor:
                 new_feat.setAttribute(sy_idx, "2026")
 
             new_features.append(new_feat)
+
+        if len(new_features) == 0:
+            log_fn(f"[INFO] No valid output features to build layer '{output_name}'.")
+            return None
 
         dp.addFeatures(new_features)
         output_layer.updateExtents()

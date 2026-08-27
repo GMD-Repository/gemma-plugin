@@ -380,7 +380,7 @@ def run_phase_8(
     eas = list(p7.get("eas") or p7.get("split_eas", []))
     previous_ea_source = p1["previous_ea_source"]
     building_source = p1["building_source"]
-    out_fields = p2.get("out_fields") or p1.get("out_fields")
+    out_fields = p2.get("out_fields") if p2.get("out_fields") is not None else p1.get("out_fields")
     target_crs = p1["target_crs"]
     max_ea_number = p4.get("max_ea_number") if p4 else p1.get("max_ea_number", {})
     area_threshold = p1["area_threshold"]
@@ -409,6 +409,15 @@ def run_phase_8(
     merged_sink = p2.get("merged_sink") or p1.get("merged_sink")
     special_ea_sink = p2.get("special_ea_sink") or p1.get("special_ea_sink")
     extracted_buildings_sink = p2.get("extracted_buildings_sink") or p1.get("extracted_buildings_sink")
+    delineated_dest_id = p2.get("delineated_dest_id")
+    merged_dest_id = p2.get("merged_dest_id")
+    special_ea_dest_id = p2.get("special_ea_dest_id")
+    extracted_buildings_dest_id = p2.get("extracted_buildings_dest_id")
+    delin_candidate_dest_id = p2.get("delin_candidate_dest_id")
+    merge_candidate_dest_id = p2.get("merge_candidate_dest_id")
+    delin_candidate_feat_count = p2.get("delin_candidate_feat_count", 0)
+    merge_candidate_feat_count = p2.get("merge_candidate_feat_count", 0)
+    extracted_bldg_feat_count = p2.get("extracted_bldg_feat_count", 0)
 
     export_fields = p2.get("export_fields")
     if not export_fields:
@@ -724,8 +733,9 @@ def run_phase_8(
             ea['sort_index'] = i
 
     # Phase 8: Output Generation & Writing
-    multi_feedback.setCurrentStep(7)
-    multi_feedback.setProgressText(f"{_PHASE_LABELS[7]} [0/{len(eas):,}]...")
+    if multi_feedback:
+        multi_feedback.setCurrentStep(7)
+        multi_feedback.setProgressText(f"{_PHASE_LABELS[7]} [0/{len(eas):,}]...")
     feedback.pushInfo("Phase 8/8: Writing output features...")
 
     source_crs = previous_ea_source.sourceCrs()
@@ -746,8 +756,9 @@ def run_phase_8(
     barangay_to_target = None
     if previous_ea_source.sourceCrs() != target_crs:
         feedback.pushInfo(f"Transforming output to {target_crs.authid()}...")
+        t_ctx = context.transformContext() if context is not None else QgsProject.instance().transformContext()
         barangay_to_target = QgsCoordinateTransform(
-            previous_ea_source.sourceCrs(), target_crs, context.transformContext()
+            previous_ea_source.sourceCrs(), target_crs, t_ctx
         )
 
     barangay_index = p1.get("barangay_index")
@@ -1281,14 +1292,16 @@ def run_phase_8(
                     else:
                         feedback.reportWarning("Failed to add building point to extracted buildings sink.")
 
-        _out_pct = int((i + 1) / max(len(eas), 1) * 100)
-        multi_feedback.setProgress(_out_pct)
-        if i % 100 == 0 or _out_pct == 100:
-            multi_feedback.setProgressText(
-                f"{_PHASE_LABELS[7]} [{i + 1:,}/{len(eas):,}]..."
-            )
+        if multi_feedback:
+            _out_pct = int((i + 1) / max(len(eas), 1) * 100)
+            multi_feedback.setProgress(_out_pct)
+            if i % 100 == 0 or _out_pct == 100:
+                multi_feedback.setProgressText(
+                    f"{_PHASE_LABELS[7]} [{i + 1:,}/{len(eas):,}]..."
+                )
 
-    multi_feedback.setProgress(100)
+    if multi_feedback:
+        multi_feedback.setProgress(100)
 
     # ── Write internally detected Barangay gaps & overlaps to SPECIAL_EA_OUTPUT ──
     # These include gaps inside Barangay boundaries and EA-to-EA overlaps that
@@ -1508,40 +1521,43 @@ def run_phase_8(
 
         crs_auth_id = target_crs.authid()
         uri = f"MultiLineString?crs={crs_auth_id}&field=geocode:string&field=ean:string&field=region:string&field=province:string&field=city_mun:string&field=barangay:string&field=indicator:string&field=remarks:string"
-        line_layer = QgsVectorLayer(uri, layer_name, "memory")
 
-        if line_layer.isValid():
-            pr = line_layer.dataProvider()
-            features_to_add = []
-            for line_geom, attrs in all_splitting_lines:
-                if not line_geom.isMultipart():
-                    line_geom.convertToMultiType()
-                f = QgsFeature(line_layer.fields())
-                f.setGeometry(line_geom)
-                f.setAttribute("geocode", attrs.get('geocode', ''))
-                f.setAttribute("ean", attrs.get('ean', ''))
-                f.setAttribute("region", attrs.get('region', ''))
-                f.setAttribute("province", attrs.get('province', ''))
-                f.setAttribute("city_mun", attrs.get('city_mun', ''))
-                f.setAttribute("barangay", attrs.get('barangay', ''))
-                f.setAttribute("indicator", attrs.get('indicator', ''))
-                f.setAttribute("remarks", attrs.get('remarks', ''))
-                features_to_add.append(f)
+        features_to_add = []
+        for line_geom, attrs in all_splitting_lines:
+            if not line_geom.isMultipart():
+                line_geom.convertToMultiType()
+            f = QgsFeature()
+            f.setGeometry(line_geom)
+            f.setAttributes([
+                attrs.get('geocode', ''),
+                attrs.get('ean', ''),
+                attrs.get('region', ''),
+                attrs.get('province', ''),
+                attrs.get('city_mun', ''),
+                attrs.get('barangay', ''),
+                attrs.get('indicator', ''),
+                attrs.get('remarks', ''),
+            ])
+            features_to_add.append(f)
 
-            pr.addFeatures(features_to_add)
-            line_layer.updateExtents()
+        if features_to_add:
+            line_layer = QgsVectorLayer(uri, layer_name, "memory")
+            if line_layer.isValid():
+                pr = line_layer.dataProvider()
+                pr.addFeatures(features_to_add)
+                line_layer.updateExtents()
 
-            apply_qml_to_layer(line_layer, "eadel_update_lines.qml")
+                apply_qml_to_layer(line_layer, "eadel_update_lines.qml")
 
-            project = QgsProject.instance()
-            if project:
-                project.addMapLayer(line_layer)
-            feedback.pushInfo(
-                f"Created line layer '{layer_name}' with {len(features_to_add)} "
-                f"feature(s) ({len(final_geom_by_candidate)} candidate(s) processed)."
-            )
-        else:
-            feedback.reportError(f"Failed to create memory layer for {layer_name}")
+                project = QgsProject.instance()
+                if project:
+                    project.addMapLayer(line_layer)
+                feedback.pushInfo(
+                    f"Created line layer '{layer_name}' with {len(features_to_add)} "
+                    f"feature(s) ({len(final_geom_by_candidate)} candidate(s) processed)."
+                )
+            else:
+                feedback.reportError(f"Failed to create memory layer for {layer_name}")
 
     feedback.pushInfo("Successfully created and structured Enumeration Areas.")
 
@@ -1685,8 +1701,18 @@ def run_phase_8(
         + "</html_table>"
     )
 
-    feedback.pushInfo(html_table)
-    feedback.pushInfo("--------------------------------------------------")
-    feedback.pushInfo("Completed.")
+    final_outputs = {}
+    if delineated_feat_count > 0 and delineated_dest_id is not None:
+        final_outputs[getattr(alg, 'DELINEATED_OUTPUT', 'DELINEATED_OUTPUT')] = delineated_dest_id
+    if merged_feat_count > 0 and merged_dest_id is not None:
+        final_outputs[getattr(alg, 'MERGED_OUTPUT', 'MERGED_OUTPUT')] = merged_dest_id
+    if special_ea_feat_count > 0 and special_ea_dest_id is not None:
+        final_outputs[getattr(alg, 'SPECIAL_EA_OUTPUT', 'SPECIAL_EA_OUTPUT')] = special_ea_dest_id
+    if delin_candidate_feat_count > 0 and delin_candidate_dest_id is not None:
+        final_outputs[getattr(alg, 'DELINEATION_CANDIDATE_OUTPUT', 'DELINEATION_CANDIDATE_OUTPUT')] = delin_candidate_dest_id
+    if merge_candidate_feat_count > 0 and merge_candidate_dest_id is not None:
+        final_outputs[getattr(alg, 'MERGE_CANDIDATE_OUTPUT', 'MERGE_CANDIDATE_OUTPUT')] = merge_candidate_dest_id
+    if extracted_bldg_feat_count > 0 and extracted_buildings_dest_id is not None:
+        final_outputs[getattr(alg, 'EXTRACTED_BUILDINGS_OUTPUT', 'EXTRACTED_BUILDINGS_OUTPUT')] = extracted_buildings_dest_id
 
-    return p2.get("outputs") or p1.get("outputs", {})
+    return final_outputs
