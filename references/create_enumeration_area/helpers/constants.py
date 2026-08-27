@@ -16,5 +16,11 @@ _PHASE_LABELS = [
 def yield_to_ui(counter: int, interval: int = 250) -> None:
     """Yield to Qt event loop periodically so GUI remains responsive."""
     if counter % interval == 0:
-        if QThread.currentThread() == QCoreApplication.instance().thread():
-            QCoreApplication.processEvents()
+        try:
+            if hasattr(QThread, "currentThread") and hasattr(QCoreApplication, "instance"):
+                inst = QCoreApplication.instance()
+                if inst and hasattr(inst, "thread") and QThread.currentThread() == inst.thread():
+                    if hasattr(QCoreApplication, "processEvents"):
+                        QCoreApplication.processEvents()
+        except Exception:
+            pass
