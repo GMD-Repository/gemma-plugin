@@ -592,6 +592,8 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
     def is_merge_candidate(ea_item):
         if ea_item.get('from_split', False) or ea_item.get('from_merge', False):
             return False
+        if ea_item.get('is_special_ea', False):
+            return False
         orig_id = ea_item.get('original_id')
         return (orig_id in merge_candidate_ids) or (ea_item['hh_count'] <= min_household)
 
@@ -1140,7 +1142,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             if not clipped.isEmpty():
                 p['geom'] = clipped
             p['split_by'] = 'forced_grid'
-            p['remarks'] = f"Forced straight cut (road/river split was unbalanced >{max_household} HH or <{min_household} HH)"
+            p['remarks'] = ""
 
         fback.pushWarning(
             f"[EA {ea_item['original_code']}] FORCED SPLIT: Applied {accepted_orientation} "
@@ -1635,7 +1637,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         # Mode 4 or Strategy 2: Keep Whole (No Splitting)
         if split_type == 4 or split_strategy == 2:
             fback.pushInfo(f"[EA {ea_item['original_code']}] Strategy 'Keep Whole' selected. Preserving EA whole.")
-            ea_item['remarks'] = "Kept whole (no-split mode)"
+            ea_item['remarks'] = ""
             return [ea_item]
 
         bldgs = ea_item.get('buildings', [])

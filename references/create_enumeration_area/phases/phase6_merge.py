@@ -50,6 +50,8 @@ def is_delineation_candidate(ea_item, max_household, eadel_indi_col_idx=-1, full
 def is_merge_candidate(ea_item, min_household, merge_candidate_ids=None):
     if ea_item.get('from_split', False):
         return False
+    if ea_item.get('is_special_ea', False):
+        return False
     if ea_item.get('from_merge', False):
         return ea_item.get('hh_count', 0.0) <= min_household
     orig_id = ea_item.get('original_id')
@@ -83,7 +85,7 @@ def process_barangay_merge(
 
         has_unders = False
         for ea in bar_eas:
-            if is_merge_candidate(ea, min_household, merge_candidate_ids) or (ea['hh_count'] == 0 and not ea.get('from_split', False)):
+            if is_merge_candidate(ea, min_household, merge_candidate_ids) or (ea['hh_count'] == 0 and not ea.get('from_split', False) and not ea.get('is_special_ea', False)):
                 has_unders = True
                 break
 
@@ -100,7 +102,7 @@ def process_barangay_merge(
 
             ea = bar_eas[idx]
 
-            if ea.get('from_split', False):
+            if ea.get('from_split', False) or ea.get('is_special_ea', False):
                 new_eas.append(ea)
                 continue
 
@@ -113,7 +115,7 @@ def process_barangay_merge(
                         continue
 
                     neighbor = bar_eas[j]
-                    if neighbor.get('from_split', False):
+                    if neighbor.get('from_split', False) or neighbor.get('is_special_ea', False):
                         continue
                     if is_delineation_candidate(neighbor, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
                         continue
@@ -174,14 +176,11 @@ def process_barangay_merge(
                         continue
 
                     neighbor = bar_eas[j]
-                    if neighbor.get('from_split', False):
+                    if neighbor.get('from_split', False) or neighbor.get('is_special_ea', False):
                         continue
                     if is_delineation_candidate(neighbor, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
                         continue
                     if neighbor.get('original_id') in delineation_candidate_ids:
-                        continue
-                    # Non-merge candidates must NOT be merged; only merge candidates can merge together
-                    if not is_merge_candidate(neighbor, min_household, merge_candidate_ids):
                         continue
 
                     is_adjacent = (

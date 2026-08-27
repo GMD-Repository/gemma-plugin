@@ -181,7 +181,7 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
         self.assertTrue(merged[0].get('from_merge', False), "Output EA must be flagged with from_merge=True.")
 
     def test_merge_candidate_with_normal_reference_ea(self):
-        """Verify that an under-threshold candidate prefers merging with a normal reference EA if present."""
+        """Verify that an under-threshold merge candidate can merge with an adjacent normal EA (excluding delineation_candidates and special_ea)."""
         feedback = MockFeedback()
 
         geom1 = make_square_geom(0, 0, 10)
@@ -226,7 +226,8 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
             merge_candidate_ids={201}
         )
 
-        self.assertEqual(len(merged), 2, "Small EA and non-merge candidate normal reference EA must NOT be merged.")
+        self.assertEqual(len(merged), 1, "Small EA should merge with adjacent normal EA (which is not delineation_candidate or special_ea).")
+        self.assertEqual(merged[0]['hh_count'], 220.0, "Combined household count should be 40 + 180 = 220 HH.")
 
     def test_delineated_split_eas_never_merged(self):
         """Verify that delineated (from_split=True) EAs are never selected as merge candidates or merged."""
@@ -281,8 +282,8 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
         for item in result:
             self.assertFalse(item.get('from_merge', False), "Neither EA should be marked as merged.")
 
-    def test_under_threshold_ea_merges_with_special_ea(self):
-        """Verify that an under-threshold EA can merge with a contiguous Special EA while excluding delineation candidates."""
+    def test_under_threshold_ea_does_not_merge_with_special_ea(self):
+        """Verify that an under-threshold EA does NOT merge with a contiguous Special EA."""
         feedback = MockFeedback()
 
         geom1 = make_square_geom(0, 0, 10)
@@ -332,9 +333,9 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
             delineation_candidate_ids=set()
         )
 
-        self.assertEqual(len(result), 1, "Under-threshold EA should successfully merge with contiguous Special EA.")
-        self.assertEqual(result[0]['hh_count'], 80.0, "Combined household count should be 50 + 30 = 80 HH.")
-        self.assertTrue(result[0]['from_merge'], "Resulting merged EA must be marked with from_merge=True.")
+        self.assertEqual(len(result), 2, "Under-threshold EA should NOT merge with Special EA.")
+        for item in result:
+            self.assertFalse(item.get('from_merge', False), "Special EA and small EA should remain unmerged.")
 
     def test_multi_iteration_merge_up_to_10_excluding_delin(self):
         """Verify multi-iteration chain merging runs up to 10 iterations while strictly excluding delineation candidates."""
@@ -1065,17 +1066,17 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
 
         # Simulate Phase 8 attribute assignment logic
         out_feat = QgsFeature(out_fields)
-        val_hh = ea_merged['hh_count'] if (ea_merged.get('is_special_ea') or ea_merged.get('from_merge')) else ea_merged.get('original_hhcount')
-        val_bldg = ea_merged['bldg_count'] if (ea_merged.get('is_special_ea') or ea_merged.get('from_merge')) else ea_merged.get('original_bldgcount')
+        val_hh = ea_merged['hh_count'] if ea_merged.get('is_special_ea') else ea_merged.get('original_hhcount')
+        val_bldg = ea_merged['bldg_count'] if ea_merged.get('is_special_ea') else ea_merged.get('original_bldgcount')
 
         out_feat.setAttribute(out_fields.indexOf("hhcount"), float(val_hh))
         out_feat.setAttribute(out_fields.indexOf("hh_count"), int(ea_merged['hh_count']))
         out_feat.setAttribute(out_fields.indexOf("bldgcount"), int(val_bldg))
         out_feat.setAttribute(out_fields.indexOf("bldg_count"), int(ea_merged['bldg_count']))
 
-        self.assertEqual(out_feat.attribute("hhcount"), 90.0, "hhcount for merged EA must reflect combined 90 HH.")
+        self.assertEqual(out_feat.attribute("hhcount"), 40.0, "hhcount for merged EA must preserve original hhcount (40 HH).")
         self.assertEqual(out_feat.attribute("hh_count"), 90, "hh_count for merged EA must reflect combined 90 HH.")
-        self.assertEqual(out_feat.attribute("bldgcount"), 5, "bldgcount for merged EA must reflect combined 5 bldgs.")
+        self.assertEqual(out_feat.attribute("bldgcount"), 2, "bldgcount for merged EA must preserve original bldgcount (2 bldgs).")
         self.assertEqual(out_feat.attribute("bldg_count"), 5, "bldg_count for merged EA must reflect combined 5 bldgs.")
 
 
