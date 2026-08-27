@@ -1436,6 +1436,14 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
         self.assertEqual(spec_sink.features[0].attribute("fid"), 1)
         self.assertEqual(spec_sink.features[0].id(), 1)
 
+        # 3b. Verify Geocode consistency across Delineated, Merged, and Special EAs
+        delin_gc = delin_sink.features[0].attribute("geocode")
+        merged_gc = merged_sink.features[0].attribute("geocode")
+        special_gc = spec_sink.features[0].attribute("geocode")
+        self.assertEqual(special_gc, "043404001")
+        self.assertEqual(delin_gc, special_gc, "Special EA geocode must match Delineated EA geocode")
+        self.assertEqual(merged_gc, special_gc, "Special EA geocode must match Merged EA geocode")
+
         # 4. Verify Extracted Buildings Sink FIDs are unique and sequential (1, 2)
         self.assertEqual(len(bldg_sink.features), 2)
         bldg_fids = [f.attribute("fid") for f in bldg_sink.features]

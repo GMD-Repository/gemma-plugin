@@ -14,6 +14,7 @@ console interface.
 """
 
 import os
+import re
 from qgis.core import (
     Qgis, QgsMessageLog,
     QgsApplication, QgsProject, QgsVectorLayer, QgsCoordinateTransform, QgsSpatialIndex,
@@ -36,6 +37,29 @@ from qgis.PyQt.QtWidgets import (
 from qgis.PyQt.QtGui import QFont, QPixmap, QColor, QIcon, QTextCursor
 from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication, QThread, QObject, pyqtSignal, QVariant, QTimer
 
+# Module-level regex for Tab 3 input validation — compiled once, reused on every
+# combo-box change event instead of being re-compiled inside the hot-path method.
+_EA_MERGE_8DIGIT_RE = re.compile(r"^\d{8}(_|$)")
+
+# Tab 3 processor helpers — imported once at module load so that
+# _ea_merge_validate_inputs (called on every combo-box change) does not
+# re-execute a relative import on each invocation.
+try:
+    from .ea_merge_processor import (
+        _field_index_ci as _emg_field_index_ci,
+        _first_nonempty_value as _emg_first_nonempty_value,
+        _unique_values as _emg_unique_values,
+        _GEOCODE_FIELDS as _EMG_GEOCODE_FIELDS,
+        _CITYMUN_FIELDS as _EMG_CITYMUN_FIELDS,
+    )
+except Exception:
+    # Fallback stubs in case the module is loaded before the package is fully
+    # initialized (e.g. during plugin reload).
+    _emg_field_index_ci = None
+    _emg_first_nonempty_value = None
+    _emg_unique_values = None
+    _EMG_GEOCODE_FIELDS = ()
+    _EMG_CITYMUN_FIELDS = ()
 
 
 class ThreadSafeFeedbackHelper(QObject):
@@ -57,6 +81,42 @@ class ThreadSafeFeedbackHelper(QObject):
     def _on_set_val(self, val):
         self.progress_bar.setValue(val)
 
+
+class _EAMergeWorker(QObject):
+    """Runs EAMergeProcessor.run() in a background QThread.
+
+    All signals are emitted from the worker thread. Because cross-thread
+    signal-slot connections default to Qt.QueuedConnection, the connected
+    slots (which update Qt widgets) are automatically marshalled back and
+    executed on the main GUI thread — so no manual locking is required.
+    """
+    feedback_signal = pyqtSignal(str)
+    progress_signal = pyqtSignal(int)
+    finished_signal = pyqtSignal(object)  # payload: EAMergeResult
+
+    def __init__(self):
+        super().__init__()
+        self._processor = None
+
+    def set_processor(self, processor):
+        """Attach the processor after signals are wired up."""
+        self._processor = processor
+
+    def run(self):
+        """Entry point called by QThread.started signal."""
+        try:
+            result = self._processor.run()
+        except Exception as exc:
+            import traceback
+            from .ea_merge_processor import EAMergeResult, EAMergeSummary
+            result = EAMergeResult(
+                success=False,
+                error_message=str(exc),
+                summary=EAMergeSummary(overall_status="ERROR"),
+            )
+            result.log_lines.append(f"[ERROR] {exc}")
+            result.log_lines.append(traceback.format_exc())
+        self.finished_signal.emit(result)
 
 class CustomProcessingFeedback(QgsProcessingFeedback):
     """Subclass of QgsProcessingFeedback to route progress and log updates to custom UI elements."""
@@ -2692,6 +2752,8 @@ class EALauncherDialog(QDialog):
         self._safe_set_layer(self.ea_merge_ea_combo, ea_match)
 
         # Also auto-detect 8-digit replacement layers if none are selected yet
+        # Accept names that begin with 8 digits (optionally followed by underscore + suffix)
+        pat_8_prefix = re.compile(r"^\d{8}(_|$)")
         if not self._ea_merge_replacement_layers:
             auto_repl = []
             for layer in layers:
@@ -2699,7 +2761,7 @@ class EALauncherDialog(QDialog):
                     continue
                 if layer.geometryType() not in (2, QgsWkbTypes.PolygonGeometry):
                     continue
-                if pat_8.match(layer.name()):
+                if pat_8_prefix.match(layer.name()):
                     auto_repl.append(layer)
             if auto_repl:
                 self._ea_merge_replacement_layers = auto_repl
@@ -2725,7 +2787,8 @@ class EALauncherDialog(QDialog):
         """Refresh the QListWidget showing the selected replacement layers."""
         self.ea_merge_layers_list.clear()
         import re
-        pat = re.compile(r"^\d{8}$")
+        # Accept names starting with 8 digits (with optional _suffix)
+        pat = re.compile(r"^\d{8}(_|$)")
         for layer in self._ea_merge_replacement_layers:
             if not layer:
                 continue
@@ -2741,8 +2804,9 @@ class EALauncherDialog(QDialog):
 
     def _ea_merge_validate_inputs(self):
         """Validate EA Input Layer and Replacement Polygon Layers and update UI indicators."""
-        import re
-        pat = re.compile(r"^\d{8}$")
+        # Use the module-level compiled regex and imported helpers — avoids
+        # per-call re.compile() and repeated relative imports on every event.
+        pat = _EA_MERGE_8DIGIT_RE
 
         ea_layer = self.ea_merge_ea_combo.currentLayer()
         repl_layers = self._ea_merge_replacement_layers
@@ -2758,20 +2822,34 @@ class EALauncherDialog(QDialog):
             self.ea_merge_ea_status_lbl.setText(f"Active: {fc} EA polygons ({crs_str}).")
 
             # Extract 5-digit geocode
-            from .ea_merge_processor import _field_index_ci, _first_nonempty_value, _GEOCODE_FIELDS, _CITYMUN_FIELDS, _unique_values
-            geo_idx = _field_index_ci(ea_layer, _GEOCODE_FIELDS)
-            raw_geo = _first_nonempty_value(ea_layer, geo_idx)
-            if raw_geo:
-                digits = re.sub(r"\D", "", raw_geo)
-                if len(digits) >= 5:
-                    geo_code = digits[:5]
+            if _emg_field_index_ci is not None:
+                geo_idx = _emg_field_index_ci(ea_layer, _EMG_GEOCODE_FIELDS)
+                raw_geo = _emg_first_nonempty_value(ea_layer, geo_idx)
+                if raw_geo:
+                    digits = re.sub(r"\D", "", raw_geo)
+                    if len(digits) >= 5:
+                        geo_code = digits[:5]
 
-            # Extract CityMun
-            citymun_idx = _field_index_ci(ea_layer, _CITYMUN_FIELDS)
-            if citymun_idx != -1:
-                vals = _unique_values(ea_layer, citymun_idx)
-                if len(vals) == 1:
-                    citymun = vals[0]
+                # Extract CityMun
+                citymun_idx = _emg_field_index_ci(ea_layer, _EMG_CITYMUN_FIELDS)
+                if citymun_idx != -1:
+                    vals = _emg_unique_values(ea_layer, citymun_idx)
+                    if len(vals) == 1:
+                        citymun = vals[0]
+            else:
+                # Fallback: lazy import if module-level import failed
+                from .ea_merge_processor import _field_index_ci, _first_nonempty_value, _GEOCODE_FIELDS, _CITYMUN_FIELDS, _unique_values
+                geo_idx = _field_index_ci(ea_layer, _GEOCODE_FIELDS)
+                raw_geo = _first_nonempty_value(ea_layer, geo_idx)
+                if raw_geo:
+                    digits = re.sub(r"\D", "", raw_geo)
+                    if len(digits) >= 5:
+                        geo_code = digits[:5]
+                citymun_idx = _field_index_ci(ea_layer, _CITYMUN_FIELDS)
+                if citymun_idx != -1:
+                    vals = _unique_values(ea_layer, citymun_idx)
+                    if len(vals) == 1:
+                        citymun = vals[0]
 
         # 2. Replacement Layers validation
         all_poly = True
@@ -2853,7 +2931,7 @@ class EALauncherDialog(QDialog):
         return f"<span style='color:#0969da;'>{msg}</span>"
 
     def _ea_merge_run(self):
-        """Validate inputs and launch the Enumeration Area Merge processor."""
+        """Validate inputs and launch the Enumeration Area Merge processor in a background thread."""
         ea_layer = self.ea_merge_ea_combo.currentLayer()
         repl_layers = self._ea_merge_replacement_layers
 
@@ -2862,6 +2940,10 @@ class EALauncherDialog(QDialog):
             return
         if not repl_layers:
             self._ea_merge_append_log("<span style='color:#cf222e; font-weight:bold;'>[ERROR] At least one Replacement Polygon Layer is required.</span>")
+            return
+
+        # Guard: don't start a second run if one is already in flight
+        if getattr(self, '_ea_merge_thread', None) and self._ea_merge_thread.isRunning():
             return
 
         # UI state — running
@@ -2881,24 +2963,65 @@ class EALauncherDialog(QDialog):
         def is_cancelled_fn():
             return self._ea_merge_cancelled
 
-        def feedback_callback(msg):
-            self._ea_merge_append_log(self._ea_merge_format_log(msg))
-
-        def progress_callback(pct):
-            self.ea_merge_progress_bar.setValue(pct)
-            QCoreApplication.processEvents()
-
+        # --- Create worker and thread ---
         from .ea_merge_processor import EAMergeProcessor
+
+        self._ea_merge_worker = _EAMergeWorker()
 
         processor = EAMergeProcessor(
             ea_layer=ea_layer,
             replacement_layers=repl_layers,
-            feedback_callback=feedback_callback,
-            progress_callback=progress_callback,
+            # Callbacks emit Qt signals — safe to call from the worker thread
+            # because cross-thread signals are queued to the main event loop.
+            feedback_callback=self._ea_merge_worker.feedback_signal.emit,
+            progress_callback=self._ea_merge_worker.progress_signal.emit,
             is_cancelled_fn=is_cancelled_fn,
+            # addMapLayer must be called on the main thread; _ea_merge_on_thread_finished
+            # handles it after the worker signals finished.
+            skip_add_to_project=True,
         )
+        self._ea_merge_worker.set_processor(processor)
 
-        result = processor.run()
+        self._ea_merge_thread = QThread()
+        self._ea_merge_worker.moveToThread(self._ea_merge_thread)
+
+        # Wire up signals
+        self._ea_merge_thread.started.connect(self._ea_merge_worker.run)
+        self._ea_merge_worker.feedback_signal.connect(
+            lambda msg: self._ea_merge_append_log(self._ea_merge_format_log(msg))
+        )
+        self._ea_merge_worker.progress_signal.connect(self.ea_merge_progress_bar.setValue)
+        self._ea_merge_worker.finished_signal.connect(self._ea_merge_on_thread_finished)
+        # Clean up thread and worker objects when the thread exits
+        self._ea_merge_thread.finished.connect(self._ea_merge_thread.deleteLater)
+        self._ea_merge_worker.finished_signal.connect(self._ea_merge_thread.quit)
+
+        self._ea_merge_thread.start()
+
+    def _ea_merge_on_thread_finished(self, result):
+        """Slot called on the main thread when the worker emits finished_signal.
+
+        Adds the output layer to the QGIS project (must be done on the main
+        thread) then delegates to the existing UI update handler.
+        """
+        # Add the output layer to the project here, on the main thread
+        if result.success and result.output_layer is not None:
+            try:
+                QgsProject.instance().addMapLayer(result.output_layer)
+                self._ea_merge_append_log(
+                    self._ea_merge_format_log(
+                        f"[INFO] Output layer '{result.summary.output_layer_name}' added to QGIS project."
+                    )
+                )
+            except Exception as exc:
+                self._ea_merge_append_log(
+                    f"<span style='color:#d17a00; font-weight:bold;'>[WARNING] Could not add layer to project: {exc}</span>"
+                )
+
+        # Release references so the worker/thread can be garbage collected
+        self._ea_merge_worker = None
+
+        # Delegate to the existing UI update handler
         self._ea_merge_on_finished(result)
 
     def _ea_merge_on_finished(self, result):
@@ -2957,7 +3080,8 @@ class MultiLayerSelectDialog(QDialog):
         layout.setSpacing(8)
 
         info_lbl = QLabel(
-            "Select one or more polygon layers with 8-digit numeric names\n"
+            "Select one or more polygon layers whose names begin with an 8-digit code\n"
+            "(e.g. 01728011, 01728011_delineated_ea2026, 01728001_merged_ea2026)\n"
             "to use as replacement geometries:"
         )
         info_lbl.setWordWrap(True)
@@ -2986,12 +3110,17 @@ class MultiLayerSelectDialog(QDialog):
         layout.addWidget(button_box)
 
     def _populate_layers(self):
+        import re
+        # Only show polygon layers whose name starts with 8 digits (optionally followed by _suffix)
+        pat_8_prefix = re.compile(r"^\d{8}(_|$)")
         selected_ids = {lyr.id() for lyr in self.selected_layers if lyr}
         all_layers = list(QgsProject.instance().mapLayers().values())
         for layer in all_layers:
             if not isinstance(layer, QgsVectorLayer):
                 continue
             if layer.geometryType() != QgsWkbTypes.PolygonGeometry:
+                continue
+            if not pat_8_prefix.match(layer.name()):
                 continue
             item = QListWidgetItem(self.list_widget)
             item.setText(f"{layer.name()} ({layer.featureCount()} features)")
