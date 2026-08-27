@@ -41,19 +41,22 @@ class TestEAMergeProcessor(unittest.TestCase):
             QgsField("GEOCODE", QVariant.String),
             QgsField("EA_NO", QVariant.String),
             QgsField("CITYMUN", QVariant.String),
-            QgsField("HH_COUNT", QVariant.Int),
+            QgsField("hhcount", QVariant.Double),
+            QgsField("bldgcount", QVariant.Int),
+            QgsField("hh_count", QVariant.Double),
+            QgsField("bldg_count", QVariant.Int),
         ])
         self.ea_layer.updateFields()
 
         # EA 1: (0,0) to (100,100)
         feat1 = QgsFeature(self.ea_layer.fields())
         feat1.setGeometry(make_square(0, 0, 100))
-        feat1.setAttributes(["0434000001", "001", "San Mateo", 150])
+        feat1.setAttributes(["0434000001", "001", "San Mateo", 150.0, 30, 150.0, 30])
 
         # EA 2: (100,0) to (200,100)
         feat2 = QgsFeature(self.ea_layer.fields())
         feat2.setGeometry(make_square(100, 0, 100))
-        feat2.setAttributes(["0434000002", "002", "San Mateo", 200])
+        feat2.setAttributes(["0434000002", "002", "San Mateo", 200.0, 45, 200.0, 45])
 
         pr.addFeatures([feat1, feat2])
         self.ea_layer.updateExtents()
@@ -61,15 +64,24 @@ class TestEAMergeProcessor(unittest.TestCase):
         # Replacement Layer 1: 8 digits (01001000), replaces (20,20) to (80,80)
         self.repl_layer1 = QgsVectorLayer("Polygon?crs=EPSG:3857", "01001000", "memory")
         rpr1 = self.repl_layer1.dataProvider()
+        rpr1.addAttributes([
+            QgsField("hhcount", QVariant.Double),
+            QgsField("bldgcount", QVariant.Int),
+            QgsField("hh_count", QVariant.Double),
+            QgsField("bldg_count", QVariant.Int),
+        ])
+        self.repl_layer1.updateFields()
+
         rfeat1 = QgsFeature(self.repl_layer1.fields())
         rfeat1.setGeometry(make_square(20, 20, 60))
+        rfeat1.setAttributes([150.0, 30, 85.0, 18])
         rpr1.addFeatures([rfeat1])
         self.repl_layer1.updateExtents()
 
     def test_8_digit_layer_name_validation(self):
         """Test 8-digit numeric layer name validation rules."""
-        valid_names = ["01001000", "01001002", "17501000"]
-        invalid_names = ["0100100", "010010000", "01001000_A", "01001_000", "ABC01001000"]
+        valid_names = ["01001000", "01001002", "17501000", "01001000_delineated_ea2026", "01001000_A"]
+        invalid_names = ["0100100", "010010000", "01001_000", "ABC01001000", "ea_01001000"]
 
         for name in valid_names:
             self.assertTrue(bool(_REPLACEMENT_NAME_RE.match(name)), f"Should be valid: {name}")
@@ -103,9 +115,113 @@ class TestEAMergeProcessor(unittest.TestCase):
             features = list(result.output_layer.getFeatures())
             self.assertEqual(len(features), 3)
 
+    def test_output_layer_includes_all_count_fields_even_if_missing_in_input(self):
+        """Verify that output layer schema always includes hhcount, bldgcount, hh_count, bldg_count."""
+        # Layer that only has hhcount / bldgcount (no hh_count or bldg_count)
+        simple_ea_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "04340_ea_simple", "memory")
+        pr = simple_ea_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("GEOCODE", QVariant.String),
+            QgsField("CITYMUN", QVariant.String),
+            QgsField("hhcount", QVariant.Double),
+            QgsField("bldgcount", QVariant.Int),
+        ])
+        simple_ea_layer.updateFields()
+
+        f = QgsFeature(simple_ea_layer.fields())
+        f.setGeometry(make_square(0, 0, 100))
+        f.setAttributes(["0434000001", "San Mateo", 120.0, 25])
+        pr.addFeatures([f])
+        simple_ea_layer.updateExtents()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            processor = EAMergeProcessor(
+                ea_layer=simple_ea_layer,
+                replacement_layers=[self.repl_layer1],
+                output_dir=tmpdir,
+            )
+            result = processor.run()
+            self.assertTrue(result.success)
+
+            out_fields = [f.name() for f in result.output_layer.fields()]
+            self.assertIn("hhcount", out_fields)
+            self.assertIn("bldgcount", out_fields)
+            self.assertIn("hh_count", out_fields)
+            self.assertIn("bldg_count", out_fields)
+
+            # Check features have values populated
+            feats = list(result.output_layer.getFeatures())
+            # Remaining EA: hh_count & bldg_count fallback from hhcount & bldgcount
+            rem_feat = feats[0]
+            self.assertEqual(float(rem_feat.attribute("hhcount")), 120.0)
+            self.assertEqual(int(rem_feat.attribute("bldgcount")), 25)
+            self.assertEqual(float(rem_feat.attribute("hh_count")), 120.0)
+            self.assertEqual(int(rem_feat.attribute("bldg_count")), 25)
+
+    def test_hhcount_and_hh_count_follow_respective_lineages(self):
+        """Verify hhcount/bldgcount follow previous/replacement hhcount/bldgcount,
+        and hh_count/bldg_count follow previous/replacement hh_count/bldg_count."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            processor = EAMergeProcessor(
+                ea_layer=self.ea_layer,
+                replacement_layers=[self.repl_layer1],
+                output_dir=tmpdir,
+            )
+            result = processor.run()
+            self.assertTrue(result.success)
+
+            features = list(result.output_layer.getFeatures())
+            # Find replacement feature (the 3rd feature)
+            repl_feat = features[2]
+            self.assertEqual(float(repl_feat.attribute("hhcount")), 150.0)
+            self.assertEqual(int(repl_feat.attribute("bldgcount")), 30)
+            self.assertEqual(float(repl_feat.attribute("hh_count")), 85.0)
+            self.assertEqual(int(repl_feat.attribute("bldg_count")), 18)
+
+            # Remaining EA 1 feature (1st feature)
+            ea1_feat = features[0]
+            self.assertEqual(float(ea1_feat.attribute("hhcount")), 150.0)
+            self.assertEqual(int(ea1_feat.attribute("bldgcount")), 30)
+            self.assertEqual(float(ea1_feat.attribute("hh_count")), 150.0)
+            self.assertEqual(int(ea1_feat.attribute("bldg_count")), 30)
+
+            # Untouched EA 2 feature (2nd feature)
+            ea2_feat = features[1]
+            self.assertEqual(float(ea2_feat.attribute("hhcount")), 200.0)
+            self.assertEqual(int(ea2_feat.attribute("bldgcount")), 45)
+            self.assertEqual(float(ea2_feat.attribute("hh_count")), 200.0)
+            self.assertEqual(int(ea2_feat.attribute("bldg_count")), 45)
+
+    def test_replacement_plain_geometry_inherits_from_overlapping_previous_ea(self):
+        """Verify that when a replacement layer has no count attributes, it inherits
+        hhcount/bldgcount and hh_count/bldg_count from the overlapping previous EA."""
+        plain_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "01001001", "memory")
+        pr = plain_layer.dataProvider()
+        f = QgsFeature(plain_layer.fields())
+        f.setGeometry(make_square(120, 20, 50))  # inside EA 2
+        pr.addFeatures([f])
+        plain_layer.updateExtents()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            processor = EAMergeProcessor(
+                ea_layer=self.ea_layer,
+                replacement_layers=[plain_layer],
+                output_dir=tmpdir,
+            )
+            result = processor.run()
+            self.assertTrue(result.success)
+
+            features = list(result.output_layer.getFeatures())
+            repl_feat = features[-1]
+            # Inherited from EA 2
+            self.assertEqual(float(repl_feat.attribute("hhcount")), 200.0)
+            self.assertEqual(int(repl_feat.attribute("bldgcount")), 45)
+            self.assertEqual(float(repl_feat.attribute("hh_count")), 200.0)
+            self.assertEqual(int(repl_feat.attribute("bldg_count")), 45)
+
     def test_invalid_replacement_layer_name_fails(self):
-        """Test that invalid 8-digit replacement layer names cause validation failure."""
-        invalid_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "01001000_A", "memory")
+        """Test that invalid replacement layer names cause validation failure."""
+        invalid_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "ABC01001000", "memory")
         pr = invalid_layer.dataProvider()
         f = QgsFeature(invalid_layer.fields())
         f.setGeometry(make_square(0, 0, 10))
@@ -122,11 +238,8 @@ class TestEAMergeProcessor(unittest.TestCase):
 
     def test_empty_output_layer_not_added_to_project(self):
         """Verify that when an output layer has 0 features, it is not set on result or added to project."""
-        from qgis.core import QgsProject
         processor = EAMergeProcessor(ea_layer=self.ea_layer, replacement_layers=[self.repl_layer1])
-        # Create an empty output layer with 0 features
         empty_out = QgsVectorLayer("Polygon?crs=EPSG:3857", "empty_out_merge", "memory")
-        # Run phase 11 logic check
         if empty_out.featureCount() == 0:
             processor._result.output_layer = None
         self.assertIsNone(processor._result.output_layer)

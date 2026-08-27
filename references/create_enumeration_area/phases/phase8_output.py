@@ -474,7 +474,7 @@ def run_phase_8(
             if idx != -1:
                 val = src_feat.attribute(idx)
             else:
-                val = src_feat.attribute(f.name())
+                val = None
             if f.name().lower() == "sy":
                 val = "2026"
             elif f.name().lower() in ("remarks", "remark", "delin_remark", "delin_remarks"):
@@ -483,6 +483,34 @@ def run_phase_8(
             exp_attrs.append(val if val is not None else None)
         exp_feat.setAttributes(exp_attrs)
         return exp_feat
+
+    def get_text_attr(feat: QgsFeature, candidate_names: list, prefer_text: bool = True):
+        if not feat or not feat.isValid():
+            return None
+        fields = feat.fields()
+        best_val = None
+        for name in candidate_names:
+            idx = fields.indexOf(name)
+            if idx == -1:
+                for j in range(fields.count()):
+                    if fields.at(j).name().lower() == name.lower():
+                        idx = j
+                        break
+            if idx != -1:
+                val = feat.attribute(idx)
+                if val is not None and val != NULL and not (isinstance(val, QVariant) and val.isNull()):
+                    val_str = str(val).strip()
+                    if val_str not in ('', 'NULL', 'None'):
+                        if val_str.endswith(".0"):
+                            val_str = val_str[:-2]
+                        if prefer_text:
+                            if not val_str.isdigit():
+                                return val_str
+                            elif best_val is None:
+                                best_val = val_str
+                        else:
+                            return val_str
+        return best_val
 
     delineated_feat_count = 0
     merged_feat_count = 0
@@ -509,33 +537,16 @@ def run_phase_8(
 
     bar_geocode_field = p1.get("bar_geocode_field", "geocode")
 
-    # Accumulate (barangay_geocode, gap_geom) tuples for all internally detected
-    # Barangay gaps and (barangay_geocode, overlap_geom) for EA-to-EA overlaps
+    # Accumulate (barangay_geocode, gap_geom, parent_bgy_feat) tuples for all internally detected
+    # Barangay gaps and (barangay_geocode, overlap_geom, parent_bgy_feat) for EA-to-EA overlaps
     # so they can be written to SPECIAL_EA_OUTPUT after the main loop.
-    internal_gap_geoms: list = []  # List[Tuple[str, QgsGeometry]]
-    internal_overlap_geoms: list = []  # List[Tuple[str, QgsGeometry]]
+    internal_gap_geoms: list = []  # List[Tuple[str, QgsGeometry, Optional[QgsFeature]]]
+    internal_overlap_geoms: list = []  # List[Tuple[str, QgsGeometry, Optional[QgsFeature]]]
 
     for bar in sorted(barangay_to_final_eas.keys(), key=lambda k: str(k) if k is not None else ""):
         bar_eas = barangay_to_final_eas[bar]
 
-        # 1. Detect any EA-to-EA overlaps within this barangay
-        for _ea_i in range(len(bar_eas)):
-            _g_i = bar_eas[_ea_i].get('geom')
-            if not _g_i or _g_i.isEmpty():
-                continue
-            for _ea_j in range(_ea_i + 1, len(bar_eas)):
-                _g_j = bar_eas[_ea_j].get('geom')
-                if not _g_j or _g_j.isEmpty():
-                    continue
-                if _g_i.intersects(_g_j):
-                    _inter = _g_i.intersection(_g_j)
-                    if _inter and not _inter.isEmpty() and _inter.area() >= 1.0:
-                        _inter_polys = get_polygons_from_geom(_inter)
-                        for _ip in _inter_polys:
-                            if _ip and not _ip.isEmpty() and _ip.area() >= 1.0:
-                                internal_overlap_geoms.append((str(bar), _ip))
-
-        # 2. Allocate uncovered Barangay gaps into constituent EAs
+        # Resolve parent_bgy_feat first
         parent_bgy_feat = None
         bar_str = str(bar).strip() if bar is not None else ""
         if bar_str.endswith(".0"):
@@ -552,12 +563,36 @@ def run_phase_8(
         if parent_bgy_feat is None and isinstance(bar, int) and bar in barangay_by_id:
             parent_bgy_feat = barangay_by_id[bar]
 
+        _bar_geocode = (
+            get_text_attr(parent_bgy_feat, ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code", "psgc"], prefer_text=False)
+            or bar_str
+        )
+        if _bar_geocode.endswith(".0"):
+            _bar_geocode = _bar_geocode[:-2]
+
+        # 1. Detect any EA-to-EA overlaps within this barangay
+        for _ea_i in range(len(bar_eas)):
+            _g_i = bar_eas[_ea_i].get('geom')
+            if not _g_i or _g_i.isEmpty():
+                continue
+            for _ea_j in range(_ea_i + 1, len(bar_eas)):
+                _g_j = bar_eas[_ea_j].get('geom')
+                if not _g_j or _g_j.isEmpty():
+                    continue
+                if _g_i.intersects(_g_j):
+                    _inter = _g_i.intersection(_g_j)
+                    if _inter and not _inter.isEmpty() and _inter.area() >= 1.0:
+                        _inter_polys = get_polygons_from_geom(_inter)
+                        for _ip in _inter_polys:
+                            if _ip and not _ip.isEmpty() and _ip.area() >= 1.0:
+                                internal_overlap_geoms.append((_bar_geocode, _ip, parent_bgy_feat))
+
+        # 2. Allocate uncovered Barangay gaps into constituent EAs
         if parent_bgy_feat and parent_bgy_feat.geometry() and not parent_bgy_feat.geometry().isEmpty():
             bar_eas, _detected_gaps = allocate_gaps_to_parts(bar_eas, parent_bgy_feat.geometry())
             if _detected_gaps:
-                _bar_geocode = bar_str
                 for _gap_geom in _detected_gaps:
-                    internal_gap_geoms.append((_bar_geocode, _gap_geom))
+                    internal_gap_geoms.append((_bar_geocode, _gap_geom, parent_bgy_feat))
 
         # Determine maximum starting sequence (child YYY) already in use in this barangay.
         # Scan both the in-memory loaded EAs AND all sibling EA codes collected from the
@@ -764,34 +799,6 @@ def run_phase_8(
     barangay_index = p1.get("barangay_index")
     full_ea_by_id = {feat.id(): feat for feat in p1.get("all_ea_features", [])}
 
-    def get_text_attr(feat: QgsFeature, candidate_names: list, prefer_text: bool = True):
-        if not feat or not feat.isValid():
-            return None
-        fields = feat.fields()
-        best_val = None
-        for name in candidate_names:
-            idx = fields.indexOf(name)
-            if idx == -1:
-                for j in range(fields.count()):
-                    if fields.at(j).name().lower() == name.lower():
-                        idx = j
-                        break
-            if idx != -1:
-                val = feat.attribute(idx)
-                if val is not None and val != NULL and not (isinstance(val, QVariant) and val.isNull()):
-                    val_str = str(val).strip()
-                    if val_str not in ('', 'NULL', 'None'):
-                        if val_str.endswith(".0"):
-                            val_str = val_str[:-2]
-                        if prefer_text:
-                            if not val_str.isdigit():
-                                return val_str
-                            elif best_val is None:
-                                best_val = val_str
-                        else:
-                            return val_str
-        return best_val
-
     def get_field_val(f: QgsFeature, fname, default=0):
         if not f or not f.isValid():
             return default
@@ -924,12 +931,12 @@ def run_phase_8(
         geocode_idx = out_fields.indexOf("geocode")
         if geocode_idx != -1:
             cur_gc = out_feat.attribute(geocode_idx)
+            inh_gc = (
+                get_text_attr(parent_feat, ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code", "psgc"], prefer_text=False)
+                or get_text_attr(parent_bgy_feat, ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code", "psgc"], prefer_text=False)
+                or ea.get('parent_barangay')
+            )
             if cur_gc is None or cur_gc == NULL or str(cur_gc).strip() in ('', 'NULL', 'None'):
-                inh_gc = (
-                    get_text_attr(parent_feat, ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code", "psgc"], prefer_text=False)
-                    or get_text_attr(parent_bgy_feat, ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code", "psgc"], prefer_text=False)
-                    or ea.get('parent_barangay')
-                )
                 if inh_gc:
                     inh_gc_str = str(inh_gc).strip()
                     if inh_gc_str.endswith(".0"):
@@ -939,6 +946,12 @@ def run_phase_8(
                 gc_str = str(cur_gc).strip()
                 if gc_str.endswith(".0"):
                     gc_str = gc_str[:-2]
+                if inh_gc:
+                    inh_gc_str = str(inh_gc).strip()
+                    if inh_gc_str.endswith(".0"):
+                        inh_gc_str = inh_gc_str[:-2]
+                    if len(inh_gc_str) > len(gc_str) and (inh_gc_str.startswith(gc_str) or gc_str in inh_gc_str):
+                        gc_str = inh_gc_str
                 out_feat.setAttribute(geocode_idx, gc_str)
 
         def safe_float(val, default=0.0):
@@ -1330,7 +1343,10 @@ def run_phase_8(
             feedback.pushInfo(
                 f"Writing {len(internal_gap_geoms)} internally detected Barangay gap(s) to Special EA output..."
             )
-            for _bar_geocode, _gap_geom in internal_gap_geoms:
+            for _item in internal_gap_geoms:
+                _bar_geocode = _item[0]
+                _gap_geom = _item[1]
+                _bgy_feat = _item[2] if len(_item) > 2 else None
                 if barangay_to_target:
                     _gap_geom = QgsGeometry(_gap_geom)
                     _gap_geom.transform(barangay_to_target)
@@ -1350,6 +1366,20 @@ def run_phase_8(
                     _gap_feat.setAttribute(_sy_idx, "2026")
                 if _remarks_idx != -1:
                     _gap_feat.setAttribute(_remarks_idx, "Internal Barangay Gap")
+                if _bgy_feat:
+                    for _fname, _cands in [
+                        ("map_uuid", ["map_uuid", "mapuuid", "uuid", "map_id"]),
+                        ("region", ["region", "reg_name", "region_name", "reg_desc", "adm1_en", "reg", "region_n", "reg_n"]),
+                        ("province", ["province", "prov_name", "province_name", "prov_desc", "adm2_en", "prov", "province_n", "prov_n"]),
+                        ("city_mun", ["city_mun", "citymun", "city_municipality", "city_name", "mun_name", "adm3_en", "city", "municipality", "mun", "citymun_n"]),
+                        ("barangay", ["barangay", "bgy_name", "brgy_name", "adm4_en", "bgy", "brgy", "barangay_n", "bgy_n"]),
+                        ("code", ["code", "bgy_code", "brgy_code", "barangay_code", "adm4_pcode"]),
+                    ]:
+                        _f_idx = special_ea_export_fields.indexOf(_fname)
+                        if _f_idx != -1:
+                            _v = get_text_attr(_bgy_feat, _cands)
+                            if _v:
+                                _gap_feat.setAttribute(_f_idx, _v)
                 if special_ea_sink.addFeature(_gap_feat, QgsFeatureSink.Flag.FastInsert):
                     special_ea_feat_count += 1
                 else:
@@ -1361,7 +1391,10 @@ def run_phase_8(
             feedback.pushInfo(
                 f"Writing {len(internal_overlap_geoms)} internally detected EA overlap(s) to Special EA output..."
             )
-            for _bar_geocode, _overlap_geom in internal_overlap_geoms:
+            for _item in internal_overlap_geoms:
+                _bar_geocode = _item[0]
+                _overlap_geom = _item[1]
+                _bgy_feat = _item[2] if len(_item) > 2 else None
                 if barangay_to_target:
                     _overlap_geom = QgsGeometry(_overlap_geom)
                     _overlap_geom.transform(barangay_to_target)
@@ -1381,6 +1414,20 @@ def run_phase_8(
                     _ov_feat.setAttribute(_sy_idx, "2026")
                 if _remarks_idx != -1:
                     _ov_feat.setAttribute(_remarks_idx, "Internal EA Overlap")
+                if _bgy_feat:
+                    for _fname, _cands in [
+                        ("map_uuid", ["map_uuid", "mapuuid", "uuid", "map_id"]),
+                        ("region", ["region", "reg_name", "region_name", "reg_desc", "adm1_en", "reg", "region_n", "reg_n"]),
+                        ("province", ["province", "prov_name", "province_name", "prov_desc", "adm2_en", "prov", "province_n", "prov_n"]),
+                        ("city_mun", ["city_mun", "citymun", "city_municipality", "city_name", "mun_name", "adm3_en", "city", "municipality", "mun", "citymun_n"]),
+                        ("barangay", ["barangay", "bgy_name", "brgy_name", "adm4_en", "bgy", "brgy", "barangay_n", "bgy_n"]),
+                        ("code", ["code", "bgy_code", "brgy_code", "barangay_code", "adm4_pcode"]),
+                    ]:
+                        _f_idx = special_ea_export_fields.indexOf(_fname)
+                        if _f_idx != -1:
+                            _v = get_text_attr(_bgy_feat, _cands)
+                            if _v:
+                                _ov_feat.setAttribute(_f_idx, _v)
                 if special_ea_sink.addFeature(_ov_feat, QgsFeatureSink.Flag.FastInsert):
                     special_ea_feat_count += 1
                 else:
