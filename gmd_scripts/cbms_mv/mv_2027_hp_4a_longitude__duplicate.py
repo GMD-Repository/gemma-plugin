@@ -1,12 +1,3 @@
-# ***************************************************************************
-# *                                                                         *
-# *   This program is free software; you can redistribute it and/or modify  *
-# *   it under the terms of the GNU General Public License as published by  *
-# *   the Free Software Foundation; either version 2 of the License, or     *
-# *   (at your option) any later version.                                   *
-# *                                                                         *
-# ***************************************************************************
-
 import os
 import json
 from typing import Any, Optional, Dict, List
@@ -96,34 +87,41 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
         features = gmdhelpers.filter_geometry_validity(geojson_data, feedback)
         fields = geojson_data.fields()
 
-        # Add a field holding longitude rounded to 6 decimal places, as a string
-        # (avoids float precision issues when comparing/grouping values)
-        if fields.indexFromName("lon_key") == -1:
-            fields.append(QgsField("lon_key", QVariant.String))
+        # Add a field holding combined (longitude, latitude) rounded to 7 decimal places as a string
+        if fields.indexFromName("coord_key") == -1:
+            fields.append(QgsField("coord_key", QVariant.String))
+
+        # Resolve field names case-insensitively
+        def resolve_field_name(field_list, target_name):
+            for fld in field_list:
+                if fld.name().lower() == target_name.lower():
+                    return fld.name()
+            return None
+
+        long_field = resolve_field_name(fields, "longitude")
+        lat_field = resolve_field_name(fields, "latitude")
 
         valid_features = []
         for f in features:
             f.setFields(fields, False)
-            # Ensure the attribute array actually matches the new field count.
-            # setFields() alone does not resize/pad the attribute values,
-            # which can leave some features misaligned once a field is added.
             f.resizeAttributes(fields.count())
 
-            lon_value = f["longitude"]
+            lon_value = f.attribute(long_field) if long_field else None
+            lat_value = f.attribute(lat_field) if lat_field else None
 
-            # Guard against null/invalid longitude values (QGIS returns
-            # NULL / QVariant() for missing attributes, not Python None)
-            if lon_value is None or lon_value == NULL:
+            if lon_value is None or lon_value == NULL or lat_value is None or lat_value == NULL:
                 feedback.pushWarning(
-                    "Feature id " + str(f.id()) + " has a null longitude value, skipping."
+                    "Feature id " + str(f.id()) + " has null longitude or latitude, skipping."
                 )
                 continue
 
             try:
-                f["lon_key"] = "{:.7f}".format(float(lon_value))
+                lon_str = "{:.7f}".format(float(lon_value))
+                lat_str = "{:.7f}".format(float(lat_value))
+                f["coord_key"] = f"{lon_str}_{lat_str}"
             except (TypeError, ValueError) as e:
                 feedback.pushWarning(
-                    "Feature id " + str(f.id()) + " has invalid longitude '" + str(lon_value) + "': " + str(e)
+                    "Feature id " + str(f.id()) + " has invalid coordinates: " + str(e)
                 )
                 continue
 
@@ -131,17 +129,14 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
 
         features = valid_features
 
-        features, fields = gmdhelpers.add_count(features, fields, "lon_key")
+        features, fields = gmdhelpers.add_count(features, fields, "coord_key")
 
-        # Defensive filter: skip any feature where the count came back null
-        # rather than a real integer (shouldn't happen after the fix above,
-        # but keeps the algorithm from crashing if it ever does).
         features = [
             f for f in features
             if f["n"] is not None and f["n"] != NULL and f["n"] > 1
         ]
 
-        features = gmdhelpers.arrange(features, "lon_key")
+        features = gmdhelpers.arrange(features, "coord_key")
 
         return gmdhelpers.export_features_to_sink(
             self,

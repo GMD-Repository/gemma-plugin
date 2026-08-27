@@ -174,8 +174,8 @@ class mv_2027_hp_4b_longitude__invalid(QgsProcessingAlgorithm):
             c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
             distance_m = round(R * c, 4)
 
-            # Include feature only if distance > 5m
-            if distance_m > 5.0:
+            # Include feature only if distance > 30m
+            if distance_m > 30.0:
                 out_feat = QgsFeature(fields)
                 out_feat.setGeometry(geom)
 
@@ -193,7 +193,7 @@ class mv_2027_hp_4b_longitude__invalid(QgsProcessingAlgorithm):
                 invalid_features.append(out_feat)
 
         feedback.pushInfo(
-            f"Results: {len(invalid_features)} features with geometry distance mismatch > 5m."
+            f"Results: {len(invalid_features)} features with geometry distance mismatch > 30m."
         )
 
         return gmdhelpers.export_features_to_sink(

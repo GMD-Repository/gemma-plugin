@@ -119,7 +119,7 @@ class mv_2027_hp_1a_map_uuid__invalid(QgsProcessingAlgorithm):
                 return True
             return False
 
-        uuid_field = resolve_field_name(source_fields, ["map_uuid", "geoid", "geo_id", "case_id", "id"])
+        uuid_field = resolve_field_name(source_fields, ["map_uuid"])
 
         # Extract records list from JSON data (Form 2 datafile)
         records = []
@@ -148,40 +148,31 @@ class mv_2027_hp_1a_map_uuid__invalid(QgsProcessingAlgorithm):
             else:
                 rec_props = rec_dict
 
-            # Find map_uuid / GeoID in record properties
+            # Find map_uuid in record properties
             rec_id = None
-            for key in ["map_uuid", "geoid", "geo_id", "case_id", "id"]:
-                for k, v in rec_props.items():
-                    if k.lower() == key.lower() and not is_null(v):
-                        rec_id = str(v).strip()
-                        break
-                if rec_id:
+            for k, v in rec_props.items():
+                if k.lower() == "map_uuid" and not is_null(v):
+                    rec_id = str(v).strip()
                     break
 
-            # Find longitude & latitude in record properties
+            # Find longitude & latitude in record properties (strictly longitude and latitude)
             json_long = None
             json_lat = None
 
-            for key in ["longitude", "pos_longit", "long", "x"]:
-                for k, v in rec_props.items():
-                    if k.lower() == key.lower() and not is_null(v):
-                        try:
-                            json_long = round(float(v), 7)
-                        except (ValueError, TypeError):
-                            pass
-                        break
-                if json_long is not None:
+            for k, v in rec_props.items():
+                if k.lower() == "longitude" and not is_null(v):
+                    try:
+                        json_long = round(float(v), 7)
+                    except (ValueError, TypeError):
+                        pass
                     break
 
-            for key in ["latitude", "pos_latitu", "lat", "y"]:
-                for k, v in rec_props.items():
-                    if k.lower() == key.lower() and not is_null(v):
-                        try:
-                            json_lat = round(float(v), 7)
-                        except (ValueError, TypeError):
-                            pass
-                        break
-                if json_lat is not None:
+            for k, v in rec_props.items():
+                if k.lower() == "latitude" and not is_null(v):
+                    try:
+                        json_lat = round(float(v), 7)
+                    except (ValueError, TypeError):
+                        pass
                     break
 
             if rec_id and json_long is not None and json_lat is not None:
