@@ -1339,7 +1339,14 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             feedback.pushInfo(f"Successfully wrote {bldg_written_preview} building features to output in preview mode.")
 
         feedback.pushInfo("PREVIEW ONLY check is active — exiting early after creating candidate layers.")
-        return {"preview_exit": True, "outputs": outputs}
+        preview_outputs = {}
+        if delin_candidate_feat_count > 0 and delin_candidate_dest_id is not None:
+            preview_outputs[alg.DELINEATION_CANDIDATE_OUTPUT] = delin_candidate_dest_id
+        if merge_candidate_feat_count > 0 and merge_candidate_dest_id is not None:
+            preview_outputs[alg.MERGE_CANDIDATE_OUTPUT] = merge_candidate_dest_id
+        if extracted_bldg_feat_count > 0 and extracted_buildings_dest_id is not None:
+            preview_outputs[alg.EXTRACTED_BUILDINGS_OUTPUT] = extracted_buildings_dest_id
+        return {"preview_exit": True, "outputs": preview_outputs}
 
     return {
         "preview_exit": False,
@@ -1355,6 +1362,12 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         "extracted_buildings_sink": extracted_buildings_sink,
         "delin_candidate_sink": delin_candidate_sink,
         "merge_candidate_sink": merge_candidate_sink,
+        "delineated_dest_id": delineated_dest_id,
+        "merged_dest_id": merged_dest_id,
+        "special_ea_dest_id": special_ea_dest_id,
+        "extracted_buildings_dest_id": extracted_buildings_dest_id,
+        "delin_candidate_dest_id": delin_candidate_dest_id,
+        "merge_candidate_dest_id": merge_candidate_dest_id,
         "delineated_feat_count": delineated_feat_count,
         "merged_feat_count": merged_feat_count,
         "delin_candidate_feat_count": delin_candidate_feat_count,

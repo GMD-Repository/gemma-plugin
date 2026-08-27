@@ -232,6 +232,23 @@ class TestPreEAProcessor(unittest.TestCase):
         overlap_area = geom1.intersection(geom2).area()
         self.assertLessEqual(overlap_area, 0.001, f"Expected 0 overlap area, got {overlap_area}")
 
+    def test_empty_output_layer_not_generated(self):
+        """Verify that when 0 output features exist, _build_output_layer returns None."""
+        processor = PreEAProcessor()
+        ea_features = list(self.ea_layer.getFeatures())
+        # Make sure geometries for all EAs are empty in corrected_geoms and EA has empty geom
+        empty_ea_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "empty_eas", "memory")
+        out = processor._build_output_layer(
+            empty_ea_layer,
+            ea_features=[],
+            corrected_geoms={},
+            ea_to_bgy={},
+            bgy_by_fid={},
+            output_name="test_empty_output",
+            log_fn=lambda m: None,
+        )
+        self.assertIsNone(out, "Output layer should be None when no features are written.")
+
 
 if __name__ == "__main__":
     unittest.main()

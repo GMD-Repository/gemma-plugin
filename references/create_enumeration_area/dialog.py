@@ -2189,6 +2189,11 @@ class EALauncherDialog(QDialog):
                                 layer = layer_ref
                             
                             if layer:
+                                if layer.featureCount() == 0:
+                                    # If there are no values in the output layer, do not generate/keep it
+                                    QgsProject.instance().removeMapLayer(layer.id())
+                                    continue
+
                                 layer.setName(target_name)
                                 apply_qml_to_layer(layer, qml_filename)
                                 lnode = root.findLayer(layer.id())
@@ -2200,18 +2205,31 @@ class EALauncherDialog(QDialog):
 
                 # Group any generated splitting line layers (ending with _eadel_update) into Splitting Lines
                 has_splitting_lines = False
-                for layer_id, proj_layer in QgsProject.instance().mapLayers().items():
+                for layer_id, proj_layer in list(QgsProject.instance().mapLayers().items()):
                     if proj_layer.name().endswith("_eadel_update"):
-                        has_splitting_lines = True
-                        lnode = root.findLayer(layer_id)
-                        if lnode and lnode.parent() != splitting_lines_group:
-                            clone = lnode.clone()
-                            splitting_lines_group.addChildNode(clone)
-                            lnode.parent().removeChildNode(lnode)
+                        if proj_layer.featureCount() == 0:
+                            QgsProject.instance().removeMapLayer(layer_id)
+                        else:
+                            has_splitting_lines = True
+                            lnode = root.findLayer(layer_id)
+                            if lnode and lnode.parent() != splitting_lines_group:
+                                clone = lnode.clone()
+                                splitting_lines_group.addChildNode(clone)
+                                lnode.parent().removeChildNode(lnode)
 
-                # Clean up empty Splitting Lines group if no splitting lines were generated
-                if not has_splitting_lines and len(splitting_lines_group.children()) == 0:
-                    main_group.removeChildNode(splitting_lines_group)
+                # Clean up empty sub-groups if no layers were added to them
+                for g_name, g_node in [
+                    ("Reference Layers", reference_group),
+                    ("Splitting Lines", splitting_lines_group),
+                    ("EAs", eas_group),
+                    ("Candidates", candidates_group),
+                ]:
+                    if g_node and len(g_node.children()) == 0:
+                        main_group.removeChildNode(g_node)
+
+                # Clean up main group if it contains no child nodes
+                if len(main_group.children()) == 0:
+                    root.removeChildNode(main_group)
 
                 self.progress_bar.setValue(100)
                 self.log_console.append("<span style='color:#1a7f37; font-weight:bold;'>[COMPLETE] Pipeline execution complete! Results loaded to map.</span>")

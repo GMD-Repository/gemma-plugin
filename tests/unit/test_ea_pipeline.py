@@ -12,6 +12,7 @@ from qgis.core import (
     QgsPolygon,
     QgsFields,
     QgsField,
+    QgsVectorLayer,
 )
 
 from references.create_enumeration_area.helpers.classification import (
@@ -1261,6 +1262,55 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
 
         self.assertEqual(overlap_feat.attribute("special_type"), "OVERLAP")
         self.assertEqual(overlap_feat.attribute("ea_type"), "OVERLAP")
+
+    def test_phase8_output_empty_layers_omitted(self):
+        """Verify that phase 8 returns only outputs with featureCount > 0."""
+        from references.create_enumeration_area.phases.phase8_output import run_phase_8
+
+        class DummyAlg:
+            DELINEATED_OUTPUT = "DELINEATED_OUTPUT"
+            MERGED_OUTPUT = "MERGED_OUTPUT"
+            SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
+            DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
+            MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
+            EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
+
+        alg = DummyAlg()
+        mock_feedback = MockFeedback()
+
+        p1 = {
+            "previous_ea_source": QgsVectorLayer("Polygon?crs=EPSG:4326", "test_ea", "memory"),
+            "building_source": QgsVectorLayer("Point?crs=EPSG:4326", "test_bldg", "memory"),
+            "target_crs": QgsVectorLayer("Polygon?crs=EPSG:4326", "test_ea", "memory").crs(),
+            "area_threshold": 1.0,
+            "max_household": 300,
+            "min_household": 100,
+            "bldg_hh_field": "hhcount",
+            "ea_id_field": "ean",
+            "barangay_by_id": {},
+        }
+        p2 = {
+            "out_fields": QgsFields(),
+            "delineation_candidate_ids": set(),
+            "merge_candidate_ids": set(),
+            "adjacent_ea_ids": set(),
+            "delineated_dest_id": "dest_delin",
+            "merged_dest_id": "dest_merged",
+            "special_ea_dest_id": "dest_special",
+            "delin_candidate_dest_id": "dest_delin_cand",
+            "merge_candidate_dest_id": "dest_merge_cand",
+            "extracted_buildings_dest_id": "dest_bldg",
+            "delin_candidate_feat_count": 0,
+            "merge_candidate_feat_count": 0,
+            "extracted_bldg_feat_count": 0,
+        }
+        p3 = {"road_geoms": {}, "river_geoms": {}}
+        p4 = {}
+        p7 = {"eas": []}
+
+        outputs = run_phase_8(alg, {}, None, mock_feedback, None, p1, p2, p3, p4, p7)
+        # All feature counts are 0, so outputs must be empty!
+        self.assertEqual(outputs, {}, "Expected empty outputs when all output layer feature counts are 0.")
 
 
 if __name__ == "__main__":
