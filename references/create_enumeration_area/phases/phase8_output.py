@@ -466,6 +466,8 @@ def run_phase_8(
                 val = src_feat.attribute(f.name())
             if f.name().lower() == "sy":
                 val = "2026"
+            elif f.name().lower() in ("remarks", "remark", "delin_remark", "delin_remarks"):
+                val = ""
             exp_attrs.append(val if val is not None else None)
         exp_feat.setAttributes(exp_attrs)
         return exp_feat
@@ -635,7 +637,10 @@ def run_phase_8(
             if len(group) == 1:
                 ea = group[0]
                 code_6, orig_last3 = extract_parent_code_and_prefix(ea)
-                if ea.get('is_new', False):
+                if ea.get('from_merge', False):
+                    if not ea.get('new_ea_code'):
+                        ea['new_ea_code'] = ea.get('original_code', '000000')
+                elif ea.get('is_new', False):
                     max_seq += 1
                     seq_str = f"{max_seq:03d}"
                     ea['new_ea_code'] = (seq_str + "000") if orig_last3 == "000" else (orig_last3 + seq_str)
@@ -1000,8 +1005,8 @@ def run_phase_8(
         if sy_idx != -1:
             out_feat.setAttribute(sy_idx, "2026")
 
-        # Merged EAs and Special EAs inherit the new combined hh_count and bldg_count
-        if ea.get('is_special_ea', False) or ea.get('from_merge', False):
+        # Special EAs inherit calculated hh_count for hhcount, while Merged EAs preserve original hhcount
+        if ea.get('is_special_ea', False):
             val_hh = safe_float(ea.get('hh_count', ea.get('original_hhcount', 0.0)), 0.0)
         else:
             val_hh = ea.get('original_hhcount')
@@ -1031,13 +1036,11 @@ def run_phase_8(
             if out_fields.at(j).name().lower() == "hh_count":
                 out_feat.setAttribute(j, new_hh_val)
 
-        # For Merged EAs and Special EAs, ensure bldgcount gets the new combined building count
+        # Special EAs inherit calculated building count for bldgcount, while Merged EAs preserve original_bldgcount
         if ea.get('is_special_ea', False):
             special_bldgs = ea.get('buildings', [])
             ea['bldg_count'] = len(special_bldgs)
             val_bldg = len(special_bldgs)
-        elif ea.get('from_merge', False):
-            val_bldg = safe_int(ea.get('bldg_count', len(ea.get('buildings', []))), 0)
         else:
             # Delineated EA bldgcount inherits directly from original_bldgcount / parent feature
             val_bldg = ea.get('original_bldgcount')
@@ -1112,27 +1115,7 @@ def run_phase_8(
         for rem_fname in ("remarks", "remark", "delin_remark", "delin_remarks"):
             rem_idx = out_fields.indexOf(rem_fname)
             if rem_idx != -1:
-                if ea.get('from_split', False):
-                    sb = ea.get('split_by', 'point_based')
-                    if sb in ('forced_grid', 'forced_straight'):
-                        ea_remark = f"Forced straight cut (road/river split was unbalanced >{max_household} HH or <{min_household} HH)"
-                    elif sb == 'road':
-                        ea_remark = "Split along road network"
-                    elif sb == 'river':
-                        ea_remark = "Split along river feature"
-                    elif sb == 'road+river':
-                        ea_remark = "Split along road and river features"
-                    elif sb == 'point_based':
-                        ea_remark = "Split using building cluster density"
-                    else:
-                        ea_remark = "Split EA"
-                elif ea.get('from_merge', False):
-                    ea_remark = "Merged EA"
-                else:
-                    ea_remark = ea.get('remarks') or ea.get('remark') or ea.get('delin_remark')
-
-                if ea_remark is not None:
-                    out_feat.setAttribute(rem_idx, str(ea_remark))
+                out_feat.setAttribute(rem_idx, "")
 
         corr_ea_geo_idx = out_fields.indexOf("correspondence_ea_geocode")
         if corr_ea_geo_idx != -1:
