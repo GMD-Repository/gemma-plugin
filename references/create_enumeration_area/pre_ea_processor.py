@@ -31,7 +31,9 @@ Dependencies:
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
@@ -201,6 +203,8 @@ class PreEAProcessor:
         resolve_overlaps: bool = True,
         detect_gaps: bool = True,
         assign_gaps: bool = True,
+        output_folder: Optional[str] = None,
+        output_file_path: Optional[str] = None,
         feedback_callback: Optional[Callable[[str], None]] = None,
         progress_callback: Optional[Callable[[int], None]] = None,
         is_cancelled_fn: Optional[Callable[[], bool]] = None,
@@ -216,6 +220,7 @@ class PreEAProcessor:
         :param resolve_overlaps: Whether to detect and eliminate overlapping polygon areas between EAs.
         :param detect_gaps: Whether to detect uncovered areas within each Barangay.
         :param assign_gaps: Whether to assign detected gaps to contiguous EAs.
+        :param output_folder: Optional filesystem path where output GPKG layer will be exported.
         :param feedback_callback: Optional callable receiving log message strings.
         :param progress_callback: Optional callable receiving integer 0-100 progress values.
         :param is_cancelled_fn: Optional callable returning True when the user cancels.
@@ -456,9 +461,61 @@ class PreEAProcessor:
                 _progress(100)
                 return PreEAResult(None, summary, result_rows, log_lines, True, "")
 
-            # Add to QGIS project
-            QgsProject.instance().addMapLayer(output_layer)
-            _log(f"[INFO] Output layer added to QGIS project: {output_name}")
+            # Export to designated GeoPackage (.gpkg) file
+            saved_to_gpkg = False
+
+            if not output_file_path:
+                if output_folder:
+                    output_file_path = os.path.join(output_folder, f"{output_name}.gpkg")
+                else:
+                    proj = QgsProject.instance() if QgsProject.instance() else None
+                    if proj and proj.fileName():
+                        output_file_path = os.path.join(os.path.dirname(proj.fileName()), f"{output_name}.gpkg")
+                    elif proj and proj.homePath():
+                        output_file_path = os.path.join(proj.homePath(), f"{output_name}.gpkg")
+                    else:
+                        output_file_path = os.path.join(tempfile.gettempdir(), f"{output_name}.gpkg")
+
+            from .helpers.pre_ea_detector import get_unique_filepath
+            out_dir = os.path.dirname(output_file_path)
+            base_fn = os.path.splitext(os.path.basename(output_file_path))[0]
+            if not out_dir:
+                out_dir = tempfile.gettempdir()
+            output_file_path = get_unique_filepath(out_dir, base_fn, ".gpkg")
+            final_layer_name = os.path.splitext(os.path.basename(output_file_path))[0]
+
+            try:
+                os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
+                if self._export_layer_to_gpkg(output_layer, output_file_path, final_layer_name, _log):
+                    _log(f"[INFO] Output layer successfully saved to GeoPackage (.gpkg): {output_file_path}")
+                    
+                    gpkg_layer = QgsVectorLayer(f"{output_file_path}|layername={final_layer_name}", final_layer_name, "ogr")
+                    if not gpkg_layer.isValid():
+                        gpkg_layer = QgsVectorLayer(output_file_path, final_layer_name, "ogr")
+
+                    if gpkg_layer.isValid():
+                        proj = QgsProject.instance()
+                        if proj:
+                            # Remove any leftover temporary memory layers with the same name
+                            for old_lyr in list(proj.mapLayersByName(final_layer_name)):
+                                proj.removeMapLayer(old_lyr.id())
+                            proj.addMapLayer(gpkg_layer)
+                        _log(f"[INFO] Permanent GeoPackage layer (.gpkg) added to QGIS canvas: {final_layer_name}")
+                        output_layer = gpkg_layer
+                        summary.output_name = final_layer_name
+                        saved_to_gpkg = True
+                    else:
+                        _log(f"[ERROR] Could not load saved GeoPackage layer from: {output_file_path}")
+                else:
+                    _log(f"[ERROR] Failed to save GeoPackage (.gpkg) to {output_file_path}")
+            except Exception as save_err:
+                _log(f"[ERROR] Output layer GeoPackage export failed with exception: {save_err}")
+
+            if not saved_to_gpkg:
+                # Add in-memory layer ONLY if GPKG export was not performed or failed
+                QgsProject.instance().addMapLayer(output_layer)
+                _log(f"[WARNING] Falling back to temporary in-memory layer: {output_name}")
+
             _progress(100)
 
             # Determine overall status
@@ -1857,3 +1914,80 @@ class PreEAProcessor:
             if feat.id() == ea_fid:
                 return self._ea_label(feat)
         return f"fid={ea_fid}"
+
+    def _export_layer_to_gpkg(self, layer: QgsVectorLayer, file_path: str, layer_name: str, log_fn) -> bool:
+        """Export a vector layer to a permanent GeoPackage (.gpkg) file on disk using QGIS Processing / QgsVectorFileWriter."""
+        try:
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+            # Method 1: QGIS Processing native:savefeatures (native C++ engine, robust GPKG creation)
+            try:
+                import processing
+                params = {
+                    "INPUT": layer,
+                    "OUTPUT": file_path,
+                    "LAYER_NAME": layer_name
+                }
+                res = processing.run("native:savefeatures", params)
+                if res and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                    log_fn(f"[INFO] Layer successfully written to GeoPackage via QGIS Processing: {file_path}")
+                    return True
+            except Exception as pe:
+                log_fn(f"[DEBUG] QGIS Processing native:savefeatures fallback: {pe}")
+
+            from qgis.core import (
+                QgsVectorFileWriter,
+                QgsCoordinateTransformContext,
+                QgsProject,
+            )
+
+            # Method 2: SaveVectorOptions with writeAsVectorFormatV3 / V2
+            save_options = QgsVectorFileWriter.SaveVectorOptions()
+            save_options.driverName = "GPKG"
+            save_options.layerName = layer_name
+            save_options.fileEncoding = "UTF-8"
+            if os.path.exists(file_path):
+                save_options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+            else:
+                save_options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteFile
+
+            ctx = (
+                QgsProject.instance().transformContext()
+                if (QgsProject.instance() and hasattr(QgsProject.instance(), 'transformContext'))
+                else QgsCoordinateTransformContext()
+            )
+
+            if hasattr(QgsVectorFileWriter, 'writeAsVectorFormatV3'):
+                res = QgsVectorFileWriter.writeAsVectorFormatV3(layer, file_path, ctx, save_options)
+                if res[0] == QgsVectorFileWriter.NoError:
+                    return True
+                log_fn(f"[DEBUG] writeAsVectorFormatV3 code={res[0]}: {res[1] if len(res) > 1 else ''}")
+
+            if hasattr(QgsVectorFileWriter, 'writeAsVectorFormatV2'):
+                res = QgsVectorFileWriter.writeAsVectorFormatV2(layer, file_path, ctx, save_options)
+                if res[0] == QgsVectorFileWriter.NoError:
+                    return True
+                log_fn(f"[DEBUG] writeAsVectorFormatV2 code={res[0]}: {res[1] if len(res) > 1 else ''}")
+
+            # Method 3: Legacy writeAsVectorFormat
+            if hasattr(QgsVectorFileWriter, 'writeAsVectorFormat'):
+                res = QgsVectorFileWriter.writeAsVectorFormat(layer, file_path, "UTF-8", layer.crs(), "GPKG")
+                if res == QgsVectorFileWriter.NoError:
+                    return True
+                log_fn(f"[DEBUG] writeAsVectorFormat code={res}")
+
+            # Method 4: Direct writer feature-by-feature
+            writer = QgsVectorFileWriter(file_path, "UTF-8", layer.fields(), layer.wkbType(), layer.crs(), "GPKG")
+            if writer.hasError() == QgsVectorFileWriter.NoError:
+                for feat in layer.getFeatures():
+                    writer.addFeature(feat)
+                del writer
+                return True
+            else:
+                log_fn(f"[DEBUG] Direct QgsVectorFileWriter error={writer.errorMessage()}")
+
+        except Exception as e:
+            log_fn(f"[ERROR] Exception during GeoPackage export: {e}")
+            return False
+
+        return os.path.exists(file_path) and os.path.getsize(file_path) > 0

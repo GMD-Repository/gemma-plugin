@@ -21,9 +21,9 @@ from qgis.core import (
     QgsCoordinateReferenceSystem, QgsWkbTypes, NULL, QgsMapLayerProxyModel
 )
 try:
-    from qgis.gui import QgsMapLayerComboBox, QgsProjectionSelectionWidget, QgsCollapsibleGroupBox
+    from qgis.gui import QgsMapLayerComboBox, QgsProjectionSelectionWidget, QgsCollapsibleGroupBox, QgsFileWidget
 except ImportError:
-    from qgis.gui import QgsMapLayerComboBox, QgsProjectionSelectionWidget
+    from qgis.gui import QgsMapLayerComboBox, QgsProjectionSelectionWidget, QgsFileWidget
     QgsCollapsibleGroupBox = QGroupBox
 from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
@@ -399,6 +399,14 @@ class EALauncherDialog(QDialog):
         self.pre_ea_ea_status_lbl.setWordWrap(True)
         inputs_layout.addWidget(self.pre_ea_ea_status_lbl)
 
+        # Designated Output Folder
+        inputs_layout.addWidget(QLabel("Designated Output Folder*"))
+        self.pre_ea_output_folder_widget = QgsFileWidget()
+        self.pre_ea_output_folder_widget.setStorageMode(QgsFileWidget.GetDirectory)
+        self.pre_ea_output_folder_widget.setDialogTitle("Designate Output Folder for EA Preprocessing")
+        inputs_layout.addWidget(self.pre_ea_output_folder_widget)
+        self.pre_ea_output_folder_widget.fileChanged.connect(self._pre_ea_validate_inputs)
+
         # Connect validation
         self.pre_ea_bgy_combo.currentIndexChanged.connect(self._pre_ea_validate_inputs)
         self.pre_ea_ea_combo.currentIndexChanged.connect(self._pre_ea_validate_inputs)
@@ -690,7 +698,7 @@ class EALauncherDialog(QDialog):
             self._ea_merge_auto_detect_ea_layer()
 
     def _pre_ea_validate_inputs(self):
-        """Validate selected layers and update status labels."""
+        """Validate selected layers and designated output folder."""
         bgy_layer = self.pre_ea_bgy_combo.currentLayer()
         ea_layer = self.pre_ea_ea_combo.currentLayer()
 
@@ -713,7 +721,8 @@ class EALauncherDialog(QDialog):
                 f"Active: {ea_layer.featureCount()} EA polygons ({ea_layer.crs().authid()})."
             )
 
-        can_run = bool(bgy_layer)
+        has_output = bool(self.pre_ea_output_folder_widget.filePath().strip()) if hasattr(self, 'pre_ea_output_folder_widget') else False
+        can_run = bool(bgy_layer) and has_output
         self.pre_ea_run_btn.setEnabled(can_run)
 
     def _pre_ea_cancel(self):
@@ -756,38 +765,35 @@ class EALauncherDialog(QDialog):
         from .pre_ea_processor import PreEAProcessor
         return PreEAProcessor.short_help_string()
 
-    def _pre_ea_append_log(self, html: str) -> None:
-        """Append an HTML-formatted line to the Pre-EA log console."""
-        self.pre_ea_log_console.append(html)
+    def _pre_ea_append_log(self, html_msg: str):
+        """Thread-safe append of HTML message to the Pre-EA log console."""
+        self.pre_ea_log_console.append(html_msg)
         self.pre_ea_log_console.ensureCursorVisible()
-        QCoreApplication.processEvents()
 
-    def _pre_ea_format_log(self, msg: str) -> str:
-        """Format a plain log message string as styled HTML."""
-        msg_lower = msg.lower()
-        if msg.startswith("[ERROR]"):
-            return f"<span style='color:#cf222e; font-weight:bold;'>{msg}</span>"
-        if msg.startswith("[WARNING]"):
-            return f"<span style='color:#d17a00; font-weight:bold;'>{msg}</span>"
-        if msg.startswith("[INFO]") and ("complete" in msg_lower or "pass" in msg_lower or "success" in msg_lower):
-            return f"<span style='color:#1a7f37; font-weight:bold;'>{msg}</span>"
-        return f"<span style='color:#0969da;'>{msg}</span>"
+    def _pre_ea_format_log(self, text: str) -> str:
+        """Format plain text log messages with HTML colors based on prefixes."""
+        if "[ERROR]" in text:
+            return f"<span style='color: #cf222e;'>{text}</span>"
+        elif "[WARNING]" in text:
+            return f"<span style='color: #d17a00;'>{text}</span>"
+        elif "[SUCCESS]" in text or "[PASS]" in text:
+            return f"<span style='color: #1a7f37; font-weight: bold;'>{text}</span>"
+        elif "[INFO]" in text or "[PHASE" in text:
+            return f"<span style='color: #0969da;'>{text}</span>"
+        elif "[DEBUG]" in text:
+            return f"<span style='color: #8c959f;'>{text}</span>"
+        return text
 
     def _pre_ea_run(self):
-        """Validate inputs and launch the Pre-EA Processing workflow."""
-        from qgis.core import QgsApplication, QgsProject
-        from .pre_ea_processor import PreEAProcessor
-
+        """Execute the EA Preprocessing workflow."""
         bgy_layer = self.pre_ea_bgy_combo.currentLayer()
         ea_layer = self.pre_ea_ea_combo.currentLayer()
 
         if not bgy_layer:
-            self._pre_ea_append_log(
-                "<span style='color:#cf222e; font-weight:bold;'>[ERROR] Barangay Layer is required.</span>"
-            )
+            QMessageBox.warning(self, "Missing Input", "Please select a Barangay Layer.")
             return
 
-        # UI state — running
+        # Prepare UI for processing
         self.pre_ea_run_btn.setEnabled(False)
         self.pre_ea_cancel_btn.setEnabled(True)
         self.pre_ea_progress_bar.setValue(0)
@@ -819,10 +825,22 @@ class EALauncherDialog(QDialog):
             self.pre_ea_progress_bar.setValue(pct)
             QCoreApplication.processEvents()
 
-        # Run synchronously on the main thread (processor is fast for typical
-        # datasets; for very large data a QgsTask wrapper can be added later).
-        from .pre_ea_processor import PreEAProcessor
 
+        # Determine designated output folder
+        out_folder = self.pre_ea_output_folder_widget.filePath().strip() if hasattr(self, 'pre_ea_output_folder_widget') else ""
+        if not out_folder:
+            QMessageBox.warning(self, "Missing Output Folder", "Please designate an output folder before running.")
+            self.pre_ea_run_btn.setEnabled(False)
+            return
+
+        from .helpers.pre_ea_detector import resolve_target_output_folder
+        out_folder = resolve_target_output_folder(out_folder, bool(ea_layer))
+
+        self._pre_ea_append_log(
+            f"<span style='color: #0969da; font-weight: bold;'>[INFO]</span> Designated Output Folder: {out_folder}"
+        )
+
+        from .pre_ea_processor import PreEAProcessor
         processor = PreEAProcessor()
         result = processor.run(
             barangay_layer=bgy_layer,
@@ -832,6 +850,7 @@ class EALauncherDialog(QDialog):
             resolve_overlaps=resolve_overlaps,
             detect_gaps=detect_gaps,
             assign_gaps=assign_gaps,
+            output_folder=out_folder,
             feedback_callback=feedback_callback,
             progress_callback=progress_callback,
             is_cancelled_fn=is_cancelled_fn,
@@ -934,6 +953,12 @@ class EALauncherDialog(QDialog):
             )
 
         self.pre_ea_progress_bar.setValue(100)
+
+        # Update layer combo with the newly generated permanent layer
+        if result.output_layer and result.output_layer.isValid():
+            self.pre_ea_ea_combo.blockSignals(True)
+            self.pre_ea_ea_combo.setLayer(result.output_layer)
+            self.pre_ea_ea_combo.blockSignals(False)
 
         # Switch to Summary tab
         right_tabs_widget = table.parent().parent().parent()
