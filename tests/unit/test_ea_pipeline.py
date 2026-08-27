@@ -226,8 +226,113 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
             merge_candidate_ids={201}
         )
 
-        self.assertEqual(len(merged), 1, "Small EA should merge with adjacent normal EA (which is not delineation_candidate or special_ea).")
-        self.assertEqual(merged[0]['hh_count'], 220.0, "Combined household count should be 40 + 180 = 220 HH.")
+        self.assertEqual(len(merged), 1, "Small EA should merge with adjacent normal EA.")
+        self.assertEqual(merged[0]['original_code'], "01737002001", "ean must retain original Merge Candidate EAN.")
+        self.assertEqual(merged[0]['new_ea_code'], "01737002002", "new_ean must take prevailing EA EAN (180 > 40 HH).")
+        self.assertEqual(merged[0]['original_hhcount'], 40.0, "hhcount must remain original Merge Candidate value.")
+        self.assertEqual(merged[0]['hh_count'], 220.0, "hh_count must be 40 + 180 = 220 HH.")
+        self.assertEqual(merged[0]['original_bldgcount'], 1, "bldgcount must remain original Merge Candidate value.")
+        self.assertEqual(merged[0]['bldg_count'], 6, "bldg_count must be 1 + 5 = 6 bldgs.")
+
+    def test_prevailing_ea_determination_examples(self):
+        """Verify prevailing EA determination and attribute preservation for all user scenarios."""
+        feedback = MockFeedback()
+
+        # Example 1: Contiguous EA higher hhcount
+        # Merge Candidate: 001000 (95 HH, 80 bldgs), Contiguous EA: 002000 (180 HH, 150 bldgs)
+        ea1 = {
+            'geom': make_square_geom(0, 0, 10),
+            'buildings': [],
+            'hh_count': 95.0,
+            'original_hhcount': 95.0,
+            'bldg_count': 80,
+            'original_bldgcount': 80,
+            'attributes': [1, "001000"],
+            'original_id': 101,
+            'original_code': "001000",
+            'is_new': False,
+            'from_merge': False,
+            'from_split': False,
+            'parent_barangay': "01737"
+        }
+        ea2 = {
+            'geom': make_square_geom(10, 0, 10),
+            'buildings': [],
+            'hh_count': 180.0,
+            'original_hhcount': 180.0,
+            'bldg_count': 150,
+            'original_bldgcount': 150,
+            'attributes': [2, "002000"],
+            'original_id': 102,
+            'original_code': "002000",
+            'is_new': False,
+            'from_merge': False,
+            'from_split': False,
+            'parent_barangay': "01737"
+        }
+        res1 = process_barangay_merge(
+            bar_code="01737",
+            bar_eas=[ea1, ea2],
+            fback=feedback,
+            min_household=100.0,
+            max_household=300.0,
+            merge_candidate_ids={101}
+        )
+        self.assertEqual(len(res1), 1)
+        self.assertEqual(res1[0]['original_code'], "001000", "ean = 001000 (retained from Merge Candidate)")
+        self.assertEqual(res1[0]['new_ea_code'], "002000", "new_ean = 002000 (Contiguous EA higher HH count)")
+        self.assertEqual(res1[0]['original_hhcount'], 95.0, "hhcount = 95 (unchanged)")
+        self.assertEqual(res1[0]['hh_count'], 275.0, "hh_count = 95 + 180 = 275")
+        self.assertEqual(res1[0]['original_bldgcount'], 80, "bldgcount = 80 (unchanged)")
+        self.assertEqual(res1[0]['bldg_count'], 230, "bldg_count = 80 + 150 = 230")
+
+        # Example 2 & 3: Merge Candidate higher or equal HH count
+        # Merge Candidate: 005000 (100 HH, 90 bldgs), Contiguous EA: 006000 (100 HH, 110 bldgs) -> Tie
+        ea5 = {
+            'geom': make_square_geom(0, 0, 10),
+            'buildings': [],
+            'hh_count': 100.0,
+            'original_hhcount': 100.0,
+            'bldg_count': 90,
+            'original_bldgcount': 90,
+            'attributes': [5, "005000"],
+            'original_id': 105,
+            'original_code': "005000",
+            'is_new': False,
+            'from_merge': False,
+            'from_split': False,
+            'parent_barangay': "01737"
+        }
+        ea6 = {
+            'geom': make_square_geom(10, 0, 10),
+            'buildings': [],
+            'hh_count': 100.0,
+            'original_hhcount': 100.0,
+            'bldg_count': 110,
+            'original_bldgcount': 110,
+            'attributes': [6, "006000"],
+            'original_id': 106,
+            'original_code': "006000",
+            'is_new': False,
+            'from_merge': False,
+            'from_split': False,
+            'parent_barangay': "01737"
+        }
+        res3 = process_barangay_merge(
+            bar_code="01737",
+            bar_eas=[ea5, ea6],
+            fback=feedback,
+            min_household=100.0,
+            max_household=300.0,
+            merge_candidate_ids={105}
+        )
+        self.assertEqual(len(res3), 1)
+        self.assertEqual(res3[0]['original_code'], "005000")
+        self.assertEqual(res3[0]['new_ea_code'], "005000", "Equal HH count tie resolved in favor of Merge Candidate")
+        self.assertEqual(res3[0]['original_hhcount'], 100.0)
+        self.assertEqual(res3[0]['hh_count'], 200.0)
+        self.assertEqual(res3[0]['original_bldgcount'], 90)
+        self.assertEqual(res3[0]['bldg_count'], 200)
 
     def test_delineated_split_eas_never_merged(self):
         """Verify that delineated (from_split=True) EAs are never selected as merge candidates or merged."""
