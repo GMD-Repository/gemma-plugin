@@ -23,6 +23,7 @@ from .gmd_scripts.repair_geometry_errors import RepairGeometryErrorsAlgorithm
 from .gmd_scripts.clip_project_layers import ClipProjectLayersAlgorithm
 from .gmd_scripts.apply_qml_styles import ApplyQmlStylesAlgorithm
 from .gmd_scripts.mbi_validator import MbiValidatorAlgorithm
+from .gmd_scripts.psa_lgu_map_comparison import PsaLguComparisonAlgorithm
 from .references.create_enumeration_area.algorithm import CreateEAAlgorithm
 #from .gmd_scripts.gsheet_csv import
 
@@ -53,6 +54,7 @@ class GmdPipelineProvider(QgsProcessingProvider):
         self.addAlgorithm(FixLGUCRSAlgorithm())
         self.addAlgorithm(JoinBarangayAttributes())
         self.addAlgorithm(MbiValidatorAlgorithm())
+        self.addAlgorithm(PsaLguComparisonAlgorithm())
         self.addAlgorithm(CreateEAAlgorithm())
         self.addAlgorithm(ScanGeometryErrorsAlgorithm())
         self.addAlgorithm(RepairGeometryErrorsAlgorithm())
