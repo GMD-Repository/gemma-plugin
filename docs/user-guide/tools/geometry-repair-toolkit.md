@@ -56,7 +56,7 @@ The toolkit scans polygon layers for the following topology and geometry issues:
 
 ### Repair Selected Features
 When you click **Repair Selected Features**, the tool inspects each checked error row and automatically applies the appropriate repair mechanism directly to the original layer:
-- **Duplicate Vertex**: Removes duplicate or near-duplicate vertices directly without requiring full polygon reconstruction.
+- **Duplicate Vertex**: Eliminates duplicate or near-duplicate vertices through a progressive tolerance sweep (scaled by bounding box diagonal from $10^{-12}$ to $10^{-6}$) verified against QGIS's internal validator, with a `makeValid()` fallback to resolve node-clustering defects without requiring full polygon reconstruction.
 - **Invalid / Wrong-type / Self Intersection**: Reconstructs the polygon shape to resolve geometry errors and self-intersections.
 - **Null / Empty / Missing Geometry**: Recovers missing shapes using spatial boundary context from surrounding polygons.
 
