@@ -1,0 +1,158 @@
+# ***************************************************************************
+# *                                                                         *
+# *   This program is free software; you can redistribute it and/or modify  *
+# *   it under the terms of the GNU General Public License as published by  *
+# *   the Free Software Foundation; either version 2 of the License, or     *
+# *   (at your option) any later version.                                   *
+# *                                                                         *
+# ***************************************************************************
+
+import os
+import json
+from typing import Any, Optional, Dict, List
+
+from PyQt5.QtCore import QVariant
+from qgis.core import (
+    NULL,
+    QgsField,
+    QgsFields,
+    QgsFeature,
+    QgsFeatureSink,
+    QgsProcessing,
+    QgsProcessingAlgorithm,
+    QgsProcessingContext,
+    QgsProcessingException,
+    QgsProcessingFeedback,
+    QgsProcessingParameterFeatureSink,
+    QgsProcessingParameterFile,
+    QgsVectorLayer,
+    QgsGeometry,
+    QgsWkbTypes,
+    QgsCoordinateReferenceSystem,
+)
+from PyQt5.QtGui import QIcon
+from .. import gmdhelpers
+
+
+class mv_2027_hp_4b_bsn_geoid__invalid(QgsProcessingAlgorithm):
+
+    INPUT_DATA = "INPUT_DATA"
+    INPUT_LAYER = "INPUT_LAYER"
+    OUTPUT = "OUTPUT"
+
+    def name(self) -> str:
+        return "mv_2027_hp_4b_bsn_geoid__invalid"
+
+    def displayName(self) -> str:
+        return "mv_2027_hp_4b_bsn_geoid__invalid"
+
+    def group(self) -> str:
+        return "2027 CBMS"
+
+    def groupId(self) -> str:
+        return "cbms_mv"
+
+    def shortHelpString(self) -> str:
+        return (
+            "List of geotagged points with missing or NULL bsn_geoid. \n \n"
+            "Every geotagged point should not have NULL values in the bsn_geoid column.\n"
+        )
+
+    def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):
+
+        self.addParameter(
+            QgsProcessingParameterFile(
+                self.INPUT_DATA,
+                "INPUT_DATA (.json file)",
+                behavior=QgsProcessingParameterFile.File,
+                extension="json",
+                optional=False,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterFile(
+                self.INPUT_LAYER,
+                "INPUT_LAYER (.geojson file)",
+                behavior=QgsProcessingParameterFile.File,
+                extension="geojson",
+                optional=False,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterFeatureSink(
+                self.OUTPUT,
+                "mv_2027_hp_4b_bsn_geoid__invalid",
+                QgsProcessing.TypeVectorAnyGeometry,
+            )
+        )
+
+    def processAlgorithm(
+        self,
+        parameters: Dict[str, Any],
+        context: QgsProcessingContext,
+        feedback: QgsProcessingFeedback,
+    ) -> Dict[str, Any]:
+
+        geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
+        json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
+
+        source_fields = geojson_data.fields()
+        fields = QgsFields(source_fields)
+
+        # Resolve field names case-insensitively
+        def resolve_field_name(field_list, target_name):
+            for fld in field_list:
+                if fld.name().lower() == target_name.lower():
+                    return fld.name()
+            return None
+
+        geoid_field = resolve_field_name(source_fields, "bsn_geoid")
+
+        def is_null(val):
+            if val is None or val == NULL:
+                return True
+            if isinstance(val, QVariant) and val.isNull():
+                return True
+            return False
+
+        invalid_features = []
+
+        for f in geojson_data.getFeatures():
+            if feedback and feedback.isCanceled():
+                break
+
+            raw_bsn_geoid = f.attribute(geoid_field) if geoid_field else None
+
+            # Flag feature if bsn_geoid is missing or NULL
+            if is_null(raw_bsn_geoid) or str(raw_bsn_geoid).strip() == "":
+                geom = f.geometry()
+                out_feat = QgsFeature(fields)
+                if geom is not None:
+                    out_feat.setGeometry(geom)
+
+                # Copy existing attributes
+                for i in range(source_fields.count()):
+                    out_feat.setAttribute(source_fields.at(i).name(), f.attribute(i))
+
+                invalid_features.append(out_feat)
+
+        feedback.pushInfo(
+            f"Results: {len(invalid_features)} features with missing or NULL bsn_geoid."
+        )
+
+        return gmdhelpers.export_features_to_sink(
+            self,
+            parameters,
+            self.OUTPUT,
+            context,
+            fields,
+            geojson_data.wkbType(),
+            geojson_data.sourceCrs(),
+            invalid_features,
+            feedback,
+        )
+
+    def createInstance(self):
+        return self.__class__()

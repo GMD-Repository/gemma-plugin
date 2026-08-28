@@ -196,8 +196,8 @@ class mv_2027_hp_4a_pos_longit__invalid(QgsProcessingAlgorithm):
                 c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
                 distance_m = round(R * c, 4)
 
-            # Include feature if distance > 5 or distance could not be computed
-            if is_null(distance_m) or distance_m > 5.0:
+            # Include feature if distance > 30m or distance could not be computed
+            if is_null(distance_m) or distance_m > 30.0:
                 out_feat = QgsFeature(fields)
                 if geom is not None:
                     out_feat.setGeometry(geom)
@@ -216,7 +216,7 @@ class mv_2027_hp_4a_pos_longit__invalid(QgsProcessingAlgorithm):
                 invalid_features.append(out_feat)
 
         feedback.pushInfo(
-            f"Results: {len(invalid_features)} features with distance > 5m or missing position data."
+            f"Results: {len(invalid_features)} features with distance > 30m or missing position data."
         )
 
         return gmdhelpers.export_features_to_sink(

@@ -24,12 +24,17 @@ from .gmd_scripts.clip_project_layers import ClipProjectLayersAlgorithm
 from .gmd_scripts.apply_qml_styles import ApplyQmlStylesAlgorithm
 from .gmd_scripts.mbi_validator import MbiValidatorAlgorithm
 from .references.create_enumeration_area.algorithm import CreateEAAlgorithm
+from .gmd_scripts.cbms_mv.mv_2027_hp_1a_map_uuid__missing import mv_2027_hp_1a_map_uuid__missing
+from .gmd_scripts.cbms_mv.mv_2027_hp_1a_map_uuid__invalid import mv_2027_hp_1a_map_uuid__invalid
 from .gmd_scripts.cbms_mv.mv_2027_hp_4a_longitude__duplicate import mv_2027_hp_4a_longitude__duplicate
 from .gmd_scripts.cbms_mv.mv_2027_hp_4a_longitude__invalid import mv_2027_hp_4a_longitude__invalid
 from .gmd_scripts.cbms_mv.mv_2027_hp_4a_map_uuid__duplicate import mv_2027_hp_4a_map_uuid__duplicate
 from .gmd_scripts.cbms_mv.mv_2027_hp_4a_pos_longit__invalid import mv_2027_hp_4a_pos_longit__invalid
+from .gmd_scripts.cbms_mv.mv_2027_hp_4b_bsn_geoid__invalid import mv_2027_hp_4b_bsn_geoid__invalid
 from .gmd_scripts.cbms_mv.mv_2027_hp_4b_geom__missing import mv_2027_hp_4b_geom__missing
+from .gmd_scripts.cbms_mv.mv_2027_hp_4b_geom__invalid import mv_2027_hp_4b_geom__invalid
 from .gmd_scripts.cbms_mv.mv_2027_hp_4b_longitude__invalid import mv_2027_hp_4b_longitude__invalid
+from .gmd_scripts.cbms_mv.mv_2027_hp_4b_longitude__missing import mv_2027_hp_4b_longitude__missing
 from .gmd_scripts.cbms_mv.mv_2027_hp_4b_geocode__missing import mv_2027_hp_4b_geocode__missing
 from .gmd_scripts.cbms_mv.mv_2027_hp_4c_remarks__invalid import mv_2027_hp_4c_remarks__invalid
 from .gmd_scripts.cbms_mv.mv_2027_hp_4a_map_uuid__missing import mv_2027_hp_4a_map_uuid__missing
@@ -69,11 +74,16 @@ class GmdPipelineProvider(QgsProcessingProvider):
         self.addAlgorithm(RepairGeometryErrorsAlgorithm())
         self.addAlgorithm(ClipProjectLayersAlgorithm())
         self.addAlgorithm(ApplyQmlStylesAlgorithm())
+        self.addAlgorithm(mv_2027_hp_1a_map_uuid__missing())
+        self.addAlgorithm(mv_2027_hp_1a_map_uuid__invalid())
         self.addAlgorithm(mv_2027_hp_4a_longitude__duplicate())
         self.addAlgorithm(mv_2027_hp_4a_longitude__invalid())
         self.addAlgorithm(mv_2027_hp_4a_map_uuid__duplicate())
         self.addAlgorithm(mv_2027_hp_4a_pos_longit__invalid())
+        self.addAlgorithm(mv_2027_hp_4b_longitude__missing())
+        self.addAlgorithm(mv_2027_hp_4b_bsn_geoid__invalid())
         self.addAlgorithm(mv_2027_hp_4b_geom__missing())
+        self.addAlgorithm(mv_2027_hp_4b_geom__invalid())
         self.addAlgorithm(mv_2027_hp_4b_longitude__invalid())
         self.addAlgorithm(mv_2027_hp_4b_geocode__missing())
         self.addAlgorithm(mv_2027_hp_4c_remarks__invalid())
