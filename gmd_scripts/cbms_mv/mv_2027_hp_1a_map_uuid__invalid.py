@@ -1,6 +1,6 @@
 import os
 import json
-from typing import Any, Optional, Dict, List, Set
+from typing import Any, Optional, Dict, List
 
 from PyQt5.QtCore import QVariant
 from qgis.core import (
@@ -25,17 +25,18 @@ from PyQt5.QtGui import QIcon
 from .. import gmdhelpers
 
 
-class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
+
+class mv_2027_hp_1a_map_uuid__invalid(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"
     INPUT_LAYER = "INPUT_LAYER"
     OUTPUT = "OUTPUT"
 
-    def name(self):
-        return "mv_2027_hp_4a_map_uuid__missing"
+    def name(self) -> str:
+        return "mv_2027_hp_1a_map_uuid__invalid"
 
-    def displayName(self):
-        return "mv_2027_hp_4a_map_uuid__missing"
+    def displayName(self) -> str:
+        return "mv_2027_hp_1a_map_uuid__invalid"
 
     def group(self) -> str:
         return "2027 CBMS"
@@ -45,11 +46,12 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points without CBMS Form 2 datafile. \n \n"
-            "Every geotagged point (except for BSN 00000) should have a counterpart datafile with the same map_uuid.\n"
+            "List of datafiles and geotagged points with the same map_uuid but different coordinates. \n \n"
+            "Datafiles and geotagged points with the same map_uuid should have the same coordinates.\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):
+        
         self.addParameter(
             QgsProcessingParameterFile(
                 self.INPUT_DATA,
@@ -73,7 +75,7 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
-                "mv_2027_hp_4a_map_uuid__missing",
+                "mv_2027_hp_1a_map_uuid__invalid",
                 QgsProcessing.TypeVectorAnyGeometry,
             )
         )
@@ -88,16 +90,21 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
 
+        # Build output fields
         source_fields = geojson_data.fields()
         fields = QgsFields(source_fields)
 
-        def ensure_field(flds, name, ftype=QVariant.String):
+        def ensure_field(flds, name, ftype=QVariant.Double):
             if flds.indexOf(name) == -1:
                 flds.append(QgsField(name, ftype))
 
-        ensure_field(fields, "status", QVariant.String)
+        ensure_field(fields, "json_longitude", QVariant.Double)
+        ensure_field(fields, "json_latitude", QVariant.Double)
+        ensure_field(fields, "geom_longitude", QVariant.Double)
+        ensure_field(fields, "geom_latitude", QVariant.Double)
+        ensure_field(fields, "distance_m", QVariant.Double)
 
-        # Helper to find field name case-insensitively from list of candidates
+        # Helper to find field name case-insensitively
         def resolve_field_name(field_list, candidate_names):
             for candidate in candidate_names:
                 for fld in field_list:
@@ -105,14 +112,14 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
                         return fld.name()
             return None
 
-        # Helper to check if a value is missing, null, na, n/a, none, or empty
-        def is_na(val: Any) -> bool:
+        def is_null(val):
             if val is None or val == NULL:
                 return True
             if isinstance(val, QVariant) and val.isNull():
                 return True
-            val_str = str(val).strip().lower()
-            return val_str in ("", "null", "none", "na", "n/a", "nan")
+            return False
+
+        uuid_field = resolve_field_name(source_fields, ["map_uuid"])
 
         # Extract records list from JSON data (Form 2 datafile)
         records = []
@@ -128,8 +135,9 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
             else:
                 records = [json_data]
 
-        # Collect set of all GeoIDs / Map UUIDs present in Form 2 JSON records
-        form2_ids = set()
+        # Build lookup table of map_uuid -> (longitude, latitude) from JSON datafile
+        json_coords_by_uuid = {}
+
         for rec in records:
             if feedback and feedback.isCanceled():
                 break
@@ -140,45 +148,95 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
             else:
                 rec_props = rec_dict
 
+            # Find map_uuid in record properties
             rec_id = None
             for k, v in rec_props.items():
-                if k.lower() == "map_uuid" and not is_na(v):
+                if k.lower() == "map_uuid" and not is_null(v):
                     rec_id = str(v).strip()
                     break
 
-            if rec_id:
-                form2_ids.add(rec_id)
+            # Find longitude & latitude in record properties (strictly longitude and latitude)
+            json_long = None
+            json_lat = None
 
-        uuid_field = resolve_field_name(source_fields, ["map_uuid"])
+            for k, v in rec_props.items():
+                if k.lower() == "longitude" and not is_null(v):
+                    try:
+                        json_long = round(float(v), 7)
+                    except (ValueError, TypeError):
+                        pass
+                    break
+
+            for k, v in rec_props.items():
+                if k.lower() == "latitude" and not is_null(v):
+                    try:
+                        json_lat = round(float(v), 7)
+                    except (ValueError, TypeError):
+                        pass
+                    break
+
+            if rec_id and json_long is not None and json_lat is not None:
+                json_coords_by_uuid[rec_id] = (json_long, json_lat)
+
         invalid_features = []
 
-        # Iterate over geotagged point features and check for missing/null/na/n/a map_uuid or missing Form 2 record
+        # Iterate over geotagged points and check for coordinate mismatches with Form 2 datafile
         for f in geojson_data.getFeatures():
             if feedback and feedback.isCanceled():
                 break
 
-            feat_uuid = f.attribute(uuid_field) if uuid_field else None
+            geom = f.geometry()
+            if geom is None or geom.isEmpty():
+                continue
 
-            # Flag if map_uuid is missing, NULL, NA, N/A, None, or not found in Form 2 datafile
-            if is_na(feat_uuid) or str(feat_uuid).strip() not in form2_ids:
-                geom = f.geometry()
+            point_geom = geom.asPoint()
+            if point_geom.isEmpty():
+                continue
+
+            feat_uuid = f.attribute(uuid_field) if uuid_field else None
+            if is_null(feat_uuid):
+                continue
+
+            uuid_str = str(feat_uuid).strip()
+            if uuid_str not in json_coords_by_uuid:
+                continue
+
+            json_long, json_lat = json_coords_by_uuid[uuid_str]
+            geom_long = round(point_geom.x(), 7)
+            geom_lat = round(point_geom.y(), 7)
+
+            # Calculate Haversine distance between datafile coords and geometry coords
+            import math
+            R = 6371000  # Earth radius in meters
+            lat1 = math.radians(geom_lat)
+            lat2 = math.radians(json_lat)
+            dlat = math.radians(json_lat - geom_lat)
+            dlon = math.radians(json_long - geom_long)
+            a = (math.sin(dlat / 2) ** 2 +
+                 math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2)
+            a = max(0.0, min(1.0, a))
+            c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+            distance_m = round(R * c, 4)
+
+            # Flag if coordinates mismatch (distance > 5m or coordinates not identical)
+            if distance_m > 5.0 or json_long != geom_long or json_lat != geom_lat:
                 out_feat = QgsFeature(fields)
-                if geom is not None:
-                    out_feat.setGeometry(geom)
+                out_feat.setGeometry(geom)
 
                 # Copy existing attributes
                 for i in range(source_fields.count()):
                     out_feat.setAttribute(source_fields.at(i).name(), f.attribute(i))
 
-                if is_na(feat_uuid):
-                    out_feat.setAttribute("status", "Missing/NULL Map UUID")
-                else:
-                    out_feat.setAttribute("status", "Missing Form 2 Datafile Record")
+                out_feat.setAttribute("json_longitude", json_long)
+                out_feat.setAttribute("json_latitude", json_lat)
+                out_feat.setAttribute("geom_longitude", geom_long)
+                out_feat.setAttribute("geom_latitude", geom_lat)
+                out_feat.setAttribute("distance_m", distance_m)
 
                 invalid_features.append(out_feat)
 
         feedback.pushInfo(
-            f"Results: {len(invalid_features)} geotagged points with missing/NULL map_uuid or missing Form 2 records."
+            f"Results: {len(invalid_features)} features with matching map_uuid but mismatched coordinates."
         )
 
         return gmdhelpers.export_features_to_sink(
