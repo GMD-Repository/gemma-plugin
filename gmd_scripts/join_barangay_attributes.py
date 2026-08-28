@@ -439,7 +439,7 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
         target_cols = [
             "map_uuid", "geocode", "region", "province", "city_mun", "barangay",
             "province_code", "city_mun_code", "barangay_code", "region_code",
-            "office_region", "office_pso"
+            "office_region", "office_pso", "hhcount", "bldgcount"
         ]
 
         def _clean_segment(v, length=0):
@@ -452,6 +452,17 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
             if s and length > 0:
                 s = s.zfill(length)
             return s
+
+        def _parse_int(v):
+            if v is None or v == NULL:
+                return None
+            s = str(v).strip()
+            if s == "" or s.lower() in ("nan", "none", "null"):
+                return None
+            try:
+                return int(float(s))
+            except (ValueError, TypeError):
+                return None
 
         # Method 1: QgsVectorLayer via GDAL/OGR
         psgc_layer = QgsVectorLayer(f"{psgc_file_path}|layername=PSGC", "psgc_ref", "ogr")
@@ -502,6 +513,8 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
                         "barangay": _get_val("barangay"),
                         "office_region": _get_val("office_region"),
                         "office_pso": _get_val("office_pso"),
+                        "hhcount": _parse_int(feat.attribute(col_indices["hhcount"])) if "hhcount" in col_indices else None,
+                        "bldgcount": _parse_int(feat.attribute(col_indices["bldgcount"])) if "bldgcount" in col_indices else None,
                     }
                     all_records.append(rec)
 
@@ -553,6 +566,8 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
                             "barangay": _row_val("barangay"),
                             "office_region": _row_val("office_region"),
                             "office_pso": _row_val("office_pso"),
+                            "hhcount": _parse_int(row[col_indices["hhcount"]]) if "hhcount" in col_indices else None,
+                            "bldgcount": _parse_int(row[col_indices["bldgcount"]]) if "bldgcount" in col_indices else None,
                         }
                         all_records.append(rec)
                 wb.close()
@@ -583,10 +598,13 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
         psgc_cols = [
             "map_uuid", "geocode", "lgu_code", "region_code", "province_code",
             "city_mun_code", "barangay_code", "region", "province", "city_mun",
-            "barangay", "office_region", "office_pso"
+            "barangay", "office_region", "office_pso", "hhcount", "bldgcount"
         ]
         for col in psgc_cols:
-            psgc_fields.append(QgsField(col, QVariant.String, len=100))
+            if col in ("hhcount", "bldgcount"):
+                psgc_fields.append(QgsField(col, QVariant.Int))
+            else:
+                psgc_fields.append(QgsField(col, QVariant.String, len=100))
 
         (psgc_sink, psgc_dest_id) = self.parameterAsSink(
             parameters,
@@ -601,7 +619,11 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
             for r in filtered_records:
                 f_psgc = QgsFeature(psgc_fields)
                 for col in psgc_cols:
-                    f_psgc.setAttribute(col, str(r.get(col, "")))
+                    val = r.get(col)
+                    if col in ("hhcount", "bldgcount"):
+                        f_psgc.setAttribute(col, val if (val is not None and val != "" and val != NULL) else NULL)
+                    else:
+                        f_psgc.setAttribute(col, str(val) if (val is not None and val != NULL) else "")
                 psgc_sink.addFeature(f_psgc, QgsFeatureSink.FastInsert)
 
         # ── Build Reference Maps ────────────────────────────────────
