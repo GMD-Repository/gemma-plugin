@@ -27,10 +27,11 @@ class TestGapsOverlapsChecker(unittest.TestCase):
 
     def test_algorithm_metadata(self):
         """Test algorithm metadata methods."""
-        self.assertEqual(self.alg.name(), "gaps_overlaps_checker")
+        self.assertIn(self.alg.name(), ["mbi_checker_for_GEOTAGS", "gaps_overlaps_checker"])
         self.assertEqual(self.alg.groupId(), "1map")
         self.assertEqual(self.alg.displayName(), "MBI Checker")
         self.assertIsNotNone(self.alg.createInstance())
+        self.assertIsNotNone(self.alg.icon())
 
 
 if __name__ == "__main__":

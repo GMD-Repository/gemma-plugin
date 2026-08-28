@@ -14,7 +14,7 @@ import inspect
 from .gmd_scripts.gaps_overlaps_checker import GapsOverlaps
 from .gmd_scripts.export_preliminary_polygons import ExportPreliminaryPolygons
 from .gmd_scripts.fill_polygon_gaps import FillPolygonGapsAlgorithm
-from .gmd_scripts.update_metadata_modified import UpdateLguPsgcMetadataAlgorithm
+from .gmd_scripts.update_metadata import UpdateLguPsgcMetadataAlgorithm
 from .gmd_scripts.update_metadata_by_geocode import UpdateLguByGeocodeAlgorithm
 from .gmd_scripts.lgu_fix_processing import FixLGUCRSAlgorithm
 from .gmd_scripts.join_barangay_attributes import JoinBarangayAttributes
@@ -22,6 +22,7 @@ from .gmd_scripts.scan_geometry_errors import ScanGeometryErrorsAlgorithm
 from .gmd_scripts.repair_geometry_errors import RepairGeometryErrorsAlgorithm
 from .gmd_scripts.clip_project_layers import ClipProjectLayersAlgorithm
 from .gmd_scripts.apply_qml_styles import ApplyQmlStylesAlgorithm
+from .gmd_scripts.mbi_validator import MbiValidatorAlgorithm
 from .references.create_enumeration_area.algorithm import CreateEAAlgorithm
 from .gmd_scripts.cbms_mv.mv_2027_hp_1a_map_uuid__missing import mv_2027_hp_1a_map_uuid__missing
 from .gmd_scripts.cbms_mv.mv_2027_hp_1a_map_uuid__invalid import mv_2027_hp_1a_map_uuid__invalid
@@ -34,6 +35,10 @@ from .gmd_scripts.cbms_mv.mv_2027_hp_4b_geom__missing import mv_2027_hp_4b_geom_
 from .gmd_scripts.cbms_mv.mv_2027_hp_4b_geom__invalid import mv_2027_hp_4b_geom__invalid
 from .gmd_scripts.cbms_mv.mv_2027_hp_4b_longitude__invalid import mv_2027_hp_4b_longitude__invalid
 from .gmd_scripts.cbms_mv.mv_2027_hp_4b_longitude__missing import mv_2027_hp_4b_longitude__missing
+from .gmd_scripts.cbms_mv.mv_2027_hp_4b_geocode__missing import mv_2027_hp_4b_geocode__missing
+from .gmd_scripts.cbms_mv.mv_2027_hp_4c_remarks__invalid import mv_2027_hp_4c_remarks__invalid
+from .gmd_scripts.cbms_mv.mv_2027_hp_4a_map_uuid__missing import mv_2027_hp_4a_map_uuid__missing
+
 
 #from .gmd_scripts.gsheet_csv import
 
@@ -63,6 +68,7 @@ class GmdPipelineProvider(QgsProcessingProvider):
         self.addAlgorithm(UpdateLguByGeocodeAlgorithm())
         self.addAlgorithm(FixLGUCRSAlgorithm())
         self.addAlgorithm(JoinBarangayAttributes())
+        self.addAlgorithm(MbiValidatorAlgorithm())
         self.addAlgorithm(CreateEAAlgorithm())
         self.addAlgorithm(ScanGeometryErrorsAlgorithm())
         self.addAlgorithm(RepairGeometryErrorsAlgorithm())
@@ -79,7 +85,9 @@ class GmdPipelineProvider(QgsProcessingProvider):
         self.addAlgorithm(mv_2027_hp_4b_geom__missing())
         self.addAlgorithm(mv_2027_hp_4b_geom__invalid())
         self.addAlgorithm(mv_2027_hp_4b_longitude__invalid())
-        
+        self.addAlgorithm(mv_2027_hp_4b_geocode__missing())
+        self.addAlgorithm(mv_2027_hp_4c_remarks__invalid())
+        self.addAlgorithm(mv_2027_hp_4a_map_uuid__missing())
 
     def id(self):
         return 'gmd_pipeline'

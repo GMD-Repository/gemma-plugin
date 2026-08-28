@@ -87,7 +87,8 @@ def force_geometric_split(ea_item, target_pop, fback, min_household=100, max_hou
                 'geom': poly,
                 'buildings': buildings_in_poly,
                 'hh_count': sub_pop,
-                'original_hhcount': ea_item.get('original_hhcount', 0),
+                'original_hhcount': ea_item.get('original_hhcount') if ea_item.get('original_hhcount') is not None else ea_item.get('hh_count', 0.0),
+                'original_bldgcount': ea_item.get('original_bldgcount') if ea_item.get('original_bldgcount') is not None else ea_item.get('bldg_count', 0),
                 'bldg_count': len(buildings_in_poly),
                 'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
                 'attributes': list(ea_item['attributes']),
@@ -231,6 +232,56 @@ def enforce_min_household_parts(parts, fback, min_household=100, max_household=3
         nb['bldg_count'] = len(nb['buildings'])
         parts.pop(up_idx)
     return parts
+
+
+def verify_point_cluster_alignment(bldgs, bbox=None, target_pop=200, k_val=2):
+    """
+    Verifies building point spatial alignment for EAs with clustered points in small areas.
+    Calculates weighted center of mass, spatial extent, and principal alignment direction (covariance).
+    Returns centroid points aligned along the principal cluster axis.
+    """
+    if not bldgs or len(bldgs) < 2:
+        return []
+
+    pts = []
+    wts = []
+    for b in bldgs:
+        pt = b.get('point')
+        if pt is None:
+            continue
+        pt_xy = pt if isinstance(pt, QgsPointXY) else QgsPointXY(pt[0], pt[1])
+        pts.append((pt_xy.x(), pt_xy.y()))
+        wts.append(float(b.get('pop', 1.0)))
+
+    if len(pts) < 2:
+        return []
+
+    N = len(pts)
+    sum_w = sum(wts) if sum(wts) > 0 else float(N)
+    cx = sum(p[0] * w for p, w in zip(pts, wts)) / sum_w
+    cy = sum(p[1] * w for p, w in zip(pts, wts)) / sum_w
+
+    var_x = sum(w * (p[0] - cx) ** 2 for p, w in zip(pts, wts)) / sum_w
+    var_y = sum(w * (p[1] - cy) ** 2 for p, w in zip(pts, wts)) / sum_w
+    cov_xy = sum(w * (p[0] - cx) * (p[1] - cy) for p, w in zip(pts, wts)) / sum_w
+
+    angle = 0.5 * math.atan2(2.0 * cov_xy, var_x - var_y + 1e-12)
+    cos_a, sin_a = math.cos(angle), math.sin(angle)
+
+    proj_coords = [(p[0] - cx) * cos_a + (p[1] - cy) * sin_a for p in pts]
+    min_u, max_u = min(proj_coords), max(proj_coords)
+    span_u = max_u - min_u
+
+    centroid_pts = []
+    if span_u > 1e-7 and k_val >= 2:
+        step = span_u / float(k_val)
+        for i in range(k_val):
+            u_i = min_u + (i + 0.5) * step
+            x_i = cx + u_i * cos_a
+            y_i = cy + u_i * sin_a
+            centroid_pts.append(QgsPointXY(x_i, y_i))
+
+    return centroid_pts
 
 
 def split_ea_voronoi_road_hybrid(ea_item, road_lines, river_lines, target_pop, fback, min_household=100, max_household=300):
@@ -411,7 +462,8 @@ def split_ea_voronoi_road_hybrid(ea_item, road_lines, river_lines, target_pop, f
             'geom': poly,
             'buildings': p_bldgs,
             'hh_count': sub_pop,
-            'original_hhcount': ea_item.get('original_hhcount', 0),
+            'original_hhcount': ea_item.get('original_hhcount') if ea_item.get('original_hhcount') is not None else ea_item.get('hh_count', 0.0),
+            'original_bldgcount': ea_item.get('original_bldgcount') if ea_item.get('original_bldgcount') is not None else ea_item.get('bldg_count', 0),
             'bldg_count': len(p_bldgs),
             'bldgpoints_value': sub_pop / len(p_bldgs) if len(p_bldgs) > 0 else 0.0,
             'attributes': list(ea_item['attributes']),
@@ -519,34 +571,34 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
 
     def is_parent_delineation_candidate(ea_item):
         orig_id = ea_item.get('original_id')
-        if orig_id is not None and eadel_indi_col_idx != -1 and orig_id in full_ea_by_id:
+        if orig_id is None or orig_id not in delineation_candidate_ids:
+            return False
+        if eadel_indi_col_idx != -1 and orig_id in full_ea_by_id:
             val = full_ea_by_id[orig_id].attribute(eadel_indi_col_idx)
             if val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"):
                 return True
-        return (orig_id in delineation_candidate_ids) or (ea_item.get('original_hhcount', ea_item.get('hh_count', 0)) >= max_household)
+        return True
 
     def is_delineation_candidate(ea_item):
         if ea_item.get('from_split', False) or ea_item.get('from_merge', False):
             return False
+        if ea_item.get('is_special_ea', False):
+            return False
         orig_id = ea_item.get('original_id')
-        is_explicit = False
-        if eadel_indi_col_idx != -1 and orig_id in full_ea_by_id:
-            val = full_ea_by_id[orig_id].attribute(eadel_indi_col_idx)
-            is_explicit = (val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"))
-        return is_explicit or (orig_id in delineation_candidate_ids) or (ea_item['hh_count'] >= max_household)
+        if orig_id is None or orig_id not in delineation_candidate_ids:
+            return False
+        return True
 
     def is_merge_candidate(ea_item):
-        if ea_item.get('from_split', False):
-            return ea_item['hh_count'] <= min_household
-        if ea_item.get('from_merge', False):
+        if ea_item.get('from_split', False) or ea_item.get('from_merge', False):
+            return False
+        if ea_item.get('is_special_ea', False):
             return False
         orig_id = ea_item.get('original_id')
         return (orig_id in merge_candidate_ids) or (ea_item['hh_count'] <= min_household)
 
     def enforce_min_household(parts, fback, ea_geom=None):
         while len(parts) > 1:
-            if split_strategy == 0 and len(parts) <= 2:
-                break
             under = [i for i, p in enumerate(parts) if p['hh_count'] < min_household]
             if not under:
                 break
@@ -705,7 +757,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             for _i_pt, _q_pt in enumerate(unique_pts):
                 _pf = QgsFeature(_i_pt)
                 _pf.setGeometry(QgsGeometry.fromPointXY(_q_pt))
-                _local_idx.insertFeature(_pf)
+                _local_idx.addFeature(_pf)
 
             _nn_dists = []
             for _i_pt, _q_pt in enumerate(unique_pts):
@@ -778,7 +830,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             for l_idx, line in enumerate(all_lines):
                 feat = QgsFeature(l_idx)
                 feat.setGeometry(line)
-                line_index.insertFeature(feat)
+                line_index.addFeature(feat)
                 line_map[l_idx] = line
 
             snapped_cells = []
@@ -824,7 +876,8 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                 'geom': poly,
                 'buildings': buildings_in_poly,
                 'hh_count': sub_pop,
-                'original_hhcount': ea_item.get('original_hhcount', 0),
+                'original_hhcount': ea_item.get('original_hhcount') if ea_item.get('original_hhcount') is not None else ea_item.get('hh_count', 0.0),
+                'original_bldgcount': ea_item.get('original_bldgcount') if ea_item.get('original_bldgcount') is not None else ea_item.get('bldg_count', 0),
                 'bldg_count': len(buildings_in_poly),
                 'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
                 'attributes': list(ea_item['attributes']),
@@ -943,7 +996,9 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             return strips
 
         use_horizontal = bbox.height() >= bbox.width()
-        k_start = max(2, math.ceil(hh_cnt / float(target_pop)))
+        eff_target = float(target_pop) if target_pop and float(target_pop) > 0 else float(max_household if max_household > 0 else 200)
+        eff_hh_cnt = float(hh_cnt) if hh_cnt and float(hh_cnt) > 0 else float(len(bldgs) if bldgs else 200)
+        k_start = max(2, math.ceil(eff_hh_cnt / eff_target))
         k_max = k_start + 4
 
         accepted_parts = None
@@ -972,7 +1027,8 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                     'geom': poly,
                     'buildings': buildings_in_poly,
                     'hh_count': sub_pop,
-                    'original_hhcount': ea_item.get('original_hhcount', 0),
+                    'original_hhcount': ea_item.get('original_hhcount') if ea_item.get('original_hhcount') is not None else ea_item.get('hh_count', 0.0),
+                    'original_bldgcount': ea_item.get('original_bldgcount') if ea_item.get('original_bldgcount') is not None else ea_item.get('bldg_count', 0),
                     'bldg_count': len(buildings_in_poly),
                     'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
                     'attributes': list(ea_item['attributes']),
@@ -1023,11 +1079,39 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                 break
 
         if accepted_parts is None:
-            fback.pushWarning(
-                f"[EA {ea_item['original_code']}] FORCED SPLIT: Could not produce >= 2 valid "
-                f"parts at any k ({k_start}–{k_max}). EA will remain over threshold."
-            )
-            return [ea_item]
+            # Absolute fail-safe: slice polygon directly into 2 halves
+            half_strips = make_strips(2, horizontal=use_horizontal)
+            if len(half_strips) < 2:
+                half_strips = make_strips(2, horizontal=not use_horizontal)
+            if len(half_strips) >= 2:
+                accepted_parts = []
+                for sp in half_strips:
+                    sp_bldgs = [b for b in bldgs if sp.contains(QgsGeometry.fromPointXY(b['point'])) or sp.intersects(QgsGeometry.fromPointXY(b['point']))]
+                    sp_pop = sum(b['pop'] for b in sp_bldgs)
+                    accepted_parts.append({
+                        'geom': sp,
+                        'buildings': sp_bldgs,
+                        'hh_count': sp_pop,
+                        'original_hhcount': ea_item.get('original_hhcount') if ea_item.get('original_hhcount') is not None else ea_item.get('hh_count', 0.0),
+                        'original_bldgcount': ea_item.get('original_bldgcount') if ea_item.get('original_bldgcount') is not None else ea_item.get('bldg_count', 0),
+                        'bldg_count': len(sp_bldgs),
+                        'bldgpoints_value': sp_pop / len(sp_bldgs) if len(sp_bldgs) > 0 else 0.0,
+                        'attributes': list(ea_item['attributes']),
+                        'original_id': ea_item['original_id'],
+                        'original_code': ea_item['original_code'],
+                        'is_new': True,
+                        'from_split': True,
+                        'split_by': 'forced_grid',
+                        'parent_barangay': ea_item['parent_barangay']
+                    })
+                accepted_k = 2
+                accepted_orientation = 'horizontal' if use_horizontal else 'vertical'
+            else:
+                fback.pushWarning(
+                    f"[EA {ea_item['original_code']}] FORCED SPLIT: Could not produce >= 2 valid "
+                    f"parts at any k ({k_start}–{k_max}). EA will remain over threshold."
+                )
+                return [ea_item]
 
         final_parts = []
         for part in accepted_parts:
@@ -1058,7 +1142,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             if not clipped.isEmpty():
                 p['geom'] = clipped
             p['split_by'] = 'forced_grid'
-            p['remarks'] = f"Forced straight cut (road/river split was unbalanced >{max_household} HH or <{min_household} HH)"
+            p['remarks'] = ""
 
         fback.pushWarning(
             f"[EA {ea_item['original_code']}] FORCED SPLIT: Applied {accepted_orientation} "
@@ -1279,7 +1363,8 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                 'geom': poly,
                 'buildings': p_bldgs,
                 'hh_count': sub_pop,
-                'original_hhcount': ea_item.get('original_hhcount', 0),
+                'original_hhcount': ea_item.get('original_hhcount') if ea_item.get('original_hhcount') is not None else ea_item.get('hh_count', 0.0),
+                'original_bldgcount': ea_item.get('original_bldgcount') if ea_item.get('original_bldgcount') is not None else ea_item.get('bldg_count', 0),
                 'bldg_count': len(p_bldgs),
                 'bldgpoints_value': sub_pop / len(p_bldgs) if len(p_bldgs) > 0 else 0.0,
                 'attributes': list(ea_item['attributes']),
@@ -1420,6 +1505,12 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         labels, centroids = weighted_kmeans(pts, wts, k_val)
         centroid_pts = [QgsPointXY(c[0], c[1]) for c in centroids]
 
+        aligned_centroids = verify_point_cluster_alignment(bldgs, ea_item['geom'].boundingBox(), target, k_val)
+        if len(aligned_centroids) >= 2:
+            bbox = ea_item['geom'].boundingBox()
+            if bbox.width() < 1000.0 or bbox.height() < 1000.0 or len(centroid_pts) < 2:
+                centroid_pts = aligned_centroids
+
         unique_centroids = []
         seen_c = set()
         for cp in centroid_pts:
@@ -1462,7 +1553,8 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                 'geom': poly,
                 'buildings': buildings_in_poly,
                 'hh_count': sub_pop,
-                'original_hhcount': ea_item.get('original_hhcount', 0),
+                'original_hhcount': ea_item.get('original_hhcount') if ea_item.get('original_hhcount') is not None else ea_item.get('hh_count', 0.0),
+                'original_bldgcount': ea_item.get('original_bldgcount') if ea_item.get('original_bldgcount') is not None else ea_item.get('bldg_count', 0),
                 'bldg_count': len(buildings_in_poly),
                 'bldgpoints_value': sub_pop / len(buildings_in_poly) if len(buildings_in_poly) > 0 else 0.0,
                 'attributes': list(ea_item['attributes']),
@@ -1537,10 +1629,15 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         if fback.isCanceled():
             return [ea_item]
 
+        # Strict Candidate Gate: NEVER delineate EAs that are not in delineation_candidate_ids
+        if not is_delineation_candidate(ea_item):
+            fback.pushInfo(f"[EA {ea_item.get('original_code')}] Not in delineation candidates. Preserving whole.")
+            return [ea_item]
+
         # Mode 4 or Strategy 2: Keep Whole (No Splitting)
         if split_type == 4 or split_strategy == 2:
             fback.pushInfo(f"[EA {ea_item['original_code']}] Strategy 'Keep Whole' selected. Preserving EA whole.")
-            ea_item['remarks'] = "Kept whole (no-split mode)"
+            ea_item['remarks'] = ""
             return [ea_item]
 
         bldgs = ea_item.get('buildings', [])
@@ -1650,14 +1747,19 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                                 _ea_ean = str(ea.get('original_code', '')).strip()
                                 _max_part_hh = max(p['hh_count'] for p in split_parts) if split_parts else 0
                                 if _max_part_hh > max_household:
-                                    _parent_hhdivthres = max_household / ea['hh_count'] if ea['hh_count'] > 0 else 1.0
                                     fback.pushWarning(
                                         f"[Barangay {bar_code}] [EA {ea['original_code']}] "
                                         f"Part exceeds max_household ({_max_part_hh} > {max_household}). "
-                                        f"Enforcing {min_household + 1}–{max_household - 1} HH range on parts."
+                                        f"Re-delineating over-threshold sub-polygons to enforce {min_household}–{max_household} HH range."
                                     )
-                                    split_parts = enforce_min_household(split_parts, fback, ea_geom=ea['geom'])
-                                    split_parts = enforce_bldgpv_threshold(split_parts, _parent_hhdivthres, fback, ea_geom=ea['geom'])
+                                    sub_divided = []
+                                    for p in split_parts:
+                                        if p['hh_count'] > max_household:
+                                            sub_p = split_ea_by_building_clusters(p, max_household, fback)
+                                            sub_divided.extend(sub_p)
+                                        else:
+                                            sub_divided.append(p)
+                                    split_parts = enforce_min_household(sub_divided, fback, ea_geom=ea['geom'])
                                 new_eas.extend(split_parts)
                                 changed = True
                                 fback.pushInfo(f"[Barangay {bar_code}] Split over-populated EA (code={ea['original_code']}, pop={ea['hh_count']}) into {len(split_parts)} sub-polygons.")
