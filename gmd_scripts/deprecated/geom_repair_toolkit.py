@@ -1,7 +1,7 @@
 from qgis.PyQt.QtCore import QVariant, QThread, QObject, pyqtSignal, Qt, QRect, QEvent
 from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QMessageBox, QTextEdit, QTableWidget, QTableWidgetItem,
+    QMessageBox, QTextEdit, QTextBrowser, QTableWidget, QTableWidgetItem,
     QHeaderView, QProgressBar, QGroupBox, QCheckBox, QListWidget,
     QListWidgetItem, QAbstractItemView, QWidget, QFrame,
     QTabWidget, QComboBox, QSizePolicy, QRadioButton, QButtonGroup,
@@ -2291,159 +2291,175 @@ class HelpInfoTab(QWidget):
 
     def _build(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(10, 10, 10, 10)
-        root.setSpacing(8)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(6)
 
-        header = QLabel("")
-        header.setStyleSheet("font-size:14px; font-weight:700;")
-        root.addWidget(header)
-
-        self.text = QTextEdit()
+        self.text = QTextBrowser()
         self.text.setReadOnly(True)
+        self.text.setOpenExternalLinks(True)
         self.text.setStyleSheet(
-            "QTextEdit { background:white; font-size:12px; }"
+            "QTextBrowser { background-color: #ffffff; color: #1f2937; font-size: 12px; border: 1px solid #d1d5db; border-radius: 4px; padding: 8px; }"
         )
         self.text.setHtml("""
-        <h2>Geometry Repair Toolkit</h2>
-        <p>
-        This tool checks polygon layers for geometry errors and repairs them directly on the
-        ORIGINAL layer — Invalid, Wrong-type, Self Intersection, Duplicate Vertex, and Null/Empty
-        are all fixed by editing that layer's own features. Nothing is written to disk automatically: the layer
-        enters QGIS's normal editing mode (unsaved), so you can review the result and choose to
-        Save Edits or Cancel Edits (discard and revert) using QGIS's own editing tools.
-        </p>
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1f2937; line-height: 1.5; font-size: 12px;">
 
-        <h3>How to Use</h3>
-        <ol>
-            <li>Select one or more polygon layers from <b>Input Layers</b>.</li>
-            <li>Click <b>Scan Layers</b>.</li>
-            <li>Review the detected errors in the table. White rows are auto-fixable; grey rows need manual review.</li>
-            <li>Check the errors to repair. You may also click the checkbox in the first column header to select or clear all auto-fixable errors.</li>
-            <li>Click <b>Repair Selected Features</b>. It automatically applies the right fixer to each checked row (Invalid, Wrong-type, Self-Intersection, or Null/Empty) directly on the source layer.</li>
-            <li>Review the changes, then use QGIS's Save Edits to keep them, or Cancel Edits to discard and revert to the original geometry.</li>
-        </ol>
+          <!-- Header Section -->
+          <div style="border-bottom: 2px solid #374151; padding-bottom: 8px; margin-bottom: 14px;">
+            <h2 style="margin: 0 0 4px 0; color: #111827; font-size: 17px; font-weight: bold;">
+              Geometry Repair Toolkit
+            </h2>
+            <div style="color: #4b5563; font-size: 12px;">
+              Direct In-Place Topology Validation and Automated Polygon Geometry Reconstruction
+            </div>
+          </div>
 
-        <h3>Error Types</h3>
-        <table border="1" cellspacing="0" cellpadding="5">
-            <tr><th>Error Type</th><th>Description</th></tr>
-            <tr>
-                <td><b>Null Geometry</b></td>
-                <td>The feature record exists, but there is no geometry object.</td>
+          <!-- Overview & In-Place Editing -->
+          <div style="background-color: #f9fafb; border: 1px solid #e5e7eb; border-left: 4px solid #4b5563; padding: 10px 14px; margin-bottom: 16px;">
+            <b style="color: #111827;">In-Place Editing Mode:</b>
+            <span style="color: #374151;">
+              This tool checks polygon layers for geometry errors and repairs them directly on the <b>original layer</b>. Features are edited in-place inside QGIS's active editing mode (unsaved buffer marked with a pencil icon). No duplicate output layers are created. You can inspect changes on the map canvas and choose <b>Save Edits</b> to write to disk or <b>Cancel Edits</b> to discard and revert to the original state.
+            </span>
+          </div>
+
+          <!-- Section 1: How to Use -->
+          <h3 style="color: #111827; font-size: 14px; font-weight: bold; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
+            How to Use
+          </h3>
+          <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px; border: 1px solid #e5e7eb; font-size: 11px;">
+            <tr style="background-color: #ffffff;">
+              <td width="65" style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 1</td>
+              <td style="border-bottom: 1px solid #f3f4f6;"><b>Select Input Layers:</b> Select one or more polygon layers from the <i>Input Layers</i> list.</td>
+            </tr>
+            <tr style="background-color: #f9fafb;">
+              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 2</td>
+              <td style="border-bottom: 1px solid #f3f4f6;"><b>Scan Layers:</b> Click <i>Scan Layers</i> to execute multi-threaded geometry checks across selected layers.</td>
+            </tr>
+            <tr style="background-color: #ffffff;">
+              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 3</td>
+              <td style="border-bottom: 1px solid #f3f4f6;"><b>Inspect Detected Errors:</b> Review issues in the results table. Double-click any row to zoom and highlight the defect on the map canvas with bounding outlines and vertex markers.</td>
+            </tr>
+            <tr style="background-color: #f9fafb;">
+              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 4</td>
+              <td style="border-bottom: 1px solid #f3f4f6;"><b>Select Errors to Repair:</b> Check individual rows or click the checkbox in the table header to select or clear all auto-fixable errors at once.</td>
+            </tr>
+            <tr style="background-color: #ffffff;">
+              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 5</td>
+              <td style="border-bottom: 1px solid #f3f4f6;"><b>Repair Selected Features:</b> Click <i>Repair Selected Features</i>. The toolkit automatically routes each checked row to its specific repair mechanism directly on the source layer.</td>
+            </tr>
+            <tr style="background-color: #f9fafb;">
+              <td style="font-weight: bold; vertical-align: top; color: #111827;">Step 6</td>
+              <td><b>Verify & Commit:</b> Re-run <i>Scan Layers</i> to confirm all errors are resolved on the unsaved layer. Use QGIS's <b>Save Edits</b> to write changes to disk, or <b>Cancel Edits</b> to discard.</td>
+            </tr>
+          </table>
+
+          <!-- Section 2: Error Types Reference Table -->
+          <h3 style="color: #111827; font-size: 14px; font-weight: bold; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
+            Error Types Reference
+          </h3>
+          <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px; border: 1px solid #d1d5db; font-size: 11px;">
+            <thead>
+              <tr style="background-color: #f3f4f6; color: #111827; text-align: left;">
+                <th style="border: 1px solid #d1d5db; padding: 7px 10px; width: 170px;">Error Type</th>
+                <th style="border: 1px solid #d1d5db; padding: 7px 10px;">Description</th>
+                <th style="border: 1px solid #d1d5db; padding: 7px 10px; width: 220px;">Repair Mechanism</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; font-weight: bold;">Null Geometry</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">The feature record exists, but there is no geometry object.</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Spatial gap recovery from surrounding polygons.</td>
+              </tr>
+              <tr style="background-color: #f9fafb;">
+                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; font-weight: bold;">Empty/Missing Geometry</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">The feature exists, but its geometry has no usable shape or coordinates.</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Spatial void recovery from surrounding polygons.</td>
+              </tr>
+              <tr>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; font-weight: bold;">Invalid Geometry</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">The polygon has geometry errors such as ring errors, spikes, or folded edges.</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Thorough polygon reconstruction.</td>
+              </tr>
+              <tr style="background-color: #f9fafb;">
+                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; font-weight: bold;">Self Intersection</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">The polygon boundary crosses itself (e.g. bowtie or figure-8 loop).</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Thorough polygon reconstruction.</td>
+              </tr>
+              <tr>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; font-weight: bold;">Wrong-type Geometry</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">The feature's geometry type does not match the layer's declared geometry type (e.g. a line or GeometryCollection stored in a polygon layer).</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Thorough polygon reconstruction.</td>
+              </tr>
+              <tr style="background-color: #f9fafb;">
+                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; font-weight: bold;">Duplicate Vertex</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Commonly an accidental self-snap made while manually digitizing a polygon (a duplicate/near-duplicate vertex or zero-length segment).</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Direct duplicate vertex removal via progressive tolerance sweep.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <!-- Section 3: Repair Mechanics & Original Layer Editing -->
+          <h3 style="color: #111827; font-size: 14px; font-weight: bold; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
+            Repair Selected Features & In-Place Processing
+          </h3>
+          <p style="margin: 0 0 10px 0;">
+            Clicking <b>Repair Selected Features</b> inspects each checked error row and automatically routes it to the correct repair mechanism directly on the source layer:
+          </p>
+          <ul style="margin: 0 0 12px 0; padding-left: 20px;">
+            <li style="margin-bottom: 4px;"><b>Invalid Geometry / Wrong-type Geometry / Self Intersection:</b> Thorough polygon reconstruction (ring decomposition, unary union planarization, face matching, and hole restoration).</li>
+            <li style="margin-bottom: 4px;"><b>Duplicate Vertex:</b> Removes duplicate and near-duplicate vertices directly via progressive tolerance sweep ($10^{-12}$ to $10^{-6}$ bbox scale) and node-clustering deduplication.</li>
+            <li style="margin-bottom: 4px;"><b>Null / Empty / Missing Geometry:</b> Recovers missing geometry from surrounding polygon spatial boundary context.</li>
+          </ul>
+          <p style="margin: 0 0 10px 0;">
+            <b>Multipart Resolution & Sliver Cleanup:</b> Polygon reconstruction can occasionally produce multiple parts when resolving a self-intersecting bowtie shape. The toolkit automatically drops negligible artifact slivers (< 0.1% area ratio) and keeps the union of real parts. Pre-existing legitimate multipart features that were not repaired are left completely untouched.
+          </p>
+          <p style="margin: 0 0 12px 0;">
+            <b>Multiple Error Types on One Feature:</b> When a feature has multiple geometry defects (such as Invalid Geometry + Self Intersection), they are processed together or can be re-scanned and repaired in sequence.
+          </p>
+
+          <!-- Section 4: Review and Limitations -->
+          <h3 style="color: #111827; font-size: 14px; font-weight: bold; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
+            Review and Limitations
+          </h3>
+          <ul style="margin: 0 0 14px 0; padding-left: 20px;">
+            <li style="margin-bottom: 4px;">Always visually inspect repaired features before saving edits to disk.</li>
+            <li style="margin-bottom: 4px;">Re-run <b>Scan Layers</b> on the layer while still in edit mode to confirm all errors are resolved.</li>
+            <li style="margin-bottom: 4px;">Completely deleted attribute records cannot be recovered by this tool.</li>
+            <li style="margin-bottom: 4px;">Outer boundary edge polygons cannot be safely reconstructed when adjacent boundaries are unknown (return to LGU for corrected boundary geometry).</li>
+            <li style="margin-bottom: 4px;"><b>CRS Reprojection:</b> Validity is evaluated in the layer's native CRS. Reprojecting a layer shifts vertices slightly and can alter geometry validity; always re-run Scan Layers after reprojection.</li>
+          </ul>
+
+          <!-- Section 5: Map Canvas & Table Controls -->
+          <h3 style="color: #111827; font-size: 14px; font-weight: bold; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
+            Map Canvas & Table Controls
+          </h3>
+          <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px; border: 1px solid #e5e7eb; font-size: 11px;">
+            <tr style="background-color: #f9fafb;">
+              <td width="160" style="font-weight: bold; border-bottom: 1px solid #e5e7eb;">Double-Click Error Row</td>
+              <td style="border-bottom: 1px solid #e5e7eb;">Pans and zooms the map canvas to the feature and places a red outline and vertex marker at the error location.</td>
             </tr>
             <tr>
-                <td><b>Empty/Missing Geometry</b></td>
-                <td>The feature exists, but its geometry has no usable shape or coordinates.</td>
+              <td style="font-weight: bold; border-bottom: 1px solid #e5e7eb;">Header Checkbox</td>
+              <td style="border-bottom: 1px solid #e5e7eb;">One-click toggle in column 1 header to select all or clear all auto-fixable rows.</td>
+            </tr>
+            <tr style="background-color: #f9fafb;">
+              <td style="font-weight: bold; border-bottom: 1px solid #e5e7eb;">Clear Button / Esc Key</td>
+              <td style="border-bottom: 1px solid #e5e7eb;">Clears the results table and removes canvas rubber-band outlines and markers.</td>
             </tr>
             <tr>
-                <td><b>Invalid Geometry</b></td>
-                <td>The polygon has geometry errors such as self-intersection, ring error, spike, or folded edge.</td>
+              <td style="font-weight: bold;">Save / Cancel Edits</td>
+              <td>Use QGIS's native editing toolbar to save in-place repairs permanently to disk or cancel edits to revert back to original geometry.</td>
             </tr>
-            <tr>
-                <td><b>Self Intersection</b></td>
-                <td>The polygon crosses itself.</td>
-            </tr>
-            <tr>
-                <td><b>Wrong-type Geometry</b></td>
-                <td>The feature's geometry type does not match the layer's declared geometry type (e.g. a line or GeometryCollection stored in a polygon layer).</td>
-            </tr>
-            <tr>
-                <td><b>Duplicate Vertex</b></td>
-                <td>Commonly an accidental self-snap made while manually digitizing a polygon
-                    (a duplicate or near-duplicate vertex, or a zero-length segment). Repaired by removing the
-                    duplicate/near-duplicate vertex.</td>
-            </tr>
-        </table>
+          </table>
 
-        <h3>Repair Selected Features</h3>
-        <p>
-        This is the single action used to fix any checked, auto-fixable row. It inspects each checked
-        row's error type and automatically routes it to the correct mechanism — editing the ORIGINAL
-        layer's own features directly:
-        </p>
-        <ul>
-            <li><b>Invalid Geometry / Wrong-type Geometry / Self Intersection</b> — thorough polygon reconstruction.</li>
-            <li><b>Duplicate Vertex</b> — removes the duplicate/near-duplicate vertex directly (no full reconstruction needed, since the geometry is already GEOS-valid).</li>
-            <li><b>Null / Empty / Missing Geometry</b> — recovery from surrounding polygons.</li>
-        </ul>
-        <p>
-        Nothing is saved to disk automatically. The layer enters QGIS's normal editing mode (its icon
-        shows a pencil, an asterisk marks it as modified) and stays that way until you explicitly choose
-        Save Edits or Cancel Edits from QGIS's own editing tools — so a repair you're not happy with can
-        always be discarded cleanly.
-        </p>
-        <p>
-        The polygon reconstruction can occasionally leave a feature multipart even though it started as a
-        single part — e.g. resolving a self-intersecting "bowtie" ring can legitimately produce two simple
-        polygons, or pick up a stray sliver fragment. Since the fix is written back onto the same feature
-        (no separate output layer, so no risk of duplicate rows), the toolkit simply drops any fragment
-        that's empty or negligibly small next to the feature's largest part, and keeps the feature's
-        geometry as the union of whatever real part(s) remain. This only ever applies to features the
-        repair actually touched — a pre-existing multipart feature that was never touched (e.g. a
-        barangay with a legitimate offshore island) is left completely alone. All of this is logged.
-        </p>
+          <!-- Footer Section -->
+          <div style="text-align: center; color: #4b5563; font-size: 11px; padding: 14px 0 6px 0; border-top: 1px solid #e5e7eb; margin-top: 16px;">
+            <b>Geometry Repair Toolkit</b> &bull; Version 1.5.1<br>
+            Philippine Statistics Authority &bull; Geospatial Management Division<br>
+            Project 1MAP
+          </div>
 
-        <h3>If One Feature Has Multiple Error Types</h3>
-        <p>
-        Some features may have more than one geometry problem. In this case, after Repair Selected Features
-        finishes, scan the layer(s) again with <b>Scan Layers</b> to check for any remaining errors on the
-        now-edited (still unsaved) geometry, and repeat the repair as needed.
-        </p>
-        <p>
-        <b>Invalid Geometry</b> and <b>Self Intersection</b> are shown as one merged row ("Invalid Geometry
-        + Self Intersection") when both are found on the same feature — a self-intersecting polygon
-        boundary is one of the standard reasons a polygon fails general geometry validity too, so the two
-        checks are reporting the same underlying problem, and both are repaired by the same fixer anyway.
-        </p>
-
-        <h3>Editing the Original Layer</h3>
-        <p>
-        Invalid, Wrong-type, Self Intersection, Duplicate Vertex, and Null/Empty repairs all edit the
-        ORIGINAL layer's own features directly — no separate output layer is created. The layer enters
-        QGIS's normal editing mode and the changes stay UNSAVED until you choose to keep or discard them:
-        </p>
-        <ul>
-            <li><b>Save Edits</b> (Layer menu, or the toolbar save icon while editing) writes the repaired geometry to disk.</li>
-            <li><b>Cancel Edits</b> discards every change made during the repair and reverts the layer to exactly what it was before.</li>
-        </ul>
-        <p>
-        Recovery status, method, and notes for Null/Empty fixes are shown in the log rather than added
-        as extra fields, so the layer's schema is never changed. Re-run Scan Layers afterward (on the
-        same, still-unsaved layer) to confirm no errors remain before deciding to save.
-        </p>
-
-        <h3>Review and Limitations</h3>
-        <ul>
-            <li>Always visually inspect the repaired features before saving.</li>
-            <li>Try to run Check Validity again on the layer while it's still in edit mode, before saving.</li>
-            <li>Deleted feature records cannot be recovered by this tool.</li>
-            <li>Edge polygons cannot be safely reconstructed when the outer boundary is unknown.</li>
-            <li>If a missing edge polygon cannot be recovered, return it to the LGU for corrected boundary geometry.</li>
-            <li>Some complex errors may still require manual review (Duplicate Geometry, Dangle).</li>
-            <li>Validity is checked using each feature's geometry exactly as stored, in the layer's current CRS —
-                it is not re-evaluated in any other CRS. A geometry that scans as valid can become invalid (or
-                vice versa) after reprojecting to a different CRS, since reprojection shifts vertices by
-                slightly different amounts and can turn an almost-self-touching boundary into one that
-                genuinely crosses itself. If you reproject a layer, re-run Scan Layers on the reprojected
-                version rather than assuming the original scan still applies.</li>
-        </ul>
-
-        <h3>Log Information</h3>
-        <p>
-        The log shows which layer and feature ID were processed, plus the repair result when applicable.
-        For Null / Empty / Missing fixes, recovery status, method, and notes are written in the log.
-        </p>
-
-        <hr>
-
-        <p align="center">
-        <b>Geometry Repair Toolkit</b><br>
-        Version 1.5.1<br>
-        Build 2026.08 — added "Duplicate Vertex"
-        now auto-fixable via Repair Selected Features, removing the duplicate/
-        near-duplicate vertex directly<br><br>
-        PSA – Geospatial Management Division<br>
-        Project 1MAP
-        </p>
+        </div>
         """)
         root.addWidget(self.text, stretch=1)
 
