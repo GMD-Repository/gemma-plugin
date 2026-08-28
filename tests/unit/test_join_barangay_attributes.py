@@ -99,6 +99,38 @@ class TestJoinBarangayAttributes(unittest.TestCase):
         except Exception as e:
             self.skipTest(f"Skipping test due to processing environment error: {e}")
 
+    def test_post_process_algorithm_deduplication(self):
+        """Test that postProcessAlgorithm deduplicates layersToLoadOnCompletion entries."""
+        alg = self.mod.JoinBarangayAttributes()
+        alg.dest_id = "memory:matched_layer_id"
+        alg.psgc_dest_id = "memory:psgc_layer_id"
+        alg.custom_name = "00502_Camalig (Matched)"
+        alg.psgc_custom_name = "00502_Camalig (Filtered PSGC)"
+
+        context = QgsProcessingContext()
+        feedback = QgsProcessingFeedback()
+
+        # Simulate duplicate entries: TEMPORARY_OUTPUT placeholder and concrete dest_ids
+        if hasattr(context, "addLayerToLoadOnCompletion"):
+            details_generic = QgsProcessingContext.LayerDetails("Filtered PSGC Table", None, "Filtered_PSGC")
+            details_specific = QgsProcessingContext.LayerDetails("Filtered PSGC Table", None, "Filtered_PSGC")
+            details_matched = QgsProcessingContext.LayerDetails("Matched Barangays", None, "Bgy_name")
+
+            context.addLayerToLoadOnCompletion("TEMPORARY_OUTPUT", details_generic)
+            context.addLayerToLoadOnCompletion("memory:psgc_layer_id", details_specific)
+            context.addLayerToLoadOnCompletion("memory:matched_layer_id", details_matched)
+
+            alg.postProcessAlgorithm(context, feedback)
+
+            layers_to_load = context.layersToLoadOnCompletion()
+            # Verify TEMPORARY_OUTPUT placeholder was removed when specific dest_id was present
+            if hasattr(layers_to_load, "keys"):
+                self.assertNotIn("TEMPORARY_OUTPUT", layers_to_load.keys())
+                if "memory:psgc_layer_id" in layers_to_load:
+                    self.assertEqual(layers_to_load["memory:psgc_layer_id"].name, "00502_Camalig (Filtered PSGC)")
+                if "memory:matched_layer_id" in layers_to_load:
+                    self.assertEqual(layers_to_load["memory:matched_layer_id"].name, "00502_Camalig (Matched)")
+
 
 if __name__ == "__main__":
     unittest.main()

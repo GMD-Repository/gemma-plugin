@@ -10,8 +10,8 @@
 """
 Join Barangay Attributes — Enhanced Fuzzy Match
 
-Timestamp   : 2026-08-26
-Version     : 1.4.1
+Timestamp   : 2026-08-28
+Version     : 1.4.2
 Changelog   :
   v1.0.0 - Initial enhanced version (Python-based fuzzy matching, Roman
            numeral <-> Arabic number normalization, match_status and
@@ -38,6 +38,9 @@ Changelog   :
   v1.4.0 - Full architectural refactor aligned with update_metadata_by_geocode.py.
   v1.4.1 - Restored Filtered PSGC Table feature sink output with thread-safe
            postProcessAlgorithm layer naming.
+  v1.4.2 - Deduplicated layersToLoadOnCompletion and active project map layers
+           in postProcessAlgorithm to ensure exactly one Filtered PSGC Table
+           named <code_filter>_<city_name> (Filtered PSGC) is output.
 """
 
 import os
@@ -768,6 +771,46 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
         psgc_dest_id = getattr(self, "psgc_dest_id", None)
         psgc_name = getattr(self, "psgc_custom_name", "Filtered_PSGC")
 
+        # 1. Clean up duplicate entries in layersToLoadOnCompletion
+        layers_to_load = context.layersToLoadOnCompletion()
+        if layers_to_load:
+            new_layers_to_load = {}
+            has_specific_psgc = bool(psgc_dest_id and psgc_dest_id in layers_to_load)
+            has_specific_matched = bool(matched_dest_id and matched_dest_id in layers_to_load)
+
+            for k, details in layers_to_load.items():
+                is_psgc = (
+                    details.outputName == self.OUTPUT_PSGC
+                    or details.name in ("Filtered PSGC Table", "Filtered_PSGC", psgc_name)
+                    or (psgc_dest_id and k == psgc_dest_id)
+                )
+                is_matched = (
+                    details.outputName == self.OUTPUT
+                    or details.name in ("Matched Barangays", "Bgy_name", matched_name)
+                    or (matched_dest_id and k == matched_dest_id)
+                )
+
+                if is_psgc:
+                    # Skip generic placeholder if a concrete sink dest_id is present
+                    if has_specific_psgc and k != psgc_dest_id:
+                        continue
+                    details.name = psgc_name
+                    new_layers_to_load[k] = details
+                elif is_matched:
+                    # Skip generic placeholder if a concrete sink dest_id is present
+                    if has_specific_matched and k != matched_dest_id:
+                        continue
+                    details.name = matched_name
+                    new_layers_to_load[k] = details
+                else:
+                    new_layers_to_load[k] = details
+
+            try:
+                context.setLayersToLoadOnCompletion(new_layers_to_load)
+            except Exception:
+                pass
+
+        # 2. Update specific dest_id details if present
         if matched_dest_id and context.willLoadLayerOnCompletion(matched_dest_id):
             details = context.layerToLoadOnCompletionDetails(matched_dest_id)
             details.name = matched_name
@@ -775,6 +818,24 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
         if psgc_dest_id and context.willLoadLayerOnCompletion(psgc_dest_id):
             details = context.layerToLoadOnCompletionDetails(psgc_dest_id)
             details.name = psgc_name
+
+        # 3. Synchronize names of any layers already loaded or mapped in context
+        if psgc_dest_id:
+            psgc_layer = QgsProcessingUtils.mapLayerFromString(psgc_dest_id, context)
+            if psgc_layer and psgc_layer.isValid():
+                psgc_layer.setName(psgc_name)
+
+        if matched_dest_id:
+            matched_layer = QgsProcessingUtils.mapLayerFromString(matched_dest_id, context)
+            if matched_layer and matched_layer.isValid():
+                matched_layer.setName(matched_name)
+
+        # 4. Clean up any rogue unrenamed "Filtered PSGC Table" layers from the active project
+        proj = context.project() if hasattr(context, "project") and context.project() else QgsProject.instance()
+        if proj:
+            for l in list(proj.mapLayers().values()):
+                if l.name() == "Filtered PSGC Table":
+                    proj.removeMapLayer(l.id())
 
         results = {}
         if matched_dest_id:

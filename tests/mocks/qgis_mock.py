@@ -632,6 +632,10 @@ class QgsProcessingContext:
             self.name = name
             self.project = project
             self.output_name = output_name
+            self.outputName = output_name
+
+    def __init__(self):
+        self._layers_to_load = {}
 
     def project(self):
         return QgsProject.instance()
@@ -640,7 +644,21 @@ class QgsProcessingContext:
         return MockGenericClass()
 
     def addLayerToLoadOnCompletion(self, layer_id, details=None):
-        pass
+        if details is None:
+            details = QgsProcessingContext.LayerDetails()
+        self._layers_to_load[str(layer_id)] = details
+
+    def layersToLoadOnCompletion(self):
+        return self._layers_to_load
+
+    def setLayersToLoadOnCompletion(self, layers):
+        self._layers_to_load = dict(layers)
+
+    def willLoadLayerOnCompletion(self, layer_id):
+        return str(layer_id) in self._layers_to_load
+
+    def layerToLoadOnCompletionDetails(self, layer_id):
+        return self._layers_to_load.get(str(layer_id))
 
 
 try:
