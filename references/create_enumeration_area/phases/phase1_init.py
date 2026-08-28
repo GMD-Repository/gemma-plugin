@@ -236,6 +236,21 @@ def run_phase_1(
                     go_geom = clipped_geom
 
                 parent_bar_geo = normalize_to_8_digits(best_bar_feat.attribute(bar_geocode_field))
+                raw_bar_geo = str(best_bar_feat.attribute(bar_geocode_field) or "").strip()
+                if raw_bar_geo.endswith(".0"):
+                    raw_bar_geo = raw_bar_geo[:-2]
+                if not raw_bar_geo or raw_bar_geo.lower() in ('null', 'none'):
+                    for col_name in ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code", "psgc"]:
+                        col_idx = best_bar_feat.fields().indexOf(col_name)
+                        if col_idx != -1:
+                            val = best_bar_feat.attribute(col_idx)
+                            if val is not None and str(val).strip() not in ('', 'NULL', 'None'):
+                                raw_bar_geo = str(val).strip()
+                                if raw_bar_geo.endswith(".0"):
+                                    raw_bar_geo = raw_bar_geo[:-2]
+                                break
+                if not raw_bar_geo:
+                    raw_bar_geo = parent_bar_geo
 
                 special_type = "GAP"
                 gaps_count += 1
@@ -277,8 +292,10 @@ def run_phase_1(
                         special_ea_attrs = [None] * previous_ea_source.fields().count()
 
                 geocode_field_idx = previous_ea_source.fields().indexOf(barangay_id_field)
+                if geocode_field_idx == -1:
+                    geocode_field_idx = previous_ea_source.fields().indexOf("geocode")
                 if geocode_field_idx != -1 and geocode_field_idx < len(special_ea_attrs):
-                    special_ea_attrs[geocode_field_idx] = parent_bar_geo
+                    special_ea_attrs[geocode_field_idx] = raw_bar_geo
 
                 special_ea_feat.setAttributes(special_ea_attrs)
 
@@ -364,6 +381,21 @@ def run_phase_1(
                     go_geom = clipped_geom
 
                 parent_bar_geo = normalize_to_8_digits(best_bar_feat.attribute(bar_geocode_field))
+                raw_bar_geo = str(best_bar_feat.attribute(bar_geocode_field) or "").strip()
+                if raw_bar_geo.endswith(".0"):
+                    raw_bar_geo = raw_bar_geo[:-2]
+                if not raw_bar_geo or raw_bar_geo.lower() in ('null', 'none'):
+                    for col_name in ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code", "psgc"]:
+                        col_idx = best_bar_feat.fields().indexOf(col_name)
+                        if col_idx != -1:
+                            val = best_bar_feat.attribute(col_idx)
+                            if val is not None and str(val).strip() not in ('', 'NULL', 'None'):
+                                raw_bar_geo = str(val).strip()
+                                if raw_bar_geo.endswith(".0"):
+                                    raw_bar_geo = raw_bar_geo[:-2]
+                                break
+                if not raw_bar_geo:
+                    raw_bar_geo = parent_bar_geo
 
                 special_type = "OVERLAP"
                 overlaps_count += 1
@@ -405,8 +437,10 @@ def run_phase_1(
                         special_ea_attrs = [None] * previous_ea_source.fields().count()
 
                 geocode_field_idx = previous_ea_source.fields().indexOf(barangay_id_field)
+                if geocode_field_idx == -1:
+                    geocode_field_idx = previous_ea_source.fields().indexOf("geocode")
                 if geocode_field_idx != -1 and geocode_field_idx < len(special_ea_attrs):
-                    special_ea_attrs[geocode_field_idx] = parent_bar_geo
+                    special_ea_attrs[geocode_field_idx] = raw_bar_geo
 
                 special_ea_feat.setAttributes(special_ea_attrs)
 

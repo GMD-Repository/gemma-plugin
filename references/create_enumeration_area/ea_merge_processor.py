@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
 
@@ -77,7 +78,9 @@ _CITYMUN_FIELDS = (
 )
 
 # Pattern for valid replacement layer names.
-_REPLACEMENT_NAME_RE = re.compile(r"^\d{8}$")
+# Accepts bare 8-digit names (01728011) or names with an underscore suffix
+# (01728011_delineated_ea2026, 01728001_merged_ea2026, 01728009_special_ea).
+_REPLACEMENT_NAME_RE = re.compile(r"^\d{8}(_|$)")
 
 # Output year suffix.
 _OUTPUT_YEAR = "ea2026"
@@ -100,6 +103,7 @@ class EAMergeSummary:
     modified_ea_count: int = 0
     final_ea_feature_count: int = 0
     output_layer_name: str = ""
+    output_file_path: str = ""
     excel_file_path: str = ""
     excel_file_name: str = ""
     citymun_name: str = ""
@@ -123,6 +127,67 @@ class EAMergeResult:
     output_layer: Optional[QgsVectorLayer] = None
     summary: EAMergeSummary = field(default_factory=EAMergeSummary)
     log_lines: List[str] = field(default_factory=list)
+
+
+# Field candidate aliases for attribute mapping in Tab 3.
+# Ensures original counts (hhcount, bldgcount) and calculated counts (hh_count, bldg_count)
+# strictly follow their respective field lineages without cross-contamination.
+_FIELD_CANDIDATE_MAP = {
+    "hhcount": (
+        "hhcount", "original_hhcount", "orig_hhcount", "orig_hh",
+        "new_hhcount", "household", "household_count", "pop", "population"
+    ),
+    "bldgcount": (
+        "bldgcount", "original_bldgcount", "orig_bldgcount", "orig_bldg",
+        "new_bldgcount", "bldgpts_cnt", "bldg_points", "building_count",
+        "bldg_total", "buildings"
+    ),
+    "hh_count": (
+        "hh_count", "new_hh_count", "calc_hh_count", "hh_cnt", "total_hh", "hh"
+    ),
+    "bldg_count": (
+        "bldg_count", "new_bldg_count", "calc_bldg_count", "bldg_cnt", "bldg"
+    ),
+    "ean": ("ean", "ea_code", "ean_code", "ea_no", "eacode", "eano", "old_ean"),
+    "new_ean": ("new_ean", "new_eacode", "new_ea", "ean_new"),
+    "sy": ("sy", "survey_yr", "survey_year", "year"),
+    "ea_type": ("ea_type", "type", "eatype", "special_type"),
+    "remarks": ("remarks", "remark", "delin_remarks", "delin_remark", "comments", "comment"),
+    "region": ("region", "reg_code", "reg_name", "adm1_pcode"),
+    "province": ("province", "prov_code", "prov_name", "adm2_pcode"),
+    "city_mun": ("city_mun", "citymun", "city_name", "mun_name", "municipality", "city", "adm3_pcode"),
+    "barangay": ("barangay", "bgy_name", "brgy_name", "brgy", "bgy", "adm4_pcode"),
+    "geocode": ("geocode", "geo_code", "psgc", "adm4_pcode", "adm_pcode", "brgy_code"),
+}
+
+
+def _extract_feature_attribute(
+    feat: QgsFeature,
+    name_to_idx: dict,
+    target_field_name: str,
+):
+    """Extract an attribute value from feat for target_field_name using exact match
+    or candidate alias matching."""
+    name_lower = target_field_name.lower()
+    from qgis.core import NULL
+
+    # 1. Try exact match
+    exact_idx = name_to_idx.get(name_lower, -1)
+    if exact_idx != -1:
+        val = feat.attribute(exact_idx)
+        if val is not None and val != NULL and str(val).strip() not in ("", "NULL", "None"):
+            return val
+
+    # 2. Try candidate aliases
+    candidates = _FIELD_CANDIDATE_MAP.get(name_lower, ())
+    for cand in candidates:
+        cand_idx = name_to_idx.get(cand.lower(), -1)
+        if cand_idx != -1:
+            val = feat.attribute(cand_idx)
+            if val is not None and val != NULL and str(val).strip() not in ("", "NULL", "None"):
+                return val
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +298,7 @@ class EAMergeProcessor:
         feedback_callback: Optional[Callable[[str], None]] = None,
         progress_callback: Optional[Callable[[int], None]] = None,
         is_cancelled_fn: Optional[Callable[[], bool]] = None,
+        skip_add_to_project: bool = False,
     ):
         self.ea_layer = ea_layer
         self.replacement_layers = replacement_layers
@@ -240,6 +306,10 @@ class EAMergeProcessor:
         self._feedback = feedback_callback or (lambda msg: None)
         self._progress = progress_callback or (lambda pct: None)
         self._is_cancelled = is_cancelled_fn or (lambda: False)
+        # When True the caller is responsible for adding the output layer to the
+        # QGIS project (required when running inside a QThread because
+        # QgsProject.addMapLayer() must be called from the main GUI thread).
+        self._skip_add_to_project = skip_add_to_project
 
         # Populated during run()
         self._geo_code: str = ""
@@ -315,8 +385,9 @@ class EAMergeProcessor:
 
             # ── Phase 6: Combine replacement geometries ────────────────────
             self._log("[INFO] Combining replacement geometries...")
+            out_fields = self._build_output_fields()
             replacement_features, combined_geom, repl_feat_count = (
-                self._prepare_replacement_geometries()
+                self._prepare_replacement_geometries(out_fields)
             )
             if combined_geom is None or combined_geom.isNull():
                 self._fail("Failed to combine replacement geometries.")
@@ -338,7 +409,7 @@ class EAMergeProcessor:
                 "geometries..."
             )
             remaining_ea_features, modified_count = (
-                self._replace_ea_geometries(combined_geom)
+                self._replace_ea_geometries(combined_geom, out_fields)
             )
             summary.modified_ea_count = modified_count
             self._log(
@@ -361,7 +432,7 @@ class EAMergeProcessor:
             self._log(
                 f"[INFO] Creating output layer: {self._output_layer_name}"
             )
-            output_layer = self._create_output_layer(all_features)
+            output_layer = self._create_output_layer(all_features, out_fields)
             if output_layer is None:
                 self._fail("Failed to create output layer.")
                 return self._result
@@ -378,7 +449,9 @@ class EAMergeProcessor:
             self._validate_output(output_layer)
             self._progress(85)
 
-            # ── Phase 11: Add to QGIS project ──────────────────────────────
+            # ── Phase 11: Export to GeoPackage and Add to QGIS project ─────
+            saved_to_gpkg = False
+
             if output_layer.featureCount() == 0:
                 self._log(
                     f"[INFO] Output layer '{self._output_layer_name}' has 0 features; "
@@ -386,12 +459,73 @@ class EAMergeProcessor:
                 )
                 self._result.output_layer = None
             else:
-                QgsProject.instance().addMapLayer(output_layer)
-                self._log(
-                    f"[INFO] Output layer '{self._output_layer_name}' added "
-                    "to QGIS project."
-                )
-                self._result.output_layer = output_layer
+                if self.output_dir:
+                    output_file_path = os.path.join(self.output_dir, f"{self._output_layer_name}.gpkg")
+                else:
+                    proj = QgsProject.instance() if QgsProject.instance() else None
+                    proj_fn = proj.fileName() if proj and hasattr(proj, 'fileName') else None
+                    proj_hp = proj.homePath() if proj and hasattr(proj, 'homePath') else None
+                    if isinstance(proj_fn, str) and proj_fn.strip():
+                        output_file_path = os.path.join(os.path.dirname(proj_fn), f"{self._output_layer_name}.gpkg")
+                    elif isinstance(proj_hp, str) and proj_hp.strip():
+                        output_file_path = os.path.join(proj_hp, f"{self._output_layer_name}.gpkg")
+                    else:
+                        output_file_path = os.path.join(tempfile.gettempdir(), f"{self._output_layer_name}.gpkg")
+
+                from .helpers.pre_ea_detector import get_unique_filepath
+                out_dir = os.path.dirname(output_file_path)
+                base_fn = os.path.splitext(os.path.basename(output_file_path))[0]
+                if not out_dir:
+                    out_dir = tempfile.gettempdir()
+                output_file_path = get_unique_filepath(out_dir, base_fn, ".gpkg")
+                final_layer_name = os.path.splitext(os.path.basename(output_file_path))[0]
+
+                try:
+                    os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
+                    if self._export_layer_to_gpkg(output_layer, output_file_path, final_layer_name):
+                        self._log(f"[INFO] Output layer successfully saved to GeoPackage (.gpkg): {output_file_path}")
+                        gpkg_layer = QgsVectorLayer(f"{output_file_path}|layername={final_layer_name}", final_layer_name, "ogr")
+                        if not gpkg_layer.isValid():
+                            gpkg_layer = QgsVectorLayer(output_file_path, final_layer_name, "ogr")
+
+                        if gpkg_layer.isValid():
+                            from .helpers.style import apply_qml_to_layer
+                            apply_qml_to_layer(gpkg_layer, "12. Merged EA Polygon.qml")
+                            output_layer = gpkg_layer
+                            self._output_layer_name = final_layer_name
+                            summary.output_layer_name = final_layer_name
+                            summary.output_file_path = output_file_path
+                            saved_to_gpkg = True
+                        else:
+                            self._log(f"[ERROR] Could not load saved GeoPackage layer from: {output_file_path}")
+                    else:
+                        self._log(f"[ERROR] Failed to save GeoPackage (.gpkg) to {output_file_path}")
+                except Exception as save_err:
+                    self._log(f"[ERROR] Output layer GeoPackage export failed with exception: {save_err}")
+
+                if self._skip_add_to_project:
+                    # Caller (e.g. threaded dialog) will add the layer on the main
+                    # thread once the worker finishes.
+                    self._result.output_layer = output_layer
+                    self._log(
+                        f"[INFO] Output layer '{self._output_layer_name}' ready; "
+                        "will be added to QGIS project by the calling thread."
+                    )
+                else:
+                    proj = QgsProject.instance()
+                    if proj:
+                        for old_lyr in list(proj.mapLayersByName(self._output_layer_name)):
+                            proj.removeMapLayer(old_lyr.id())
+                        proj.addMapLayer(output_layer)
+                    if saved_to_gpkg:
+                        self._log(
+                            f"[INFO] Permanent GeoPackage layer (.gpkg) added to QGIS canvas: {self._output_layer_name}"
+                        )
+                    else:
+                        self._log(
+                            f"[WARNING] Falling back to temporary in-memory layer: {self._output_layer_name}"
+                        )
+                    self._result.output_layer = output_layer
             self._progress(90)
 
             # ── Phase 12: Read final attribute table for Excel ─────────────
@@ -502,14 +636,15 @@ class EAMergeProcessor:
         for layer in self.replacement_layers:
             name = layer.name()
 
-            # 1. 8-digit numeric name
+            # 1. 8-digit numeric name (prefix match — suffix after _ is allowed)
             if not _REPLACEMENT_NAME_RE.match(name):
                 self._fail(
                     f"Layer \"{name}\" does not follow the required "
                     "8-digit numeric naming convention.\n"
-                    "The replacement polygon layer name must contain "
+                    "The replacement polygon layer name must begin with "
                     "exactly 8 numeric digits.\n"
-                    "Required format: ########"
+                    "Accepted formats: ######## or ########_suffix "
+                    "(e.g. 01728011_delineated_ea2026)"
                 )
                 return False
 
@@ -580,8 +715,43 @@ class EAMergeProcessor:
             return None
         return values[0]
 
+    def _build_output_fields(self) -> QgsFields:
+        """Construct the output layer field schema.
+
+        Preserves all fields from the Previous EA Layer, and ensures:
+        - hhcount (Double)
+        - bldgcount (Int)
+        - hh_count (Double)
+        - bldg_count (Int)
+        are all included in the output schema.
+        """
+        ea_fields = self.ea_layer.fields()
+        out_fields = QgsFields()
+        existing_names_lower = set()
+
+        for i in range(ea_fields.count()):
+            f = ea_fields.at(i)
+            out_fields.append(QgsField(f.name(), f.type()))
+            existing_names_lower.add(f.name().lower())
+
+        if "hhcount" not in existing_names_lower:
+            out_fields.append(QgsField("hhcount", QVariant.Double))
+            existing_names_lower.add("hhcount")
+        if "bldgcount" not in existing_names_lower:
+            out_fields.append(QgsField("bldgcount", QVariant.Int))
+            existing_names_lower.add("bldgcount")
+        if "hh_count" not in existing_names_lower:
+            out_fields.append(QgsField("hh_count", QVariant.Double))
+            existing_names_lower.add("hh_count")
+        if "bldg_count" not in existing_names_lower:
+            out_fields.append(QgsField("bldg_count", QVariant.Int))
+            existing_names_lower.add("bldg_count")
+
+        return out_fields
+
     def _prepare_replacement_geometries(
         self,
+        out_fields: Optional[QgsFields] = None,
     ) -> tuple[list[QgsFeature], Optional[QgsGeometry], int]:
         """Collect replacement features and produce a single dissolved union geometry.
 
@@ -590,10 +760,23 @@ class EAMergeProcessor:
 
         CRS: all replacement geometries are transformed to the EA input CRS.
         """
+        if out_fields is None:
+            out_fields = self._build_output_fields()
         ea_crs = self.ea_layer.crs()
         replacement_features: list[QgsFeature] = []
-        union_geom: Optional[QgsGeometry] = None
+        # Collect individual geometries first — build union in one shot at the
+        # end via unaryUnion(), which is O(n log n) vs O(n²) incremental combine.
+        geom_list: list[QgsGeometry] = []
         total_count = 0
+
+        # Build spatial index on EA layer for attribute inheritance fallback
+        ea_index = QgsSpatialIndex(self.ea_layer.getFeatures())
+        ea_features_by_id = {f.id(): f for f in self.ea_layer.getFeatures()}
+        ea_fields = self.ea_layer.fields()
+        ea_name_to_idx = {
+            ea_fields.at(i).name().lower(): i
+            for i in range(ea_fields.count())
+        }
 
         for layer in self.replacement_layers:
             layer_crs = layer.crs()
@@ -609,6 +792,14 @@ class EAMergeProcessor:
                     f"to {ea_crs.authid()}."
                 )
 
+            repl_fields = layer.fields()
+            # Build a case-insensitive name → index map for the replacement layer's
+            # fields so we can look up values efficiently for every feature.
+            repl_name_to_idx = {
+                repl_fields.at(i).name().lower(): i
+                for i in range(repl_fields.count())
+            }
+
             for feat in layer.getFeatures():
                 geom = QgsGeometry(feat.geometry())
                 if geom is None or geom.isNull() or geom.isEmpty():
@@ -623,26 +814,91 @@ class EAMergeProcessor:
                 if geom is None or geom.isNull() or geom.isEmpty():
                     continue
 
-                # Accumulate union
-                if union_geom is None or union_geom.isNull():
-                    union_geom = QgsGeometry(geom)
-                else:
-                    union_geom = union_geom.combine(geom)
+                geom_list.append(QgsGeometry(geom))
 
-                # Build output feature (same schema as EA layer)
-                out_feat = QgsFeature(self.ea_layer.fields())
+                # Build output feature using the output fields schema.
+                # Attributes follow specific field lineages:
+                # - hhcount & bldgcount follow previous / replacement hhcount & bldgcount
+                # - hh_count & bldg_count follow previous / replacement hh_count & bldg_count
+                out_feat = QgsFeature(out_fields)
                 out_feat.setGeometry(geom)
+
+                # Find intersecting previous EA feature (if any) as fallback for missing attributes
+                fallback_ea_feat = None
+                intersecting_ids = ea_index.intersects(geom.boundingBox())
+                best_overlap_area = 0.0
+                for ea_fid in intersecting_ids:
+                    prev_f = ea_features_by_id.get(ea_fid)
+                    if prev_f and prev_f.geometry():
+                        inter = geom.intersection(prev_f.geometry())
+                        if inter and not inter.isEmpty():
+                            area = inter.area()
+                            if area > best_overlap_area:
+                                best_overlap_area = area
+                                fallback_ea_feat = prev_f
+
+                for ea_i in range(out_fields.count()):
+                    ea_field = out_fields.at(ea_i)
+                    ea_field_name = ea_field.name().lower()
+                    val = _extract_feature_attribute(feat, repl_name_to_idx, ea_field_name)
+
+                    if val is None and fallback_ea_feat is not None:
+                        # Fallback: inherit from overlapping previous EA feature
+                        val = _extract_feature_attribute(fallback_ea_feat, ea_name_to_idx, ea_field_name)
+
+                    # Secondary fallback if count field was not present
+                    if val is None:
+                        if ea_field_name == "hh_count":
+                            val = _extract_feature_attribute(feat, repl_name_to_idx, "hhcount")
+                            if val is None and fallback_ea_feat is not None:
+                                val = _extract_feature_attribute(fallback_ea_feat, ea_name_to_idx, "hhcount")
+                        elif ea_field_name == "bldg_count":
+                            val = _extract_feature_attribute(feat, repl_name_to_idx, "bldgcount")
+                            if val is None and fallback_ea_feat is not None:
+                                val = _extract_feature_attribute(fallback_ea_feat, ea_name_to_idx, "bldgcount")
+                        elif ea_field_name == "hhcount":
+                            val = _extract_feature_attribute(feat, repl_name_to_idx, "hh_count")
+                            if val is None and fallback_ea_feat is not None:
+                                val = _extract_feature_attribute(fallback_ea_feat, ea_name_to_idx, "hh_count")
+                        elif ea_field_name == "bldgcount":
+                            val = _extract_feature_attribute(feat, repl_name_to_idx, "bldg_count")
+                            if val is None and fallback_ea_feat is not None:
+                                val = _extract_feature_attribute(fallback_ea_feat, ea_name_to_idx, "bldg_count")
+
+                    if val is not None:
+                        # Safe type conversion based on target field type
+                        try:
+                            if ea_field.type() in (QVariant.Double, getattr(QVariant, 'Float', QVariant.Double)):
+                                val = float(val)
+                            elif ea_field.type() in (
+                                QVariant.Int, getattr(QVariant, 'LongLong', QVariant.Int),
+                                getattr(QVariant, 'UInt', QVariant.Int), getattr(QVariant, 'ULongLong', QVariant.Int)
+                            ):
+                                val = int(round(float(val)))
+                            elif ea_field.type() == QVariant.String:
+                                val = str(val)
+                        except (ValueError, TypeError):
+                            pass
+                        out_feat.setAttribute(ea_i, val)
+
                 replacement_features.append(out_feat)
                 total_count += 1
 
-        # Final repair of combined geometry
-        if union_geom and not union_geom.isNull():
-            union_geom = _repair_geometry(union_geom)
+
+        # Build the combined union in one call — far more efficient than
+        # iterative combine() when there are many replacement geometries.
+        union_geom: Optional[QgsGeometry] = None
+        if geom_list:
+            union_geom = QgsGeometry.unaryUnion(geom_list)
+            if union_geom and not union_geom.isNull():
+                union_geom = _repair_geometry(union_geom)
 
         return replacement_features, union_geom, total_count
 
     def _replace_ea_geometries(
-        self, combined_replacement: QgsGeometry
+        self,
+        combined_replacement: QgsGeometry,
+        out_fields: Optional[QgsFields] = None,
     ) -> tuple[list[QgsFeature], int]:
         """Subtract combined_replacement from each EA feature geometry.
 
@@ -652,11 +908,18 @@ class EAMergeProcessor:
         Features whose remaining geometry is empty after the difference are
         dropped from the output (they are fully covered by replacement polygons).
         """
+        if out_fields is None:
+            out_fields = self._build_output_fields()
         # Build spatial index on EA layer for efficient candidate selection
         ea_index = QgsSpatialIndex(self.ea_layer.getFeatures())
         combined_bbox = combined_replacement.boundingBox()
-        candidate_ids = ea_index.intersects(combined_bbox)
-        candidate_id_set = set(candidate_ids)
+        candidate_id_set = set(ea_index.intersects(combined_bbox))
+
+        ea_fields = self.ea_layer.fields()
+        ea_name_to_idx = {
+            ea_fields.at(i).name().lower(): i
+            for i in range(ea_fields.count())
+        }
 
         remaining_features: list[QgsFeature] = []
         modified_count = 0
@@ -668,52 +931,85 @@ class EAMergeProcessor:
                 continue
 
             ea_geom = _repair_geometry(ea_geom)
+            geom_to_keep = None
 
-            is_candidate = (fid in candidate_id_set) or ea_geom.intersects(combined_replacement)
+            if fid in candidate_id_set:
+                # Spatial index says bounding boxes overlap — confirm with exact
+                # geometric intersection before computing the expensive difference.
+                if ea_geom.intersects(combined_replacement):
+                    remaining = ea_geom.difference(combined_replacement)
+                    if remaining is None or remaining.isNull() or remaining.isEmpty():
+                        # EA is fully covered — drop it
+                        modified_count += 1
+                        continue
+                    remaining = _repair_geometry(remaining)
+                    if remaining is None or remaining.isNull() or remaining.isEmpty():
+                        modified_count += 1
+                        continue
 
-            if is_candidate and ea_geom.intersects(combined_replacement):
-                # Compute difference only for candidates with actual geometric overlap
-                remaining = ea_geom.difference(combined_replacement)
-                if remaining is None or remaining.isNull() or remaining.isEmpty():
-                    # EA is fully covered — drop it
-                    modified_count += 1
-                    continue
-                remaining = _repair_geometry(remaining)
-                if remaining is None or remaining.isNull() or remaining.isEmpty():
-                    modified_count += 1
-                    continue
+                    # Count as modified if area actually changed
+                    orig_area = ea_geom.area()
+                    rem_area = remaining.area()
+                    if abs(orig_area - rem_area) > 1e-6:
+                        modified_count += 1
 
-                # Check if geometry actually changed (area, GEOS equality, or vertex difference)
-                orig_area = ea_geom.area()
-                rem_area = remaining.area()
-                is_diff = abs(orig_area - rem_area) > 1e-6
-                if not is_diff and hasattr(remaining, 'isGeosEqual'):
-                    try:
-                        is_diff = not remaining.isGeosEqual(ea_geom)
-                    except Exception:
-                        pass
-                if not is_diff and hasattr(remaining, 'polygons') and hasattr(ea_geom, 'polygons'):
-                    if remaining.polygons != ea_geom.polygons:
-                        is_diff = True
-                if is_diff:
-                    modified_count += 1
-
-                out_feat = QgsFeature(feat)
-                out_feat.setGeometry(remaining)
-                remaining_features.append(out_feat)
+                    geom_to_keep = remaining
+                else:
+                    # Bounding-box overlap but no actual geometric intersection
+                    geom_to_keep = ea_geom
             else:
-                # No overlap — keep as-is
-                remaining_features.append(QgsFeature(feat))
+                # No spatial-index overlap — keep as-is, no geometry test needed
+                geom_to_keep = ea_geom
+
+            # Format remaining EA feature using out_fields schema
+            out_feat = QgsFeature(out_fields)
+            out_feat.setGeometry(geom_to_keep)
+
+            for ea_i in range(out_fields.count()):
+                ea_field = out_fields.at(ea_i)
+                ea_field_name = ea_field.name().lower()
+                val = _extract_feature_attribute(feat, ea_name_to_idx, ea_field_name)
+
+                if val is None:
+                    if ea_field_name == "hh_count":
+                        val = _extract_feature_attribute(feat, ea_name_to_idx, "hhcount")
+                    elif ea_field_name == "bldg_count":
+                        val = _extract_feature_attribute(feat, ea_name_to_idx, "bldgcount")
+                    elif ea_field_name == "hhcount":
+                        val = _extract_feature_attribute(feat, ea_name_to_idx, "hh_count")
+                    elif ea_field_name == "bldgcount":
+                        val = _extract_feature_attribute(feat, ea_name_to_idx, "bldg_count")
+
+                if val is not None:
+                    try:
+                        if ea_field.type() in (QVariant.Double, getattr(QVariant, 'Float', QVariant.Double)):
+                            val = float(val)
+                        elif ea_field.type() in (
+                            QVariant.Int, getattr(QVariant, 'LongLong', QVariant.Int),
+                            getattr(QVariant, 'UInt', QVariant.Int), getattr(QVariant, 'ULongLong', QVariant.Int)
+                        ):
+                            val = int(round(float(val)))
+                        elif ea_field.type() == QVariant.String:
+                            val = str(val)
+                    except (ValueError, TypeError):
+                        pass
+                    out_feat.setAttribute(ea_i, val)
+
+            remaining_features.append(out_feat)
 
         return remaining_features, modified_count
 
     def _create_output_layer(
-        self, features: list[QgsFeature]
+        self,
+        features: list[QgsFeature],
+        out_fields: Optional[QgsFields] = None,
     ) -> Optional[QgsVectorLayer]:
         """Build the output in-memory polygon layer from the collected features.
 
-        Uses the exact field schema of the Previous EA Layer.
+        Uses out_fields containing Previous EA Layer attributes plus all count fields.
         """
+        if out_fields is None:
+            out_fields = self._build_output_fields()
         crs_auth = self.ea_layer.crs().authid()
         is_multi = False
         try:
@@ -733,9 +1029,8 @@ class EAMergeProcessor:
 
         provider = layer.dataProvider()
 
-        # Copy field schema from Previous EA Layer
-        ea_fields = self.ea_layer.fields()
-        fields_list = [ea_fields.at(i) for i in range(ea_fields.count())]
+        # Set field schema from out_fields
+        fields_list = [out_fields.at(i) for i in range(out_fields.count())]
         provider.addAttributes(fields_list)
         layer.updateFields()
 
@@ -772,6 +1067,84 @@ class EAMergeProcessor:
         )
         return True
 
+    def _export_layer_to_gpkg(
+        self, layer: QgsVectorLayer, file_path: str, layer_name: str
+    ) -> bool:
+        """Export a vector layer to a permanent GeoPackage (.gpkg) file on disk."""
+        try:
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+            # Method 1: QGIS Processing native:savefeatures (fast C++ engine)
+            try:
+                import processing
+                params = {
+                    "INPUT": layer,
+                    "OUTPUT": file_path,
+                    "LAYER_NAME": layer_name,
+                }
+                res = processing.run("native:savefeatures", params)
+                if res and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                    self._log(f"[INFO] Layer successfully written to GeoPackage via QGIS Processing: {file_path}")
+                    return True
+            except Exception as pe:
+                self._log(f"[DEBUG] QGIS Processing native:savefeatures fallback: {pe}")
+
+            from qgis.core import (
+                QgsCoordinateTransformContext,
+                QgsVectorFileWriter,
+            )
+
+            # Method 2: SaveVectorOptions with writeAsVectorFormatV3 / V2
+            save_options = QgsVectorFileWriter.SaveVectorOptions()
+            save_options.driverName = "GPKG"
+            save_options.layerName = layer_name
+            save_options.fileEncoding = "UTF-8"
+            if os.path.exists(file_path):
+                save_options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+            else:
+                save_options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteFile
+
+            ctx = (
+                QgsProject.instance().transformContext()
+                if (QgsProject.instance() and hasattr(QgsProject.instance(), 'transformContext'))
+                else QgsCoordinateTransformContext()
+            )
+
+            if hasattr(QgsVectorFileWriter, 'writeAsVectorFormatV3'):
+                res = QgsVectorFileWriter.writeAsVectorFormatV3(layer, file_path, ctx, save_options)
+                if res[0] == QgsVectorFileWriter.NoError:
+                    return True
+                self._log(f"[DEBUG] writeAsVectorFormatV3 code={res[0]}: {res[1] if len(res) > 1 else ''}")
+
+            if hasattr(QgsVectorFileWriter, 'writeAsVectorFormatV2'):
+                res = QgsVectorFileWriter.writeAsVectorFormatV2(layer, file_path, ctx, save_options)
+                if res[0] == QgsVectorFileWriter.NoError:
+                    return True
+                self._log(f"[DEBUG] writeAsVectorFormatV2 code={res[0]}: {res[1] if len(res) > 1 else ''}")
+
+            # Method 3: Legacy writeAsVectorFormat
+            if hasattr(QgsVectorFileWriter, 'writeAsVectorFormat'):
+                res = QgsVectorFileWriter.writeAsVectorFormat(layer, file_path, "UTF-8", layer.crs(), "GPKG")
+                if res == QgsVectorFileWriter.NoError:
+                    return True
+                self._log(f"[DEBUG] writeAsVectorFormat code={res}")
+
+            # Method 4: Direct writer feature-by-feature
+            writer = QgsVectorFileWriter(file_path, "UTF-8", layer.fields(), layer.wkbType(), layer.crs(), "GPKG")
+            if writer.hasError() == QgsVectorFileWriter.NoError:
+                for feat in layer.getFeatures():
+                    writer.addFeature(feat)
+                del writer
+                return True
+            else:
+                self._log(f"[DEBUG] Direct QgsVectorFileWriter error={writer.errorMessage()}")
+
+        except Exception as e:
+            self._log(f"[ERROR] Exception during GeoPackage export: {e}")
+            return False
+
+        return os.path.exists(file_path) and os.path.getsize(file_path) > 0
+
     def _export_attribute_table_to_excel(
         self, layer: QgsVectorLayer, path: str
     ) -> bool:
@@ -783,6 +1156,7 @@ class EAMergeProcessor:
         """
         try:
             import openpyxl
+            from openpyxl.writer.excel import save_workbook
         except ImportError:
             self._log(
                 "[ERROR] openpyxl is not installed. "
@@ -791,9 +1165,12 @@ class EAMergeProcessor:
             return False
 
         try:
-            wb = openpyxl.Workbook()
-            ws = wb.active
-            ws.title = _EXCEL_SHEET_NAME
+            # Use write_only=True to avoid the Windows fatal access violation
+            # that occurs when openpyxl.Workbook() calls _setup_styles() →
+            # copy(DEFAULT_FONT) → to_tree() → lxml Element(), which clashes
+            # with QGIS's own libxml2 critical-section lock on the main thread.
+            wb = openpyxl.Workbook(write_only=True)
+            ws = wb.create_sheet(title=_EXCEL_SHEET_NAME)
 
             fields = layer.fields()
             field_names = [fields.at(i).name() for i in range(fields.count())]
