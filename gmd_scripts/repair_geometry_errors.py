@@ -196,67 +196,18 @@ def finalize_fixed_geom(geom, output_wkb):
 
 
 def qgis_fix_single_feature_fallback(source_crs, fields, source_wkb, feat, context, feedback):
-    """Runs QGIS native:fixgeometries on an individual feature record as fallback."""
+    """Fast in-memory GEOS fallback for an individual corrupted feature record."""
     try:
-        tmp = QgsVectorLayer(
-            f"{QgsWkbTypes.displayString(source_wkb)}?crs={source_crs.authid()}",
-            "single_fix_input",
-            "memory"
-        )
-        tmp.setCrs(source_crs)
-        tmp.dataProvider().addAttributes(fields)
-        tmp.updateFields()
-
-        tf = QgsFeature(fields)
-        tf.setAttributes(feat.attributes())
-        tf.setGeometry(feat.geometry())
-        ok, _ = tmp.dataProvider().addFeatures([tf])
-        tmp.updateExtents()
-
-        if (not ok) or tmp.featureCount() == 0:
-            extracted = clean_geom(feat.geometry())
-            if extracted is None or extracted.isEmpty():
-                return None
-            tmp = QgsVectorLayer(
-                f"{QgsWkbTypes.displayString(source_wkb)}?crs={source_crs.authid()}",
-                "single_fix_input_extracted",
-                "memory"
-            )
-            tmp.setCrs(source_crs)
-            tmp.dataProvider().addAttributes(fields)
-            tmp.updateFields()
-            tf = QgsFeature(fields)
-            tf.setAttributes(feat.attributes())
-            tf.setGeometry(extracted)
-            ok, _ = tmp.dataProvider().addFeatures([tf])
-            tmp.updateExtents()
-            if (not ok) or tmp.featureCount() == 0:
-                return None
-
-        res = processing.run(
-            "native:fixgeometries",
-            {"INPUT": tmp, "METHOD": 1, "OUTPUT": "TEMPORARY_OUTPUT"},
-            context=context,
-            feedback=feedback,
-            is_child_algorithm=False
-        )
-        fixed_layer = resolve_processing_output_layer(res["OUTPUT"], context)
-        if fixed_layer is None or fixed_layer.featureCount() == 0:
+        geom = feat.geometry()
+        if geom is None or geom.isEmpty():
             return None
-
-        best = None
-        for ff in fixed_layer.getFeatures(QgsFeatureRequest().setInvalidGeometryCheck(QgsFeatureRequest.GeometryNoCheck)):
-            fg = finalize_fixed_geom(ff.geometry(), source_wkb)
-            if fg is None or fg.isEmpty():
-                continue
-            try:
-                if fg.isGeosValid():
-                    if best is None or fg.area() > best.area():
-                        best = fg
-            except Exception:
-                if best is None or fg.area() > best.area():
-                    best = fg
-        return best
+        g = clean_try_makevalid_buffer(geom, source_wkb)
+        if g and not g.isEmpty() and is_valid_polygon_geom(g):
+            return g
+        g = repair_micro_self_intersection_spike(geom, source_wkb)
+        if g and not g.isEmpty() and is_valid_polygon_geom(g):
+            return g
+        return None
     except Exception:
         return None
 
