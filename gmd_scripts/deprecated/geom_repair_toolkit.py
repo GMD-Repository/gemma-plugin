@@ -1845,13 +1845,78 @@ class PolygonFixerWorker(QThread):
             # polygonize reconstruction below; just strip the
             # duplicate/near-duplicate vertex directly with the
             # purpose-built QGIS method for it.
+            #
+            # IMPORTANT — tolerance sweep:
+            # removeDuplicateNodes()'s default epsilon is ~8.9e-16 (4 × DBL_EPSILON),
+            # which only removes bit-for-bit identical coordinates. But the scanner
+            # flags near-duplicate vertices via validateGeometry(), which uses QGIS's
+            # internal validator at a much coarser tolerance. Calling with no arguments
+            # therefore always returns False for the kind of near-duplicate vertex this
+            # scanner actually detects, making every Duplicate Vertex row show
+            # "already valid — left unchanged." Fix: sweep through increasing
+            # tolerances (matching the spike-repair approach used elsewhere) until
+            # removeDuplicateNodes() removes something OR the QGIS internal validator
+            # stops flagging the result. Fall back to makeValid() as a last resort.
             if orig is not None and not orig.isEmpty() and orig.isGeosValid() and orig.isSimple():
-                deduped = QgsGeometry(orig)
+                deduped = None
+                had_dupes = False
+
+                # Build bounding-box diagonal for relative tolerance scaling,
+                # same as _repair_micro_self_intersection_spike().
                 try:
-                    had_dupes = deduped.removeDuplicateNodes()
+                    bb = orig.boundingBox()
+                    diag = ((bb.width() ** 2) + (bb.height() ** 2)) ** 0.5
                 except Exception:
-                    had_dupes = False
-                if had_dupes:
+                    diag = 0
+                if not diag or diag <= 0:
+                    diag = 1.0
+
+                # Sweep from very tight to moderately loose tolerances.
+                # Stop as soon as removeDuplicateNodes() reports a change AND
+                # the QGIS internal validator no longer flags the result.
+                for scale in (1e-12, 5e-12, 1e-11, 5e-11, 1e-10, 5e-10,
+                              1e-9, 5e-9, 1e-8, 5e-8, 1e-7, 5e-7, 1e-6):
+                    tol = diag * scale
+                    if tol <= 0:
+                        continue
+                    try:
+                        candidate = QgsGeometry(orig)
+                        changed = candidate.removeDuplicateNodes(tol, False)
+                    except Exception:
+                        continue
+                    if not changed:
+                        continue
+                    # Verify that this tolerance actually satisfies the QGIS
+                    # internal validator (not just GEOS validity).
+                    try:
+                        remaining = candidate.validateGeometry()
+                    except Exception:
+                        remaining = []
+                    if not remaining:
+                        deduped = candidate
+                        had_dupes = True
+                        break
+                    # Partial improvement — keep the best result so far and
+                    # keep trying a larger tolerance.
+                    if deduped is None:
+                        deduped = candidate
+                        had_dupes = True
+
+                # If the tolerance sweep removed nodes but the QGIS validator
+                # still complains, try makeValid() on the deduped geometry as
+                # a second pass.  Also try makeValid() on the original directly
+                # in case removeDuplicateNodes never found anything to remove.
+                if not had_dupes or (deduped is not None and deduped.validateGeometry()):
+                    try:
+                        mv_src = deduped if (deduped is not None and not deduped.isEmpty()) else orig
+                        mv = mv_src.makeValid()
+                        if mv and not mv.isEmpty() and not mv.validateGeometry():
+                            deduped = mv
+                            had_dupes = True
+                    except Exception:
+                        pass
+
+                if had_dupes and deduped is not None and not deduped.isEmpty():
                     new_geom = deduped
                     fixed += 1
                     self.log.emit(f"   FID {feat.id()} repaired by removing duplicate/near-duplicate vertex(es).")
