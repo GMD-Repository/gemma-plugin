@@ -1268,21 +1268,38 @@ class CheckerTab(QWidget):
             span = int(value / self.fix_total_jobs)
             self.progress.setValue(min(100, base + span))
 
+    def _apply_worker_repaired_geometries(self, worker, layer):
+        if not worker or not hasattr(worker, "repaired_geometries") or not worker.repaired_geometries:
+            return
+        repaired = worker.repaired_geometries
+        if not layer or not layer.isValid():
+            return
+        if not layer.isEditable():
+            if not layer.startEditing():
+                self._log(f"Could not start editing on {layer.name()} to apply repairs.")
+                return
+            self._log(f"{layer.name()} is now in edit mode (unsaved). Use QGIS's Save/Cancel Edits to keep or discard.")
+        for fid, new_geom in repaired.items():
+            if new_geom is not None and not new_geom.isNull():
+                layer.changeGeometry(fid, new_geom)
+        layer.triggerRepaint()
+        self._log(f"Applied {len(repaired)} repaired geometry updates to {layer.name()} in edit mode.")
+
     def _done_fixer(self, fixed, copied):
         self.fix_done_jobs += 1
+        self._apply_worker_repaired_geometries(self.worker, self.current_job_layer)
         self._log(f"Fixed: {fixed}   Left unchanged: {copied}")
         key = self.current_job_layer.id()
-        if self.worker.output_layer is not None:
-            self.fix_edited_layers[key] = self.worker.output_layer
+        self.fix_edited_layers[key] = self.current_job_layer
         self.fix_touched_fids.setdefault(key, set()).update(getattr(self.worker, "touched_fids", set()))
         self._start_next_fix_job()
 
     def _done_null(self, recovered, copied, manual):
         self.fix_done_jobs += 1
+        self._apply_worker_repaired_geometries(self.worker, self.current_job_layer)
         self._log(f"Recovered: {recovered}   Manual review: {manual}")
         key = self.current_job_layer.id()
-        if self.worker.output_layer is not None:
-            self.fix_edited_layers[key] = self.worker.output_layer
+        self.fix_edited_layers[key] = self.current_job_layer
         self.fix_touched_fids.setdefault(key, set()).update(getattr(self.worker, "touched_fids", set()))
         self._start_next_fix_job()
 
@@ -1623,74 +1640,19 @@ class PolygonFixerWorker(QThread):
 
 
     def _qgis_fix_single_feature_fallback(self, source_layer, source_feat, context, feedback):
-        """Last-resort fallback for selected Invalid/Wrong-type features.
-
-        This is only used when the original polygonize/makeValid workflow cannot
-        return a valid polygon. It runs QGIS native:fixgeometries on the original
-        feature record, then converts the result back to the input layer WKB type.
-        """
+        """Last-resort fast in-memory GEOS fallback for selected Invalid/Wrong-type features."""
         try:
-            tmp = QgsVectorLayer(
-                f"{QgsWkbTypes.displayString(source_layer.wkbType())}?crs={source_layer.crs().authid()}",
-                source_layer.name() + "_single_fix_input",
-                "memory"
-            )
-            tmp.setCrs(source_layer.crs())
-            tmp.dataProvider().addAttributes(source_layer.fields())
-            tmp.updateFields()
-
-            tf = QgsFeature(source_layer.fields())
-            tf.setAttributes(source_feat.attributes())
-            tf.setGeometry(source_feat.geometry())
-            ok, _ = tmp.dataProvider().addFeatures([tf])
-            tmp.updateExtents()
-
-            if (not ok) or tmp.featureCount() == 0:
-                # Wrong-type GeometryCollection may be rejected by a polygon memory layer.
-                # Try to extract polygon parts first, then run Fix Geometries.
-                extracted = self._clean(source_feat.geometry())
-                if extracted is None or extracted.isEmpty():
-                    return None
-                tmp = QgsVectorLayer(
-                    f"{QgsWkbTypes.displayString(source_layer.wkbType())}?crs={source_layer.crs().authid()}",
-                    source_layer.name() + "_single_fix_input_extracted",
-                    "memory"
-                )
-                tmp.setCrs(source_layer.crs())
-                tmp.dataProvider().addAttributes(source_layer.fields())
-                tmp.updateFields()
-                tf = QgsFeature(source_layer.fields())
-                tf.setAttributes(source_feat.attributes())
-                tf.setGeometry(extracted)
-                ok, _ = tmp.dataProvider().addFeatures([tf])
-                tmp.updateExtents()
-                if (not ok) or tmp.featureCount() == 0:
-                    return None
-
-            res = processing.run(
-                "native:fixgeometries",
-                {"INPUT": tmp, "METHOD": 1, "OUTPUT": "TEMPORARY_OUTPUT"},
-                context=context,
-                feedback=feedback,
-                is_child_algorithm=False
-            )
-            fixed_layer = resolve_processing_output_layer(res["OUTPUT"], context)
-            if fixed_layer is None or fixed_layer.featureCount() == 0:
+            geom = source_feat.geometry()
+            if geom is None or geom.isEmpty():
                 return None
-
-            best = None
-            for ff in fixed_layer.getFeatures(QgsFeatureRequest().setInvalidGeometryCheck(QgsFeatureRequest.GeometryNoCheck)):
-                fg = self._finalize_fixed_geom(ff.geometry(), source_layer.wkbType())
-                if fg is None or fg.isEmpty():
-                    continue
-                try:
-                    if fg.isGeosValid():
-                        if best is None or fg.area() > best.area():
-                            best = fg
-                except Exception:
-                    if best is None or fg.area() > best.area():
-                        best = fg
-            return best
+            wkb = source_layer.wkbType()
+            g = self._clean_try_makevalid_buffer(geom, wkb)
+            if g and not g.isEmpty() and self._is_valid_polygon_geom(g):
+                return g
+            g = self._repair_micro_self_intersection_spike(geom, wkb)
+            if g and not g.isEmpty() and self._is_valid_polygon_geom(g):
+                return g
+            return None
         except Exception:
             return None
 
@@ -1717,7 +1679,11 @@ class PolygonFixerWorker(QThread):
         for feat in source_layer.getFeatures(req):
             out = QgsFeature(source_layer.fields())
             out.setAttributes(feat.attributes())
-            out.setGeometry(feat.geometry())
+            clean_g = self._clean(feat.geometry())
+            if clean_g and not clean_g.isEmpty():
+                out.setGeometry(clean_g)
+            else:
+                out.setGeometry(feat.geometry())
             out_feats.append(out)
 
         tmp.dataProvider().addFeatures(out_feats)
@@ -1730,20 +1696,11 @@ class PolygonFixerWorker(QThread):
         SINGLE = (QgsWkbTypes.Polygon, QgsWkbTypes.Polygon25D,
                   QgsWkbTypes.PolygonZ, QgsWkbTypes.PolygonM, QgsWkbTypes.PolygonZM)
 
-        old_selection = list(layer.selectedFeatureIds())
-
         if self.selected_only:
             sel_ids = list(self.forced_selected_ids) if self.forced_selected_ids else list(layer.selectedFeatureIds())
             if not sel_ids:
                 self.log.emit("No features selected."); self.finished.emit(0, 0); return
 
-            # IMPORTANT:
-            # Do NOT rebuild the checked rows into a new memory polygon layer here.
-            # Wrong-type errors can be GeometryCollection features inside a polygon layer,
-            # and a polygon memory provider may reject those geometries, causing
-            # 'selected error input layer has no features'.
-            # Instead, search the FIDs in the ORIGINAL layer and temporarily select them,
-            # exactly like the original 2_geometry_fixer.py selected-features workflow.
             found_ids = []
             req_check = QgsFeatureRequest().setInvalidGeometryCheck(QgsFeatureRequest.GeometryNoCheck)
             wanted = set(sel_ids)
@@ -1756,8 +1713,7 @@ class PolygonFixerWorker(QThread):
                 self.finished.emit(0, 0); return
 
             sel_ids = found_ids
-            layer.selectByIds(sel_ids)
-            src = QgsProcessingFeatureSourceDefinition(layer.id(), selectedFeaturesOnly=True)
+            src = self._make_selected_input_layer(layer, sel_ids)
         else:
             req = QgsFeatureRequest().setInvalidGeometryCheck(QgsFeatureRequest.GeometryNoCheck)
             sel_ids = [f.id() for f in layer.getFeatures(req)]
@@ -1772,13 +1728,9 @@ class PolygonFixerWorker(QThread):
                                 context=ctx, feedback=fb, is_child_algorithm=False)
             ll = resolve_processing_output_layer(lr["OUTPUT"], ctx)
         except Exception as e:
-            if self.selected_only:
-                layer.selectByIds(old_selection)
             self.log.emit(f"Preparing selected feature boundaries failed: {e}"); self.finished.emit(0, 0); return
 
         if ll is None or ll.featureCount() == 0:
-            if self.selected_only:
-                layer.selectByIds(old_selection)
             self.log.emit("No repair boundary was created."); self.finished.emit(0, 0); return
 
         self.log.emit("Building repair candidates…"); self.progress.emit(25)
@@ -1787,13 +1739,9 @@ class PolygonFixerWorker(QThread):
                                 context=ctx, feedback=fb, is_child_algorithm=False)
             pl = resolve_processing_output_layer(pr["OUTPUT"], ctx)
         except Exception as e:
-            if self.selected_only:
-                layer.selectByIds(old_selection)
             self.log.emit(f"Building repair candidates failed: {e}"); self.finished.emit(0, 0); return
 
         if pl is None or pl.featureCount() == 0:
-            if self.selected_only:
-                layer.selectByIds(old_selection)
             self.log.emit("No repair candidate was created."); self.finished.emit(0, 0); return
 
         self.log.emit(f"Repair candidates created: {pl.featureCount()}")
@@ -1807,27 +1755,12 @@ class PolygonFixerWorker(QThread):
         p_lookup = {f.id(): f for f in p_feats}
 
         if not p_feats:
-            if self.selected_only:
-                layer.selectByIds(old_selection)
             self.log.emit("No valid polygonized geometry."); self.finished.emit(0, 0); return
 
-        # Edit the ORIGINAL layer's geometries directly instead of building a
-        # separate "_FIXED" output layer. Changes are left UNCOMMITTED — the
-        # layer enters QGIS's normal editing mode (edit-pencil icon, asterisk
-        # in the legend). Nothing is written to disk here; use QGIS's own
-        # Save/Cancel Edits to keep or discard the repair.
-        if not layer.isEditable():
-            if not layer.startEditing():
-                self.log.emit(f"Could not start editing on {layer.name()} — it may be read-only "
-                              f"or a joined/virtual layer. No changes were made.")
-                if self.selected_only:
-                    layer.selectByIds(old_selection)
-                self.finished.emit(0, 0); return
-            self.log.emit(f"{layer.name()} is now in edit mode (unsaved). Use QGIS's Save/Cancel "
-                          f"Edits to keep or discard these changes.")
         self.output_layer = layer
+        self.repaired_geometries = {}
 
-        self.log.emit("Applying repaired geometries to the original layer…"); self.progress.emit(60)
+        self.log.emit("Calculating repaired geometries…"); self.progress.emit(60)
 
         fixed = 0; copied = 0; sel_set = set(sel_ids); total = len(sel_ids)
         req = QgsFeatureRequest().setInvalidGeometryCheck(QgsFeatureRequest.GeometryNoCheck).setFilterFids(sel_ids)
@@ -1838,31 +1771,10 @@ class PolygonFixerWorker(QThread):
             orig = feat.geometry()
             new_geom = None  # left None means "no change needed / could not fix"
 
-            # Cheap path for features that are already GEOS-valid and simple
-            # (this is exactly what a "Duplicate Vertex" row is, by
-            # definition — that check only fires when GEOS already
-            # considers the geometry fine). No need to run the full
-            # polygonize reconstruction below; just strip the
-            # duplicate/near-duplicate vertex directly with the
-            # purpose-built QGIS method for it.
-            #
-            # IMPORTANT — tolerance sweep:
-            # removeDuplicateNodes()'s default epsilon is ~8.9e-16 (4 × DBL_EPSILON),
-            # which only removes bit-for-bit identical coordinates. But the scanner
-            # flags near-duplicate vertices via validateGeometry(), which uses QGIS's
-            # internal validator at a much coarser tolerance. Calling with no arguments
-            # therefore always returns False for the kind of near-duplicate vertex this
-            # scanner actually detects, making every Duplicate Vertex row show
-            # "already valid — left unchanged." Fix: sweep through increasing
-            # tolerances (matching the spike-repair approach used elsewhere) until
-            # removeDuplicateNodes() removes something OR the QGIS internal validator
-            # stops flagging the result. Fall back to makeValid() as a last resort.
             if orig is not None and not orig.isEmpty() and orig.isGeosValid() and orig.isSimple():
                 deduped = None
                 had_dupes = False
 
-                # Build bounding-box diagonal for relative tolerance scaling,
-                # same as _repair_micro_self_intersection_spike().
                 try:
                     bb = orig.boundingBox()
                     diag = ((bb.width() ** 2) + (bb.height() ** 2)) ** 0.5
@@ -1871,9 +1783,6 @@ class PolygonFixerWorker(QThread):
                 if not diag or diag <= 0:
                     diag = 1.0
 
-                # Sweep from very tight to moderately loose tolerances.
-                # Stop as soon as removeDuplicateNodes() reports a change AND
-                # the QGIS internal validator no longer flags the result.
                 for scale in (1e-12, 5e-12, 1e-11, 5e-11, 1e-10, 5e-10,
                               1e-9, 5e-9, 1e-8, 5e-8, 1e-7, 5e-7, 1e-6):
                     tol = diag * scale
@@ -1886,8 +1795,6 @@ class PolygonFixerWorker(QThread):
                         continue
                     if not changed:
                         continue
-                    # Verify that this tolerance actually satisfies the QGIS
-                    # internal validator (not just GEOS validity).
                     try:
                         remaining = candidate.validateGeometry()
                     except Exception:
@@ -1896,16 +1803,10 @@ class PolygonFixerWorker(QThread):
                         deduped = candidate
                         had_dupes = True
                         break
-                    # Partial improvement — keep the best result so far and
-                    # keep trying a larger tolerance.
                     if deduped is None:
                         deduped = candidate
                         had_dupes = True
 
-                # If the tolerance sweep removed nodes but the QGIS validator
-                # still complains, try makeValid() on the deduped geometry as
-                # a second pass.  Also try makeValid() on the original directly
-                # in case removeDuplicateNodes never found anything to remove.
                 if not had_dupes or (deduped is not None and deduped.validateGeometry()):
                     try:
                         mv_src = deduped if (deduped is not None and not deduped.isEmpty()) else orig
@@ -1925,7 +1826,7 @@ class PolygonFixerWorker(QThread):
                     self.log.emit(f"   FID {feat.id()} was already valid with no duplicate vertices found — left unchanged.")
 
                 if new_geom is not None:
-                    layer.changeGeometry(feat.id(), new_geom)
+                    self.repaired_geometries[feat.id()] = new_geom
                     self.touched_fids.add(feat.id())
                 continue
 
@@ -1958,12 +1859,6 @@ class PolygonFixerWorker(QThread):
                         if pg.intersects(co):
                             inter = pg.intersection(co)
                             if inter and not inter.isEmpty() and inter.area() > 0:
-                                # Use the clipped intersection, not the whole polygonize
-                                # face — polygonize runs over ALL selected features'
-                                # boundaries at once, so a face can extend beyond this
-                                # feature's own footprint into a neighbor's area. Taking
-                                # the raw face here would union that extra area in and
-                                # create a new overlap with the neighbor.
                                 cands.append(inter)
                     except:
                         if pg.boundingBox().intersects(co.boundingBox()):
@@ -1974,12 +1869,14 @@ class PolygonFixerWorker(QThread):
                                 cands.append(pg)
 
                 if cands:
-                    ng = QgsGeometry.unaryUnion(cands)
-                    ng = self._finalize_fixed_geom(ng, layer.wkbType())
+                    try:
+                        ng = QgsGeometry.unaryUnion(cands)
+                    except Exception:
+                        ng = None
+                    ng = self._finalize_fixed_geom(ng, layer.wkbType()) if ng else None
                     if ng and not ng.isEmpty():
                         new_geom = ng; fixed += 1
                     else:
-                        # Fallback: use the cleaned original geometry instead of leaving the invalid original.
                         fallback = self._finalize_fixed_geom(co, layer.wkbType())
                         if fallback and not fallback.isEmpty():
                             new_geom = fallback; fixed += 1
@@ -1997,8 +1894,6 @@ class PolygonFixerWorker(QThread):
                                 else:
                                     copied += 1
                 else:
-                    # For stubborn self-intersections, polygonize may produce no matching face.
-                    # Do not immediately give up on the bad geometry; first try the cleaned original.
                     fallback = self._finalize_fixed_geom(co, layer.wkbType())
                     if fallback and not fallback.isEmpty():
                         new_geom = fallback; fixed += 1
@@ -2017,8 +1912,6 @@ class PolygonFixerWorker(QThread):
                                 copied += 1
                                 self.log.emit(f"   FID {feat.id()} no polygonized match — left unchanged.")
 
-            # Final selected-feature guard: do not knowingly write an invalid selected geometry
-            # when a QGIS Fix Geometries fallback can repair it.
             if new_geom is not None:
                 try:
                     if not new_geom.isEmpty() and not new_geom.isGeosValid():
@@ -2034,13 +1927,11 @@ class PolygonFixerWorker(QThread):
                 except Exception:
                     pass
 
-                layer.changeGeometry(feat.id(), new_geom)
+                self.repaired_geometries[feat.id()] = new_geom
                 self.touched_fids.add(feat.id())
 
-        if self.selected_only:
-            layer.selectByIds(old_selection)
         self.progress.emit(100)
-        self.log.emit(f"\nFinished.Fixed: {fixed}   Left unchanged: {copied}   "
+        self.log.emit(f"\nFinished. Fixed: {fixed}   Left unchanged: {copied}   "
                       f"(unsaved — edit {layer.name()} to keep, or Cancel Edits to discard)")
         self.finished.emit(fixed, copied)
 
@@ -2054,8 +1945,9 @@ class NullFixerWorker(QThread):
     def __init__(self, layer, selected_only, selected_ids=None):
         super().__init__()
         self.layer = layer; self.selected_only = selected_only; self.forced_selected_ids = set(selected_ids or []); self._cancel = False
-        self.output_layer = None   # set to the source layer itself once run() starts editing it in place
+        self.output_layer = None   # set to the source layer itself
         self.touched_fids = set()  # attribute tuples of rows this worker actually changed (not copied through)
+        self.repaired_geometries = {}
 
     def cancel(self): self._cancel = True
 
@@ -2203,25 +2095,15 @@ class NullFixerWorker(QThread):
             note_txt = f"Missing: {len(missing_ids)}, candidates: {len(cand_gaps)}. Safe auto-match not possible."
             self.log.emit("Auto-recovery not applied — " + note_txt)
 
-        # Edit the ORIGINAL layer's geometries directly instead of building a
-        # separate "_FIXED" output layer. Changes are left UNCOMMITTED — the
-        # layer enters QGIS's normal editing mode. Nothing is written to disk
-        # here; use QGIS's own Save/Cancel Edits to keep or discard the repair.
-        if not layer.isEditable():
-            if not layer.startEditing():
-                self.log.emit(f"Could not start editing on {layer.name()} — it may be read-only "
-                              f"or a joined/virtual layer. No changes were made.")
-                self.finished.emit(0, 0, 0); return
-            self.log.emit(f"{layer.name()} is now in edit mode (unsaved). Use QGIS's Save/Cancel "
-                          f"Edits to keep or discard these changes.")
         self.output_layer = layer
+        self.repaired_geometries = {}
 
         recovered = 0; copied = 0; manual = 0; total = len(missing_ids)
         for i, fid in enumerate(missing_ids):
             if self._cancel: break
             if total: self.progress.emit(80 + int((i / total) * 18))
             if fid in recover_map:
-                layer.changeGeometry(fid, recover_map[fid])
+                self.repaired_geometries[fid] = recover_map[fid]
                 recovered += 1
                 self.touched_fids.add(fid)
                 self.log.emit(f"FID {fid}: Recovered. Method: {method_txt}. Note: {note_txt}")

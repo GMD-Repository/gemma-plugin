@@ -858,27 +858,32 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
                 if norm_key not in normalized_psgc_keys:
                     normalized_psgc_keys.append(norm_key)
 
-        # Loop LGU layer features and calculate matches/populate preview rows
+        # Loop LGU layer features and calculate matches/populate preview rows with memoization
         matched_count = 0
         total_features = lgu_layer.featureCount()
         preview_rows = []
+        preview_match_cache = {}
         
         for current, feature in enumerate(lgu_layer.getFeatures()):
             lgu_key_val = feature.attribute(field_val)
             lgu_key_str = str(lgu_key_val).strip() if lgu_key_val is not None and lgu_key_val != NULL else ""
             
-            exact_key = lgu_key_str.lower().strip()
-            norm_key = normalize_barangay_name(lgu_key_str)
-            
-            psgc_data = None
-            if exact_key in psgc_lookup:
-                psgc_data = psgc_lookup[exact_key]
-            elif norm_key in psgc_lookup:
-                psgc_data = psgc_lookup[norm_key]
-            elif norm_key and normalized_psgc_keys:
-                close_matches = difflib.get_close_matches(norm_key, normalized_psgc_keys, n=1, cutoff=0.75)
-                if close_matches:
-                    psgc_data = psgc_lookup[close_matches[0]]
+            if lgu_key_str in preview_match_cache:
+                psgc_data = preview_match_cache[lgu_key_str]
+            else:
+                exact_key = lgu_key_str.lower().strip()
+                norm_key = normalize_barangay_name(lgu_key_str)
+                
+                psgc_data = None
+                if exact_key in psgc_lookup:
+                    psgc_data = psgc_lookup[exact_key]
+                elif norm_key in psgc_lookup:
+                    psgc_data = psgc_lookup[norm_key]
+                elif norm_key and normalized_psgc_keys:
+                    close_matches = difflib.get_close_matches(norm_key, normalized_psgc_keys, n=1, cutoff=0.75)
+                    if close_matches:
+                        psgc_data = psgc_lookup[close_matches[0]]
+                preview_match_cache[lgu_key_str] = psgc_data
                     
             if psgc_data:
                 matched_count += 1
@@ -1710,22 +1715,41 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
             for cand_id in candidates:
                 j = bgy_map[cand_id]
                 geom_b = staged[j]["geom"]
-
-                # Compute shared boundary length
-                intersection = geom_c.intersection(geom_b)
-                if intersection is None or intersection.isEmpty():
+                if geom_b is None or geom_b.isNull() or geom_b.isEmpty():
                     continue
-                shared_len = intersection.length()   # 0 for point touches; > 0 for shared edges
-                if shared_len > best_len:
-                    best_len = shared_len
-                    best_idx = j
+
+                # Compute shared boundary length safely with GEOS protection
+                try:
+                    intersection = geom_c.intersection(geom_b)
+                    if intersection is None or intersection.isEmpty():
+                        continue
+                    shared_len = intersection.length()   # 0 for point touches; > 0 for shared edges
+                    if shared_len > best_len:
+                        best_len = shared_len
+                        best_idx = j
+                except Exception:
+                    try:
+                        vg_c = geom_c.makeValid() if not geom_c.isGeosValid() else geom_c
+                        vg_b = geom_b.makeValid() if not geom_b.isGeosValid() else geom_b
+                        if vg_c and vg_b and not vg_c.isEmpty() and not vg_b.isEmpty():
+                            intersection = vg_c.intersection(vg_b)
+                            if intersection and not intersection.isEmpty():
+                                shared_len = intersection.length()
+                                if shared_len > best_len:
+                                    best_len = shared_len
+                                    best_idx = j
+                    except Exception:
+                        pass
 
             # Fallback: no edge-sharing neighbour found — use nearest centroid
             if best_idx is None and bgy_map:
-                centroid_c = geom_c.centroid().asPoint()
-                nearest_ids = bgy_index.nearestNeighbor(centroid_c, 1)
-                if nearest_ids:
-                    best_idx = bgy_map[nearest_ids[0]]
+                try:
+                    centroid_c = geom_c.centroid().asPoint()
+                    nearest_ids = bgy_index.nearestNeighbor(centroid_c, 1)
+                    if nearest_ids:
+                        best_idx = bgy_map[nearest_ids[0]]
+                except Exception:
+                    pass
 
             if best_idx is not None:
                 donor = staged[best_idx]["attrs"]
