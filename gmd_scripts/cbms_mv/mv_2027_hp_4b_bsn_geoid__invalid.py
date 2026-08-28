@@ -34,17 +34,17 @@ from PyQt5.QtGui import QIcon
 from .. import gmdhelpers
 
 
-class mv_2027_hp_4b_bsn_geoid__missing(QgsProcessingAlgorithm):
+class mv_2027_hp_4b_bsn_geoid__invalid(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"
     INPUT_LAYER = "INPUT_LAYER"
     OUTPUT = "OUTPUT"
 
     def name(self) -> str:
-        return "mv_2027_hp_4b_bsn_geoid__missing"
+        return "mv_2027_hp_4b_bsn_geoid__invalid"
 
     def displayName(self) -> str:
-        return "mv_2027_hp_4b_bsn_geoid__missing"
+        return "mv_2027_hp_4b_bsn_geoid__invalid"
 
     def group(self) -> str:
         return "2027 CBMS"
@@ -83,7 +83,7 @@ class mv_2027_hp_4b_bsn_geoid__missing(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
-                "mv_2027_hp_4b_bsn_geoid__missing",
+                "mv_2027_hp_4b_bsn_geoid__invalid",
                 QgsProcessing.TypeVectorAnyGeometry,
             )
         )
