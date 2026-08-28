@@ -50,5 +50,52 @@ class TestPsaLguMapComparison(unittest.TestCase):
         self.assertEqual(self.mod.extract_code(""), "")
 
 
+class TestFindDefaultLayerId(unittest.TestCase):
+    """Test suite for the dialog pre-fill helper find_default_layer_id."""
+
+    def setUp(self):
+        self.mod = importlib.import_module("gmd_scripts.psa_lgu_map_comparison")
+        self.project = self.mod.QgsProject.instance()
+        self.project.removeAllMapLayers()
+
+    def tearDown(self):
+        self.project.removeAllMapLayers()
+
+    def add_polygon_layer(self, name):
+        layer = self.mod.QgsVectorLayer("Polygon?crs=EPSG:4326", name, "memory")
+        self.project.addMapLayer(layer)
+        return layer
+
+    def find(self, hints, exclude_ids=()):
+        return self.mod.find_default_layer_id(
+            hints, self.mod.QgsWkbTypes.PolygonGeometry, exclude_ids=exclude_ids)
+
+    def test_picks_psa_and_lgu_layers_by_name(self):
+        """The PSA hints should find the PSA layer and the LGU hints the LGU one."""
+        psa = self.add_polygon_layer("000102_PSA")
+        lgu = self.add_polygon_layer("000102_LGU")
+        self.assertEqual(self.find(self.mod.PSA_LAYER_HINTS), psa.id())
+        self.assertEqual(self.find(self.mod.LGU_LAYER_HINTS), lgu.id())
+
+    def test_returns_none_when_no_layer_matches(self):
+        """A project with no PSA-like layer should pre-fill nothing."""
+        self.add_polygon_layer("Barangay Boundary")
+        self.assertIsNone(self.find(self.mod.PSA_LAYER_HINTS))
+
+    def test_skips_this_algorithms_own_output_layers(self):
+        """Outputs of a previous run must not be offered as inputs on a re-run."""
+        self.add_polygon_layer("000102_PSA_Matched")
+        self.add_polygon_layer("000102_PSA_Unmatched")
+        self.assertIsNone(self.find(self.mod.PSA_LAYER_HINTS))
+        source = self.add_polygon_layer("000102_PSA")
+        self.assertEqual(self.find(self.mod.PSA_LAYER_HINTS), source.id())
+
+    def test_exclude_ids_keeps_psa_pick_out_of_the_lgu_running(self):
+        """A layer already chosen for PSA is not reused for LGU."""
+        both = self.add_polygon_layer("000102_PSA_LGU_draft")
+        self.assertEqual(self.find(self.mod.PSA_LAYER_HINTS), both.id())
+        self.assertIsNone(self.find(self.mod.LGU_LAYER_HINTS, exclude_ids=(both.id(),)))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -4,6 +4,7 @@ import re
 from qgis.PyQt.QtCore import QCoreApplication, QVariant
 from qgis.PyQt.QtGui import QColor, QIcon
 from qgis.core import (
+    QgsProject,
     QgsProcessing,
     QgsProcessingAlgorithm,
     QgsProcessingException,
@@ -31,6 +32,142 @@ from qgis.core import (
 # other spellings/codes (PSGC, brgy_code, etc.) are not guessed, so the
 # user is expected to pick those explicitly when auto-detection fails.
 GEOCODE_FIELD_HINTS = ["geocode"]
+
+# Layer-name keywords used to pre-select the three input layers when the
+# dialog opens. Each list is tried in order, so the more specific spelling
+# wins over the looser one (e.g. "000102_psa" before a bare "psa").
+PSA_LAYER_HINTS = ["_psa", "psa"]
+LGU_LAYER_HINTS = ["_lgu", "lgu"]
+BUILDING_LAYER_HINTS = [
+    "bldgpts", "bldg_point", "bldgpoint", "building point", "building_point",
+    "geotagged", "bldg", "building",
+]
+
+# Name fragments of this algorithm's own output layers. They match the input
+# hints above ("000102_PSA_Matched" contains "psa"), so they're skipped when
+# picking defaults -- otherwise a second run would pre-select the first run's
+# results instead of the original source layers.
+OUTPUT_NAME_MARKERS = [
+    "_matched", "_unmatched", "inside lgu boundary", "outside lgu boundary",
+]
+
+
+def find_default_layer_id(hints, geometry_type, exclude_ids=()):
+    """Return the id of a loaded vector layer of geometry_type whose name
+    contains one of hints (case-insensitive), or None if the project has no
+    such layer. Candidates are considered in name order so that reopening
+    the dialog on an unchanged project always pre-selects the same layer.
+    Returns None rather than raising if the project can't be read -- a
+    missing default just leaves that box empty."""
+    try:
+        project = QgsProject.instance()
+        if project is None:
+            return None
+        candidates = []
+        for layer in project.mapLayers().values():
+            if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
+                continue
+            if layer.id() in exclude_ids:
+                continue
+            if layer.geometryType() != geometry_type:
+                continue
+            name_lower = layer.name().lower()
+            if any(marker in name_lower for marker in OUTPUT_NAME_MARKERS):
+                continue
+            candidates.append((name_lower, layer.id()))
+        candidates.sort()
+        for hint in hints:
+            for name_lower, layer_id in candidates:
+                if hint in name_lower:
+                    return layer_id
+    except Exception:
+        return None
+    return None
+
+
+def find_default_geocode_field(layer_id):
+    """Return the Geocode field name on the layer with layer_id, so the
+    dialog's Geocode box comes up already filled in for a pre-selected
+    layer. None (no such layer, or no Geocode-like field) leaves the box
+    empty, which processAlgorithm() then resolves the same way as before."""
+    if not layer_id:
+        return None
+    try:
+        layer = QgsProject.instance().mapLayer(layer_id)
+        if layer is None:
+            return None
+        return guess_geocode_field([f.name() for f in layer.fields()])
+    except Exception:
+        return None
+
+
+def _move_layer_node(layer_id, insert_index=None):
+    """Move the tree node for layer_id to be a direct child of the project's
+    layer tree root, either inserted at insert_index (0 = very top of the
+    Layers panel) or appended at the end (insert_index=None, the bottom).
+
+    Repositioning explicitly like this -- rather than relying on QGIS's own
+    position for newly added layers, which is a user-configurable setting
+    (Settings > Options > General > "Add new layers to...") and not
+    guaranteed to be "top" -- is what actually guarantees the ordering this
+    module promises: output layers above the original inputs, and the
+    basemap below everything. No-op if the layer has no tree node (e.g. it
+    was removed from the project before this ran)."""
+    root = QgsProject.instance().layerTreeRoot()
+    node = root.findLayer(layer_id)
+    if node is None:
+        return
+    parent = node.parent()
+    clone = node.clone()
+    if insert_index is None:
+        root.addChildNode(clone)
+    else:
+        root.insertChildNode(insert_index, clone)
+    if parent is not None:
+        parent.removeChildNode(node)
+
+
+# Same display name HCMGIS > Basemaps > Google Satellite uses for the layer
+# it adds -- used both to build the layer and to recognize one already in
+# the project, so a re-run never piles up duplicates.
+GOOGLE_SATELLITE_BASEMAP_NAME = "Google Satellite"
+
+
+def ensure_google_satellite_basemap():
+    """Load the same "Google Satellite" XYZ basemap that HCMGIS > Basemaps >
+    Google Satellite adds, positioned at the very bottom of the layer tree
+    so it sits underneath every other layer instead of on top of them --
+    then the reviewer always has imagery to compare against without adding
+    it by hand.
+
+    A no-op when a layer named "Google Satellite" is already in the
+    project (this only ever needs to run once), or when the HCMGIS plugin
+    isn't installed/importable. HCMGIS is a required dependency of this
+    plugin (see dependency_checker.py), but this is a convenience on top of
+    the comparison run, not part of it -- its absence must never fail the
+    algorithm itself.
+    """
+    project = QgsProject.instance()
+    for layer in project.mapLayers().values():
+        if layer.name().lower() == GOOGLE_SATELLITE_BASEMAP_NAME.lower():
+            return
+    try:
+        from HCMGIS import hcmgis_library
+    except ImportError:
+        return
+    try:
+        before_ids = set(project.mapLayers().keys())
+        hcmgis_library.hcmgis_basemap(GOOGLE_SATELLITE_BASEMAP_NAME)
+        added_ids = set(project.mapLayers().keys()) - before_ids
+    except Exception:
+        return
+    if not added_ids:
+        return
+    try:
+        for layer_id in added_ids:
+            _move_layer_node(layer_id)  # appended at the end == bottom
+    except Exception:
+        pass
 
 
 def guess_geocode_field(field_names):
@@ -67,7 +204,7 @@ def extract_code(layer_name):
 
 def style_boundary_outline(layer, color):
     """Style a polygon layer as a transparent-fill, colored-outline
-    boundary -- used to tell Matched_PSA (green) and Matched_LGU (blue)
+    boundary -- used to tell Matched_PSA (blue) and Matched_LGU (yellow)
     apart on the map at a glance."""
     symbol = QgsFillSymbol.createSimple({
         "color": "0,0,0,0",       # transparent fill
@@ -146,33 +283,81 @@ def first8(value):
     return s[:8]
 
 
-class _PanelRunCoordinator:
-    """Tracks which of one run's target layers have actually been added to
-    the project, and opens the review panel only once every expected one has
-    landed.
+class _RunCoordinator:
+    """Tracks one run's output layers as they land in the project and
+    drives four main-thread-only cleanup steps from postProcessLayer() --
+    the documented hook for it, since processAlgorithm() itself executes on
+    a Processing worker thread where touching the layer tree or iface is
+    never safe:
 
-    QGIS stores layers-to-load-on-completion in a container keyed by layer
-    id, not by registration order, so postProcessLayer() can fire for
-    MATCHED_PSA, MATCHED_LGU and the Matched Building layer in any order.
-    Firing the panel off the first callback alone would mean it sometimes
-    opens before the Building layer -- or even the LGU layer -- actually
-    exists in the project. Waiting for every expected id makes this order
-    independent.
+    - Moves each output layer to the very top of the layer tree as it
+      lands, so every Matched/Unmatched result ends up stacked above the
+      original PSA/LGU/Building inputs regardless of QGIS's own (user
+      configurable) default position for newly added layers.
+    - Hides the original PSA / LGU / Building Point input layers in the
+      layer tree as soon as any output from this run has landed, so the map
+      view shows the new Matched/Unmatched results instead of the raw
+      source layers underneath them.
+    - Loads the HCMGIS "Google Satellite" basemap at the bottom of the
+      layer tree (once per project, not per run) so there is imagery to
+      compare the boundaries against without the user adding it by hand.
+    - Opens the review panel once every expected Matched output (PSA, LGU,
+      and Building when present) has landed. QGIS stores layers-to-load-
+      on-completion in a container keyed by layer id, not registration
+      order, so postProcessLayer() can fire for them in any order; waiting
+      for the full expected set makes this order-independent.
     """
 
-    def __init__(self, psa_layer_id, lgu_layer_id, building_layer_id):
-        self.psa_layer_id = psa_layer_id
-        self.lgu_layer_id = lgu_layer_id
-        self.building_layer_id = building_layer_id
-        self.expected = {lid for lid in (psa_layer_id, lgu_layer_id, building_layer_id) if lid}
+    def __init__(self, input_layer_ids, panel_psa_id, panel_lgu_id, panel_building_id):
+        self.input_layer_ids = [lid for lid in input_layer_ids if lid]
+        self.panel_psa_id = panel_psa_id
+        self.panel_lgu_id = panel_lgu_id
+        self.panel_building_id = panel_building_id
+        self.panel_expected = {lid for lid in (panel_psa_id, panel_lgu_id, panel_building_id) if lid}
         self.seen = set()
-        self.shown = False
+        self.inputs_hidden = False
+        self.basemap_loaded = False
+        self.panel_shown = False
 
     def mark_seen(self, layer_id, feedback):
         self.seen.add(layer_id)
-        if self.shown or not self.expected.issubset(self.seen):
+        self._raise_above_inputs(layer_id)
+        self._hide_inputs()
+        self._load_basemap()
+        self._maybe_show_panel(feedback)
+
+    def _raise_above_inputs(self, layer_id):
+        try:
+            _move_layer_node(layer_id, insert_index=0)
+        except Exception:
+            pass
+
+    def _hide_inputs(self):
+        if self.inputs_hidden or not self.input_layer_ids:
             return
-        self.shown = True
+        self.inputs_hidden = True
+        try:
+            root = QgsProject.instance().layerTreeRoot()
+            for layer_id in self.input_layer_ids:
+                node = root.findLayer(layer_id)
+                if node is not None:
+                    node.setItemVisibilityChecked(False)
+        except Exception:
+            pass
+
+    def _load_basemap(self):
+        if self.basemap_loaded:
+            return
+        self.basemap_loaded = True
+        try:
+            ensure_google_satellite_basemap()
+        except Exception:
+            pass
+
+    def _maybe_show_panel(self, feedback):
+        if self.panel_shown or not self.panel_expected.issubset(self.seen):
+            return
+        self.panel_shown = True
 
         try:
             from qgis.utils import iface
@@ -184,7 +369,8 @@ class _PanelRunCoordinator:
             return
         try:
             from .psa_lgu_comparison_panel import show_comparison_panel
-            show_comparison_panel(iface, self.psa_layer_id, self.lgu_layer_id, self.building_layer_id)
+            show_comparison_panel(
+                iface, self.panel_psa_id, self.panel_lgu_id, self.panel_building_id)
         except Exception as exc:
             feedback.pushInfo("Could not open the comparison review panel: {}".format(exc))
 
@@ -194,7 +380,8 @@ class _ComparisonPanelPostProcessor(QgsProcessingLayerPostProcessorInterface):
 
     processAlgorithm() runs on a Processing worker thread, where touching
     iface or building widgets is never safe. postProcessLayer() is the
-    documented main-thread hook, so the panel is created from here instead.
+    documented main-thread hook, so both cleanup steps are driven from here
+    instead.
     """
 
     def __init__(self, coordinator):
@@ -212,14 +399,21 @@ class _ComparisonPanelPostProcessor(QgsProcessingLayerPostProcessorInterface):
 _PANEL_POST_PROCESSORS = []
 
 
-def _make_panel_post_processors(psa_layer_id, lgu_layer_id, building_layer_id):
-    """Return {layer_id: post_processor} for every target id that is not
-    None. All share one coordinator, and each layer id gets its own
-    processor instance -- QGIS takes ownership per-attachment, so the same
-    instance cannot safely be reused across multiple LayerDetails."""
-    coordinator = _PanelRunCoordinator(psa_layer_id, lgu_layer_id, building_layer_id)
+def _make_run_post_processors(input_layer_ids, output_layer_ids,
+                               panel_psa_id, panel_lgu_id, panel_building_id):
+    """Return {layer_id: post_processor} for every output layer id this run
+    is about to load -- not just the ones the review panel needs -- so that
+    hiding the original input layers happens regardless of whether a
+    Matched panel ends up opening (e.g. a run where nothing matched still
+    only loads Unmatched layers). All share one coordinator, and each output
+    layer id gets its own processor instance -- QGIS takes ownership
+    per-attachment, so the same instance cannot safely be reused across
+    multiple LayerDetails."""
+    coordinator = _RunCoordinator(input_layer_ids, panel_psa_id, panel_lgu_id, panel_building_id)
     processors = {}
-    for layer_id in coordinator.expected:
+    for layer_id in output_layer_ids:
+        if not layer_id:
+            continue
         processor = _ComparisonPanelPostProcessor(coordinator)
         _PANEL_POST_PROCESSORS.append(processor)
         processors[layer_id] = processor
@@ -273,14 +467,26 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
             "used for matching, so spelling differences between the two maps don't matter. If a "
             "barangay is made up of several separate shapes (like islands), they all stay grouped "
             "together as one barangay.\n\n"
+            "The three layer boxes and their Geocode fields are pre-filled from the layers already "
+            "loaded in the project -- a polygon layer named '*PSA*', another named '*LGU*', and a "
+            "building-point layer -- skipping this tool's own output layers. Any of them can be "
+            "changed before running, and boxes with nothing to pre-fill are simply left empty.\n\n"
             "If a Geocode field is left blank, a field literally named 'Geocode' (any case) is "
             "auto-detected on that layer; other spellings/codes (PSGC, brgy_code, etc.) are not "
             "guessed and must be selected explicitly.\n\n"
             "Output layers (only created when they contain at least one feature):\n"
-            "- <code>_PSA_Matched -- green outline, labeled with the PSA layer's 'barangay' field\n"
-            "- <code>_LGU_Matched -- blue outline, labeled with the LGU layer's 'barangay' field\n"
+            "- <code>_PSA_Matched -- blue outline, labeled with the PSA layer's 'barangay' field\n"
+            "- <code>_LGU_Matched -- yellow outline, labeled with the LGU layer's 'barangay' field\n"
             "- <code>_PSA_Unmatched / <code>_LGU_Unmatched\n"
             "- Building Points inside LGU Boundary / Building Points Outside LGU Boundary\n\n"
+            "Every output layer above is moved to the top of the Layers panel as it loads, so the "
+            "results always stack above the original PSA, LGU and Building Point input layers. "
+            "Those input layers are then unchecked (not removed -- they can be re-checked at any "
+            "time) so the map view shows only the new results.\n\n"
+            "A 'Google Satellite' basemap (same one as HCMGIS > Basemaps > Google Satellite) is "
+            "loaded at the bottom of the layer tree the first time this is run in a project, so "
+            "there is imagery underneath to compare the boundaries against. Skipped silently if "
+            "one is already loaded, or if the HCMGIS plugin isn't installed.\n\n"
             "<code> is the pppmm-style prefix parsed from the PSA (or LGU) layer name, e.g. "
             "'000102_PSA' -> '000102'.\n\n"
             "A blank geocode never counts as a match, even blank-vs-blank. If two different "
@@ -289,11 +495,30 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
         )
 
     def initAlgorithm(self, config=None):
+        # Pre-fill every box from the layers already loaded in the project:
+        # a polygon layer named "*PSA*", another named "*LGU*", a
+        # building-point layer, and each one's Geocode field. QGIS builds a
+        # fresh algorithm instance each time the dialog opens, so these
+        # reflect the project as it stands right then. They're only starting
+        # points -- the user can change any of them, and a default of None
+        # simply leaves that box empty as before.
+        default_psa = find_default_layer_id(
+            PSA_LAYER_HINTS, QgsWkbTypes.PolygonGeometry)
+        # PSA and LGU share the polygon hint space, so the PSA pick is taken
+        # out of the running before the LGU one is made -- otherwise a layer
+        # named e.g. "PSA_LGU_draft" could end up selected for both.
+        default_lgu = find_default_layer_id(
+            LGU_LAYER_HINTS, QgsWkbTypes.PolygonGeometry,
+            exclude_ids=(default_psa,) if default_psa else ())
+        default_building = find_default_layer_id(
+            BUILDING_LAYER_HINTS, QgsWkbTypes.PointGeometry)
+
         self.addParameter(
             QgsProcessingParameterVectorLayer(
                 self.PSA_LAYER,
                 self.tr('PSA Boundary Layer'),
-                [QgsProcessing.TypeVectorPolygon]
+                [QgsProcessing.TypeVectorPolygon],
+                defaultValue=default_psa
             )
         )
         self.addParameter(
@@ -302,14 +527,16 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
                 self.tr('Geocode Field (PSA)'),
                 parentLayerParameterName=self.PSA_LAYER,
                 type=QgsProcessingParameterField.Any,
-                optional=True
+                optional=True,
+                defaultValue=find_default_geocode_field(default_psa)
             )
         )
         self.addParameter(
             QgsProcessingParameterVectorLayer(
                 self.LGU_LAYER,
                 self.tr('LGU-Submitted Boundary Layer'),
-                [QgsProcessing.TypeVectorPolygon]
+                [QgsProcessing.TypeVectorPolygon],
+                defaultValue=default_lgu
             )
         )
         self.addParameter(
@@ -318,14 +545,16 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
                 self.tr('Geocode Field (LGU)'),
                 parentLayerParameterName=self.LGU_LAYER,
                 type=QgsProcessingParameterField.Any,
-                optional=True
+                optional=True,
+                defaultValue=find_default_geocode_field(default_lgu)
             )
         )
         self.addParameter(
             QgsProcessingParameterVectorLayer(
                 self.BUILDING_LAYER,
                 self.tr('Building Point Layer'),
-                [QgsProcessing.TypeVectorPoint]
+                [QgsProcessing.TypeVectorPoint],
+                defaultValue=default_building
             )
         )
         self.addParameter(
@@ -334,7 +563,8 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
                 self.tr('Geocode Field (Building Point)'),
                 parentLayerParameterName=self.BUILDING_LAYER,
                 type=QgsProcessingParameterField.Any,
-                optional=True
+                optional=True,
+                defaultValue=find_default_geocode_field(default_building)
             )
         )
 
@@ -460,11 +690,11 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
         unmatched_psa = QgsVectorLayer("{}?crs={}".format(geom_psa, crs_psa), name_unmatched_psa, "memory")
         unmatched_lgu = QgsVectorLayer("{}?crs={}".format(geom_lgu, crs_lgu), name_unmatched_lgu, "memory")
 
-        # PSA_Matched gets a green outline, LGU_Matched a blue outline (both
+        # PSA_Matched gets a blue outline, LGU_Matched a yellow outline (both
         # transparent fill) so the two boundary sources are easy to tell
         # apart on the map when overlaid.
-        style_boundary_outline(matched_psa, "green")
-        style_boundary_outline(matched_lgu, "blue")
+        style_boundary_outline(matched_psa, "blue")
+        style_boundary_outline(matched_lgu, "yellow")
 
         matched_psa.dataProvider().addAttributes(fields_matched_psa)
         matched_psa.updateFields()
@@ -603,30 +833,50 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
         # Only load layers that actually contain features -- an empty
         # matched/unmatched group is common (e.g. every barangay matched)
         # and would just clutter the Layers panel with nothing to show.
+        output_layer_ids = [
+            lid for lid, has_feats in (
+                (matched_psa.id(), matched_psa_feats),
+                (matched_lgu.id(), matched_lgu_feats),
+                (unmatched_psa.id(), unmatched_psa_feats),
+                (unmatched_lgu.id(), unmatched_lgu_feats),
+                (matched_building.id(), matched_building_feats),
+                (unmatched_building.id(), unmatched_building_feats),
+            ) if has_feats
+        ]
+
         # The review panel needs both Matched layers (and, when present, the
-        # Matched Building layer): each gets its own post processor, all
-        # sharing one coordinator, so the panel opens only after every
-        # expected one of them has actually landed in the project.
-        panel_processors = {}
-        if matched_psa_feats and matched_lgu_feats:
-            panel_building_id = matched_building.id() if matched_building_feats else None
-            panel_processors = _make_panel_post_processors(
-                matched_psa.id(), matched_lgu.id(), panel_building_id)
+        # Matched Building layer). Every output layer above still gets a post
+        # processor -- built below, sharing one coordinator -- so that the
+        # original PSA/LGU/Building input layers get hidden from the map
+        # view regardless of whether a run produces a full Matched set (a
+        # run where nothing matched still only loads Unmatched layers).
+        have_panel = bool(matched_psa_feats and matched_lgu_feats)
+        panel_psa_id = matched_psa.id() if have_panel else None
+        panel_lgu_id = matched_lgu.id() if have_panel else None
+        panel_building_id = matched_building.id() if have_panel and matched_building_feats else None
+        run_processors = _make_run_post_processors(
+            (layer_psa.id(), layer_lgu.id(), building_layer.id()),
+            output_layer_ids, panel_psa_id, panel_lgu_id, panel_building_id)
 
         results = {
             'MATCHED_PSA': load_layer(
                 matched_psa, name_matched_psa,
-                panel_processors.get(matched_psa.id())) if matched_psa_feats else None,
+                run_processors.get(matched_psa.id())) if matched_psa_feats else None,
             'MATCHED_LGU': load_layer(
                 matched_lgu, name_matched_lgu,
-                panel_processors.get(matched_lgu.id())) if matched_lgu_feats else None,
-            'UNMATCHED_PSA': load_layer(unmatched_psa, name_unmatched_psa) if unmatched_psa_feats else None,
-            'UNMATCHED_LGU': load_layer(unmatched_lgu, name_unmatched_lgu) if unmatched_lgu_feats else None,
+                run_processors.get(matched_lgu.id())) if matched_lgu_feats else None,
+            'UNMATCHED_PSA': load_layer(
+                unmatched_psa, name_unmatched_psa,
+                run_processors.get(unmatched_psa.id())) if unmatched_psa_feats else None,
+            'UNMATCHED_LGU': load_layer(
+                unmatched_lgu, name_unmatched_lgu,
+                run_processors.get(unmatched_lgu.id())) if unmatched_lgu_feats else None,
             'MATCHED_BUILDING': load_layer(
                 matched_building, "Building Points inside LGU Boundary",
-                panel_processors.get(matched_building.id())) if matched_building_feats else None,
+                run_processors.get(matched_building.id())) if matched_building_feats else None,
             'UNMATCHED_BUILDING': load_layer(
-                unmatched_building, "Building Points Outside LGU Boundary") if unmatched_building_feats else None,
+                unmatched_building, "Building Points Outside LGU Boundary",
+                run_processors.get(unmatched_building.id())) if unmatched_building_feats else None,
         }
 
         feedback.setProgress(100)

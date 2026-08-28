@@ -3,7 +3,7 @@ Review panel for the PSA - LGU Boundary Comparison algorithm.
 
 Docks below the Layers panel and lets the user step through every matched
 barangay one at a time -- zooming the canvas to each barangay so the PSA
-(green) and LGU (blue) outlines are framed together for visual comparison.
+(blue) and LGU (yellow) outlines are framed together for visual comparison.
 
 This module is GUI-only and is imported lazily by
 psa_lgu_map_comparison.py, so that algorithm stays usable headless
@@ -352,8 +352,10 @@ class PsaLguComparisonPanel(QDockWidget):
 
     # ── Zooming ─────────────────────────────────────────────────────────
     def _selection_extent(self, layer, key):
-        """Select the features of *layer* belonging to barangay *key* and
-        return their combined bounding box in canvas CRS, or None."""
+        """Return the combined bounding box (in canvas CRS) of *layer*'s
+        features belonging to barangay *key*, or None. The subset filter
+        applied by _apply_filter() is what isolates the barangay on the
+        map -- this does not select/highlight features on top of that."""
         if layer is None or not layer.isValid():
             return None
 
@@ -363,19 +365,14 @@ class PsaLguComparisonPanel(QDockWidget):
         request = QgsFeatureRequest().setFilterExpression(expression)
 
         rect = None
-        ids = []
         for feat in layer.getFeatures(request):
             geom = feat.geometry()
             if geom is None or geom.isEmpty():
                 continue
-            ids.append(feat.id())
             box = geom.boundingBox()
             rect = QgsRectangle(box) if rect is None else rect
             rect.combineExtentWith(box)
 
-        layer.removeSelection()
-        if ids:
-            layer.selectByIds(ids)
         if rect is None:
             return None
 
