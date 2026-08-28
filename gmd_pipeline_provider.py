@@ -30,6 +30,9 @@ from .gmd_scripts.cbms_mv.mv_2027_hp_4a_map_uuid__duplicate import mv_2027_hp_4a
 from .gmd_scripts.cbms_mv.mv_2027_hp_4a_pos_longit__invalid import mv_2027_hp_4a_pos_longit__invalid
 from .gmd_scripts.cbms_mv.mv_2027_hp_4b_geom__missing import mv_2027_hp_4b_geom__missing
 from .gmd_scripts.cbms_mv.mv_2027_hp_4b_longitude__invalid import mv_2027_hp_4b_longitude__invalid
+from .gmd_scripts.cbms_mv.mv_2027_hp_4b_geocode__missing import mv_2027_hp_4b_geocode__missing
+from .gmd_scripts.cbms_mv.mv_2027_hp_4c_remarks__invalid import mv_2027_hp_4c_remarks__invalid
+from .gmd_scripts.cbms_mv.mv_2027_hp_4a_map_uuid__missing import mv_2027_hp_4a_map_uuid__missing
 
 
 #from .gmd_scripts.gsheet_csv import
@@ -72,7 +75,9 @@ class GmdPipelineProvider(QgsProcessingProvider):
         self.addAlgorithm(mv_2027_hp_4a_pos_longit__invalid())
         self.addAlgorithm(mv_2027_hp_4b_geom__missing())
         self.addAlgorithm(mv_2027_hp_4b_longitude__invalid())
-        
+        self.addAlgorithm(mv_2027_hp_4b_geocode__missing())
+        self.addAlgorithm(mv_2027_hp_4c_remarks__invalid())
+        self.addAlgorithm(mv_2027_hp_4a_map_uuid__missing())
 
     def id(self):
         return 'gmd_pipeline'

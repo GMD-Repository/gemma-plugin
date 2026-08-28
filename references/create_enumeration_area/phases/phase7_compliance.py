@@ -37,10 +37,9 @@ def run_phase_7(
     multi_feedback.setProgressText(f"{_PHASE_LABELS[6]}...")
     feedback.pushInfo("Running compliance sweep...")
 
-    compliance_changed = False
+    compliance_changed = True
     compliance_pass = 0
     max_compliance_passes = 10
-    feedback.pushInfo("TEMPORARY BYPASS: Skipping Phase 8 Final Compliance Sweep as requested.")
 
     while compliance_changed and compliance_pass < max_compliance_passes:
         if multi_feedback.isCanceled():
@@ -97,7 +96,7 @@ def run_phase_7(
             if i in removed:
                 continue
             ea = eas[i]
-            if ea.get("from_split", False):
+            if ea.get("from_split", False) or ea.get("is_special_ea", False):
                 continue
             bar = ea["parent_barangay"]
 
@@ -106,7 +105,7 @@ def run_phase_7(
             for j, nb in enumerate(eas):
                 if j == i or j in removed:
                     continue
-                if nb.get("from_split", False):
+                if nb.get("from_split", False) or nb.get("is_special_ea", False):
                     continue
                 if nb["parent_barangay"] != bar:
                     continue
@@ -114,69 +113,44 @@ def run_phase_7(
                     continue
                 if nb.get("original_id") in delineation_candidate_ids:
                     continue
+
                 if ea["geom"].touches(nb["geom"]) or ea["geom"].intersects(nb["geom"]):
                     combined = ea["hh_count"] + nb["hh_count"]
-                    if min_household < combined < max_household:
+                    if combined <= max_household:
                         score = abs(combined - (max_household - 1))
                         if score < best_score:
                             best_score = score
                             best_j = j
 
-            if best_j == -1:
-                for j, nb in enumerate(eas):
-                    if j == i or j in removed:
-                        continue
-                    if nb.get("from_split", False):
-                        continue
-                    if nb["parent_barangay"] != bar:
-                        continue
-                    if is_delineation_candidate(nb, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
-                        continue
-                    if nb.get("original_id") in delineation_candidate_ids:
-                        continue
-                    if ea["geom"].touches(nb["geom"]) or ea["geom"].intersects(nb["geom"]):
-                        combined = ea["hh_count"] + nb["hh_count"]
-                        if combined < max_household:
-                            score = abs(combined - (max_household - 1))
-                            if score < best_score:
-                                best_score = score
-                                best_j = j
-
-            if best_j == -1:
-                up_centroid = ea["geom"].centroid().asPoint()
-                best_dist = float("inf")
-                for j, nb in enumerate(eas):
-                    if j == i or j in removed:
-                        continue
-                    if nb.get("from_split", False):
-                        continue
-                    if nb["parent_barangay"] != bar:
-                        continue
-                    if is_delineation_candidate(nb, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
-                        continue
-                    if nb.get("original_id") in delineation_candidate_ids:
-                        continue
-                    combined = ea["hh_count"] + nb["hh_count"]
-                    if combined < max_household:
-                        dist = up_centroid.distance(nb["geom"].centroid().asPoint())
-                        if dist < best_dist:
-                            best_dist = dist
-                            best_j = j
-
             if best_j != -1:
                 nb = eas[best_j]
-                dominant = nb if nb["hh_count"] >= ea["hh_count"] else ea
+                ea_orig_hh = ea.get('original_hhcount', 0.0)
+                nb_orig_hh = nb.get('original_hhcount', 0.0)
+                ea_max_orig = ea.get('max_orig_hh', ea_orig_hh)
+                nb_max_orig = nb.get('max_orig_hh', nb_orig_hh)
+                ea_code = ea.get('new_ea_code') or ea.get('original_code')
+                nb_code = nb.get('new_ea_code') or nb.get('original_code')
+
+                if ea_max_orig >= nb_max_orig:
+                    prevailing_ean = ea_code
+                    max_orig_hh = ea_max_orig
+                else:
+                    prevailing_ean = nb_code
+                    max_orig_hh = nb_max_orig
+
                 merged_ea = {
                     "geom": ea["geom"].combine(nb["geom"]).buffer(0.0, 3),
                     "buildings": ea.get("buildings", []) + nb.get("buildings", []),
                     "hh_count": ea["hh_count"] + nb["hh_count"],
-                    "original_hhcount": dominant.get("original_hhcount", 0),
-                    "original_bldgcount": dominant.get("original_bldgcount", 0),
+                    "original_hhcount": ea.get("original_hhcount", ea.get("hh_count", 0.0)),
+                    "original_bldgcount": ea.get("original_bldgcount", ea.get("bldg_count", 0)),
                     "bldg_count": ea.get("bldg_count", 0) + nb.get("bldg_count", 0),
-                    "attributes": list(dominant["attributes"]),
-                    "original_id": dominant["original_id"],
-                    "original_code": dominant["original_code"],
-                    "is_new": True,
+                    "attributes": list(ea["attributes"]),
+                    "original_id": ea["original_id"],
+                    "original_code": ea["original_code"],
+                    "new_ea_code": prevailing_ean,
+                    "max_orig_hh": max_orig_hh,
+                    "is_new": False,
                     "from_split": False,
                     "split_by": ea.get("split_by", "none"),
                     "from_merge": True,
