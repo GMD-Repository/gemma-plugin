@@ -91,21 +91,21 @@ BUILTIN_PRESETS = {
         },
         # Sub-folder inside "For Verification"
         {
-<<<<<<< HEAD
+<<<<<<<<< Temporary merge branch 1
             "path": ["EA Field Verification", "Delineated EA"],
-=======
+=========
             "path": ["For Verification", "Delineated EA"],
->>>>>>> 62f92be6f9bad85206314a4618be352516291f5b
+>>>>>>>>> Temporary merge branch 2
             "is_group": True,
             "checked": True
         },
         # Sub-folder inside "For Verification"
         {
-<<<<<<< HEAD
+<<<<<<<<< Temporary merge branch 1
             "path": ["EA Field Verification", "Merged EA"],
-=======
+=========
             "path": ["For Verification", "Merged EA"],
->>>>>>> 62f92be6f9bad85206314a4618be352516291f5b
+>>>>>>>>> Temporary merge branch 2
             "is_group": True,
             "checked": True
         },
