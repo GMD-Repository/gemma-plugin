@@ -1,6 +1,6 @@
 import os
 import json
-from typing import Any, Optional, Dict, List
+from typing import Any, Optional, Dict, List, Set
 
 from PyQt5.QtCore import QVariant
 from qgis.core import (
@@ -37,20 +37,19 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
     def displayName(self):
         return "mv_2027_hp_4a_map_uuid__missing"
 
-    def group(self):
+    def group(self) -> str:
         return "2027 CBMS"
 
-    def groupId(self):
+    def groupId(self) -> str:
         return "cbms_mv"
 
-    def shortHelpString(self):
+    def shortHelpString(self) -> str:
         return (
             "List of geotagged points without CBMS Form 2 datafile. \n \n"
             "Every geotagged point (except for BSN 00000) should have a counterpart datafile with the same map_uuid.\n"
         )
 
-    def initAlgorithm(self, config=None):
-
+    def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):
         self.addParameter(
             QgsProcessingParameterFile(
                 self.INPUT_DATA,

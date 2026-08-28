@@ -31,21 +31,32 @@ def run_phase_6(alg, parameters, context, feedback, multi_feedback, p1, p2, p5):
 def is_delineation_candidate(ea_item, max_household, eadel_indi_col_idx=-1, full_ea_by_id=None, delineation_candidate_ids=None):
     if ea_item.get('from_split', False) or ea_item.get('from_merge', False):
         return False
+    if ea_item.get('is_special_ea', False):
+        return False
     orig_id = ea_item.get('original_id')
+    if orig_id is None:
+        return False
+    if delineation_candidate_ids is not None:
+        return orig_id in delineation_candidate_ids
     is_explicit = False
     if eadel_indi_col_idx != -1 and full_ea_by_id and orig_id in full_ea_by_id:
         val = full_ea_by_id[orig_id].attribute(eadel_indi_col_idx)
         is_explicit = (val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"))
-    delin_set = delineation_candidate_ids or set()
-    return is_explicit or (orig_id in delin_set) or (ea_item['hh_count'] >= max_household)
+    if is_explicit:
+        return True
+    return ea_item['hh_count'] >= max_household
 
 
 def is_merge_candidate(ea_item, min_household, merge_candidate_ids=None):
-    if ea_item.get('from_split', False) or ea_item.get('from_merge', False):
-        return ea_item['hh_count'] <= min_household
+    if ea_item.get('from_split', False):
+        return False
+    if ea_item.get('is_special_ea', False):
+        return False
+    if ea_item.get('from_merge', False):
+        return ea_item.get('hh_count', 0.0) <= min_household
     orig_id = ea_item.get('original_id')
     merge_set = merge_candidate_ids or set()
-    return (orig_id in merge_set) or (ea_item['hh_count'] <= min_household)
+    return (orig_id in merge_set) or (ea_item.get('hh_count', 0.0) <= min_household)
 
 
 def process_barangay_merge(
@@ -65,7 +76,7 @@ def process_barangay_merge(
     merge_candidate_ids = merge_candidate_ids or set()
 
     iteration = 0
-    max_iterations = 5
+    max_iterations = 10
     changed = True
 
     while changed and iteration < max_iterations:
@@ -74,7 +85,7 @@ def process_barangay_merge(
 
         has_unders = False
         for ea in bar_eas:
-            if is_merge_candidate(ea, min_household, merge_candidate_ids) or ea['hh_count'] == 0:
+            if is_merge_candidate(ea, min_household, merge_candidate_ids) or (ea['hh_count'] == 0 and not ea.get('from_split', False) and not ea.get('is_special_ea', False)):
                 has_unders = True
                 break
 
@@ -91,6 +102,10 @@ def process_barangay_merge(
 
             ea = bar_eas[idx]
 
+            if ea.get('from_split', False) or ea.get('is_special_ea', False):
+                new_eas.append(ea)
+                continue
+
             if ea['hh_count'] == 0:
                 best_neighbor_idx = -1
                 best_neighbor_score = float('inf')
@@ -100,11 +115,11 @@ def process_barangay_merge(
                         continue
 
                     neighbor = bar_eas[j]
+                    if neighbor.get('from_split', False) or neighbor.get('is_special_ea', False):
+                        continue
                     if is_delineation_candidate(neighbor, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
                         continue
                     if neighbor.get('original_id') in delineation_candidate_ids:
-                        continue
-                    if neighbor.get('is_special_ea', False) and not is_merge_candidate(neighbor, min_household, merge_candidate_ids):
                         continue
                     if ea['geom'].touches(neighbor['geom']) or ea['geom'].intersects(neighbor['geom']):
                         combined_hh = ea['hh_count'] + neighbor['hh_count']
@@ -118,16 +133,33 @@ def process_barangay_merge(
                     merged_geom = ea['geom'].combine(neighbor['geom'])
                     merged_geom = merged_geom.buffer(0.0, 3)
 
+                    ea_orig_hh = ea.get('original_hhcount', 0.0)
+                    neighbor_orig_hh = neighbor.get('original_hhcount', 0.0)
+                    ea_max_orig = ea.get('max_orig_hh', ea_orig_hh)
+                    neighbor_max_orig = neighbor.get('max_orig_hh', neighbor_orig_hh)
+                    ea_code = ea.get('new_ea_code') or ea.get('original_code')
+                    neighbor_code = neighbor.get('new_ea_code') or neighbor.get('original_code')
+
+                    if ea_max_orig >= neighbor_max_orig:
+                        prevailing_ean = ea_code
+                        max_orig_hh = ea_max_orig
+                    else:
+                        prevailing_ean = neighbor_code
+                        max_orig_hh = neighbor_max_orig
+
                     merged_ea = {
                         'geom': merged_geom,
                         'buildings': ea.get('buildings', []) + neighbor.get('buildings', []),
                         'hh_count': ea['hh_count'] + neighbor['hh_count'],
-                        'original_hhcount': ea.get('original_hhcount', 0) if ea['hh_count'] >= neighbor['hh_count'] else neighbor.get('original_hhcount', 0),
+                        'original_hhcount': ea.get('original_hhcount', ea.get('hh_count', 0.0)),
+                        'original_bldgcount': ea.get('original_bldgcount', ea.get('bldg_count', 0)),
                         'bldg_count': ea.get('bldg_count', 0) + neighbor.get('bldg_count', 0),
-                        'attributes': list(ea['attributes']) if ea['hh_count'] >= neighbor['hh_count'] else list(neighbor['attributes']),
-                        'original_id': ea['original_id'] if ea['hh_count'] >= neighbor['hh_count'] else neighbor['original_id'],
-                        'original_code': ea['original_code'] if ea['hh_count'] >= neighbor['hh_count'] else neighbor['original_code'],
-                        'is_new': True,
+                        'attributes': list(ea['attributes']),
+                        'original_id': ea['original_id'],
+                        'original_code': ea['original_code'],
+                        'new_ea_code': prevailing_ean,
+                        'max_orig_hh': max_orig_hh,
+                        'is_new': False,
                         'split_by': ea.get('split_by', 'none'),
                         'from_merge': True,
                         'parent_barangay': bar_code
@@ -146,32 +178,24 @@ def process_barangay_merge(
                     fback.pushInfo(f"[Barangay {bar_code}] Force-merged 0-household EA (code={ea['original_code']}) with adjacent neighbor (pop={neighbor['hh_count']}) -> Combined={merged_ea['hh_count']}")
                     continue
 
-            if ea.get('from_split', False) and ea['hh_count'] >= min_household:
-                new_eas.append(ea)
-                continue
-
             if is_delineation_candidate(ea, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
                 new_eas.append(ea)
                 continue
 
             if is_merge_candidate(ea, min_household, merge_candidate_ids):
                 best_neighbor_idx = -1
-                best_neighbor_score = float('inf')
+                best_neighbor_score = (float('inf'), float('inf'))
 
                 for j in range(len(bar_eas)):
                     if idx == j or j in merged_indices:
                         continue
 
                     neighbor = bar_eas[j]
-                    if neighbor.get('from_split', False):
+                    if neighbor.get('from_split', False) or neighbor.get('is_special_ea', False):
                         continue
                     if is_delineation_candidate(neighbor, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
                         continue
                     if neighbor.get('original_id') in delineation_candidate_ids:
-                        continue
-                    if is_merge_candidate(neighbor, min_household, merge_candidate_ids):
-                        continue
-                    if neighbor.get('is_special_ea', False) and not is_merge_candidate(neighbor, min_household, merge_candidate_ids):
                         continue
 
                     is_adjacent = (
@@ -182,37 +206,10 @@ def process_barangay_merge(
                     if is_adjacent:
                         combined_hh = ea['hh_count'] + neighbor['hh_count']
                         if combined_hh <= max_household:
-                            score = abs(combined_hh - (max_household - 1))
+                            score = (0 if combined_hh >= min_household else 1, float(neighbor.get('hh_count', 0.0)), neighbor['geom'].area())
                             if score < best_neighbor_score:
                                 best_neighbor_score = score
                                 best_neighbor_idx = j
-
-                if best_neighbor_idx == -1:
-                    for j in range(len(bar_eas)):
-                        if idx == j or j in merged_indices:
-                            continue
-                        neighbor = bar_eas[j]
-                        if is_delineation_candidate(neighbor, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
-                            continue
-                        if neighbor.get('original_id') in delineation_candidate_ids:
-                            continue
-                        if not allow_candidate_merge and is_merge_candidate(neighbor, min_household, merge_candidate_ids):
-                            continue
-                        if neighbor.get('is_special_ea', False) and not is_merge_candidate(neighbor, min_household, merge_candidate_ids):
-                            continue
-
-                        is_adjacent = (
-                            ea['geom'].touches(neighbor['geom'])
-                            or ea['geom'].intersects(neighbor['geom'])
-                            or ea['geom'].buffer(0.001, 3).intersects(neighbor['geom'])
-                        )
-                        if is_adjacent:
-                            combined_hh = ea['hh_count'] + neighbor['hh_count']
-                            if combined_hh <= max_household:
-                                score = abs(combined_hh - (max_household - 1))
-                                if score < best_neighbor_score:
-                                    best_neighbor_score = score
-                                    best_neighbor_idx = j
 
                 if best_neighbor_idx == -1:
                     new_eas.append(ea)
@@ -223,16 +220,33 @@ def process_barangay_merge(
                     merged_geom = ea['geom'].combine(neighbor['geom'])
                     merged_geom = merged_geom.buffer(0.0, 3)
 
+                    ea_orig_hh = ea.get('original_hhcount', 0.0)
+                    neighbor_orig_hh = neighbor.get('original_hhcount', 0.0)
+                    ea_max_orig = ea.get('max_orig_hh', ea_orig_hh)
+                    neighbor_max_orig = neighbor.get('max_orig_hh', neighbor_orig_hh)
+                    ea_code = ea.get('new_ea_code') or ea.get('original_code')
+                    neighbor_code = neighbor.get('new_ea_code') or neighbor.get('original_code')
+
+                    if ea_max_orig >= neighbor_max_orig:
+                        prevailing_ean = ea_code
+                        max_orig_hh = ea_max_orig
+                    else:
+                        prevailing_ean = neighbor_code
+                        max_orig_hh = neighbor_max_orig
+
                     merged_ea = {
                         'geom': merged_geom,
                         'buildings': ea.get('buildings', []) + neighbor.get('buildings', []),
                         'hh_count': ea['hh_count'] + neighbor['hh_count'],
-                        'original_hhcount': ea.get('original_hhcount', 0) if ea['hh_count'] >= neighbor['hh_count'] else neighbor.get('original_hhcount', 0),
+                        'original_hhcount': ea.get('original_hhcount', ea.get('hh_count', 0.0)),
+                        'original_bldgcount': ea.get('original_bldgcount', ea.get('bldg_count', 0)),
                         'bldg_count': ea.get('bldg_count', 0) + neighbor.get('bldg_count', 0),
-                        'attributes': list(ea['attributes']) if ea['hh_count'] >= neighbor['hh_count'] else list(neighbor['attributes']),
-                        'original_id': ea['original_id'] if ea['hh_count'] >= neighbor['hh_count'] else neighbor['original_id'],
-                        'original_code': ea['original_code'] if ea['hh_count'] >= neighbor['hh_count'] else neighbor['original_code'],
-                        'is_new': True,
+                        'attributes': list(ea['attributes']),
+                        'original_id': ea['original_id'],
+                        'original_code': ea['original_code'],
+                        'new_ea_code': prevailing_ean,
+                        'max_orig_hh': max_orig_hh,
+                        'is_new': False,
                         'split_by': ea.get('split_by', 'none'),
                         'from_merge': True,
                         'parent_barangay': bar_code
