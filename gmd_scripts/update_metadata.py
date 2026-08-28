@@ -1,17 +1,10 @@
-# ***************************************************************************
-# *                                                                         *
-# *   This program is free software; you can redistribute it and/or modify  *
-# *   it under the terms of the GNU General Public License as published by  *
-# *   the Free Software Foundation; either version 2 of the License, or     *
-# *   (at your option) any later version.                                   *
-# *                                                                         *
-# ***************************************************************************
-
 import uuid
 import os
+import re
+import sqlite3
 import difflib
 import inspect
-from typing import Any, Optional
+from typing import Any, Optional, Tuple, Dict, List
 
 from PyQt5.QtCore import QVariant, Qt
 from PyQt5.QtWidgets import (
@@ -58,6 +51,41 @@ from qgis import processing
 from processing.gui.wrappers import WidgetWrapper
 
 
+def get_2024_barangay_layers_dir() -> Optional[str]:
+    """
+    Locates the '2024 Barangay Layers' reference directory.
+    Checks standard plugin paths and working directory paths.
+    """
+    candidates = [
+        os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "references", "2024 Barangay Layers")),
+        os.path.abspath(os.path.join(os.getcwd(), "references", "2024 Barangay Layers")),
+        os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "2024 Barangay Layers")),
+        os.path.abspath(os.path.join(os.getcwd(), "2024 Barangay Layers")),
+    ]
+    for c in candidates:
+        if os.path.exists(c) and os.path.isdir(c):
+            return os.path.normpath(c).replace("\\", "/")
+    return None
+
+
+def normalize_admin_name(s: str) -> str:
+    """
+    Standardizes province and municipality names for directory and file matching.
+    """
+    if not s:
+        return ""
+    s = s.lower().strip()
+    s = s.replace("sta.", "santa").replace("sta ", "santa ").replace(" sta", " santa")
+    s = s.replace("sto.", "santo").replace("sto ", "santo ").replace(" sto", " santo")
+    for term in [
+        "city of ", "city", "municipality of ", "municipality", "(capital)", "capital",
+        "first district", "second district", "third district", "fourth district",
+        "district", "province of ", "province", "barmm", "ncr", "car", "region"
+    ]:
+        s = s.replace(term, "")
+    return re.sub(r'[^a-z0-9]', '', s)
+
+
 def normalize_barangay_name(name: str) -> str:
     """
     Standardizes Barangay names to ensure robust matching even with variations in
@@ -98,6 +126,176 @@ def normalize_barangay_name(name: str) -> str:
         s = str(int(s))
         
     return s
+
+
+class BarangayCountLookup:
+    """
+    High-performance, cached lookup provider for hhcount (household count)
+    and bldgcount (building count) from the '2024 Barangay Layers' GPKG reference dataset.
+    """
+
+    _instance = None
+
+    def __init__(self, base_dir: Optional[str] = None):
+        self.base_dir = base_dir or get_2024_barangay_layers_dir()
+        self.gpkg_index: Dict[Any, str] = {}
+        # Cache of loaded municipality records: gpkg_path -> (lookup_dict, norm_keys_list)
+        self._muni_cache: Dict[str, Tuple[Dict[str, Tuple[Optional[int], Optional[int]]], List[str]]] = {}
+        self._indexed = False
+        if self.base_dir and os.path.exists(self.base_dir):
+            self._build_file_index()
+
+    def _build_file_index(self):
+        """Indexes all GPKG files within 2024 Barangay Layers by normalized keys."""
+        if not self.base_dir or not os.path.exists(self.base_dir):
+            return
+        for root, _, files in os.walk(self.base_dir):
+            for f in files:
+                if f.lower().endswith(".gpkg"):
+                    full_path = os.path.normpath(os.path.join(root, f)).replace("\\", "/")
+                    folder_name = os.path.basename(root)
+                    file_stem = os.path.splitext(f)[0]
+
+                    norm_fld = normalize_admin_name(folder_name)
+                    norm_stem = normalize_admin_name(file_stem)
+
+                    if norm_fld and norm_stem:
+                        self.gpkg_index[(norm_fld, norm_stem)] = full_path
+                    if norm_stem:
+                        if norm_stem not in self.gpkg_index:
+                            self.gpkg_index[norm_stem] = full_path
+        self._indexed = True
+
+    def find_gpkg_path(self, province: str, city_mun: str) -> Optional[str]:
+        """Finds the GPKG path for a given province and city/municipality."""
+        if not self._indexed:
+            self._build_file_index()
+
+        norm_p = normalize_admin_name(province)
+        norm_c = normalize_admin_name(city_mun)
+
+        # 1. Exact (province, city_mun) pair
+        if (norm_p, norm_c) in self.gpkg_index:
+            return self.gpkg_index[(norm_p, norm_c)]
+
+        # 2. City/Mun alone
+        if norm_c in self.gpkg_index:
+            return self.gpkg_index[norm_c]
+
+        # 3. Substring matching on (province, city_mun)
+        tuple_keys = [k for k in self.gpkg_index.keys() if isinstance(k, tuple)]
+        for k in tuple_keys:
+            if (norm_p and (norm_p in k[0] or k[0] in norm_p)) and (norm_c and (norm_c in k[1] or k[1] in norm_c)):
+                return self.gpkg_index[k]
+
+        # 4. Fallback: stem substring alone
+        for k in tuple_keys:
+            if norm_c and (norm_c in k[1] or k[1] in norm_c):
+                return self.gpkg_index[k]
+
+        return None
+
+    def _load_municipality_records(self, gpkg_path: str) -> Tuple[Dict[str, Tuple[Optional[int], Optional[int]]], List[str]]:
+        """Loads and caches all barangay counts for a specific municipality GPKG file."""
+        if gpkg_path in self._muni_cache:
+            return self._muni_cache[gpkg_path]
+
+        lookup: Dict[str, Tuple[Optional[int], Optional[int]]] = {}
+        norm_keys: List[str] = []
+
+        if not os.path.exists(gpkg_path):
+            self._muni_cache[gpkg_path] = (lookup, norm_keys)
+            return lookup, norm_keys
+
+        try:
+            conn = sqlite3.connect(gpkg_path)
+            c = conn.cursor()
+            c.execute("SELECT barangay, geocode, map_uuid, hhcount, bldgcount FROM barangay")
+            rows = c.fetchall()
+            conn.close()
+
+            for bgy, geo, uuid_val, hh, bldg in rows:
+                hh_int = int(round(float(hh))) if hh is not None and str(hh).strip() != "" else None
+                bldg_int = int(round(float(bldg))) if bldg is not None and str(bldg).strip() != "" else None
+                val = (hh_int, bldg_int)
+
+                if bgy:
+                    bgy_str = str(bgy).strip()
+                    lookup[bgy_str.lower()] = val
+                    norm_bgy = normalize_barangay_name(bgy_str)
+                    if norm_bgy:
+                        lookup[norm_bgy] = val
+                        if norm_bgy not in norm_keys:
+                            norm_keys.append(norm_bgy)
+
+                if uuid_val and str(uuid_val).strip() and str(uuid_val).strip().lower() != "null":
+                    lookup[str(uuid_val).strip().lower()] = val
+
+                if geo and str(geo).strip():
+                    clean_geo = "".join(ch for ch in str(geo) if ch.isdigit())
+                    if clean_geo:
+                        lookup[clean_geo] = val
+                        if len(clean_geo) > 6:
+                            lookup[clean_geo.lstrip("0")] = val
+
+        except Exception:
+            pass
+
+        self._muni_cache[gpkg_path] = (lookup, norm_keys)
+        return lookup, norm_keys
+
+    def get_counts(
+        self,
+        province: str,
+        city_mun: str,
+        barangay: Optional[str] = None,
+        map_uuid: Optional[str] = None,
+        geocode: Optional[str] = None,
+    ) -> Tuple[Optional[int], Optional[int]]:
+        """
+        Retrieves (hhcount, bldgcount) for the specified barangay.
+        Returns (None, None) if not found.
+        """
+        gpkg_path = self.find_gpkg_path(province, city_mun)
+        if not gpkg_path:
+            return None, None
+
+        lookup, norm_keys = self._load_municipality_records(gpkg_path)
+        if not lookup:
+            return None, None
+
+        # 1. Match by map_uuid
+        if map_uuid and str(map_uuid).strip():
+            u_key = str(map_uuid).strip().lower()
+            if u_key in lookup:
+                return lookup[u_key]
+
+        # 2. Match by exact barangay name
+        if barangay and str(barangay).strip():
+            b_exact = str(barangay).strip().lower()
+            if b_exact in lookup:
+                return lookup[b_exact]
+
+            # 3. Match by normalized barangay name
+            b_norm = normalize_barangay_name(barangay)
+            if b_norm in lookup:
+                return lookup[b_norm]
+
+            # 4. Fuzzy match fallback
+            if b_norm and norm_keys:
+                close = difflib.get_close_matches(b_norm, norm_keys, n=1, cutoff=0.75)
+                if close and close[0] in lookup:
+                    return lookup[close[0]]
+
+        # 5. Match by geocode
+        if geocode and str(geocode).strip():
+            clean_geo = "".join(ch for ch in str(geocode) if ch.isdigit())
+            if clean_geo in lookup:
+                return lookup[clean_geo]
+            if clean_geo.lstrip("0") in lookup:
+                return lookup[clean_geo.lstrip("0")]
+
+        return None, None
 
 
 class PsgcFilterWidgetWrapper(WidgetWrapper):
@@ -837,6 +1035,7 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
         matched_count = 0
         total_features = lgu_layer.featureCount()
         preview_rows = []
+        count_lookup = BarangayCountLookup()
         
         for current, feature in enumerate(lgu_layer.getFeatures()):
             lgu_key_val = feature.attribute(field_val)
@@ -869,6 +1068,17 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
                 # map_uuid: use PSGC value if present; otherwise it will be auto-generated at run-time
                 psgc_uuid = psgc_data.get("map_uuid", "")
                 uuid_val = psgc_uuid if psgc_uuid else "[Auto-generated]"
+
+                # Lookup hhcount and bldgcount from 2024 Barangay Layers
+                hh_val, bldg_val = count_lookup.get_counts(
+                    province=province,
+                    city_mun=city_mun,
+                    barangay=barangay,
+                    map_uuid=psgc_uuid,
+                    geocode=geocode,
+                )
+                hh_str = str(hh_val) if hh_val is not None else "NULL"
+                bldg_str = str(bldg_val) if bldg_val is not None else "NULL"
             else:
                 geocode = ""
                 region = ""
@@ -879,6 +1089,8 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
                 # Preview uses join field value; raw name field resolved at run-time
                 preview_lgu_name = lgu_key_str if lgu_key_str else "[from raw name field]"
                 uuid_val = "NULL"       # Contested features always keep map_uuid NULL
+                hh_str = "NULL"
+                bldg_str = "NULL"
                 self._unmatched_features.append(feature)
 
             fid_val = current + 1
@@ -894,8 +1106,8 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
                 "1003",
                 "",
                 source_val,
-                "NULL",
-                "NULL",
+                hh_str,
+                bldg_str,
                 sy_val,
                 boundary_val,       # boundary
                 preview_lgu_name,   # lgu_bgy_name
@@ -1059,9 +1271,6 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
             "geocode followed by '_bgy' (e.g. '14000_bgy').\n"
             "10. Automatically saves a permanent copy of the updated LGU layer in the specified output directory as "
             "a GeoPackage with the same custom name (e.g., '14000_bgy.gpkg').\n\n"
-
-            "<b>Support Email:</b> gmd.support@psa.gov.ph\n"
-            "Author: CPA\n"
         )
 
     def initAlgorithm(self, config: Optional[dict[str, Any]] = None):
@@ -1518,6 +1727,7 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
 
         # Each entry: {"attrs": {...}, "geom": QgsGeometry}  (attrs includes "boundary": "Barangay"/"Contested")
         staged = []
+        count_lookup = BarangayCountLookup()
 
         feedback.pushInfo("Pass 1 — Matching LGU boundaries against PSGC records...")
         for current, feature in enumerate(source.getFeatures()):
@@ -1569,6 +1779,16 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
                 if geocode:
                     geocode = geocode[2:] + "000000"
                 psgc_uuid = psgc_data.get("map_uuid", "")
+
+                # Lookup hhcount and bldgcount from 2024 Barangay Layers
+                hh_val, bldg_val = count_lookup.get_counts(
+                    province=psgc_data["province"],
+                    city_mun=psgc_data["city_mun"],
+                    barangay=psgc_data["barangay"],
+                    map_uuid=psgc_uuid,
+                    geocode=geocode,
+                )
+
                 attrs = {
                     "map_uuid":     psgc_uuid if psgc_uuid else str(uuid.uuid4()),
                     "geocode":      geocode,
@@ -1576,6 +1796,8 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
                     "province":     psgc_data["province"],
                     "city_mun":     psgc_data["city_mun"],
                     "barangay":     psgc_data["barangay"],
+                    "hhcount":      hh_val,
+                    "bldgcount":    bldg_val,
                     "boundary":     "Barangay",
                     "lgu_bgy_name": lgu_bgy_name_val,
                     "bdry_status":  None,
@@ -1588,6 +1810,8 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
                     "province":     "",
                     "city_mun":     "",
                     "barangay":     None,           # NULL for Contested
+                    "hhcount":      None,
+                    "bldgcount":    None,
                     "boundary":     "Contested",
                     "lgu_bgy_name": lgu_bgy_name_val,
                     "bdry_status":  None,
@@ -1707,8 +1931,8 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
                 "1003",              # code
                 "",                  # remarks
                 source_meta_val,     # source
-                None,                # hhcount
-                None,                # bldgcount
+                a["hhcount"],        # hhcount
+                a["bldgcount"],      # bldgcount
                 sy_val,              # sy
                 a["boundary"],       # boundary
                 a["lgu_bgy_name"],   # lgu_bgy_name
