@@ -274,6 +274,86 @@ class TestEAMergeProcessor(unittest.TestCase):
             processor._result.output_layer = None
         self.assertIsNone(processor._result.output_layer)
 
+    def test_ea_type_included_in_output_layer_schema_and_defaults_to_standard(self):
+        """Verify ea_type field is present in output layer schema and defaults to STANDARD."""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            processor = EAMergeProcessor(
+                ea_layer=self.ea_layer,
+                replacement_layers=[self.repl_layer1],
+                output_dir=tmpdir,
+            )
+            result = processor.run()
+            self.assertTrue(result.success)
+
+            out_fields = [f.name() for f in result.output_layer.fields()]
+            self.assertIn("ea_type", out_fields)
+
+            # Features should default to "STANDARD"
+            for feat in result.output_layer.getFeatures():
+                self.assertEqual(feat.attribute("ea_type"), "STANDARD")
+
+    def test_ea_type_preserves_custom_and_special_types(self):
+        """Verify ea_type preserves explicit values like 'SPECIAL' or 'GAP' from inputs."""
+        custom_ea_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "04340_ea_custom", "memory")
+        pr = custom_ea_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("GEOCODE", QVariant.String),
+            QgsField("CITYMUN", QVariant.String),
+            QgsField("hhcount", QVariant.Double),
+            QgsField("bldgcount", QVariant.Int),
+            QgsField("ea_type", QVariant.String),
+        ])
+        custom_ea_layer.updateFields()
+
+        f1 = QgsFeature(custom_ea_layer.fields())
+        f1.setGeometry(make_square(0, 0, 100))
+        f1.setAttributes(["0434000001", "San Mateo", 100.0, 20, "STANDARD"])
+
+        f2 = QgsFeature(custom_ea_layer.fields())
+        f2.setGeometry(make_square(100, 0, 100))
+        f2.setAttributes(["0434000002", "San Mateo", 0.0, 0, "GAP"])
+        pr.addFeatures([f1, f2])
+        custom_ea_layer.updateExtents()
+
+        # Replacement layer with special_type="SPECIAL"
+        repl_special = QgsVectorLayer("Polygon?crs=EPSG:3857", "01001005", "memory")
+        rpr = repl_special.dataProvider()
+        rpr.addAttributes([
+            QgsField("hhcount", QVariant.Double),
+            QgsField("bldgcount", QVariant.Int),
+            QgsField("special_type", QVariant.String),
+        ])
+        repl_special.updateFields()
+
+        rf = QgsFeature(repl_special.fields())
+        rf.setGeometry(make_square(20, 20, 60))
+        rf.setAttributes([80.0, 15, "SPECIAL"])
+        rpr.addFeatures([rf])
+        repl_special.updateExtents()
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            processor = EAMergeProcessor(
+                ea_layer=custom_ea_layer,
+                replacement_layers=[repl_special],
+                output_dir=tmpdir,
+            )
+            result = processor.run()
+            self.assertTrue(result.success)
+
+            features = list(result.output_layer.getFeatures())
+            self.assertEqual(len(features), 3)
+
+            # Check special replacement feature has ea_type == "SPECIAL"
+            special_feat = next((f for f in features if f.geometry().area() < 5000), None)
+            self.assertIsNotNone(special_feat)
+            self.assertEqual(special_feat.attribute("ea_type"), "SPECIAL")
+
+            # Check gap EA feature kept ea_type == "GAP"
+            gap_feat = next((f for f in features if str(f.attribute("GEOCODE")) == "0434000002"), None)
+            self.assertIsNotNone(gap_feat)
+            self.assertEqual(gap_feat.attribute("ea_type"), "GAP")
+
 
 if __name__ == "__main__":
     unittest.main()
+

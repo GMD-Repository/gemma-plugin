@@ -133,7 +133,7 @@ The output layers `<geocode>_delineated_ea2026`, `<geocode>_merged_ea2026`, and 
 | **new_ean** | String | Newly assigned post-delineation 6-digit EA sequence number code (e.g. `001000`). |
 | **hh_count** | Integer | New total household count aggregated from building points assigned to this polygon (whole number). |
 | **bldg_count** | Integer | New total building point count contained in this polygon. |
-| **ea_type** | String | EA classification type (`STANDARD` or `SPECIAL`). |
+| **ea_type** | String | EA classification and transformation type (`DELINEATED`, `MERGED`, `RETAINED`, `GAP`, `OVERLAP`, or `SPECIAL`). |
 | **remarks** | String | Processing note detailing action or split strategy (e.g. `Split along road network`, `Merged EA`, `Generated from Gap layer`). |
 
 In addition, the **`merge_ea2026`** (`<geocode>_merged_ea2026`) output layer includes the following 3 additional fields:

@@ -513,10 +513,14 @@ class EAMergeProcessor:
                     )
                 else:
                     proj = QgsProject.instance()
-                    if proj:
-                        for old_lyr in list(proj.mapLayersByName(self._output_layer_name)):
-                            proj.removeMapLayer(old_lyr.id())
-                        proj.addMapLayer(output_layer)
+                    if proj and hasattr(proj, 'mapLayersByName'):
+                        old_layers = proj.mapLayersByName(self._output_layer_name)
+                        if old_layers and isinstance(old_layers, (list, tuple)):
+                            for old_lyr in list(old_layers):
+                                if hasattr(proj, 'removeMapLayer') and hasattr(old_lyr, 'id'):
+                                    proj.removeMapLayer(old_lyr.id())
+                        if hasattr(proj, 'addMapLayer'):
+                            proj.addMapLayer(output_layer)
                     if saved_to_gpkg:
                         self._log(
                             f"[INFO] Permanent GeoPackage layer (.gpkg) added to QGIS canvas: {self._output_layer_name}"
@@ -723,6 +727,7 @@ class EAMergeProcessor:
         - bldgcount (Int)
         - hh_count (Double)
         - bldg_count (Int)
+        - ea_type (String)
         are all included in the output schema.
         """
         ea_fields = self.ea_layer.fields()
@@ -746,6 +751,9 @@ class EAMergeProcessor:
         if "bldg_count" not in existing_names_lower:
             out_fields.append(QgsField("bldg_count", QVariant.Int))
             existing_names_lower.add("bldg_count")
+        if "ea_type" not in existing_names_lower:
+            out_fields.append(QgsField("ea_type", QVariant.String))
+            existing_names_lower.add("ea_type")
 
         return out_fields
 
@@ -846,7 +854,7 @@ class EAMergeProcessor:
                         # Fallback: inherit from overlapping previous EA feature
                         val = _extract_feature_attribute(fallback_ea_feat, ea_name_to_idx, ea_field_name)
 
-                    # Secondary fallback if count field was not present
+                    # Secondary fallback if count / ea_type field was not present
                     if val is None:
                         if ea_field_name == "hh_count":
                             val = _extract_feature_attribute(feat, repl_name_to_idx, "hhcount")
@@ -864,6 +872,8 @@ class EAMergeProcessor:
                             val = _extract_feature_attribute(feat, repl_name_to_idx, "bldg_count")
                             if val is None and fallback_ea_feat is not None:
                                 val = _extract_feature_attribute(fallback_ea_feat, ea_name_to_idx, "bldg_count")
+                        elif ea_field_name == "ea_type":
+                            val = "STANDARD"
 
                     if val is not None:
                         # Safe type conversion based on target field type
@@ -979,6 +989,8 @@ class EAMergeProcessor:
                         val = _extract_feature_attribute(feat, ea_name_to_idx, "hh_count")
                     elif ea_field_name == "bldgcount":
                         val = _extract_feature_attribute(feat, ea_name_to_idx, "bldg_count")
+                    elif ea_field_name == "ea_type":
+                        val = "STANDARD"
 
                 if val is not None:
                     try:

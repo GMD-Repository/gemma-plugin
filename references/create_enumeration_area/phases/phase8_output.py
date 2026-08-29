@@ -1145,7 +1145,18 @@ def run_phase_8(
 
         ea_type_idx = out_fields.indexOf("ea_type")
         if ea_type_idx != -1:
-            out_feat.setAttribute(ea_type_idx, ea.get('ea_type', 'STANDARD'))
+            explicit_ea_type = ea.get('ea_type')
+            if explicit_ea_type and str(explicit_ea_type).strip() not in ('STANDARD', '', 'None', 'NULL'):
+                ea_type_val = str(explicit_ea_type).strip()
+            elif ea.get('from_split', False):
+                ea_type_val = 'DELINEATED'
+            elif ea.get('from_merge', False):
+                ea_type_val = 'MERGED'
+            elif ea.get('is_special_ea', False):
+                ea_type_val = str(ea.get('special_type', 'SPECIAL'))
+            else:
+                ea_type_val = 'RETAINED'
+            out_feat.setAttribute(ea_type_idx, ea_type_val)
 
         special_type_idx = out_fields.indexOf("special_type")
         if special_type_idx != -1:

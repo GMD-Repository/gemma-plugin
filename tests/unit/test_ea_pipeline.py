@@ -1444,11 +1444,106 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
         self.assertEqual(delin_gc, special_gc, "Special EA geocode must match Delineated EA geocode")
         self.assertEqual(merged_gc, special_gc, "Special EA geocode must match Merged EA geocode")
 
+        # 3c. Verify ea_type classification values (DELINEATED, MERGED, GAP)
+        self.assertEqual(delin_sink.features[0].attribute("ea_type"), "DELINEATED")
+        self.assertEqual(delin_sink.features[1].attribute("ea_type"), "DELINEATED")
+        self.assertEqual(merged_sink.features[0].attribute("ea_type"), "MERGED")
+        self.assertEqual(spec_sink.features[0].attribute("ea_type"), "GAP")
+
         # 4. Verify Extracted Buildings Sink FIDs are unique and sequential (1, 2)
         self.assertEqual(len(bldg_sink.features), 2)
         bldg_fids = [f.attribute("fid") for f in bldg_sink.features]
         self.assertEqual(bldg_fids, [1, 2], "Extracted buildings features must have unique sequential FIDs [1, 2].")
         self.assertEqual([f.id() for f in bldg_sink.features], [1, 2])
+
+    def test_phase8_output_ea_type_classification(self):
+        """Verify phase8 assigns specific ea_type classifications: DELINEATED, MERGED, RETAINED, GAP, OVERLAP, SPECIAL."""
+        from references.create_enumeration_area.phases.phase8_output import run_phase_8
+        try:
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            try:
+                from PyQt5.QtCore import QVariant
+            except ImportError:
+                from qgis.core import QVariant
+
+        class DummyAlg:
+            pass
+
+        class MockSink:
+            def __init__(self):
+                self.features = []
+            def addFeature(self, feat, flags=0):
+                self.features.append(QgsFeature(feat))
+                return True
+
+        alg = DummyAlg()
+        mock_feedback = MockFeedback()
+        fields = QgsFields()
+        for f in ["fid", "map_uuid", "geocode", "region", "province", "city_mun", "barangay", "code", "name", "ean", "hhcount", "bldgcount", "sy", "new_ean", "hh_count", "bldg_count", "ea_type", "remarks"]:
+            fields.append(QgsField(f, QVariant.Int if f == "fid" else (QVariant.Double if f == "hhcount" else (QVariant.Int if "count" in f else QVariant.String))))
+
+        delin_sink = MockSink()
+        merged_sink = MockSink()
+        spec_sink = MockSink()
+
+        poly = QgsGeometry.fromPolygonXY([[QgsPointXY(0,0), QgsPointXY(1,0), QgsPointXY(1,1), QgsPointXY(0,1), QgsPointXY(0,0)]])
+
+        eas = [
+            {'geom': poly, 'original_id': 1, 'original_code': '001', 'new_ea_code': '001A', 'parent_barangay': '043404001', 'from_split': True, 'hh_count': 150.0, 'bldg_count': 20, 'original_hhcount': 350.0, 'original_bldgcount': 50, 'buildings': []},
+            {'geom': poly, 'original_id': 2, 'original_code': '002', 'new_ea_code': '002', 'parent_barangay': '043404001', 'from_merge': True, 'hh_count': 120.0, 'bldg_count': 15, 'original_hhcount': 60.0, 'original_bldgcount': 8, 'buildings': []},
+            {'geom': poly, 'original_id': 3, 'original_code': '003', 'new_ea_code': '003', 'parent_barangay': '043404001', 'from_split': False, 'from_merge': False, 'is_special_ea': False, 'hh_count': 200.0, 'bldg_count': 25, 'original_hhcount': 200.0, 'original_bldgcount': 25, 'buildings': []},
+            {'geom': poly, 'original_id': 4, 'original_code': '004', 'new_ea_code': '004', 'parent_barangay': '043404001', 'is_special_ea': True, 'special_type': 'GAP', 'hh_count': 0.0, 'bldg_count': 0, 'original_hhcount': 0.0, 'original_bldgcount': 0, 'buildings': []},
+            {'geom': poly, 'original_id': 5, 'original_code': '005', 'new_ea_code': '005', 'parent_barangay': '043404001', 'is_special_ea': True, 'special_type': 'OVERLAP', 'hh_count': 0.0, 'bldg_count': 0, 'original_hhcount': 0.0, 'original_bldgcount': 0, 'buildings': []},
+            {'geom': poly, 'original_id': 6, 'original_code': '006', 'new_ea_code': '006', 'parent_barangay': '043404001', 'is_special_ea': True, 'special_type': 'SPECIAL', 'hh_count': 50.0, 'bldg_count': 5, 'original_hhcount': 50.0, 'original_bldgcount': 5, 'buildings': []},
+        ]
+
+        p1 = {
+            "previous_ea_source": QgsVectorLayer("Polygon?crs=EPSG:4326", "test_ea", "memory"),
+            "building_source": None,
+            "target_crs": QgsVectorLayer("Polygon?crs=EPSG:4326", "test_ea", "memory").crs(),
+            "area_threshold": 1.0,
+            "max_household": 300,
+            "min_household": 100,
+            "bldg_hh_field": "pop",
+            "ea_id_field": "ean",
+            "barangay_by_id": {},
+            "all_ea_features": [],
+        }
+        p2 = {
+            "out_fields": fields,
+            "export_fields": fields,
+            "delineation_candidate_ids": {1},
+            "merge_candidate_ids": {2},
+            "adjacent_ea_ids": set(),
+            "delineated_sink": delin_sink,
+            "delineated_dest_id": "dest_delin",
+            "merged_sink": merged_sink,
+            "merged_dest_id": "dest_merged",
+            "special_ea_sink": spec_sink,
+            "special_ea_dest_id": "dest_special",
+            "extracted_buildings_sink": None,
+            "extracted_buildings_dest_id": None,
+            "delin_candidate_feat_count": 0,
+            "merge_candidate_feat_count": 0,
+            "extracted_bldg_feat_count": 0,
+        }
+        p3 = {"road_geoms": {}, "river_geoms": {}}
+        p4 = {}
+        p7 = {"eas": eas}
+
+        run_phase_8(alg, {}, None, mock_feedback, None, p1, p2, p3, p4, p7)
+
+        delin_types = [f.attribute("ea_type") for f in delin_sink.features]
+        self.assertIn("DELINEATED", delin_types)
+
+        merged_types = [f.attribute("ea_type") for f in merged_sink.features]
+        self.assertIn("MERGED", merged_types)
+
+        spec_types = [f.attribute("ea_type") for f in spec_sink.features]
+        self.assertIn("GAP", spec_types)
+        self.assertIn("OVERLAP", spec_types)
+        self.assertIn("SPECIAL", spec_types)
 
     def test_ea_merge_processor_unique_fids(self):
         """Verify that EAMergeProcessor assigns unique sequential FIDs across replacement and remaining features."""
