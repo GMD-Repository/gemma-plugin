@@ -195,7 +195,7 @@ class QgsGeometry:
         if stype == "Polygon":
             shell = [QgsPointXY(x, y) for x, y in sg.exterior.coords]
             holes = [[QgsPointXY(x, y) for x, y in ring.coords] for ring in sg.interiors]
-            return QgsGeometry("Polygon", [shell] + holes if holes else [shell])
+            return QgsGeometry("Polygon", [[shell] + holes] if holes else [[shell]])
         elif stype == "MultiPolygon":
             mpolys = []
             for p in sg.geoms:
@@ -395,10 +395,13 @@ class QgsGeometry:
 
     def boundingBox(self):
         if self.polygons and self.polygons[0]:
-            xs = [p.x() for p in self.polygons[0]]
-            ys = [p.y() for p in self.polygons[0]]
-            xmin, xmax = min(xs), max(xs)
-            ymin, ymax = min(ys), max(ys)
+            first = self.polygons[0]
+            ring = first[0] if isinstance(first, list) and first and isinstance(first[0], list) else first
+            xs = [p.x() for p in ring if hasattr(p, 'x')]
+            ys = [p.y() for p in ring if hasattr(p, 'y')]
+            if xs and ys:
+                xmin, xmax = min(xs), max(xs)
+                ymin, ymax = min(ys), max(ys)
             class MockBox:
                 def __init__(self, x0, x1, y0, y1):
                     self._x0, self._x1, self._y0, self._y1 = x0, x1, y0, y1
@@ -587,6 +590,9 @@ class QgsVectorDataProvider:
         return self._layer._fields
 
 
+_MOCK_LAYER_CACHE = {}
+
+
 class QgsVectorLayer:
     def __init__(self, path="Polygon?crs=EPSG:4326", name="MockLayer", provider="memory"):
         self._path = path
@@ -594,6 +600,17 @@ class QgsVectorLayer:
         self._provider = provider
         self._fields = QgsFields()
         self._features = []
+        raw_path = str(path).split("|")[0].replace("\\", "/")
+        if raw_path in _MOCK_LAYER_CACHE:
+            cached_fields, cached_feats = _MOCK_LAYER_CACHE[raw_path]
+            for f in cached_fields:
+                self._fields.append(QgsField(f.name(), f.type()))
+            for feat in cached_feats:
+                cf = QgsFeature(self._fields)
+                cf.setGeometry(feat.geometry())
+                cf.setAttributes(list(feat.attributes()))
+                cf.setId(feat.id())
+                self._features.append(cf)
 
     def name(self): return self._name
     def isValid(self): return True
@@ -680,10 +697,13 @@ class QgsProcessingException(Exception):
 class QgsSpatialIndex:
     def __init__(self, *args, **kwargs):
         self._features = {}
+        if args and hasattr(args[0], "__iter__"):
+            self.addFeatures(args[0])
 
     def addFeature(self, feature):
         if hasattr(feature, "id"):
-            self._features[feature.id()] = feature
+            fid = feature.id() if callable(feature.id) else getattr(feature, "_id", 0)
+            self._features[fid] = feature
 
     def addFeatures(self, features):
         for f in features:
@@ -691,6 +711,80 @@ class QgsSpatialIndex:
 
     def intersects(self, bbox):
         return list(self._features.keys())
+
+
+class QgsProject:
+    _instance = None
+
+    def __init__(self):
+        self._layers = {}
+
+    @classmethod
+    def instance(cls):
+        if cls._instance is None:
+            cls._instance = QgsProject()
+        return cls._instance
+
+    def fileName(self):
+        return ""
+
+    def homePath(self):
+        return ""
+
+    def transformContext(self):
+        return MockGenericClass()
+
+    def mapLayersByName(self, name):
+        return [lyr for lyr in self._layers.values() if hasattr(lyr, "name") and lyr.name() == name]
+
+    def addMapLayer(self, layer):
+        if layer and hasattr(layer, "id"):
+            self._layers[layer.id()] = layer
+        return layer
+
+    def removeMapLayer(self, layer_id):
+        self._layers.pop(layer_id, None)
+
+
+class QgsVectorFileWriter:
+    NoError = 0
+    ErrCreateDataSource = 1
+    CreateOrOverwriteFile = 0
+    CreateOrOverwriteLayer = 1
+
+    class SaveVectorOptions:
+        def __init__(self):
+            self.driverName = "GPKG"
+            self.layerName = ""
+            self.fileEncoding = "UTF-8"
+            self.actionOnExistingFile = 0
+
+    @classmethod
+    def writeAsVectorFormatV3(cls, layer, file_path, ctx, options):
+        try:
+            import os
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            with open(file_path, "wb") as f:
+                f.write(b"mock_gpkg_data")
+            norm_path = str(file_path).replace("\\", "/")
+            _MOCK_LAYER_CACHE[norm_path] = (layer.fields(), list(layer.getFeatures()))
+        except Exception:
+            pass
+        return (0, "")
+
+    @classmethod
+    def writeAsVectorFormatV2(cls, layer, file_path, ctx, options):
+        try:
+            import os
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            with open(file_path, "wb") as f:
+                f.write(b"mock_gpkg_data")
+            norm_path = str(file_path).replace("\\", "/")
+            _MOCK_LAYER_CACHE[norm_path] = (layer.fields(), list(layer.getFeatures()))
+        except Exception:
+            pass
+        return (0, "")
+
 
 
 class QgsProcessingAlgorithm:
@@ -1061,6 +1155,7 @@ def setup_qgis_mock_if_needed():
     core_mod.QgsProject = QgsProject
     core_mod.QgsApplication = QgsApplication
     core_mod.QgsWkbTypes = QgsWkbTypes
+    core_mod.QgsVectorFileWriter = QgsVectorFileWriter
 
     # PyQt attributes
     class MockSignal:
