@@ -307,7 +307,6 @@ class EARFWriter:
 
         # ── Collect raw EA rows ──────────────────────────────────────────
         raw_rows: List[Dict[str, Any]] = []
-        seen_new_eans: set = set()
 
         for feat in layer.getFeatures():
             geocode_raw = _str(feat, "geocode") or ""
@@ -335,17 +334,6 @@ class EARFWriter:
             ean_val     = _str(feat, "ean")     or ""
             new_ean_val = _str(feat, "new_ean") or ""
             remarks_val = _str(feat, "remarks") or ""
-
-            # Detect merged: remarks mentions "merge" or new_ean already emitted
-            is_merged = (
-                "merge" in remarks_val.lower()
-                or (new_ean_val and new_ean_val in seen_new_eans)
-            )
-            if is_merged and "merge" not in remarks_val.lower():
-                remarks_val = ("Merged EA; " + remarks_val).strip("; ")
-
-            if new_ean_val:
-                seen_new_eans.add(new_ean_val)
 
             raw_rows.append({
                 # Geographic identifiers
