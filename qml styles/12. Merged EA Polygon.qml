@@ -1059,33 +1059,25 @@
   </attributeactions>
   <attributetableconfig sortOrder="0" actionWidgetStyle="dropDown" sortExpression="&quot;name&quot;">
     <columns>
-      <column type="field" width="-1" name="name" hidden="0"/>
-      <column type="field" width="-1" name="code" hidden="0"/>
-      <column type="field" width="-1" name="EACount" hidden="0"/>
       <column type="field" width="-1" name="fid" hidden="0"/>
       <column type="field" width="-1" name="map_uuid" hidden="0"/>
       <column type="field" width="-1" name="geocode" hidden="0"/>
-      <column type="field" width="-1" name="ean" hidden="0"/>
-      <column type="field" width="-1" name="correspondence_ea_geocode" hidden="0"/>
       <column type="field" width="-1" name="region" hidden="0"/>
       <column type="field" width="-1" name="province" hidden="0"/>
       <column type="field" width="-1" name="city_mun" hidden="0"/>
       <column type="field" width="-1" name="barangay" hidden="0"/>
-      <column type="field" width="-1" name="remarks" hidden="0"/>
+      <column type="field" width="-1" name="ean" hidden="0"/>
+      <column type="field" width="-1" name="name" hidden="0"/>
+      <column type="field" width="-1" name="code" hidden="0"/>
       <column type="field" width="-1" name="hhcount" hidden="0"/>
       <column type="field" width="-1" name="bldgcount" hidden="0"/>
       <column type="field" width="-1" name="sy" hidden="0"/>
-      <column type="field" width="-1" name="split_by" hidden="0"/>
-      <column type="field" width="-1" name="bldg_count" hidden="0"/>
+      <column type="field" width="-1" name="new_ean" hidden="0"/>
       <column type="field" width="-1" name="hh_count" hidden="0"/>
-      <column type="field" width="-1" name="bldgpoints_value" hidden="0"/>
+      <column type="field" width="-1" name="bldg_count" hidden="0"/>
       <column type="field" width="-1" name="ea_type" hidden="0"/>
-      <column type="field" width="-1" name="special_type" hidden="0"/>
-      <column type="field" width="-1" name="source_id" hidden="0"/>
-      <column type="field" width="-1" name="new_ea" hidden="0"/>
-      <column type="field" width="-1" name="indicator" hidden="0"/>
-      <column type="field" width="-1" name="gps" hidden="0"/>
-      <column type="field" width="-1" name="min_circle" hidden="0"/>
+      <column type="field" width="-1" name="eacount" hidden="0"/>
+      <column type="field" width="-1" name="remarks" hidden="0"/>
       <column type="actions" width="-1" hidden="1"/>
     </columns>
   </attributetableconfig>

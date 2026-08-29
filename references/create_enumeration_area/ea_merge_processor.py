@@ -133,6 +133,16 @@ class EAMergeResult:
 # Ensures original counts (hhcount, bldgcount) and calculated counts (hh_count, bldg_count)
 # strictly follow their respective field lineages without cross-contamination.
 _FIELD_CANDIDATE_MAP = {
+    "fid": ("fid", "id", "objectid", "gid", "feat_id"),
+    "map_uuid": ("map_uuid", "uuid", "guid", "mapuuid"),
+    "geocode": ("geocode", "geo_code", "psgc", "adm4_pcode", "adm_pcode", "brgy_code"),
+    "region": ("region", "reg_code", "reg_name", "adm1_pcode"),
+    "province": ("province", "prov_code", "prov_name", "adm2_pcode"),
+    "city_mun": ("city_mun", "citymun", "city_name", "mun_name", "municipality", "city", "adm3_pcode"),
+    "barangay": ("barangay", "bgy_name", "brgy_name", "brgy", "bgy", "adm4_pcode"),
+    "ean": ("ean", "ea_code", "ean_code", "ea_no", "eacode", "eano", "old_ean"),
+    "name": ("name", "ean_name", "ea_name", "areaname", "area_name"),
+    "code": ("code", "bgy_code", "brgy_code", "bgy_c", "brgy_c"),
     "hhcount": (
         "hhcount", "original_hhcount", "orig_hhcount", "orig_hh",
         "new_hhcount", "household", "household_count", "pop", "population"
@@ -142,24 +152,41 @@ _FIELD_CANDIDATE_MAP = {
         "new_bldgcount", "bldgpts_cnt", "bldg_points", "building_count",
         "bldg_total", "buildings"
     ),
+    "sy": ("sy", "survey_yr", "survey_year", "year"),
+    "new_ean": ("new_ean", "new_eacode", "new_ea", "ean_new", "new_ea_code", "new_ea_tracker"),
     "hh_count": (
         "hh_count", "new_hh_count", "calc_hh_count", "hh_cnt", "total_hh", "hh"
     ),
     "bldg_count": (
         "bldg_count", "new_bldg_count", "calc_bldg_count", "bldg_cnt", "bldg"
     ),
-    "ean": ("ean", "ea_code", "ean_code", "ea_no", "eacode", "eano", "old_ean"),
-    "new_ean": ("new_ean", "new_eacode", "new_ea", "ean_new", "new_ea_code", "new_ea_tracker"),
-    "eacount": ("eacount", "ea_count", "eacnt", "total_ea", "ea_total"),
-    "sy": ("sy", "survey_yr", "survey_year", "year"),
     "ea_type": ("ea_type", "type", "eatype", "special_type"),
+    "eacount": ("eacount", "ea_count", "eacnt", "total_ea", "ea_total"),
     "remarks": ("remarks", "remark", "delin_remarks", "delin_remark", "comments", "comment"),
-    "region": ("region", "reg_code", "reg_name", "adm1_pcode"),
-    "province": ("province", "prov_code", "prov_name", "adm2_pcode"),
-    "city_mun": ("city_mun", "citymun", "city_name", "mun_name", "municipality", "city", "adm3_pcode"),
-    "barangay": ("barangay", "bgy_name", "brgy_name", "brgy", "bgy", "adm4_pcode"),
-    "geocode": ("geocode", "geo_code", "psgc", "adm4_pcode", "adm_pcode", "brgy_code"),
 }
+
+# The exact 19 output fields in strict order
+_OUTPUT_FIELD_SPECS = (
+    ("fid", QVariant.Int),
+    ("map_uuid", QVariant.String),
+    ("geocode", QVariant.String),
+    ("region", QVariant.String),
+    ("province", QVariant.String),
+    ("city_mun", QVariant.String),
+    ("barangay", QVariant.String),
+    ("ean", QVariant.String),
+    ("name", QVariant.String),
+    ("code", QVariant.String),
+    ("hhcount", QVariant.Double),
+    ("bldgcount", QVariant.Int),
+    ("sy", QVariant.String),
+    ("new_ean", QVariant.String),
+    ("hh_count", QVariant.Double),
+    ("bldg_count", QVariant.Int),
+    ("ea_type", QVariant.String),
+    ("eacount", QVariant.Int),
+    ("remarks", QVariant.String),
+)
 
 
 def _extract_feature_attribute(
@@ -724,44 +751,43 @@ class EAMergeProcessor:
     def _build_output_fields(self) -> QgsFields:
         """Construct the output layer field schema.
 
-        Preserves all fields from the Previous EA Layer, and ensures:
-        - hhcount (Double)
-        - bldgcount (Int)
-        - hh_count (Double)
-        - bldg_count (Int)
-        - ea_type (String)
-        are all included in the output schema.
+        Constructs exactly the 19 standard output fields in the required order:
+        1. fid (Int)
+        2. map_uuid (String)
+        3. geocode (String)
+        4. region (String)
+        5. province (String)
+        6. city_mun (String)
+        7. barangay (String)
+        8. ean (String)
+        9. name (String)
+        10. code (String)
+        11. hhcount (Double)
+        12. bldgcount (Int)
+        13. sy (String)
+        14. new_ean (String)
+        15. hh_count (Double)
+        16. bldg_count (Int)
+        17. ea_type (String)
+        18. eacount (Int)
+        19. remarks (String)
+
+        Preserves existing field types from the Previous EA Layer if present.
         """
-        ea_fields = self.ea_layer.fields()
+        ea_fields = self.ea_layer.fields() if self.ea_layer else None
+        ea_field_map = {}
+        if ea_fields:
+            for i in range(ea_fields.count()):
+                f = ea_fields.at(i)
+                ea_field_map[f.name().lower()] = f
+
         out_fields = QgsFields()
-        existing_names_lower = set()
-
-        for i in range(ea_fields.count()):
-            f = ea_fields.at(i)
-            out_fields.append(QgsField(f.name(), f.type()))
-            existing_names_lower.add(f.name().lower())
-
-        if "hhcount" not in existing_names_lower:
-            out_fields.append(QgsField("hhcount", QVariant.Double))
-            existing_names_lower.add("hhcount")
-        if "bldgcount" not in existing_names_lower:
-            out_fields.append(QgsField("bldgcount", QVariant.Int))
-            existing_names_lower.add("bldgcount")
-        if "new_ean" not in existing_names_lower:
-            out_fields.append(QgsField("new_ean", QVariant.String))
-            existing_names_lower.add("new_ean")
-        if "eacount" not in existing_names_lower:
-            out_fields.append(QgsField("EACount", QVariant.Int))
-            existing_names_lower.add("eacount")
-        if "hh_count" not in existing_names_lower:
-            out_fields.append(QgsField("hh_count", QVariant.Double))
-            existing_names_lower.add("hh_count")
-        if "bldg_count" not in existing_names_lower:
-            out_fields.append(QgsField("bldg_count", QVariant.Int))
-            existing_names_lower.add("bldg_count")
-        if "ea_type" not in existing_names_lower:
-            out_fields.append(QgsField("ea_type", QVariant.String))
-            existing_names_lower.add("ea_type")
+        for fname, default_type in _OUTPUT_FIELD_SPECS:
+            existing_field = ea_field_map.get(fname.lower())
+            if existing_field is not None:
+                out_fields.append(QgsField(fname, existing_field.type()))
+            else:
+                out_fields.append(QgsField(fname, default_type))
 
         return out_fields
 

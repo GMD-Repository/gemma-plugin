@@ -518,6 +518,26 @@ class TestEAMergeProcessor(unittest.TestCase):
             self.assertEqual(len(bgy2_feats), 1)
             self.assertEqual(int(bgy2_feats[0].attribute("EACount")), 1)
 
+    def test_output_fields_exact_19_order(self):
+        """Verify the final output contains exactly the 19 standard fields in the required order."""
+        expected_fields = [
+            "fid", "map_uuid", "geocode", "region", "province", "city_mun",
+            "barangay", "ean", "name", "code", "hhcount", "bldgcount",
+            "sy", "new_ean", "hh_count", "bldg_count", "ea_type", "eacount", "remarks"
+        ]
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            processor = EAMergeProcessor(
+                ea_layer=self.ea_layer,
+                replacement_layers=[self.repl_layer1],
+                output_dir=tmpdir,
+            )
+            result = processor.run()
+            self.assertTrue(result.success)
+
+            actual_fields = [f.name() for f in result.output_layer.fields()]
+            self.assertEqual(actual_fields, expected_fields, f"Fields mismatch.\nExpected: {expected_fields}\nActual: {actual_fields}")
+
 
 if __name__ == "__main__":
     unittest.main()
