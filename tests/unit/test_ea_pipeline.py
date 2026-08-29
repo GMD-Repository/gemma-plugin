@@ -1589,6 +1589,127 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
         self.assertEqual(fids, [1, 2, 3], "All output features in merged layer must have unique sequential FIDs.")
         self.assertEqual([feat.id() for feat in out_layer.getFeatures()], [1, 2, 3])
 
+    def test_special_ea_zero_or_empty_bldg_count_rule(self):
+        """Verify that for Special EA output, if bldg_count is 0 or empty/null, hh_count is set to 0 or empty/null."""
+        from references.create_enumeration_area.phases.phase8_output import run_phase_8
+        from qgis.core import QgsVectorLayer, QgsFields, QgsField, QgsGeometry, QgsPointXY
+        try:
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            try:
+                from PyQt5.QtCore import QVariant
+            except ImportError:
+                from qgis.core import QVariant
+
+        class MockFeedback:
+            def isCanceled(self): return False
+            def pushInfo(self, msg): pass
+            def pushWarning(self, msg): pass
+            def reportError(self, msg): pass
+
+        class MockSink:
+            def __init__(self):
+                self.features = []
+            def addFeature(self, feat, flags=None):
+                self.features.append(feat)
+                return True
+
+        class DummyAlg:
+            DELINEATED_OUTPUT = "DELINEATED_OUTPUT"
+            MERGED_OUTPUT = "MERGED_OUTPUT"
+            SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
+            DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
+            MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
+            EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
+
+        alg = DummyAlg()
+        mock_feedback = MockFeedback()
+        fields = QgsFields()
+        for f in ["fid", "map_uuid", "geocode", "region", "province", "city_mun", "barangay", "code", "name", "ean", "hhcount", "bldgcount", "sy", "new_ean", "hh_count", "bldg_count", "ea_type", "remarks", "special_type"]:
+            fields.append(QgsField(f, QVariant.Int if f == "fid" else (QVariant.Double if f == "hhcount" else (QVariant.Int if "count" in f else QVariant.String))))
+
+        spec_sink = MockSink()
+        poly1 = QgsGeometry.fromPolygonXY([[QgsPointXY(0,0), QgsPointXY(1,0), QgsPointXY(1,1), QgsPointXY(0,1), QgsPointXY(0,0)]])
+        poly2 = QgsGeometry.fromPolygonXY([[QgsPointXY(2,0), QgsPointXY(3,0), QgsPointXY(3,1), QgsPointXY(2,1), QgsPointXY(2,0)]])
+        poly3 = QgsGeometry.fromPolygonXY([[QgsPointXY(4,0), QgsPointXY(5,0), QgsPointXY(5,1), QgsPointXY(4,1), QgsPointXY(4,0)]])
+
+        eas = [
+            # 1. Special EA with bldg_count = 0 and non-zero legacy hh_count (must be forced to hh_count = 0)
+            {
+                'geom': poly1, 'original_id': 101, 'original_code': '001', 'new_ea_code': '001',
+                'parent_barangay': '043404001', 'is_special_ea': True, 'special_type': 'GAP',
+                'hh_count': 150.0, 'bldg_count': 0, 'original_hhcount': 150.0, 'original_bldgcount': 0,
+                'buildings': []
+            },
+            # 2. Special EA with bldg_count = None / empty and non-zero hh_count (must be forced to hh_count = None)
+            {
+                'geom': poly2, 'original_id': 102, 'original_code': '002', 'new_ea_code': '002',
+                'parent_barangay': '043404001', 'is_special_ea': True, 'special_type': 'SPECIAL',
+                'hh_count': 75.0, 'bldg_count': None, 'original_hhcount': 75.0, 'original_bldgcount': None,
+                'buildings': []
+            },
+            # 3. Special EA with valid building points (bldg_count > 0, hh_count preserved/calculated)
+            {
+                'geom': poly3, 'original_id': 103, 'original_code': '003', 'new_ea_code': '003',
+                'parent_barangay': '043404001', 'is_special_ea': True, 'special_type': 'SPECIAL',
+                'hh_count': 80.0, 'bldg_count': 4, 'original_hhcount': 80.0, 'original_bldgcount': 4,
+                'buildings': [{'point': QgsPointXY(4.5, 0.5), 'pop': 20.0, 'bldgpoints_value': 1.0} for _ in range(4)]
+            },
+        ]
+
+        p1 = {
+            "previous_ea_source": QgsVectorLayer("Polygon?crs=EPSG:4326", "test_ea", "memory"),
+            "building_source": None,
+            "target_crs": QgsVectorLayer("Polygon?crs=EPSG:4326", "test_ea", "memory").crs(),
+            "area_threshold": 1.0,
+            "max_household": 300,
+            "min_household": 100,
+            "bldg_hh_field": "pop",
+            "ea_id_field": "ean",
+            "barangay_by_id": {},
+            "all_ea_features": [],
+        }
+        p2 = {
+            "out_fields": fields,
+            "export_fields": fields,
+            "delineation_candidate_ids": set(),
+            "merge_candidate_ids": set(),
+            "adjacent_ea_ids": set(),
+            "delineated_sink": None,
+            "delineated_dest_id": None,
+            "merged_sink": None,
+            "merged_dest_id": None,
+            "special_ea_sink": spec_sink,
+            "special_ea_dest_id": "dest_special",
+            "extracted_buildings_sink": None,
+            "extracted_buildings_dest_id": None,
+            "delin_candidate_feat_count": 0,
+            "merge_candidate_feat_count": 0,
+            "extracted_bldg_feat_count": 0,
+        }
+        p3 = {"road_geoms": {}, "river_geoms": {}}
+        p4 = {}
+        p7 = {"eas": eas}
+
+        run_phase_8(alg, {}, None, mock_feedback, None, p1, p2, p3, p4, p7)
+
+        self.assertEqual(len(spec_sink.features), 3)
+
+        # Feature 1: bldg_count = 0 -> hh_count = 0
+        feat1 = spec_sink.features[0]
+        self.assertEqual(feat1.attribute("bldg_count"), 0)
+        self.assertEqual(feat1.attribute("hh_count"), 0)
+
+        # Feature 2: bldg_count is None/null -> hh_count is None/null
+        feat2 = spec_sink.features[1]
+        self.assertTrue(feat2.attribute("bldg_count") is None or feat2.attribute("bldg_count") == QVariant())
+        self.assertTrue(feat2.attribute("hh_count") is None or feat2.attribute("hh_count") == QVariant())
+
+        # Feature 3: bldg_count = 4 -> hh_count = 80
+        feat3 = spec_sink.features[2]
+        self.assertEqual(feat3.attribute("bldg_count"), 4)
+        self.assertEqual(feat3.attribute("hh_count"), 80)
+
 
 if __name__ == "__main__":
     unittest.main()
