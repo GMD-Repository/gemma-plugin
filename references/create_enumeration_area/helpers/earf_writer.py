@@ -359,7 +359,7 @@ class EARFWriter:
                 "new_ean":    new_ean_val,
                 "hh_count":   _num(feat, "hh_count"),
                 "bldg_count": _num(feat, "bldg_count"),
-                "ea_type":    _str(feat, "ea_type")  or "STANDARD",
+                "ea_type":    _str(feat, "ea_type")  or "RETAINED",
                 "sy":         _str(feat, "sy")        or "2026",
                 "remarks":    remarks_val,
                 # Row type

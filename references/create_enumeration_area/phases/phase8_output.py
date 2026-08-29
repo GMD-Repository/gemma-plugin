@@ -1166,7 +1166,7 @@ def run_phase_8(
         ea_type_idx = out_fields.indexOf("ea_type")
         if ea_type_idx != -1:
             explicit_ea_type = ea.get('ea_type')
-            if explicit_ea_type and str(explicit_ea_type).strip() not in ('STANDARD', '', 'None', 'NULL'):
+            if explicit_ea_type and str(explicit_ea_type).strip() not in ('RETAINED', '', 'None', 'NULL'):
                 ea_type_val = str(explicit_ea_type).strip()
             elif ea.get('from_split', False):
                 ea_type_val = 'DELINEATED'

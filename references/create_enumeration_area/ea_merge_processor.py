@@ -935,7 +935,7 @@ class EAMergeProcessor:
                                 if val is None:
                                     val = _extract_feature_attribute(fallback_ea_feat, ea_name_to_idx, "ean")
                         elif ea_field_name == "ea_type":
-                            val = "STANDARD"
+                            val = "RETAINED"
 
                     if val is not None:
                         # Safe type conversion based on target field type
@@ -1054,7 +1054,7 @@ class EAMergeProcessor:
                     elif ea_field_name == "new_ean":
                         val = _extract_feature_attribute(feat, ea_name_to_idx, "ean")
                     elif ea_field_name == "ea_type":
-                        val = "STANDARD"
+                        val = "RETAINED"
 
                 if val is not None:
                     try:
