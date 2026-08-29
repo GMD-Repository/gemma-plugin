@@ -1053,9 +1053,7 @@
     <constraint field="min_circle" desc="" exp=""/>
     <constraint field="EACount" desc="" exp=""/>
   </constraintExpressions>
-  <expressionfields>
-    <field typeName="string" type="10" subType="0" expression="count(  &quot;BGY_GEO&quot;  ,group_by:=  &quot;BGY_GEO&quot;  )" name="EACount" comment="" length="0" precision="0"/>
-  </expressionfields>
+  <expressionfields/>
   <attributeactions>
     <defaultAction key="Canvas" value="{00000000-0000-0000-0000-000000000000}"/>
   </attributeactions>

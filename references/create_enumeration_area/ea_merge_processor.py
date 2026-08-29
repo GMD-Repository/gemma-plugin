@@ -149,7 +149,8 @@ _FIELD_CANDIDATE_MAP = {
         "bldg_count", "new_bldg_count", "calc_bldg_count", "bldg_cnt", "bldg"
     ),
     "ean": ("ean", "ea_code", "ean_code", "ea_no", "eacode", "eano", "old_ean"),
-    "new_ean": ("new_ean", "new_eacode", "new_ea", "ean_new"),
+    "new_ean": ("new_ean", "new_eacode", "new_ea", "ean_new", "new_ea_code", "new_ea_tracker"),
+    "eacount": ("eacount", "ea_count", "eacnt", "total_ea", "ea_total"),
     "sy": ("sy", "survey_yr", "survey_year", "year"),
     "ea_type": ("ea_type", "type", "eatype", "special_type"),
     "remarks": ("remarks", "remark", "delin_remarks", "delin_remark", "comments", "comment"),
@@ -425,6 +426,7 @@ class EAMergeProcessor:
             # ── Phase 8: Combine into final feature list ───────────────────
             self._log("[INFO] Applying replacement geometries...")
             all_features = remaining_ea_features + replacement_features
+            self._populate_ea_counts(all_features, out_fields)
             self._progress(70)
 
             # ── Phase 9: Create output memory layer ────────────────────────
@@ -745,6 +747,12 @@ class EAMergeProcessor:
         if "bldgcount" not in existing_names_lower:
             out_fields.append(QgsField("bldgcount", QVariant.Int))
             existing_names_lower.add("bldgcount")
+        if "new_ean" not in existing_names_lower:
+            out_fields.append(QgsField("new_ean", QVariant.String))
+            existing_names_lower.add("new_ean")
+        if "eacount" not in existing_names_lower:
+            out_fields.append(QgsField("EACount", QVariant.Int))
+            existing_names_lower.add("eacount")
         if "hh_count" not in existing_names_lower:
             out_fields.append(QgsField("hh_count", QVariant.Double))
             existing_names_lower.add("hh_count")
@@ -872,6 +880,12 @@ class EAMergeProcessor:
                             val = _extract_feature_attribute(feat, repl_name_to_idx, "bldg_count")
                             if val is None and fallback_ea_feat is not None:
                                 val = _extract_feature_attribute(fallback_ea_feat, ea_name_to_idx, "bldg_count")
+                        elif ea_field_name == "new_ean":
+                            val = _extract_feature_attribute(feat, repl_name_to_idx, "ean")
+                            if val is None and fallback_ea_feat is not None:
+                                val = _extract_feature_attribute(fallback_ea_feat, ea_name_to_idx, "new_ean")
+                                if val is None:
+                                    val = _extract_feature_attribute(fallback_ea_feat, ea_name_to_idx, "ean")
                         elif ea_field_name == "ea_type":
                             val = "STANDARD"
 
@@ -989,6 +1003,8 @@ class EAMergeProcessor:
                         val = _extract_feature_attribute(feat, ea_name_to_idx, "hh_count")
                     elif ea_field_name == "bldgcount":
                         val = _extract_feature_attribute(feat, ea_name_to_idx, "bldg_count")
+                    elif ea_field_name == "new_ean":
+                        val = _extract_feature_attribute(feat, ea_name_to_idx, "ean")
                     elif ea_field_name == "ea_type":
                         val = "STANDARD"
 
@@ -1010,6 +1026,66 @@ class EAMergeProcessor:
             remaining_features.append(out_feat)
 
         return remaining_features, modified_count
+
+    def _populate_ea_counts(
+        self,
+        features: list[QgsFeature],
+        out_fields: QgsFields,
+    ) -> None:
+        """Populate the EACount field based on the 8-digit geocode and new_ean.
+
+        Assigns 1 on the first occurrence of each unique (8-digit geocode, new_ean)
+        pair, and leaves EACount empty (None / NULL) on duplicate rows/fragments
+        to prevent double-counting due to delineation.
+        """
+        # Find the EACount field index in out_fields
+        ea_count_idx = -1
+        for i in range(out_fields.count()):
+            if out_fields.at(i).name().lower() == "eacount":
+                ea_count_idx = i
+                break
+
+        if ea_count_idx == -1:
+            return
+
+        out_name_to_idx = {
+            out_fields.at(i).name().lower(): i
+            for i in range(out_fields.count())
+        }
+
+        seen_ea_keys = set()
+
+        for idx, feat in enumerate(features):
+            raw_geo = _extract_feature_attribute(feat, out_name_to_idx, "geocode")
+            if not raw_geo:
+                raw_geo = _extract_feature_attribute(feat, out_name_to_idx, "barangay")
+            if not raw_geo:
+                raw_geo = _extract_feature_attribute(feat, out_name_to_idx, "code")
+            if not raw_geo:
+                raw_geo = self._geo_code or ""
+
+            digits = re.sub(r"\D", "", str(raw_geo).strip())
+            if len(digits) >= 8:
+                bgy_code = digits[:8]
+            elif digits:
+                bgy_code = digits
+            else:
+                bgy_code = str(raw_geo).strip() or "UNKNOWN"
+
+            ean_val = _extract_feature_attribute(feat, out_name_to_idx, "new_ean")
+            if ean_val is None or str(ean_val).strip() in ("", "NULL", "None"):
+                ean_val = _extract_feature_attribute(feat, out_name_to_idx, "ean")
+            if ean_val is None or str(ean_val).strip() in ("", "NULL", "None"):
+                ean_val = f"feat_{idx}"
+
+            ean_str = str(ean_val).strip()
+            ea_key = (bgy_code, ean_str)
+
+            if ea_key not in seen_ea_keys:
+                seen_ea_keys.add(ea_key)
+                feat.setAttribute(ea_count_idx, 1)
+            else:
+                feat.setAttribute(ea_count_idx, None)
 
     def _create_output_layer(
         self,
