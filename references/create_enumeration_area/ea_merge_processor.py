@@ -564,7 +564,7 @@ class EAMergeProcessor:
             # ── Phase 12: Read final attribute table for Excel ─────────────
             self._log("[INFO] Reading final output attribute table...")
 
-            # ── Phase 13: Export Excel ─────────────────────────────────────
+            # ── Phase 13: Export Preliminary EARF Excel ────────────────────
             excel_name = f"{geo_code}_earf_{citymun}.xlsx"
             if self.output_dir:
                 excel_path = os.path.join(self.output_dir, excel_name)
@@ -577,24 +577,46 @@ class EAMergeProcessor:
                     excel_path = os.path.join(os.path.expanduser("~"), excel_name)
 
             self._log(
-                f"[INFO] Generating Excel output: {excel_name}"
+                f"[INFO] Generating Preliminary EARF Excel: {excel_name}"
             )
-            excel_ok = self._export_attribute_table_to_excel(
-                output_layer, excel_path
-            )
+
+            # Primary: styled PSA EARF template via EARFWriter
+            excel_ok = False
+            try:
+                from .helpers.earf_writer import EARFWriter
+                writer = EARFWriter(
+                    layer=output_layer,
+                    geo_code=geo_code,
+                    citymun=citymun,
+                    output_path=excel_path,
+                    feedback=self._feedback,
+                )
+                excel_ok = writer.write()
+            except Exception as _earf_err:
+                self._log(
+                    f"[WARNING] EARFWriter raised an exception ({_earf_err}); "
+                    "falling back to plain attribute table export."
+                )
+
+            # Fallback: plain attribute table dump (no styling)
+            if not excel_ok:
+                excel_ok = self._export_attribute_table_to_excel(
+                    output_layer, excel_path
+                )
+
             if excel_ok:
                 summary.excel_generated = True
                 summary.excel_file_path = excel_path
                 summary.excel_file_name = excel_name
                 self._log(
-                    "[INFO] Excel attribute table successfully generated."
+                    "[INFO] Preliminary EARF Excel successfully generated."
                 )
             else:
                 # Warn but do not fail — the polygon output was created
                 self._log(
                     f"[WARNING] The final EA layer was successfully created: "
                     f"{self._output_layer_name}\n"
-                    "However, the Excel output could not be generated."
+                    "However, the Preliminary EARF Excel could not be generated."
                 )
 
             self._progress(100)
