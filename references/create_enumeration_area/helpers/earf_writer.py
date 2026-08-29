@@ -67,25 +67,24 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 # ---------------------------------------------------------------------------
-# Column indices (0-based, A=0 … O=14)
+# Column indices (0-based, A=0 … N=13)
 # ---------------------------------------------------------------------------
-_COL_REG        = 0   # A
-_COL_PROV       = 1   # B
-_COL_MUN        = 2   # C
-_COL_BRGY       = 3   # D
-_COL_EA         = 4   # E
-_COL_EACOUNT    = 5   # F
-_COL_NAME       = 6   # G
-_COL_HHCOUNT    = 7   # H
-_COL_BLDGCOUNT  = 8   # I
-_COL_NEW_EAN    = 9   # J
-_COL_HH_COUNT   = 10  # K
-_COL_BLDG_COUNT = 11  # L
-_COL_EA_TYPE    = 12  # M
-_COL_SY         = 13  # N
-_COL_REMARKS    = 14  # O
+_COL_PROV       = 0   # A
+_COL_MUN        = 1   # B
+_COL_BRGY       = 2   # C
+_COL_EA         = 3   # D
+_COL_EACOUNT    = 4   # E
+_COL_NAME       = 5   # F
+_COL_HHCOUNT    = 6   # G
+_COL_BLDGCOUNT  = 7   # H
+_COL_NEW_EAN    = 8   # I
+_COL_HH_COUNT   = 9   # J
+_COL_BLDG_COUNT = 10  # K
+_COL_EA_TYPE    = 11  # L
+_COL_SY         = 12  # M
+_COL_REMARKS    = 13  # N
 
-_TOTAL_COLS = 15   # A–O
+_TOTAL_COLS = 14   # A–N
 
 # ---------------------------------------------------------------------------
 # Row constants (1-indexed for openpyxl)
@@ -105,17 +104,16 @@ _DATA_START    = 11
 # Format: (label, start_col, end_col)
 # ---------------------------------------------------------------------------
 _COL_GROUPS = [
-    ("Geographic Identification", 1,  5),   # A–E
-    ("2024 EARF",                 6,  7),   # F–G
-    ("2024 Estimated",            8,  9),   # H–I
-    ("2026 Preliminary EAs",      10, 15),  # J–O
+    ("Geographic Identification", 1,  4),   # A–D
+    ("2024 EARF",                 5,  6),   # E–F
+    ("2024 Estimated",            7,  8),   # G–H
+    ("2026 Preliminary EA",       9, 14),   # I–N
 ]
 
 # ---------------------------------------------------------------------------
 # Sub-header texts per column (displayed in rows 5–8, merged vertically)
 # ---------------------------------------------------------------------------
 _SUBHDR = [
-    "Reg",
     "Prov",
     "Mun",
     "Brgy",
@@ -134,16 +132,16 @@ _SUBHDR = [
 
 # Number codes row 9
 _NUM_CODES = [
-    "(1)", "(2)", "(3)", "(4)", "(5)",
+    "(2)", "(3)", "(4)", "(5)",
     "(6)", "(7)", "(8)", "(9)",
     "(10)", "(11)", "(12)", "(13)", "(14)", "",
 ]
 
 # Column widths (Excel character units)
 _COL_WIDTHS = [
-    5, 7, 5, 6, 10,    # A–E
-    10, 44, 14, 12,    # F–I
-    18, 14, 14, 12, 10, 32,  # J–O
+    7, 5, 6, 10,        # A–D (Prov, Mun, Brgy, EA)
+    10, 44, 14, 12,     # E–H (Number of EAs, Name, HH, Bldg)
+    18, 14, 14, 12, 10, 32,  # I–N (New EA Code … Remarks)
 ]
 
 # Numeric column indices (0-based) — right-align
@@ -153,7 +151,7 @@ _NUMERIC_COLS = {
 }
 # Center-aligned columns (codes, type, year)
 _CENTER_COLS = {
-    _COL_REG, _COL_PROV, _COL_MUN, _COL_BRGY,
+    _COL_PROV, _COL_MUN, _COL_BRGY,
     _COL_EA, _COL_NEW_EAN, _COL_EA_TYPE, _COL_SY,
 }
 
@@ -295,6 +293,18 @@ class EARFWriter:
             s = str(val).strip()
             return None if s in ("", "NULL", "None") else s
 
+        def _remarks_str(feat, fname: str) -> str:
+            idx = name_to_idx.get(fname.lower(), -1)
+            if idx == -1:
+                return ""
+            val = feat.attribute(idx)
+            if val is None or val == NULL:
+                return ""
+            s = str(val).strip()
+            if s.upper() in ("", "NULL", "NONE", "FALSE", "0", "F"):
+                return ""
+            return s
+
         def _num(feat, fname: str) -> Optional[Any]:
             raw = _str(feat, fname)
             if raw is None:
@@ -312,37 +322,46 @@ class EARFWriter:
             geocode_raw = _str(feat, "geocode") or ""
             digits = re.sub(r"\D", "", geocode_raw)
 
-            # Parse geographic code components
-            # Full geocode expected as 8-digit: RRPPPMMBBB (but QGIS stores 8 chars)
-            # Breakdown: digits[0:2]=reg, full 5-digit=citymun, last 3=brgy offset
+            # Parse geographic code components (8-digit: PPPMMBBB)
+            # Breakdown: digits[0:3]=prov, digits[3:5]=mun, digits[5:8]=brgy
             if len(digits) >= 8:
-                reg  = digits[0:2]
-                prov = digits[2:5]    # 3-digit province offset within 5-digit code
-                mun  = digits[0:5]    # 5-digit city/mun code
+                prov = digits[0:3]    # 3-digit province code
+                mun  = digits[3:5]    # 2-digit municipality code
                 brgy = digits[5:8]    # 3-digit barangay suffix
                 geocode_8 = digits[:8]
             elif len(digits) >= 5:
-                reg  = digits[0:2]
-                prov = digits[2:5]
-                mun  = digits[0:5]
+                prov = digits[0:3]
+                mun  = digits[3:5]
                 brgy = ""
                 geocode_8 = digits[:5].ljust(8, "0")
             else:
-                reg = prov = mun = brgy = ""
+                prov = mun = brgy = ""
                 geocode_8 = (digits or geocode_raw).ljust(8, "0")[:8]
 
-            ean_val     = _str(feat, "ean")     or ""
-            new_ean_val = _str(feat, "new_ean") or ""
-            remarks_val = _str(feat, "remarks") or ""
+            ean_val     = _str(feat, "ean") or _str(feat, "ea_no") or _str(feat, "ea") or _str(feat, "eano") or ""
+            new_ean_val = _str(feat, "new_ean") or _str(feat, "new_eacode") or ""
+            remarks_val = _remarks_str(feat, "remarks")
+            brgy_name_val = (
+                _str(feat, "barangay")
+                or _str(feat, "bgy_name")
+                or _str(feat, "brgy_name")
+                or _str(feat, "barangay_name")
+                or _str(feat, "bgy_desc")
+                or _str(feat, "brgy_desc")
+                or _str(feat, "adm4_en")
+                or _str(feat, "bgy")
+                or _str(feat, "brgy")
+                or ""
+            )
 
             raw_rows.append({
                 # Geographic identifiers
-                "reg":        reg,
-                "prov":       prov,
-                "mun":        mun,
-                "brgy":       brgy,
-                "ea":         ean_val,
-                "geocode_8":  geocode_8,
+                "prov":          prov,
+                "mun":           mun,
+                "brgy":          brgy,
+                "ea":            ean_val,
+                "geocode_8":     geocode_8,
+                "barangay_name": brgy_name_val,
                 # 2024 EARF columns
                 "eacount":    _num(feat, "eacount"),
                 "name":       _str(feat, "name")     or "",
@@ -365,8 +384,13 @@ class EARFWriter:
         # ── Process ghost rows (fully-consumed previous EAs) ────────────
         # Ghost features are emitted by _replace_ea_geometries() when a
         # previous EA is entirely covered by replacement polygons.  They
-        # carry ea_type=MERGED and NULL eacount so they do not distort
-        # city/mun or barangay subtotals.
+        # carry ea_type=MERGED and NULL 2026 counts / new_ean.
+        active_keys = {
+            (r.get("geocode_8", ""), r.get("ea", ""))
+            for r in raw_rows
+            if not r.get("is_ghost") and r.get("ea")
+        }
+
         for ghost_feat in self._ghost_features:
             try:
                 ghost_fields = ghost_feat.fields()
@@ -390,6 +414,18 @@ class EARFWriter:
                 s = str(val).strip()
                 return None if s in ("", "NULL", "None") else s
 
+            def _g_remarks(fname: str) -> str:
+                idx = ghost_name_to_idx.get(fname.lower(), -1)
+                if idx == -1:
+                    return ""
+                val = ghost_feat.attribute(idx)
+                if val is None or val == NULL:
+                    return ""
+                s = str(val).strip()
+                if s.upper() in ("", "NULL", "NONE", "FALSE", "0", "F"):
+                    return ""
+                return s
+
             def _g_num(fname: str) -> Optional[Any]:
                 raw = _g_str(fname)
                 if raw is None:
@@ -403,40 +439,60 @@ class EARFWriter:
             geocode_raw = _g_str("geocode") or ""
             digits = re.sub(r"\D", "", geocode_raw)
             if len(digits) >= 8:
-                reg  = digits[0:2]
-                prov = digits[2:5]
-                mun  = digits[0:5]
+                prov = digits[0:3]
+                mun  = digits[3:5]
                 brgy = digits[5:8]
                 geocode_8 = digits[:8]
             elif len(digits) >= 5:
-                reg  = digits[0:2]
-                prov = digits[2:5]
-                mun  = digits[0:5]
+                prov = digits[0:3]
+                mun  = digits[3:5]
                 brgy = ""
                 geocode_8 = digits[:5].ljust(8, "0")
             else:
-                reg = prov = mun = brgy = ""
+                prov = mun = brgy = ""
                 geocode_8 = (digits or geocode_raw).ljust(8, "0")[:8]
 
+            ghost_ea = _g_str("ean") or _g_str("ea_no") or _g_str("ea") or _g_str("eano") or ""
+            if not ghost_ea or (geocode_8, ghost_ea) in active_keys:
+                # Already represented by an active output feature; do not duplicate
+                continue
+
+            ghost_rmk = _g_remarks("remarks")
+            if not ghost_rmk:
+                ghost_rmk = "Merged EA"
+
+            ghost_brgy_name = (
+                _g_str("barangay")
+                or _g_str("bgy_name")
+                or _g_str("brgy_name")
+                or _g_str("barangay_name")
+                or _g_str("bgy_desc")
+                or _g_str("brgy_desc")
+                or _g_str("adm4_en")
+                or _g_str("bgy")
+                or _g_str("brgy")
+                or ""
+            )
+
             raw_rows.append({
-                "reg":        reg,
-                "prov":       prov,
-                "mun":        mun,
-                "brgy":       brgy,
-                "ea":         _g_str("ean")     or "",
-                "geocode_8":  geocode_8,
+                "prov":          prov,
+                "mun":           mun,
+                "brgy":          brgy,
+                "ea":            ghost_ea,
+                "geocode_8":     geocode_8,
+                "barangay_name": ghost_brgy_name,
                 # 2024 EARF columns — carry original counts for reference
-                "eacount":    None,   # excluded from subtotals
+                "eacount":    _g_num("eacount") or 1,
                 "name":       _g_str("name")    or "",
                 "hhcount":    _g_num("hhcount"),
                 "bldgcount":  _g_num("bldgcount"),
-                # 2026 Preliminary columns
-                "new_ean":    _g_str("new_ean") or "",
-                "hh_count":   _g_num("hh_count"),
-                "bldg_count": _g_num("bldg_count"),
+                # 2026 Preliminary columns — left empty for merged partner
+                "new_ean":    "",
+                "hh_count":   None,
+                "bldg_count": None,
                 "ea_type":    _g_str("ea_type") or "MERGED",
-                "sy":         _g_str("sy")       or "",
-                "remarks":    _g_str("remarks")  or "Merged EA",
+                "sy":         _g_str("sy")       or "2024",
+                "remarks":    ghost_rmk,
                 # Row type
                 "is_citymun_summary":  False,
                 "is_barangay_summary": False,
@@ -445,16 +501,17 @@ class EARFWriter:
             })
 
         # ── City/Mun totals ──────────────────────────────────────────────
-        # Subtotals sum only rows where eacount / hhcount / bldgcount are
-        # non-None; ghost rows have eacount=None so they are excluded.
         def _sum(rows, key):
-            return sum(r[key] or 0 for r in rows if r[key] is not None) or None
+            vals = [r[key] for r in rows if r.get(key) is not None]
+            return sum(vals) if vals else None
 
         first = raw_rows[0] if raw_rows else {}
+        # City/Mun summary row (geocode_8 = 5-digit geocode + 000)
+        first_prov = first.get("prov", "") or (self._geo_code[:3] if len(self._geo_code) >= 3 else "")
+        first_mun = first.get("mun", "") or (self._geo_code[3:5] if len(self._geo_code) >= 5 else "")
         citymun_row = {
-            "reg":    first.get("reg",  ""),
-            "prov":   first.get("prov", ""),
-            "mun":    first.get("mun",  ""),
+            "prov":   first_prov,
+            "mun":    first_mun,
             "brgy":   "000",
             "ea":     "000000",
             "geocode_8": self._geo_code.ljust(8, "0")[:8],
@@ -484,32 +541,47 @@ class EARFWriter:
 
         for brgy_code in sorted(brgy_groups.keys()):
             ea_rows = brgy_groups[brgy_code]
-            # Separate normal and ghost rows for barangay subtotal computation.
-            # Ghost rows have eacount=None and are excluded from counts.
-            normal_ea_rows = [r for r in ea_rows if not r.get("is_ghost")]
-            first_ea = normal_ea_rows[0] if normal_ea_rows else ea_rows[0]
+            first_ea = ea_rows[0]
 
-            # Derive barangay name by stripping EA suffix from the name field
-            brgy_name = first_ea.get("name", "")
-            brgy_name = re.sub(
-                r"\s*[-\u2013]\s*EA\s+\S+\s*$", "", brgy_name, flags=re.IGNORECASE
-            ).strip()
+            # Derive barangay name:
+            # 1. First check if any row has an explicit barangay name field
+            brgy_name = ""
+            for r in ea_rows:
+                candidate = r.get("barangay_name", "").strip()
+                if candidate and not re.match(r"^EA\s+\d+", candidate, re.IGNORECASE):
+                    brgy_name = candidate.upper()
+                    break
+
+            # 2. If not found, derive from name field by stripping EA suffix
+            if not brgy_name:
+                for r in ea_rows:
+                    cand = r.get("name", "").strip()
+                    if cand:
+                        cleaned = re.sub(
+                            r"\s*[-\u2013]\s*EA\s+\S+\s*$", "", cand, flags=re.IGNORECASE
+                        ).strip()
+                        if cleaned and not re.match(r"^EA\s+\d+", cleaned, re.IGNORECASE):
+                            brgy_name = cleaned.upper()
+                            break
+
+            # 3. Fallback to BARANGAY <suffix> (e.g. BARANGAY 001)
+            if not brgy_name:
+                brgy_suffix = first_ea.get("brgy", "") or brgy_code[-3:]
+                brgy_name = f"BARANGAY {brgy_suffix}".upper()
 
             brgy_row = {
-                "reg":    first_ea.get("reg",  ""),
                 "prov":   first_ea.get("prov", ""),
                 "mun":    first_ea.get("mun",  ""),
                 "brgy":   first_ea.get("brgy", ""),
                 "ea":     "000000",
                 "geocode_8": brgy_code,
-                # Subtotals use only non-ghost rows
-                "eacount":   _sum(normal_ea_rows, "eacount"),
+                "eacount":   _sum(ea_rows, "eacount"),
                 "name":      brgy_name,
-                "hhcount":   _sum(normal_ea_rows, "hhcount"),
-                "bldgcount": _sum(normal_ea_rows, "bldgcount"),
+                "hhcount":   _sum(ea_rows, "hhcount"),
+                "bldgcount": _sum(ea_rows, "bldgcount"),
                 "new_ean":   "",
-                "hh_count":  _sum(normal_ea_rows, "hh_count"),
-                "bldg_count":_sum(normal_ea_rows, "bldg_count"),
+                "hh_count":  _sum(ea_rows, "hh_count"),
+                "bldg_count":_sum(ea_rows, "bldg_count"),
                 "ea_type":   "",
                 "sy":        "",
                 "remarks":   "",
@@ -520,7 +592,7 @@ class EARFWriter:
             }
             output.append(brgy_row)
 
-            for ea_row in sorted(ea_rows, key=lambda r: r.get("ea", "") or ""):
+            for ea_row in sorted(ea_rows, key=lambda r: (r.get("ea", "") or "", r.get("new_ean", "") or "")):
                 output.append(ea_row)
 
         return output
@@ -558,11 +630,11 @@ class EARFWriter:
             "Geographic Identification": styles.fill_geo,
             "2024 EARF":                 styles.fill_2024,
             "2024 Estimated":            styles.fill_est,
-            "2026 Preliminary EAs":      styles.fill_2026,
+            "2026 Preliminary EA":       styles.fill_2026,
         }
 
         for label, start_col, end_col in _COL_GROUPS:
-            fill = group_fills[label]
+            fill = group_fills.get(label, styles.fill_subhdr)
 
             # Write label in the first cell of the group
             cell = ws.cell(row=_ROW_GRP_HDR, column=start_col, value=label)
@@ -620,14 +692,12 @@ class EARFWriter:
                 self._write_row(ws, styles, row, row_data, kind="citymun")
             elif row_data["is_barangay_summary"]:
                 self._write_row(ws, styles, row, row_data, kind="barangay")
-            elif row_data.get("is_ghost"):
-                self._write_row(ws, styles, row, row_data, kind="ghost")
             else:
                 self._write_row(ws, styles, row, row_data, kind="ea")
 
     def _write_row(self, ws, styles, row: int,
                    row_data: Dict, kind: str) -> None:
-        """Write a single row; kind = 'citymun' | 'barangay' | 'ea' | 'ghost'."""
+        """Write a single row; kind = 'citymun' | 'barangay' | 'ea'."""
         if kind == "citymun":
             font   = styles.font_summary_citymun
             fill   = styles.fill_summary_citymun
@@ -636,19 +706,28 @@ class EARFWriter:
             font   = styles.font_summary_brgy
             fill   = styles.fill_summary_brgy
             border = styles.border_thin
-        elif kind == "ghost":
-            # Fully-consumed previous EA: light-orange fill to distinguish from
-            # normal retained EAs.  Italic font signals it is a reference row.
-            font   = styles.font_ghost
-            fill   = styles.fill_ghost
-            border = styles.border_thin_light
         else:
-            font   = styles.font_data
-            fill   = styles.fill_none
-            border = styles.border_thin_light
+            ea_type = (row_data.get("ea_type") or "").upper()
+            is_ghost = row_data.get("is_ghost", False)
+
+            if is_ghost or ea_type == "MERGED":
+                font   = styles.font_ghost if is_ghost else styles.font_data
+                fill   = styles.fill_merged
+                border = styles.border_thin_light
+            elif ea_type == "DELINEATED":
+                font   = styles.font_data
+                fill   = styles.fill_delineated
+                border = styles.border_thin_light
+            elif ea_type in ("SPECIAL", "GAP", "OVERLAP"):
+                font   = styles.font_data
+                fill   = styles.fill_special
+                border = styles.border_thin_light
+            else:
+                font   = styles.font_data
+                fill   = styles.fill_none
+                border = styles.border_thin_light
 
         values = [
-            row_data.get("reg",        ""),
             row_data.get("prov",       ""),
             row_data.get("mun",        ""),
             row_data.get("brgy",       ""),
@@ -720,7 +799,12 @@ class _Styles:
         self.fill_subhdr          = _fill("F2F2F2")   # Sub-header — light gray
         self.fill_summary_citymun = _fill("D9D9D9")   # City/Mun row — medium gray
         self.fill_summary_brgy    = _fill("EFEFEF")   # Barangay row — lighter gray
-        self.fill_ghost           = _fill("FFE4B5")   # Ghost/merged row — moccasin
+
+        # Row highlighting fills for EA categories:
+        self.fill_merged          = _fill("FFF0E6")   # Merged EAs — Soft Light Peach
+        self.fill_delineated      = _fill("FEF9E7")   # Delineated EAs — Soft Warm Butter
+        self.fill_special         = _fill("ECEFF1")   # Special EAs — Soft Mist
+        self.fill_ghost           = self.fill_merged
         self.fill_none            = PatternFill(fill_type=None)
 
         # ── Borders ──────────────────────────────────────────────────────
