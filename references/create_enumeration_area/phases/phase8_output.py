@@ -1048,9 +1048,39 @@ def run_phase_8(
         if sy_idx != -1:
             out_feat.setAttribute(sy_idx, "2026")
 
-        # Special EAs inherit calculated hh_count for hhcount, while Merged EAs preserve original hhcount
+        # Special EAs rule: if bldg_count is 0 or empty/null, hh_count must also be set to 0 or empty/null
         if ea.get('is_special_ea', False):
-            val_hh = safe_float(ea.get('hh_count', ea.get('original_hhcount', 0.0)), 0.0)
+            special_bldgs = ea.get('buildings', [])
+            raw_bldg_cnt = ea.get('bldg_count')
+            if raw_bldg_cnt is None and not special_bldgs:
+                # If explicitly None and no buildings
+                if 'bldg_count' in ea and ea['bldg_count'] is None:
+                    raw_bldg_cnt = None
+                else:
+                    raw_bldg_cnt = 0
+            elif special_bldgs:
+                raw_bldg_cnt = len(special_bldgs)
+
+            if raw_bldg_cnt is None or (isinstance(raw_bldg_cnt, str) and raw_bldg_cnt.strip() in ('', 'NULL', 'None')):
+                ea['bldg_count'] = None
+                ea['hh_count'] = None
+                val_bldg = None
+                val_hh = None
+                new_bldg_val = None
+                new_hh_val = None
+            elif safe_int(raw_bldg_cnt, 0) == 0:
+                ea['bldg_count'] = 0
+                ea['hh_count'] = 0.0
+                val_bldg = 0
+                val_hh = 0.0
+                new_bldg_val = 0
+                new_hh_val = 0
+            else:
+                ea['bldg_count'] = len(special_bldgs) if special_bldgs else safe_int(raw_bldg_cnt, 0)
+                val_bldg = ea['bldg_count']
+                new_bldg_val = val_bldg
+                val_hh = safe_float(ea.get('hh_count', ea.get('original_hhcount', 0.0)), 0.0)
+                new_hh_val = safe_int(val_hh, 0)
         else:
             val_hh = ea.get('original_hhcount')
             if val_hh is None:
@@ -1069,22 +1099,6 @@ def run_phase_8(
                             break
                 val_hh = safe_float(cur_hh, 0.0) if cur_hh is not None and str(cur_hh).strip() not in ('', 'NULL', 'None') else 0.0
 
-        for j in range(out_fields.count()):
-            if out_fields.at(j).name().lower() == "hhcount":
-                out_feat.setAttribute(j, val_hh)
-
-        # hh_count holds the new calculated household count
-        new_hh_val = safe_int(ea.get('hh_count', 0.0), 0)
-        for j in range(out_fields.count()):
-            if out_fields.at(j).name().lower() == "hh_count":
-                out_feat.setAttribute(j, new_hh_val)
-
-        # Special EAs inherit calculated building count for bldgcount, while Merged EAs preserve original_bldgcount
-        if ea.get('is_special_ea', False):
-            special_bldgs = ea.get('buildings', [])
-            ea['bldg_count'] = len(special_bldgs)
-            val_bldg = len(special_bldgs)
-        else:
             # Delineated EA bldgcount inherits directly from original_bldgcount / parent feature
             val_bldg = ea.get('original_bldgcount')
             if val_bldg is None:
@@ -1092,25 +1106,31 @@ def run_phase_8(
                 if bldgcount_field and bldgcount_field not in bldg_names:
                     bldg_names.insert(0, bldgcount_field)
                 val_bldg = get_field_val(parent_feat, bldg_names, default=None)
-        if val_bldg is not None:
-            val_bldg = safe_int(val_bldg, 0)
-        else:
-            cur_bldg = None
-            for j in range(out_fields.count()):
-                if out_fields.at(j).name().lower() == "bldgcount":
-                    cur_bldg = out_feat.attribute(j)
-                    if cur_bldg is not None and cur_bldg != NULL and str(cur_bldg).strip() not in ('', 'NULL', 'None'):
-                        break
-            val_bldg = safe_int(cur_bldg, 0) if cur_bldg is not None and str(cur_bldg).strip() not in ('', 'NULL', 'None') else 0
+            if val_bldg is not None:
+                val_bldg = safe_int(val_bldg, 0)
+            else:
+                cur_bldg = None
+                for j in range(out_fields.count()):
+                    if out_fields.at(j).name().lower() == "bldgcount":
+                        cur_bldg = out_feat.attribute(j)
+                        if cur_bldg is not None and cur_bldg != NULL and str(cur_bldg).strip() not in ('', 'NULL', 'None'):
+                            break
+                val_bldg = safe_int(cur_bldg, 0) if cur_bldg is not None and str(cur_bldg).strip() not in ('', 'NULL', 'None') else 0
+
+            # hh_count holds the new calculated household count
+            new_hh_val = safe_int(ea.get('hh_count', 0.0), 0)
+
+            # bldg_count holds the new calculated building count
+            new_bldg_val = safe_int(ea.get('bldg_count', len(ea.get('buildings', []))), 0)
 
         for j in range(out_fields.count()):
-            if out_fields.at(j).name().lower() == "bldgcount":
+            if out_fields.at(j).name().lower() == "hhcount":
+                out_feat.setAttribute(j, val_hh)
+            elif out_fields.at(j).name().lower() == "hh_count":
+                out_feat.setAttribute(j, new_hh_val)
+            elif out_fields.at(j).name().lower() == "bldgcount":
                 out_feat.setAttribute(j, val_bldg)
-
-        # bldg_count holds the new calculated building count
-        new_bldg_val = safe_int(ea.get('bldg_count', len(ea.get('buildings', []))), 0)
-        for j in range(out_fields.count()):
-            if out_fields.at(j).name().lower() == "bldg_count":
+            elif out_fields.at(j).name().lower() == "bldg_count":
                 out_feat.setAttribute(j, new_bldg_val)
 
         bldgpts_val_idx = out_fields.indexOf("bldgpoints_value")
@@ -1146,7 +1166,7 @@ def run_phase_8(
         ea_type_idx = out_fields.indexOf("ea_type")
         if ea_type_idx != -1:
             explicit_ea_type = ea.get('ea_type')
-            if explicit_ea_type and str(explicit_ea_type).strip() not in ('STANDARD', '', 'None', 'NULL'):
+            if explicit_ea_type and str(explicit_ea_type).strip() not in ('RETAINED', '', 'None', 'NULL'):
                 ea_type_val = str(explicit_ea_type).strip()
             elif ea.get('from_split', False):
                 ea_type_val = 'DELINEATED'
@@ -1349,6 +1369,8 @@ def run_phase_8(
         _special_type_idx = special_ea_export_fields.indexOf("special_type")
         _sy_idx = special_ea_export_fields.indexOf("sy")
         _remarks_idx = special_ea_export_fields.indexOf("remarks")
+        _bldg_cnt_idx = special_ea_export_fields.indexOf("bldg_count")
+        _hh_cnt_idx = special_ea_export_fields.indexOf("hh_count")
 
         if internal_gap_geoms:
             feedback.pushInfo(
@@ -1377,6 +1399,10 @@ def run_phase_8(
                     _gap_feat.setAttribute(_sy_idx, "2026")
                 if _remarks_idx != -1:
                     _gap_feat.setAttribute(_remarks_idx, "Internal Barangay Gap")
+                if _bldg_cnt_idx != -1:
+                    _gap_feat.setAttribute(_bldg_cnt_idx, 0)
+                if _hh_cnt_idx != -1:
+                    _gap_feat.setAttribute(_hh_cnt_idx, 0)
                 if _bgy_feat:
                     for _fname, _cands in [
                         ("map_uuid", ["map_uuid", "mapuuid", "uuid", "map_id"]),
@@ -1425,6 +1451,10 @@ def run_phase_8(
                     _ov_feat.setAttribute(_sy_idx, "2026")
                 if _remarks_idx != -1:
                     _ov_feat.setAttribute(_remarks_idx, "Internal EA Overlap")
+                if _bldg_cnt_idx != -1:
+                    _ov_feat.setAttribute(_bldg_cnt_idx, 0)
+                if _hh_cnt_idx != -1:
+                    _ov_feat.setAttribute(_hh_cnt_idx, 0)
                 if _bgy_feat:
                     for _fname, _cands in [
                         ("map_uuid", ["map_uuid", "mapuuid", "uuid", "map_id"]),

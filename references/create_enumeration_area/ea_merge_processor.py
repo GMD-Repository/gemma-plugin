@@ -133,6 +133,16 @@ class EAMergeResult:
 # Ensures original counts (hhcount, bldgcount) and calculated counts (hh_count, bldg_count)
 # strictly follow their respective field lineages without cross-contamination.
 _FIELD_CANDIDATE_MAP = {
+    "fid": ("fid", "id", "objectid", "gid", "feat_id"),
+    "map_uuid": ("map_uuid", "uuid", "guid", "mapuuid"),
+    "geocode": ("geocode", "geo_code", "psgc", "adm4_pcode", "adm_pcode", "brgy_code"),
+    "region": ("region", "reg_code", "reg_name", "adm1_pcode"),
+    "province": ("province", "prov_code", "prov_name", "adm2_pcode"),
+    "city_mun": ("city_mun", "citymun", "city_name", "mun_name", "municipality", "city", "adm3_pcode"),
+    "barangay": ("barangay", "bgy_name", "brgy_name", "brgy", "bgy", "adm4_pcode"),
+    "ean": ("ean", "ea_code", "ean_code", "ea_no", "eacode", "eano", "old_ean"),
+    "name": ("name", "ean_name", "ea_name", "areaname", "area_name"),
+    "code": ("code", "bgy_code", "brgy_code", "bgy_c", "brgy_c"),
     "hhcount": (
         "hhcount", "original_hhcount", "orig_hhcount", "orig_hh",
         "new_hhcount", "household", "household_count", "pop", "population"
@@ -142,23 +152,41 @@ _FIELD_CANDIDATE_MAP = {
         "new_bldgcount", "bldgpts_cnt", "bldg_points", "building_count",
         "bldg_total", "buildings"
     ),
+    "sy": ("sy", "survey_yr", "survey_year", "year"),
+    "new_ean": ("new_ean", "new_eacode", "new_ea", "ean_new", "new_ea_code", "new_ea_tracker"),
     "hh_count": (
         "hh_count", "new_hh_count", "calc_hh_count", "hh_cnt", "total_hh", "hh"
     ),
     "bldg_count": (
         "bldg_count", "new_bldg_count", "calc_bldg_count", "bldg_cnt", "bldg"
     ),
-    "ean": ("ean", "ea_code", "ean_code", "ea_no", "eacode", "eano", "old_ean"),
-    "new_ean": ("new_ean", "new_eacode", "new_ea", "ean_new"),
-    "sy": ("sy", "survey_yr", "survey_year", "year"),
     "ea_type": ("ea_type", "type", "eatype", "special_type"),
+    "eacount": ("eacount", "ea_count", "eacnt", "total_ea", "ea_total"),
     "remarks": ("remarks", "remark", "delin_remarks", "delin_remark", "comments", "comment"),
-    "region": ("region", "reg_code", "reg_name", "adm1_pcode"),
-    "province": ("province", "prov_code", "prov_name", "adm2_pcode"),
-    "city_mun": ("city_mun", "citymun", "city_name", "mun_name", "municipality", "city", "adm3_pcode"),
-    "barangay": ("barangay", "bgy_name", "brgy_name", "brgy", "bgy", "adm4_pcode"),
-    "geocode": ("geocode", "geo_code", "psgc", "adm4_pcode", "adm_pcode", "brgy_code"),
 }
+
+# The exact 19 output fields in strict order
+_OUTPUT_FIELD_SPECS = (
+    ("fid", QVariant.Int),
+    ("map_uuid", QVariant.String),
+    ("geocode", QVariant.String),
+    ("region", QVariant.String),
+    ("province", QVariant.String),
+    ("city_mun", QVariant.String),
+    ("barangay", QVariant.String),
+    ("ean", QVariant.String),
+    ("name", QVariant.String),
+    ("code", QVariant.String),
+    ("hhcount", QVariant.Double),
+    ("bldgcount", QVariant.Int),
+    ("sy", QVariant.String),
+    ("new_ean", QVariant.String),
+    ("hh_count", QVariant.Double),
+    ("bldg_count", QVariant.Int),
+    ("ea_type", QVariant.String),
+    ("eacount", QVariant.Int),
+    ("remarks", QVariant.String),
+)
 
 
 def _extract_feature_attribute(
@@ -408,14 +436,21 @@ class EAMergeProcessor:
                 "[INFO] Removing replacement areas from existing EA "
                 "geometries..."
             )
-            remaining_ea_features, modified_count = (
-                self._replace_ea_geometries(combined_geom, out_fields)
+            remaining_ea_features, ghost_ea_features, modified_count = (
+                self._replace_ea_geometries(
+                    combined_geom, out_fields, replacement_features
+                )
             )
             summary.modified_ea_count = modified_count
             self._log(
                 f"[INFO] Modified EA Features (geometry affected): "
                 f"{modified_count}"
             )
+            if ghost_ea_features:
+                self._log(
+                    f"[INFO] Fully-consumed EA features (ghost rows for "
+                    f"Excel): {len(ghost_ea_features)}"
+                )
             self._progress(65)
 
             if self._is_cancelled():
@@ -423,8 +458,11 @@ class EAMergeProcessor:
                 return self._result
 
             # ── Phase 8: Combine into final feature list ───────────────────
+            # ghost_ea_features are intentionally excluded here — they have
+            # NULL geometry and must not enter the spatial (.gpkg) output.
             self._log("[INFO] Applying replacement geometries...")
             all_features = remaining_ea_features + replacement_features
+            self._populate_ea_counts(all_features, out_fields)
             self._progress(70)
 
             # ── Phase 9: Create output memory layer ────────────────────────
@@ -535,7 +573,7 @@ class EAMergeProcessor:
             # ── Phase 12: Read final attribute table for Excel ─────────────
             self._log("[INFO] Reading final output attribute table...")
 
-            # ── Phase 13: Export Excel ─────────────────────────────────────
+            # ── Phase 13: Export Preliminary EARF Excel ────────────────────
             excel_name = f"{geo_code}_earf_{citymun}.xlsx"
             if self.output_dir:
                 excel_path = os.path.join(self.output_dir, excel_name)
@@ -548,24 +586,48 @@ class EAMergeProcessor:
                     excel_path = os.path.join(os.path.expanduser("~"), excel_name)
 
             self._log(
-                f"[INFO] Generating Excel output: {excel_name}"
+                f"[INFO] Generating Preliminary EARF Excel: {excel_name}"
             )
-            excel_ok = self._export_attribute_table_to_excel(
-                output_layer, excel_path
-            )
+
+            # Primary: styled PSA EARF template via EARFWriter
+            excel_ok = False
+            try:
+                from .helpers.earf_writer import EARFWriter
+                writer = EARFWriter(
+                    layer=output_layer,
+                    geo_code=geo_code,
+                    citymun=citymun,
+                    output_path=excel_path,
+                    feedback=self._feedback,
+                    ghost_features=ghost_ea_features,
+                )
+                excel_ok = writer.write()
+            except Exception as _earf_err:
+                self._log(
+                    f"[WARNING] EARFWriter raised an exception ({_earf_err}); "
+                    "falling back to plain attribute table export."
+                )
+
+            # Fallback: plain attribute table dump (no styling)
+            if not excel_ok:
+                excel_ok = self._export_attribute_table_to_excel(
+                    output_layer, excel_path,
+                    ghost_features=ghost_ea_features,
+                )
+
             if excel_ok:
                 summary.excel_generated = True
                 summary.excel_file_path = excel_path
                 summary.excel_file_name = excel_name
                 self._log(
-                    "[INFO] Excel attribute table successfully generated."
+                    "[INFO] Preliminary EARF Excel successfully generated."
                 )
             else:
                 # Warn but do not fail — the polygon output was created
                 self._log(
                     f"[WARNING] The final EA layer was successfully created: "
                     f"{self._output_layer_name}\n"
-                    "However, the Excel output could not be generated."
+                    "However, the Preliminary EARF Excel could not be generated."
                 )
 
             self._progress(100)
@@ -722,38 +784,43 @@ class EAMergeProcessor:
     def _build_output_fields(self) -> QgsFields:
         """Construct the output layer field schema.
 
-        Preserves all fields from the Previous EA Layer, and ensures:
-        - hhcount (Double)
-        - bldgcount (Int)
-        - hh_count (Double)
-        - bldg_count (Int)
-        - ea_type (String)
-        are all included in the output schema.
+        Constructs exactly the 19 standard output fields in the required order:
+        1. fid (Int)
+        2. map_uuid (String)
+        3. geocode (String)
+        4. region (String)
+        5. province (String)
+        6. city_mun (String)
+        7. barangay (String)
+        8. ean (String)
+        9. name (String)
+        10. code (String)
+        11. hhcount (Double)
+        12. bldgcount (Int)
+        13. sy (String)
+        14. new_ean (String)
+        15. hh_count (Double)
+        16. bldg_count (Int)
+        17. ea_type (String)
+        18. eacount (Int)
+        19. remarks (String)
+
+        Preserves existing field types from the Previous EA Layer if present.
         """
-        ea_fields = self.ea_layer.fields()
+        ea_fields = self.ea_layer.fields() if self.ea_layer else None
+        ea_field_map = {}
+        if ea_fields:
+            for i in range(ea_fields.count()):
+                f = ea_fields.at(i)
+                ea_field_map[f.name().lower()] = f
+
         out_fields = QgsFields()
-        existing_names_lower = set()
-
-        for i in range(ea_fields.count()):
-            f = ea_fields.at(i)
-            out_fields.append(QgsField(f.name(), f.type()))
-            existing_names_lower.add(f.name().lower())
-
-        if "hhcount" not in existing_names_lower:
-            out_fields.append(QgsField("hhcount", QVariant.Double))
-            existing_names_lower.add("hhcount")
-        if "bldgcount" not in existing_names_lower:
-            out_fields.append(QgsField("bldgcount", QVariant.Int))
-            existing_names_lower.add("bldgcount")
-        if "hh_count" not in existing_names_lower:
-            out_fields.append(QgsField("hh_count", QVariant.Double))
-            existing_names_lower.add("hh_count")
-        if "bldg_count" not in existing_names_lower:
-            out_fields.append(QgsField("bldg_count", QVariant.Int))
-            existing_names_lower.add("bldg_count")
-        if "ea_type" not in existing_names_lower:
-            out_fields.append(QgsField("ea_type", QVariant.String))
-            existing_names_lower.add("ea_type")
+        for fname, default_type in _OUTPUT_FIELD_SPECS:
+            existing_field = ea_field_map.get(fname.lower())
+            if existing_field is not None:
+                out_fields.append(QgsField(fname, existing_field.type()))
+            else:
+                out_fields.append(QgsField(fname, default_type))
 
         return out_fields
 
@@ -872,8 +939,14 @@ class EAMergeProcessor:
                             val = _extract_feature_attribute(feat, repl_name_to_idx, "bldg_count")
                             if val is None and fallback_ea_feat is not None:
                                 val = _extract_feature_attribute(fallback_ea_feat, ea_name_to_idx, "bldg_count")
+                        elif ea_field_name == "new_ean":
+                            val = _extract_feature_attribute(feat, repl_name_to_idx, "ean")
+                            if val is None and fallback_ea_feat is not None:
+                                val = _extract_feature_attribute(fallback_ea_feat, ea_name_to_idx, "new_ean")
+                                if val is None:
+                                    val = _extract_feature_attribute(fallback_ea_feat, ea_name_to_idx, "ean")
                         elif ea_field_name == "ea_type":
-                            val = "STANDARD"
+                            val = "RETAINED"
 
                     if val is not None:
                         # Safe type conversion based on target field type
@@ -909,14 +982,20 @@ class EAMergeProcessor:
         self,
         combined_replacement: QgsGeometry,
         out_fields: Optional[QgsFields] = None,
-    ) -> tuple[list[QgsFeature], int]:
+        replacement_features: Optional[list] = None,
+    ) -> tuple[list[QgsFeature], list[QgsFeature], int]:
         """Subtract combined_replacement from each EA feature geometry.
 
         Returns:
-          (remaining_features, modified_count)
+          (remaining_features, ghost_features, modified_count)
 
-        Features whose remaining geometry is empty after the difference are
-        dropped from the output (they are fully covered by replacement polygons).
+        ``remaining_features`` — EA features whose geometry survived the
+          difference operation (partial or full overlap removed).
+        ``ghost_features`` — EA features that were *fully* consumed by a
+          replacement polygon.  Their geometry is set to NULL so they are
+          **not** added to the spatial output layer, but they are forwarded
+          to the Excel exporter as reference rows tagged ``ea_type = MERGED``
+          with ``eacount = NULL`` so subtotals remain correct.
         """
         if out_fields is None:
             out_fields = self._build_output_fields()
@@ -931,7 +1010,17 @@ class EAMergeProcessor:
             for i in range(ea_fields.count())
         }
 
+        # Field indices in the output schema needed for ghost-row annotation
+        out_name_to_idx = {
+            out_fields.at(i).name().lower(): i
+            for i in range(out_fields.count())
+        }
+        _ghost_ea_type_idx  = out_name_to_idx.get("ea_type",  -1)
+        _ghost_eacount_idx  = out_name_to_idx.get("eacount",  -1)
+        _ghost_remarks_idx  = out_name_to_idx.get("remarks",  -1)
+
         remaining_features: list[QgsFeature] = []
+        ghost_features: list[QgsFeature] = []
         modified_count = 0
 
         for feat in self.ea_layer.getFeatures():
@@ -942,6 +1031,7 @@ class EAMergeProcessor:
 
             ea_geom = _repair_geometry(ea_geom)
             geom_to_keep = None
+            fully_consumed = False
 
             if fid in candidate_id_set:
                 # Spatial index says bounding boxes overlap — confirm with exact
@@ -949,21 +1039,22 @@ class EAMergeProcessor:
                 if ea_geom.intersects(combined_replacement):
                     remaining = ea_geom.difference(combined_replacement)
                     if remaining is None or remaining.isNull() or remaining.isEmpty():
-                        # EA is fully covered — drop it
+                        # EA is fully covered — capture as ghost, do not add to
+                        # the spatial output.
                         modified_count += 1
-                        continue
-                    remaining = _repair_geometry(remaining)
-                    if remaining is None or remaining.isNull() or remaining.isEmpty():
-                        modified_count += 1
-                        continue
-
-                    # Count as modified if area actually changed
-                    orig_area = ea_geom.area()
-                    rem_area = remaining.area()
-                    if abs(orig_area - rem_area) > 1e-6:
-                        modified_count += 1
-
-                    geom_to_keep = remaining
+                        fully_consumed = True
+                    else:
+                        remaining = _repair_geometry(remaining)
+                        if remaining is None or remaining.isNull() or remaining.isEmpty():
+                            modified_count += 1
+                            fully_consumed = True
+                        else:
+                            # Count as modified if area actually changed
+                            orig_area = ea_geom.area()
+                            rem_area = remaining.area()
+                            if abs(orig_area - rem_area) > 1e-6:
+                                modified_count += 1
+                            geom_to_keep = remaining
                 else:
                     # Bounding-box overlap but no actual geometric intersection
                     geom_to_keep = ea_geom
@@ -971,9 +1062,13 @@ class EAMergeProcessor:
                 # No spatial-index overlap — keep as-is, no geometry test needed
                 geom_to_keep = ea_geom
 
-            # Format remaining EA feature using out_fields schema
+            # ── Build output feature (remaining or ghost) ──────────────────
             out_feat = QgsFeature(out_fields)
-            out_feat.setGeometry(geom_to_keep)
+            if fully_consumed:
+                # Geometry intentionally left NULL — ghost row for Excel only
+                out_feat.setGeometry(QgsGeometry())
+            else:
+                out_feat.setGeometry(geom_to_keep)
 
             for ea_i in range(out_fields.count()):
                 ea_field = out_fields.at(ea_i)
@@ -989,8 +1084,10 @@ class EAMergeProcessor:
                         val = _extract_feature_attribute(feat, ea_name_to_idx, "hh_count")
                     elif ea_field_name == "bldgcount":
                         val = _extract_feature_attribute(feat, ea_name_to_idx, "bldg_count")
+                    elif ea_field_name == "new_ean":
+                        val = _extract_feature_attribute(feat, ea_name_to_idx, "ean")
                     elif ea_field_name == "ea_type":
-                        val = "STANDARD"
+                        val = "RETAINED"
 
                 if val is not None:
                     try:
@@ -1007,9 +1104,153 @@ class EAMergeProcessor:
                         pass
                     out_feat.setAttribute(ea_i, val)
 
-            remaining_features.append(out_feat)
+            if fully_consumed:
+                # Override ea_type → MERGED and clear eacount (reference row only)
+                if _ghost_ea_type_idx != -1:
+                    out_feat.setAttribute(_ghost_ea_type_idx, "MERGED")
+                if _ghost_eacount_idx != -1:
+                    out_feat.setAttribute(_ghost_eacount_idx, None)
 
-        return remaining_features, modified_count
+                # Annotate remarks with the absorbing replacement's new_ean
+                absorbing_new_ean = self._absorbing_replacement_new_ean(
+                    ea_geom, replacement_features or []
+                )
+                existing_remarks = ""
+                if _ghost_remarks_idx != -1:
+                    raw_rmk = out_feat.attribute(_ghost_remarks_idx)
+                    from qgis.core import NULL
+                    if raw_rmk is not None and raw_rmk != NULL:
+                        existing_remarks = str(raw_rmk).strip()
+
+                if absorbing_new_ean:
+                    merged_note = f"Merged into {absorbing_new_ean}"
+                else:
+                    merged_note = "Merged EA"
+
+                if existing_remarks and "merge" not in existing_remarks.lower():
+                    new_remarks = f"{merged_note}; {existing_remarks}"
+                elif not existing_remarks:
+                    new_remarks = merged_note
+                else:
+                    new_remarks = existing_remarks  # already annotated
+
+                if _ghost_remarks_idx != -1:
+                    out_feat.setAttribute(_ghost_remarks_idx, new_remarks)
+
+                ghost_features.append(out_feat)
+            else:
+                remaining_features.append(out_feat)
+
+        return remaining_features, ghost_features, modified_count
+
+    def _absorbing_replacement_new_ean(
+        self,
+        consumed_geom: QgsGeometry,
+        replacement_features: list,
+    ) -> Optional[str]:
+        """Find the new_ean of the replacement feature that most overlaps consumed_geom.
+
+        Iterates through already-built replacement QgsFeature objects, computes
+        intersection area, and returns the new_ean of the best-overlap candidate.
+        Returns None when no match is found or when the replacement list is empty.
+        """
+        if not replacement_features or consumed_geom is None or consumed_geom.isNull():
+            return None
+
+        from qgis.core import NULL
+
+        best_area = 0.0
+        best_new_ean: Optional[str] = None
+
+        for repl_feat in replacement_features:
+            repl_geom = repl_feat.geometry()
+            if repl_geom is None or repl_geom.isNull() or repl_geom.isEmpty():
+                continue
+            inter = consumed_geom.intersection(repl_geom)
+            if inter is None or inter.isNull() or inter.isEmpty():
+                continue
+            area = inter.area()
+            if area > best_area:
+                best_area = area
+                # Read new_ean from the replacement feature's attributes
+                repl_fields = repl_feat.fields()
+                if repl_fields is not None:
+                    repl_name_to_idx = {
+                        repl_fields.at(i).name().lower(): i
+                        for i in range(repl_fields.count())
+                    }
+                    raw = _extract_feature_attribute(
+                        repl_feat, repl_name_to_idx, "new_ean"
+                    )
+                    if raw is None:
+                        raw = _extract_feature_attribute(
+                            repl_feat, repl_name_to_idx, "ean"
+                        )
+                    if raw is not None and raw != NULL:
+                        s = str(raw).strip()
+                        best_new_ean = s if s not in ("", "NULL", "None") else None
+
+        return best_new_ean
+
+    def _populate_ea_counts(
+        self,
+        features: list[QgsFeature],
+        out_fields: QgsFields,
+    ) -> None:
+        """Populate the EACount field based on the 8-digit geocode and new_ean.
+
+        Assigns 1 on the first occurrence of each unique (8-digit geocode, new_ean)
+        pair, and leaves EACount empty (None / NULL) on duplicate rows/fragments
+        to prevent double-counting due to delineation.
+        """
+        # Find the EACount field index in out_fields
+        ea_count_idx = -1
+        for i in range(out_fields.count()):
+            if out_fields.at(i).name().lower() == "eacount":
+                ea_count_idx = i
+                break
+
+        if ea_count_idx == -1:
+            return
+
+        out_name_to_idx = {
+            out_fields.at(i).name().lower(): i
+            for i in range(out_fields.count())
+        }
+
+        seen_ea_keys = set()
+
+        for idx, feat in enumerate(features):
+            raw_geo = _extract_feature_attribute(feat, out_name_to_idx, "geocode")
+            if not raw_geo:
+                raw_geo = _extract_feature_attribute(feat, out_name_to_idx, "barangay")
+            if not raw_geo:
+                raw_geo = _extract_feature_attribute(feat, out_name_to_idx, "code")
+            if not raw_geo:
+                raw_geo = self._geo_code or ""
+
+            digits = re.sub(r"\D", "", str(raw_geo).strip())
+            if len(digits) >= 8:
+                bgy_code = digits[:8]
+            elif digits:
+                bgy_code = digits
+            else:
+                bgy_code = str(raw_geo).strip() or "UNKNOWN"
+
+            ean_val = _extract_feature_attribute(feat, out_name_to_idx, "new_ean")
+            if ean_val is None or str(ean_val).strip() in ("", "NULL", "None"):
+                ean_val = _extract_feature_attribute(feat, out_name_to_idx, "ean")
+            if ean_val is None or str(ean_val).strip() in ("", "NULL", "None"):
+                ean_val = f"feat_{idx}"
+
+            ean_str = str(ean_val).strip()
+            ea_key = (bgy_code, ean_str)
+
+            if ea_key not in seen_ea_keys:
+                seen_ea_keys.add(ea_key)
+                feat.setAttribute(ea_count_idx, 1)
+            else:
+                feat.setAttribute(ea_count_idx, None)
 
     def _create_output_layer(
         self,
@@ -1158,17 +1399,25 @@ class EAMergeProcessor:
         return os.path.exists(file_path) and os.path.getsize(file_path) > 0
 
     def _export_attribute_table_to_excel(
-        self, layer: QgsVectorLayer, path: str
+        self,
+        layer: QgsVectorLayer,
+        path: str,
+        ghost_features: Optional[list] = None,
     ) -> bool:
         """Export the layer attribute table to Excel.
 
         Columns = layer fields (same order, same names, no extra columns).
-        Rows    = all features (no geometry).
+        Rows    = all features (no geometry) followed by ghost rows.
         Sheet   = EA2026.
+
+        ghost_features : list[QgsFeature], optional
+            Fully-consumed previous EA features (NULL geometry) that were
+            excluded from the spatial output layer but should appear in the
+            Excel file as reference rows tagged ea_type=MERGED.
         """
         try:
             import openpyxl
-            from openpyxl.writer.excel import save_workbook
+            from openpyxl.writer.excel import save_workbook  # noqa: F401
         except ImportError:
             self._log(
                 "[ERROR] openpyxl is not installed. "
@@ -1190,18 +1439,39 @@ class EAMergeProcessor:
             # Header row
             ws.append(field_names)
 
-            # Data rows
             from qgis.core import NULL
+
+            def _row_values(feat, flds):
+                row = []
+                for i in range(flds.count()):
+                    val = feat.attribute(i)
+                    row.append(None if (val == NULL or val is None) else val)
+                return row
+
+            # Data rows — spatial features
             for feat in layer.getFeatures(
                 QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry)
             ):
+                ws.append(_row_values(feat, fields))
+
+            # Ghost rows — fully-consumed previous EAs (Excel-only reference rows)
+            for ghost_feat in (ghost_features or []):
+                ghost_fields = ghost_feat.fields()
+                if ghost_fields is None or ghost_fields.count() == 0:
+                    continue
+                # Align ghost feature attributes to the layer's field order
+                ghost_name_to_idx = {
+                    ghost_fields.at(i).name().lower(): i
+                    for i in range(ghost_fields.count())
+                }
                 row = []
-                for i in range(fields.count()):
-                    val = feat.attribute(i)
-                    if val == NULL or val is None:
+                for fname in field_names:
+                    idx = ghost_name_to_idx.get(fname.lower(), -1)
+                    if idx == -1:
                         row.append(None)
                     else:
-                        row.append(val)
+                        val = ghost_feat.attribute(idx)
+                        row.append(None if (val == NULL or val is None) else val)
                 ws.append(row)
 
             wb.save(path)

@@ -146,6 +146,7 @@ class TestEAMergeProcessor(unittest.TestCase):
             out_fields = [f.name() for f in result.output_layer.fields()]
             self.assertIn("hhcount", out_fields)
             self.assertIn("bldgcount", out_fields)
+            self.assertIn("new_ean", out_fields)
             self.assertIn("hh_count", out_fields)
             self.assertIn("bldg_count", out_fields)
 
@@ -352,6 +353,190 @@ class TestEAMergeProcessor(unittest.TestCase):
             gap_feat = next((f for f in features if str(f.attribute("GEOCODE")) == "0434000002"), None)
             self.assertIsNotNone(gap_feat)
             self.assertEqual(gap_feat.attribute("ea_type"), "GAP")
+
+    def test_new_ean_field_schema_and_value_propagation(self):
+        """Verify that new_ean field is present in output schema and populates properly."""
+        ea_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "04340_ea_prev", "memory")
+        pr = ea_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("GEOCODE", QVariant.String),
+            QgsField("EA_NO", QVariant.String),
+            QgsField("CITYMUN", QVariant.String),
+            QgsField("hhcount", QVariant.Double),
+            QgsField("bldgcount", QVariant.Int),
+        ])
+        ea_layer.updateFields()
+
+        f1 = QgsFeature(ea_layer.fields())
+        f1.setGeometry(make_square(0, 0, 100))
+        f1.setAttributes(["0434000001", "001000", "San Mateo", 100.0, 20])
+
+        f2 = QgsFeature(ea_layer.fields())
+        f2.setGeometry(make_square(100, 0, 100))
+        f2.setAttributes(["0434000002", "002000", "San Mateo", 120.0, 25])
+        pr.addFeatures([f1, f2])
+        ea_layer.updateExtents()
+
+        # Replacement layer with explicit new_ean
+        repl_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "01001001", "memory")
+        rpr = repl_layer.dataProvider()
+        rpr.addAttributes([
+            QgsField("new_ean", QVariant.String),
+            QgsField("hhcount", QVariant.Double),
+            QgsField("bldgcount", QVariant.Int),
+        ])
+        repl_layer.updateFields()
+
+        rf = QgsFeature(repl_layer.fields())
+        rf.setGeometry(make_square(20, 20, 60))
+        rf.setAttributes(["001001A", 80.0, 15])
+        rpr.addFeatures([rf])
+        repl_layer.updateExtents()
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            processor = EAMergeProcessor(
+                ea_layer=ea_layer,
+                replacement_layers=[repl_layer],
+                output_dir=tmpdir,
+            )
+            result = processor.run()
+            self.assertTrue(result.success)
+
+            out_fields = [f.name() for f in result.output_layer.fields()]
+            self.assertIn("new_ean", out_fields)
+
+            features = list(result.output_layer.getFeatures())
+            self.assertEqual(len(features), 3)
+
+            # Replacement feature has explicit new_ean = "001001A"
+            repl_out = next((f for f in features if f.geometry().area() < 5000), None)
+            self.assertIsNotNone(repl_out)
+            self.assertEqual(repl_out.attribute("new_ean"), "001001A")
+
+            # Remaining EA 1 feature has new_ean = "001000" (inherited from EA_NO)
+            ea1_out = next((f for f in features if str(f.attribute("GEOCODE")) == "0434000001" and f != repl_out), None)
+            self.assertIsNotNone(ea1_out)
+            self.assertEqual(ea1_out.attribute("new_ean"), "001000")
+
+            # Untouched EA 2 feature has new_ean = "002000" (inherited from EA_NO)
+            ea2_out = next((f for f in features if str(f.attribute("GEOCODE")) == "0434000002"), None)
+            self.assertIsNotNone(ea2_out)
+            self.assertEqual(ea2_out.attribute("new_ean"), "002000")
+
+    def test_eacount_population_grouped_by_8digit_geocode_and_new_ean(self):
+        """Verify EACount is calculated from unique new_ean count per 8-digit barangay."""
+        ea_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "04340_ea_prev", "memory")
+        pr = ea_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("GEOCODE", QVariant.String),
+            QgsField("EA_NO", QVariant.String),
+            QgsField("CITYMUN", QVariant.String),
+            QgsField("hhcount", QVariant.Double),
+            QgsField("bldgcount", QVariant.Int),
+        ])
+        ea_layer.updateFields()
+
+        # Barangay 04340001 with 2 EAs: 001 and 002
+        f1 = QgsFeature(ea_layer.fields())
+        f1.setGeometry(make_square(0, 0, 100))
+        f1.setAttributes(["04340001001", "001000", "San Mateo", 100.0, 20])
+
+        f2 = QgsFeature(ea_layer.fields())
+        f2.setGeometry(make_square(100, 0, 100))
+        f2.setAttributes(["04340001002", "002000", "San Mateo", 120.0, 25])
+
+        # Barangay 04340002 with 1 EA: 001
+        f3 = QgsFeature(ea_layer.fields())
+        f3.setGeometry(make_square(200, 0, 100))
+        f3.setAttributes(["04340002001", "001000", "San Mateo", 80.0, 15])
+
+        pr.addFeatures([f1, f2, f3])
+        ea_layer.updateExtents()
+
+        # Replacement layer: Delineates EA 1 in Barangay 04340001 into 2 replacement parts:
+        # Part A (new_ean=001001A) and Part B (new_ean=001001B)
+        repl_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "04340001", "memory")
+        rpr = repl_layer.dataProvider()
+        rpr.addAttributes([
+            QgsField("GEOCODE", QVariant.String),
+            QgsField("new_ean", QVariant.String),
+            QgsField("hhcount", QVariant.Double),
+            QgsField("bldgcount", QVariant.Int),
+        ])
+        repl_layer.updateFields()
+
+        rf1 = QgsFeature(repl_layer.fields())
+        rf1.setGeometry(make_square(0, 0, 50))
+        rf1.setAttributes(["04340001001A", "001001A", 50.0, 10])
+
+        rf2 = QgsFeature(repl_layer.fields())
+        rf2.setGeometry(make_square(50, 0, 50))
+        rf2.setAttributes(["04340001001B", "001001B", 50.0, 10])
+
+        # Extra multi-part fragment sharing new_ean 001001B (should not inflate EACount)
+        rf3 = QgsFeature(repl_layer.fields())
+        rf3.setGeometry(make_square(50, 50, 20))
+        rf3.setAttributes(["04340001001B", "001001B", 10.0, 2])
+
+        rpr.addFeatures([rf1, rf2, rf3])
+        repl_layer.updateExtents()
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            processor = EAMergeProcessor(
+                ea_layer=ea_layer,
+                replacement_layers=[repl_layer],
+                output_dir=tmpdir,
+            )
+            result = processor.run()
+            self.assertTrue(result.success)
+
+            out_layer = result.output_layer
+            out_fields = [f.name() for f in out_layer.fields()]
+            self.assertIn("EACount", out_fields)
+
+            features = list(out_layer.getFeatures())
+            # For Barangay 04340001:
+            # We have:
+            # - Remaining EA (002000): first occurrence -> EACount = 1
+            # - Replacement Part A (001001A): first occurrence -> EACount = 1
+            # - Replacement Part B (001001B): first occurrence -> EACount = 1
+            # - Duplicate Fragment of Part B (001001B): duplicate -> EACount is None
+            from qgis.core import NULL
+            bgy1_feats = [f for f in features if str(f.attribute("GEOCODE"))[:8] == "04340001"]
+            self.assertEqual(len(bgy1_feats), 4)
+
+            bgy1_eacounts = [f.attribute("EACount") for f in bgy1_feats]
+            # Count how many are 1 vs None/NULL
+            ones = [v for v in bgy1_eacounts if v == 1 or v == "1"]
+            empties = [v for v in bgy1_eacounts if v is None or v == NULL or str(v).strip() in ("", "NULL", "None")]
+            self.assertEqual(len(ones), 3, "Exactly 3 distinct EAs should have EACount=1")
+            self.assertEqual(len(empties), 1, "The duplicate fragment should have empty/NULL EACount")
+
+            # For Barangay 04340002:
+            # Distinct EANs: {"001000"} -> EACount = 1
+            bgy2_feats = [f for f in features if str(f.attribute("GEOCODE"))[:8] == "04340002"]
+            self.assertEqual(len(bgy2_feats), 1)
+            self.assertEqual(int(bgy2_feats[0].attribute("EACount")), 1)
+
+    def test_output_fields_exact_19_order(self):
+        """Verify the final output contains exactly the 19 standard fields in the required order."""
+        expected_fields = [
+            "fid", "map_uuid", "geocode", "region", "province", "city_mun",
+            "barangay", "ean", "name", "code", "hhcount", "bldgcount",
+            "sy", "new_ean", "hh_count", "bldg_count", "ea_type", "eacount", "remarks"
+        ]
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            processor = EAMergeProcessor(
+                ea_layer=self.ea_layer,
+                replacement_layers=[self.repl_layer1],
+                output_dir=tmpdir,
+            )
+            result = processor.run()
+            self.assertTrue(result.success)
+
+            actual_fields = [f.name() for f in result.output_layer.fields()]
+            self.assertEqual(actual_fields, expected_fields, f"Fields mismatch.\nExpected: {expected_fields}\nActual: {actual_fields}")
 
 
 if __name__ == "__main__":
