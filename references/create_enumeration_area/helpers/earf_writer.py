@@ -189,13 +189,18 @@ class EARFWriter:
         output_path: str,
         as_of_date: Optional[datetime] = None,
         feedback=None,
+        ghost_features: Optional[list] = None,
     ) -> None:
-        self._layer       = layer
-        self._geo_code    = geo_code
-        self._citymun     = citymun
-        self._output_path = output_path
-        self._as_of_date  = as_of_date or datetime.now()
-        self._log         = feedback or (lambda msg: None)
+        self._layer         = layer
+        self._geo_code      = geo_code
+        self._citymun       = citymun
+        self._output_path   = output_path
+        self._as_of_date    = as_of_date or datetime.now()
+        self._log           = feedback or (lambda msg: None)
+        # Fully-consumed previous EA features (ghost rows for Excel only).
+        # These have NULL geometry and ea_type=MERGED; they are included in
+        # the Excel output as reference rows but excluded from the .gpkg layer.
+        self._ghost_features: list = ghost_features or []
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -366,11 +371,96 @@ class EARFWriter:
                 "is_citymun_summary":  False,
                 "is_barangay_summary": False,
                 "is_ea_row":           True,
+                "is_ghost":            False,
+            })
+
+        # ── Process ghost rows (fully-consumed previous EAs) ────────────
+        # Ghost features are emitted by _replace_ea_geometries() when a
+        # previous EA is entirely covered by replacement polygons.  They
+        # carry ea_type=MERGED and NULL eacount so they do not distort
+        # city/mun or barangay subtotals.
+        for ghost_feat in self._ghost_features:
+            try:
+                ghost_fields = ghost_feat.fields()
+            except Exception:
+                continue
+            if ghost_fields is None:
+                continue
+
+            ghost_name_to_idx: Dict[str, int] = {
+                ghost_fields.at(i).name().lower(): i
+                for i in range(ghost_fields.count())
+            }
+
+            def _g_str(fname: str) -> Optional[str]:
+                idx = ghost_name_to_idx.get(fname.lower(), -1)
+                if idx == -1:
+                    return None
+                val = ghost_feat.attribute(idx)
+                if val is None or val == NULL:
+                    return None
+                s = str(val).strip()
+                return None if s in ("", "NULL", "None") else s
+
+            def _g_num(fname: str) -> Optional[Any]:
+                raw = _g_str(fname)
+                if raw is None:
+                    return None
+                try:
+                    f = float(raw)
+                    return int(f) if f == int(f) else f
+                except (ValueError, TypeError):
+                    return None
+
+            geocode_raw = _g_str("geocode") or ""
+            digits = re.sub(r"\D", "", geocode_raw)
+            if len(digits) >= 8:
+                reg  = digits[0:2]
+                prov = digits[2:5]
+                mun  = digits[0:5]
+                brgy = digits[5:8]
+                geocode_8 = digits[:8]
+            elif len(digits) >= 5:
+                reg  = digits[0:2]
+                prov = digits[2:5]
+                mun  = digits[0:5]
+                brgy = ""
+                geocode_8 = digits[:5].ljust(8, "0")
+            else:
+                reg = prov = mun = brgy = ""
+                geocode_8 = (digits or geocode_raw).ljust(8, "0")[:8]
+
+            raw_rows.append({
+                "reg":        reg,
+                "prov":       prov,
+                "mun":        mun,
+                "brgy":       brgy,
+                "ea":         _g_str("ean")     or "",
+                "geocode_8":  geocode_8,
+                # 2024 EARF columns — carry original counts for reference
+                "eacount":    None,   # excluded from subtotals
+                "name":       _g_str("name")    or "",
+                "hhcount":    _g_num("hhcount"),
+                "bldgcount":  _g_num("bldgcount"),
+                # 2026 Preliminary columns
+                "new_ean":    _g_str("new_ean") or "",
+                "hh_count":   _g_num("hh_count"),
+                "bldg_count": _g_num("bldg_count"),
+                "ea_type":    _g_str("ea_type") or "MERGED",
+                "sy":         _g_str("sy")       or "",
+                "remarks":    _g_str("remarks")  or "Merged EA",
+                # Row type
+                "is_citymun_summary":  False,
+                "is_barangay_summary": False,
+                "is_ea_row":           True,
+                "is_ghost":            True,
             })
 
         # ── City/Mun totals ──────────────────────────────────────────────
+        # Subtotals sum only rows where eacount / hhcount / bldgcount are
+        # non-None; ghost rows have eacount=None so they are excluded.
         def _sum(rows, key):
-            return sum(r[key] or 0 for r in rows) or None
+            return sum(r[key] or 0 for r in rows if r[key] is not None) or None
 
         first = raw_rows[0] if raw_rows else {}
         citymun_row = {
@@ -393,6 +483,7 @@ class EARFWriter:
             "is_citymun_summary":  True,
             "is_barangay_summary": False,
             "is_ea_row":           False,
+            "is_ghost":            False,
         }
 
         # ── Group by barangay ────────────────────────────────────────────
@@ -405,7 +496,10 @@ class EARFWriter:
 
         for brgy_code in sorted(brgy_groups.keys()):
             ea_rows = brgy_groups[brgy_code]
-            first_ea = ea_rows[0]
+            # Separate normal and ghost rows for barangay subtotal computation.
+            # Ghost rows have eacount=None and are excluded from counts.
+            normal_ea_rows = [r for r in ea_rows if not r.get("is_ghost")]
+            first_ea = normal_ea_rows[0] if normal_ea_rows else ea_rows[0]
 
             # Derive barangay name by stripping EA suffix from the name field
             brgy_name = first_ea.get("name", "")
@@ -420,19 +514,21 @@ class EARFWriter:
                 "brgy":   first_ea.get("brgy", ""),
                 "ea":     "000000",
                 "geocode_8": brgy_code,
-                "eacount":   _sum(ea_rows, "eacount"),
+                # Subtotals use only non-ghost rows
+                "eacount":   _sum(normal_ea_rows, "eacount"),
                 "name":      brgy_name,
-                "hhcount":   _sum(ea_rows, "hhcount"),
-                "bldgcount": _sum(ea_rows, "bldgcount"),
+                "hhcount":   _sum(normal_ea_rows, "hhcount"),
+                "bldgcount": _sum(normal_ea_rows, "bldgcount"),
                 "new_ean":   "",
-                "hh_count":  _sum(ea_rows, "hh_count"),
-                "bldg_count":_sum(ea_rows, "bldg_count"),
+                "hh_count":  _sum(normal_ea_rows, "hh_count"),
+                "bldg_count":_sum(normal_ea_rows, "bldg_count"),
                 "ea_type":   "",
                 "sy":        "",
                 "remarks":   "",
                 "is_citymun_summary":  False,
                 "is_barangay_summary": True,
                 "is_ea_row":           False,
+                "is_ghost":            False,
             }
             output.append(brgy_row)
 
@@ -536,12 +632,14 @@ class EARFWriter:
                 self._write_row(ws, styles, row, row_data, kind="citymun")
             elif row_data["is_barangay_summary"]:
                 self._write_row(ws, styles, row, row_data, kind="barangay")
+            elif row_data.get("is_ghost"):
+                self._write_row(ws, styles, row, row_data, kind="ghost")
             else:
                 self._write_row(ws, styles, row, row_data, kind="ea")
 
     def _write_row(self, ws, styles, row: int,
                    row_data: Dict, kind: str) -> None:
-        """Write a single row; kind = 'citymun' | 'barangay' | 'ea'."""
+        """Write a single row; kind = 'citymun' | 'barangay' | 'ea' | 'ghost'."""
         if kind == "citymun":
             font   = styles.font_summary_citymun
             fill   = styles.fill_summary_citymun
@@ -550,6 +648,12 @@ class EARFWriter:
             font   = styles.font_summary_brgy
             fill   = styles.fill_summary_brgy
             border = styles.border_thin
+        elif kind == "ghost":
+            # Fully-consumed previous EA: light-orange fill to distinguish from
+            # normal retained EAs.  Italic font signals it is a reference row.
+            font   = styles.font_ghost
+            fill   = styles.fill_ghost
+            border = styles.border_thin_light
         else:
             font   = styles.font_data
             fill   = styles.fill_none
@@ -607,6 +711,8 @@ class _Styles:
         self.font_summary_citymun = Font(name="Arial", size=9,  bold=True)
         self.font_summary_brgy    = Font(name="Arial", size=8,  bold=True)
         self.font_data            = Font(name="Arial", size=8)
+        # Ghost rows: italic to signal they are reference-only rows
+        self.font_ghost           = Font(name="Arial", size=8, italic=True)
 
         # ── Alignments ───────────────────────────────────────────────────
         self.align_left         = Alignment(horizontal="left",   vertical="center")
@@ -626,6 +732,7 @@ class _Styles:
         self.fill_subhdr          = _fill("F2F2F2")   # Sub-header — light gray
         self.fill_summary_citymun = _fill("D9D9D9")   # City/Mun row — medium gray
         self.fill_summary_brgy    = _fill("EFEFEF")   # Barangay row — lighter gray
+        self.fill_ghost           = _fill("FFE4B5")   # Ghost/merged row — moccasin
         self.fill_none            = PatternFill(fill_type=None)
 
         # ── Borders ──────────────────────────────────────────────────────
