@@ -3026,7 +3026,7 @@ class EALauncherDialog(QDialog):
                         proj.removeMapLayer(old_lyr.id())
                     proj.addMapLayer(result.output_layer)
                     from .helpers.style import apply_qml_to_layer
-                    apply_qml_to_layer(result.output_layer, "11. Delineated EA Polygon.qml")
+                    apply_qml_to_layer(result.output_layer, "ea_output.qml")
                 self._ea_merge_append_log(
                     self._ea_merge_format_log(
                         f"[INFO] Permanent GeoPackage layer (.gpkg) added to QGIS canvas: {result.summary.output_layer_name}"

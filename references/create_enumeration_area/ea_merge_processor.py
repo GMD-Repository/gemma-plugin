@@ -552,7 +552,7 @@ class EAMergeProcessor:
 
                         if gpkg_layer.isValid():
                             from .helpers.style import apply_qml_to_layer
-                            apply_qml_to_layer(gpkg_layer, "11. Delineated EA Polygon.qml")
+                            apply_qml_to_layer(gpkg_layer, "ea_output.qml")
                             output_layer = gpkg_layer
                             self._output_layer_name = final_layer_name
                             summary.output_layer_name = final_layer_name
