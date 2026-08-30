@@ -363,6 +363,8 @@ class GMDPipeline(object):
 
         if self.ea_dlg is None:
             self.ea_dlg = EALauncherDialog(self.iface.mainWindow())
+        else:
+            self.ea_dlg.refresh_all()
 
         self.ea_dlg.showNormal()
         self.ea_dlg.show()
