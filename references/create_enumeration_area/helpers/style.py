@@ -6,7 +6,7 @@ Provides safe QML style path resolution and layer styling methods.
 """
 
 import os
-from qgis.core import QgsVectorLayer
+from qgis.core import QgsVectorLayer, QgsMapLayer
 
 
 def get_qml_file_path(qml_filename: str) -> str:
@@ -33,8 +33,14 @@ def apply_qml_to_layer(layer: QgsVectorLayer, qml_filename: str) -> bool:
         return False
 
     try:
-        msg, ok = layer.loadNamedStyle(qml_path)
+        categories = QgsMapLayer.AllStyleCategories & ~QgsMapLayer.Fields
+        msg, ok = layer.loadNamedStyle(qml_path, categories=categories)
         layer.triggerRepaint()
         return bool(ok)
     except Exception:
-        return False
+        try:
+            msg, ok = layer.loadNamedStyle(qml_path)
+            layer.triggerRepaint()
+            return bool(ok)
+        except Exception:
+            return False

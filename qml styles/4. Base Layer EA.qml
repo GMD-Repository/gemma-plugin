@@ -522,7 +522,7 @@
         </config>
       </editWidget>
     </field>
-    <field name="EACount" configurationFlags="None">
+    <field name="eacount" configurationFlags="None">
       <editWidget type="TextEdit">
         <config>
           <Option/>
@@ -539,7 +539,7 @@
     <alias index="5" field="BGY_GEO" name=""/>
     <alias index="6" field="Old_Geo" name=""/>
     <alias index="7" field="mun_name" name=""/>
-    <alias index="8" field="EACount" name=""/>
+    <alias index="8" field="eacount" name=""/>
   </aliases>
   <defaults>
     <default applyOnUpdate="0" field="fid" expression=""/>
@@ -550,7 +550,7 @@
     <default applyOnUpdate="0" field="BGY_GEO" expression=""/>
     <default applyOnUpdate="0" field="Old_Geo" expression=""/>
     <default applyOnUpdate="0" field="mun_name" expression=""/>
-    <default applyOnUpdate="0" field="EACount" expression=""/>
+    <default applyOnUpdate="0" field="eacount" expression=""/>
   </defaults>
   <constraints>
     <constraint constraints="3" field="fid" unique_strength="1" notnull_strength="1" exp_strength="0"/>
@@ -561,7 +561,7 @@
     <constraint constraints="0" field="BGY_GEO" unique_strength="0" notnull_strength="0" exp_strength="0"/>
     <constraint constraints="0" field="Old_Geo" unique_strength="0" notnull_strength="0" exp_strength="0"/>
     <constraint constraints="0" field="mun_name" unique_strength="0" notnull_strength="0" exp_strength="0"/>
-    <constraint constraints="0" field="EACount" unique_strength="0" notnull_strength="0" exp_strength="0"/>
+    <constraint constraints="0" field="eacount" unique_strength="0" notnull_strength="0" exp_strength="0"/>
   </constraints>
   <constraintExpressions>
     <constraint field="fid" exp="" desc=""/>
@@ -572,11 +572,9 @@
     <constraint field="BGY_GEO" exp="" desc=""/>
     <constraint field="Old_Geo" exp="" desc=""/>
     <constraint field="mun_name" exp="" desc=""/>
-    <constraint field="EACount" exp="" desc=""/>
+    <constraint field="eacount" exp="" desc=""/>
   </constraintExpressions>
-  <expressionfields>
-    <field precision="0" subType="0" typeName="string" length="0" comment="" name="EACount" type="10" expression="count(  &quot;BGY_GEO&quot;  ,group_by:=  &quot;BGY_GEO&quot;  )"/>
-  </expressionfields>
+  <expressionfields/>
   <attributeactions>
     <defaultAction key="Canvas" value="{00000000-0000-0000-0000-000000000000}"/>
   </attributeactions>
@@ -586,7 +584,7 @@
       <column name="code" width="-1" hidden="0" type="field"/>
       <column name="floating" width="-1" hidden="0" type="field"/>
       <column name="BGY_GEO" width="-1" hidden="0" type="field"/>
-      <column name="EACount" width="-1" hidden="0" type="field"/>
+      <column name="eacount" width="-1" hidden="0" type="field"/>
       <column name="fid" width="-1" hidden="0" type="field"/>
       <column name="mun_name" width="-1" hidden="0" type="field"/>
       <column name="Geocode" width="-1" hidden="0" type="field"/>
@@ -631,7 +629,7 @@ def my_form_open(dialog, layer, feature):
     <field editable="0" name="BLOCKNUM"/>
     <field editable="0" name="BlockCount"/>
     <field editable="1" name="CODE"/>
-    <field editable="0" name="EACount"/>
+    <field editable="0" name="eacount"/>
     <field editable="1" name="GEOCODE"/>
     <field editable="1" name="GEOID"/>
     <field editable="1" name="Geocode"/>
@@ -651,7 +649,7 @@ def my_form_open(dialog, layer, feature):
     <field editable="0" name="virtual_layer_BGY_name"/>
     <field editable="0" name="virtual_layer_BLOCKNUM"/>
     <field editable="0" name="virtual_layer_BlockCount"/>
-    <field editable="0" name="virtual_layer_EACount"/>
+    <field editable="0" name="virtual_layer_eacount"/>
     <field editable="0" name="virtual_layer_name"/>
   </editable>
   <labelOnTop>
@@ -663,7 +661,7 @@ def my_form_open(dialog, layer, feature):
     <field name="BLOCKNUM" labelOnTop="0"/>
     <field name="BlockCount" labelOnTop="0"/>
     <field name="CODE" labelOnTop="0"/>
-    <field name="EACount" labelOnTop="0"/>
+    <field name="eacount" labelOnTop="0"/>
     <field name="GEOCODE" labelOnTop="0"/>
     <field name="GEOID" labelOnTop="0"/>
     <field name="Geocode" labelOnTop="0"/>
@@ -683,7 +681,7 @@ def my_form_open(dialog, layer, feature):
     <field name="virtual_layer_BGY_name" labelOnTop="0"/>
     <field name="virtual_layer_BLOCKNUM" labelOnTop="0"/>
     <field name="virtual_layer_BlockCount" labelOnTop="0"/>
-    <field name="virtual_layer_EACount" labelOnTop="0"/>
+    <field name="virtual_layer_eacount" labelOnTop="0"/>
     <field name="virtual_layer_name" labelOnTop="0"/>
   </labelOnTop>
   <reuseLastValue>
@@ -693,7 +691,7 @@ def my_form_open(dialog, layer, feature):
     <field reuseLastValue="0" name="BGY_GEO"/>
     <field reuseLastValue="0" name="BLOCKNUM"/>
     <field reuseLastValue="0" name="BlockCount"/>
-    <field reuseLastValue="0" name="EACount"/>
+    <field reuseLastValue="0" name="eacount"/>
     <field reuseLastValue="0" name="Geocode"/>
     <field reuseLastValue="0" name="Old_Geo"/>
     <field reuseLastValue="0" name="code"/>
@@ -708,7 +706,7 @@ def my_form_open(dialog, layer, feature):
     <field reuseLastValue="0" name="virtual_layer_BGY_name"/>
     <field reuseLastValue="0" name="virtual_layer_BLOCKNUM"/>
     <field reuseLastValue="0" name="virtual_layer_BlockCount"/>
-    <field reuseLastValue="0" name="virtual_layer_EACount"/>
+    <field reuseLastValue="0" name="virtual_layer_eacount"/>
     <field reuseLastValue="0" name="virtual_layer_name"/>
   </reuseLastValue>
   <dataDefinedFieldProperties/>
