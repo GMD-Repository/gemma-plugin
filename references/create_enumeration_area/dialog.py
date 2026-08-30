@@ -2759,22 +2759,6 @@ class EALauncherDialog(QDialog):
 
         self._safe_set_layer(self.ea_merge_ea_combo, ea_match)
 
-        # Also auto-detect 8-digit replacement layers if none are selected yet
-        # Accept names that begin with 8 digits (optionally followed by underscore + suffix)
-        pat_8_prefix = re.compile(r"^\d{8}(_|$)")
-        if not self._ea_merge_replacement_layers:
-            auto_repl = []
-            for layer in layers:
-                if not isinstance(layer, QgsVectorLayer):
-                    continue
-                if layer.geometryType() not in (2, QgsWkbTypes.PolygonGeometry):
-                    continue
-                if pat_8_prefix.match(layer.name()):
-                    auto_repl.append(layer)
-            if auto_repl:
-                self._ea_merge_replacement_layers = auto_repl
-                self._ea_merge_update_replacement_list()
-
         if ea_match and hasattr(self, 'ea_merge_output_folder_widget'):
             current_out = self.ea_merge_output_folder_widget.filePath().strip()
             if not current_out:
@@ -3042,7 +3026,7 @@ class EALauncherDialog(QDialog):
                         proj.removeMapLayer(old_lyr.id())
                     proj.addMapLayer(result.output_layer)
                     from .helpers.style import apply_qml_to_layer
-                    apply_qml_to_layer(result.output_layer, "4. Base Layer EA.qml")
+                    apply_qml_to_layer(result.output_layer, "11. Delineated EA Polygon.qml")
                 self._ea_merge_append_log(
                     self._ea_merge_format_log(
                         f"[INFO] Permanent GeoPackage layer (.gpkg) added to QGIS canvas: {result.summary.output_layer_name}"
