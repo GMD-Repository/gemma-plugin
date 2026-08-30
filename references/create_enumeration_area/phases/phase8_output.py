@@ -542,6 +542,7 @@ def run_phase_8(
     # so they can be written to SPECIAL_EA_OUTPUT after the main loop.
     internal_gap_geoms: list = []  # List[Tuple[str, QgsGeometry, Optional[QgsFeature]]]
     internal_overlap_geoms: list = []  # List[Tuple[str, QgsGeometry, Optional[QgsFeature]]]
+    special_prefix_by_barangay: dict = {}  # Dict[str, int] tracked per barangay
 
     for bar in sorted(barangay_to_final_eas.keys(), key=lambda k: str(k) if k is not None else ""):
         bar_eas = barangay_to_final_eas[bar]
@@ -707,17 +708,16 @@ def run_phase_8(
             pid = ea_item.get('original_id', id(ea_item))
             parent_groups.setdefault(pid, []).append(ea_item)
 
+        # Step 1: Assign new_ea_code to non-special EAs first (retained, merged, delineated)
         for pid, group in parent_groups.items():
             if len(group) == 1:
                 ea = group[0]
+                if ea.get('is_special_ea', False) or ea.get('is_new', False):
+                    continue  # Handled in Step 3 for Special EAs
                 code_6, orig_last3 = extract_parent_code_and_prefix(ea)
                 if ea.get('from_merge', False):
                     if not ea.get('new_ea_code'):
                         ea['new_ea_code'] = ea.get('original_code', '000000')
-                elif ea.get('is_new', False):
-                    max_seq += 1
-                    seq_str = f"{max_seq:03d}"
-                    ea['new_ea_code'] = (seq_str + "000") if orig_last3 == "000" else (orig_last3 + seq_str)
                 else:
                     if orig_last3 == "000" or code_6 in ("000000", "000", "0"):
                         ea['new_ea_code'] = "000000"
@@ -751,6 +751,79 @@ def run_phase_8(
                             max_seq += 1
                             seq_str = f"{max_seq:03d}"
                             ea['new_ea_code'] = orig_last3 + seq_str
+
+        # Step 2: Determine highest_prefix and highest_suffix among non-special EAs in barangay
+        highest_prefix = 0
+        highest_suffix = 0
+
+        # Scan non-special EAs in bar_eas
+        for ea_item in bar_eas:
+            if ea_item.get('is_special_ea', False) or ea_item.get('is_new', False):
+                continue
+            c_val = str(ea_item.get('new_ea_code') or ea_item.get('original_code', '')).strip()
+            if c_val.endswith(".0"):
+                c_val = c_val[:-2]
+            digits = "".join([c for c in c_val if c.isdigit()])
+            if len(digits) == 6:
+                try:
+                    p_val = int(digits[:3])
+                    s_val = int(digits[3:])
+                    if p_val > highest_prefix:
+                        highest_prefix = p_val
+                    if s_val > highest_suffix:
+                        highest_suffix = s_val
+                except ValueError:
+                    pass
+            elif len(digits) >= 3:
+                try:
+                    p_val = int(digits[:3])
+                    if p_val > highest_prefix:
+                        highest_prefix = p_val
+                except ValueError:
+                    pass
+
+        # Scan sibling EAs in whole barangay registry
+        for sib_code in sibling_codes:
+            sib_digits = "".join([c for c in str(sib_code) if c.isdigit()])
+            if len(sib_digits) == 6:
+                try:
+                    p_val = int(sib_digits[:3])
+                    s_val = int(sib_digits[3:])
+                    if p_val > highest_prefix:
+                        highest_prefix = p_val
+                    if s_val > highest_suffix:
+                        highest_suffix = s_val
+                except ValueError:
+                    pass
+            elif len(sib_digits) >= 3:
+                try:
+                    p_val = int(sib_digits[:3])
+                    if p_val > highest_prefix:
+                        highest_prefix = p_val
+                except ValueError:
+                    pass
+
+        # Step 3: Determine starting prefix for Special EAs:
+        # If highest suffix > 0, prefix follows highest suffix + 1.
+        # If highest suffix == 0 (e.g. only 000 suffixes), prefix follows highest prefix + 1.
+        if highest_suffix > 0:
+            special_prefix = highest_suffix + 1
+        else:
+            special_prefix = highest_prefix + 1
+
+        # Step 4: Assign new_ea_code to Special EAs in bar_eas
+        for pid, group in parent_groups.items():
+            if len(group) == 1:
+                ea = group[0]
+                if ea.get('is_special_ea', False) or ea.get('is_new', False):
+                    seq_str = f"{special_prefix:03d}"
+                    ea['new_ea_code'] = f"{seq_str}000"
+                    special_prefix += 1
+
+        # Track special_prefix for this barangay so internally detected gaps/overlaps can continue numbering
+        special_prefix_by_barangay[_bar_geocode] = special_prefix
+        if bar_str:
+            special_prefix_by_barangay[bar_str] = special_prefix
 
         # Re-sort all EAs in barangay spatially for sort_index
         has_delin = any(ea.get('original_id') in delineation_candidate_ids for ea in bar_eas)
@@ -899,7 +972,7 @@ def run_phase_8(
                 if parent_bgy_feat is None and isinstance(bar, int) and bar in barangay_by_id:
                     parent_bgy_feat = barangay_by_id[bar]
 
-        final_pop = ea['original_hhcount'] if is_unchanged_retain else ea['hh_count']
+        final_pop = ea.get('original_hhcount', ea.get('hh_count', 0.0)) if is_unchanged_retain else ea.get('hh_count', 0.0)
 
         pop_idx = out_fields.indexOf(output_hh_field)
         if pop_idx != -1 and output_hh_field.lower() not in ("hhcount", "bldgcount"):
@@ -1371,6 +1444,12 @@ def run_phase_8(
         _remarks_idx = special_ea_export_fields.indexOf("remarks")
         _bldg_cnt_idx = special_ea_export_fields.indexOf("bldg_count")
         _hh_cnt_idx = special_ea_export_fields.indexOf("hh_count")
+        _new_ean_idx = special_ea_export_fields.indexOf("new_ean")
+        if _new_ean_idx == -1:
+            _new_ean_idx = special_ea_export_fields.indexOf("new_ea")
+        _ean_idx = special_ea_export_fields.indexOf("ean")
+        _name_idx = special_ea_export_fields.indexOf("name")
+        _code_idx = special_ea_export_fields.indexOf("code")
 
         if internal_gap_geoms:
             feedback.pushInfo(
@@ -1389,8 +1468,22 @@ def run_phase_8(
                 if _fid_idx != -1:
                     _gap_feat.setAttribute(_fid_idx, _gap_fid)
                 _gap_feat.setId(_gap_fid)
+
+                _sp_prefix = special_prefix_by_barangay.get(_bar_geocode, 1)
+                _sp_ean = f"{_sp_prefix:03d}000"
+                special_prefix_by_barangay[_bar_geocode] = _sp_prefix + 1
+
+                if _new_ean_idx != -1:
+                    _gap_feat.setAttribute(_new_ean_idx, _sp_ean)
+                if _ean_idx != -1:
+                    _gap_feat.setAttribute(_ean_idx, _sp_ean)
+                if _name_idx != -1:
+                    _gap_feat.setAttribute(_name_idx, f"EA {_sp_ean}")
+                if _code_idx != -1:
+                    _gap_feat.setAttribute(_code_idx, _sp_ean)
                 if _geocode_idx != -1:
-                    _gap_feat.setAttribute(_geocode_idx, _bar_geocode)
+                    _gc_prefix = _bar_geocode if len(_bar_geocode) <= 9 else _bar_geocode[:9]
+                    _gap_feat.setAttribute(_geocode_idx, _gc_prefix + _sp_ean)
                 if _ea_type_idx != -1:
                     _gap_feat.setAttribute(_ea_type_idx, "GAP")
                 if _special_type_idx != -1:
@@ -1441,8 +1534,22 @@ def run_phase_8(
                 if _fid_idx != -1:
                     _ov_feat.setAttribute(_fid_idx, _ov_fid)
                 _ov_feat.setId(_ov_fid)
+
+                _sp_prefix = special_prefix_by_barangay.get(_bar_geocode, 1)
+                _sp_ean = f"{_sp_prefix:03d}000"
+                special_prefix_by_barangay[_bar_geocode] = _sp_prefix + 1
+
+                if _new_ean_idx != -1:
+                    _ov_feat.setAttribute(_new_ean_idx, _sp_ean)
+                if _ean_idx != -1:
+                    _ov_feat.setAttribute(_ean_idx, _sp_ean)
+                if _name_idx != -1:
+                    _ov_feat.setAttribute(_name_idx, f"EA {_sp_ean}")
+                if _code_idx != -1:
+                    _ov_feat.setAttribute(_code_idx, _sp_ean)
                 if _geocode_idx != -1:
-                    _ov_feat.setAttribute(_geocode_idx, _bar_geocode)
+                    _gc_prefix = _bar_geocode if len(_bar_geocode) <= 9 else _bar_geocode[:9]
+                    _ov_feat.setAttribute(_geocode_idx, _gc_prefix + _sp_ean)
                 if _ea_type_idx != -1:
                     _ov_feat.setAttribute(_ea_type_idx, "OVERLAP")
                 if _special_type_idx != -1:

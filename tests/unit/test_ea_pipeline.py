@@ -1710,6 +1710,223 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
         self.assertEqual(feat3.attribute("bldg_count"), 4)
         self.assertEqual(feat3.attribute("hh_count"), 80)
 
+    def test_tab2_special_ea_naming_when_suffix_greater_than_zero(self):
+        """Verify that when non-zero suffixes exist in barangay (e.g. 001004), Special EA gets prefix (suffix+1) + 000 -> 005000."""
+        from references.create_enumeration_area.phases.phase8_output import run_phase_8
+        from qgis.core import QgsVectorLayer, QgsFields, QgsField, QgsGeometry, QgsPointXY
+        try:
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            from PyQt5.QtCore import QVariant
+
+        class MockFeedback:
+            def isCanceled(self): return False
+            def pushInfo(self, msg): pass
+            def pushWarning(self, msg): pass
+            def reportError(self, msg): pass
+
+        class MockSink:
+            def __init__(self): self.features = []
+            def addFeature(self, feat, flags=None):
+                self.features.append(feat)
+                return True
+
+        class DummyAlg:
+            DELINEATED_OUTPUT = "DELINEATED_OUTPUT"
+            MERGED_OUTPUT = "MERGED_OUTPUT"
+            SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
+            DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
+            MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
+            EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
+
+        fields = QgsFields()
+        for f in ["fid", "map_uuid", "geocode", "region", "province", "city_mun", "barangay", "code", "name", "ean", "hhcount", "bldgcount", "sy", "new_ean", "hh_count", "bldg_count", "ea_type", "remarks", "special_type"]:
+            fields.append(QgsField(f, QVariant.Int if f == "fid" else (QVariant.Double if f == "hhcount" else (QVariant.Int if "count" in f else QVariant.String))))
+
+        spec_sink = MockSink()
+        poly1 = QgsGeometry.fromPolygonXY([[QgsPointXY(0,0), QgsPointXY(1,0), QgsPointXY(1,1), QgsPointXY(0,1), QgsPointXY(0,0)]])
+        poly2 = QgsGeometry.fromPolygonXY([[QgsPointXY(1,0), QgsPointXY(2,0), QgsPointXY(2,1), QgsPointXY(1,1), QgsPointXY(1,0)]])
+        poly_spec = QgsGeometry.fromPolygonXY([[QgsPointXY(2,0), QgsPointXY(3,0), QgsPointXY(3,1), QgsPointXY(2,1), QgsPointXY(2,0)]])
+
+        eas = [
+            # Standard EA 1
+            {'geom': poly1, 'original_id': 1, 'original_code': '001000', 'new_ea_code': '001000', 'parent_barangay': '043404001', 'is_special_ea': False, 'hh_count': 200.0, 'bldg_count': 20, 'buildings': []},
+            # Split child EA with non-zero suffix 004
+            {'geom': poly2, 'original_id': 2, 'original_code': '001004', 'new_ea_code': '001004', 'parent_barangay': '043404001', 'is_special_ea': False, 'hh_count': 150.0, 'bldg_count': 15, 'buildings': []},
+            # Special EA (Gap)
+            {'geom': poly_spec, 'original_id': 100, 'original_code': '000000', 'parent_barangay': '043404001', 'is_special_ea': True, 'special_type': 'GAP', 'hh_count': 0.0, 'bldg_count': 0, 'buildings': []},
+        ]
+
+        p1 = {
+            "previous_ea_source": QgsVectorLayer("Polygon?crs=EPSG:4326", "test_ea", "memory"),
+            "building_source": None,
+            "target_crs": QgsVectorLayer("Polygon?crs=EPSG:4326", "test_ea", "memory").crs(),
+            "area_threshold": 1.0, "max_household": 300, "min_household": 100,
+            "bldg_hh_field": "pop", "ea_id_field": "ean", "barangay_by_id": {}, "all_ea_features": [],
+        }
+        p2 = {
+            "out_fields": fields, "export_fields": fields, "special_ea_export_fields": fields,
+            "delineation_candidate_ids": set(), "merge_candidate_ids": set(), "adjacent_ea_ids": set(),
+            "delineated_sink": None, "merged_sink": None, "special_ea_sink": spec_sink,
+            "special_ea_dest_id": "dest_special", "extracted_buildings_sink": None,
+            "delin_candidate_feat_count": 0, "merge_candidate_feat_count": 0, "extracted_bldg_feat_count": 0,
+        }
+        p3 = {"road_geoms": {}, "river_geoms": {}}
+        p4 = {}
+        p7 = {"eas": eas}
+
+        run_phase_8(DummyAlg(), {}, None, MockFeedback(), None, p1, p2, p3, p4, p7)
+
+        self.assertEqual(len(spec_sink.features), 1)
+        spec_feat = spec_sink.features[0]
+        # Highest suffix was 004 -> special EA prefix is 005 -> new_ean is 005000
+        self.assertEqual(spec_feat.attribute("new_ean"), "005000")
+
+    def test_tab2_special_ea_naming_when_suffix_is_zero(self):
+        """Verify that when all suffixes in barangay are 000 (e.g. 001000, 002000, 003000), Special EA gets prefix (prefix+1) + 000 -> 004000."""
+        from references.create_enumeration_area.phases.phase8_output import run_phase_8
+        from qgis.core import QgsVectorLayer, QgsFields, QgsField, QgsGeometry, QgsPointXY
+        try:
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            from PyQt5.QtCore import QVariant
+
+        class MockFeedback:
+            def isCanceled(self): return False
+            def pushInfo(self, msg): pass
+            def pushWarning(self, msg): pass
+            def reportError(self, msg): pass
+
+        class MockSink:
+            def __init__(self): self.features = []
+            def addFeature(self, feat, flags=None):
+                self.features.append(feat)
+                return True
+
+        class DummyAlg:
+            DELINEATED_OUTPUT = "DELINEATED_OUTPUT"
+            MERGED_OUTPUT = "MERGED_OUTPUT"
+            SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
+            DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
+            MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
+            EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
+
+        fields = QgsFields()
+        for f in ["fid", "map_uuid", "geocode", "region", "province", "city_mun", "barangay", "code", "name", "ean", "hhcount", "bldgcount", "sy", "new_ean", "hh_count", "bldg_count", "ea_type", "remarks", "special_type"]:
+            fields.append(QgsField(f, QVariant.Int if f == "fid" else (QVariant.Double if f == "hhcount" else (QVariant.Int if "count" in f else QVariant.String))))
+
+        spec_sink = MockSink()
+        poly1 = QgsGeometry.fromPolygonXY([[QgsPointXY(0,0), QgsPointXY(1,0), QgsPointXY(1,1), QgsPointXY(0,1), QgsPointXY(0,0)]])
+        poly2 = QgsGeometry.fromPolygonXY([[QgsPointXY(1,0), QgsPointXY(2,0), QgsPointXY(2,1), QgsPointXY(1,1), QgsPointXY(1,0)]])
+        poly3 = QgsGeometry.fromPolygonXY([[QgsPointXY(2,0), QgsPointXY(3,0), QgsPointXY(3,1), QgsPointXY(2,1), QgsPointXY(2,0)]])
+        poly_spec = QgsGeometry.fromPolygonXY([[QgsPointXY(3,0), QgsPointXY(4,0), QgsPointXY(4,1), QgsPointXY(3,1), QgsPointXY(3,0)]])
+
+        eas = [
+            {'geom': poly1, 'original_id': 1, 'original_code': '001000', 'new_ea_code': '001000', 'parent_barangay': '043404001', 'is_special_ea': False, 'hh_count': 200.0, 'bldg_count': 20, 'buildings': []},
+            {'geom': poly2, 'original_id': 2, 'original_code': '002000', 'new_ea_code': '002000', 'parent_barangay': '043404001', 'is_special_ea': False, 'hh_count': 180.0, 'bldg_count': 18, 'buildings': []},
+            {'geom': poly3, 'original_id': 3, 'original_code': '003000', 'new_ea_code': '003000', 'parent_barangay': '043404001', 'is_special_ea': False, 'hh_count': 160.0, 'bldg_count': 16, 'buildings': []},
+            # Special EA
+            {'geom': poly_spec, 'original_id': 100, 'original_code': '000000', 'parent_barangay': '043404001', 'is_special_ea': True, 'special_type': 'GAP', 'hh_count': 0.0, 'bldg_count': 0, 'buildings': []},
+        ]
+
+        p1 = {
+            "previous_ea_source": QgsVectorLayer("Polygon?crs=EPSG:4326", "test_ea", "memory"),
+            "building_source": None,
+            "target_crs": QgsVectorLayer("Polygon?crs=EPSG:4326", "test_ea", "memory").crs(),
+            "area_threshold": 1.0, "max_household": 300, "min_household": 100,
+            "bldg_hh_field": "pop", "ea_id_field": "ean", "barangay_by_id": {}, "all_ea_features": [],
+        }
+        p2 = {
+            "out_fields": fields, "export_fields": fields, "special_ea_export_fields": fields,
+            "delineation_candidate_ids": set(), "merge_candidate_ids": set(), "adjacent_ea_ids": set(),
+            "delineated_sink": None, "merged_sink": None, "special_ea_sink": spec_sink,
+            "special_ea_dest_id": "dest_special", "extracted_buildings_sink": None,
+            "delin_candidate_feat_count": 0, "merge_candidate_feat_count": 0, "extracted_bldg_feat_count": 0,
+        }
+        p3 = {"road_geoms": {}, "river_geoms": {}}
+        p4 = {}
+        p7 = {"eas": eas}
+
+        run_phase_8(DummyAlg(), {}, None, MockFeedback(), None, p1, p2, p3, p4, p7)
+
+        self.assertEqual(len(spec_sink.features), 1)
+        spec_feat = spec_sink.features[0]
+        # Highest prefix was 003, all suffixes 000 -> special EA prefix is 004 -> new_ean is 004000
+        self.assertEqual(spec_feat.attribute("new_ean"), "004000")
+
+    def test_tab2_multiple_special_eas_sequential_increment(self):
+        """Verify that multiple Special EAs in the same barangay increment sequentially (e.g. 004000, 005000)."""
+        from references.create_enumeration_area.phases.phase8_output import run_phase_8
+        from qgis.core import QgsVectorLayer, QgsFields, QgsField, QgsGeometry, QgsPointXY
+        try:
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            from PyQt5.QtCore import QVariant
+
+        class MockFeedback:
+            def isCanceled(self): return False
+            def pushInfo(self, msg): pass
+            def pushWarning(self, msg): pass
+            def reportError(self, msg): pass
+
+        class MockSink:
+            def __init__(self): self.features = []
+            def addFeature(self, feat, flags=None):
+                self.features.append(feat)
+                return True
+
+        class DummyAlg:
+            DELINEATED_OUTPUT = "DELINEATED_OUTPUT"
+            MERGED_OUTPUT = "MERGED_OUTPUT"
+            SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
+            DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
+            MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
+            EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
+
+        fields = QgsFields()
+        for f in ["fid", "map_uuid", "geocode", "region", "province", "city_mun", "barangay", "code", "name", "ean", "hhcount", "bldgcount", "sy", "new_ean", "hh_count", "bldg_count", "ea_type", "remarks", "special_type"]:
+            fields.append(QgsField(f, QVariant.Int if f == "fid" else (QVariant.Double if f == "hhcount" else (QVariant.Int if "count" in f else QVariant.String))))
+
+        spec_sink = MockSink()
+        poly1 = QgsGeometry.fromPolygonXY([[QgsPointXY(0,0), QgsPointXY(1,0), QgsPointXY(1,1), QgsPointXY(0,1), QgsPointXY(0,0)]])
+        poly2 = QgsGeometry.fromPolygonXY([[QgsPointXY(1,0), QgsPointXY(2,0), QgsPointXY(2,1), QgsPointXY(1,1), QgsPointXY(1,0)]])
+        poly_spec1 = QgsGeometry.fromPolygonXY([[QgsPointXY(2,0), QgsPointXY(3,0), QgsPointXY(3,1), QgsPointXY(2,1), QgsPointXY(2,0)]])
+        poly_spec2 = QgsGeometry.fromPolygonXY([[QgsPointXY(3,0), QgsPointXY(4,0), QgsPointXY(4,1), QgsPointXY(3,1), QgsPointXY(3,0)]])
+
+        eas = [
+            {'geom': poly1, 'original_id': 1, 'original_code': '001000', 'new_ea_code': '001000', 'parent_barangay': '043404001', 'is_special_ea': False, 'hh_count': 200.0, 'bldg_count': 20, 'buildings': []},
+            {'geom': poly2, 'original_id': 2, 'original_code': '002000', 'new_ea_code': '002000', 'parent_barangay': '043404001', 'is_special_ea': False, 'hh_count': 180.0, 'bldg_count': 18, 'buildings': []},
+            # Special EA 1 (Gap)
+            {'geom': poly_spec1, 'original_id': 100, 'original_code': '000000', 'parent_barangay': '043404001', 'is_special_ea': True, 'special_type': 'GAP', 'hh_count': 0.0, 'bldg_count': 0, 'buildings': []},
+            # Special EA 2 (Overlap)
+            {'geom': poly_spec2, 'original_id': 101, 'original_code': '000000', 'parent_barangay': '043404001', 'is_special_ea': True, 'special_type': 'OVERLAP', 'hh_count': 0.0, 'bldg_count': 0, 'buildings': []},
+        ]
+
+        p1 = {
+            "previous_ea_source": QgsVectorLayer("Polygon?crs=EPSG:4326", "test_ea", "memory"),
+            "building_source": None,
+            "target_crs": QgsVectorLayer("Polygon?crs=EPSG:4326", "test_ea", "memory").crs(),
+            "area_threshold": 1.0, "max_household": 300, "min_household": 100,
+            "bldg_hh_field": "pop", "ea_id_field": "ean", "barangay_by_id": {}, "all_ea_features": [],
+        }
+        p2 = {
+            "out_fields": fields, "export_fields": fields, "special_ea_export_fields": fields,
+            "delineation_candidate_ids": set(), "merge_candidate_ids": set(), "adjacent_ea_ids": set(),
+            "delineated_sink": None, "merged_sink": None, "special_ea_sink": spec_sink,
+            "special_ea_dest_id": "dest_special", "extracted_buildings_sink": None,
+            "delin_candidate_feat_count": 0, "merge_candidate_feat_count": 0, "extracted_bldg_feat_count": 0,
+        }
+        p3 = {"road_geoms": {}, "river_geoms": {}}
+        p4 = {}
+        p7 = {"eas": eas}
+
+        run_phase_8(DummyAlg(), {}, None, MockFeedback(), None, p1, p2, p3, p4, p7)
+
+        self.assertEqual(len(spec_sink.features), 2)
+        # Highest prefix was 002, suffixes 000 -> Special EA 1 is 003000, Special EA 2 is 004000
+        self.assertEqual(spec_sink.features[0].attribute("new_ean"), "003000")
+        self.assertEqual(spec_sink.features[1].attribute("new_ean"), "004000")
+
 
 if __name__ == "__main__":
     unittest.main()
