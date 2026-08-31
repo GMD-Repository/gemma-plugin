@@ -1663,11 +1663,15 @@ class PackageDialog(QDialog, DialogUi):
         """
         Check if a layer name matches any of the 10 excluded system role layer pattern names/suffixes:
         _bldg_point, _bldgpts, _bgy, _ea, _landmark, _block, _road, _river, _bridge, _railroad.
+
+        The suffix from the first underscore in the layer name must exactly equal
+        one of the excluded patterns (e.g. ``01716_ea`` → ``_ea`` → excluded,
+        but ``01716_merged_ea`` → ``_merged_ea`` → NOT excluded).
         """
         if not layer_name:
             return True
         name_lower = layer_name.strip().lower()
-        excluded_patterns = [
+        excluded_patterns = {
             "_bldg_point",
             "_bldgpts",
             "_bgy",
@@ -1678,13 +1682,12 @@ class PackageDialog(QDialog, DialogUi):
             "_river",
             "_bridge",
             "_railroad",
-        ]
-        for pat in excluded_patterns:
-            if name_lower.endswith(pat) or name_lower == pat or (pat + "_") in name_lower:
-                return True
-            if pat in ["_bldg_point", "_bldgpts", "_landmark", "_railroad", "_bridge"] and pat in name_lower:
-                return True
-        return False
+        }
+        idx = name_lower.find("_")
+        if idx == -1:
+            return False
+        suffix = name_lower[idx:]
+        return suffix in excluded_patterns
 
     def _on_toggle_layer_data_sources(self, *args):
         """Open a popup dialog to configure per-layer data source properties for active layers."""
