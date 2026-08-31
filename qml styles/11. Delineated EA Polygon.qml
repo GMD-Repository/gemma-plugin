@@ -254,7 +254,7 @@
   </selection>
   <labeling type="simple">
     <settings calloutType="simple">
-      <text-style forcedItalic="0" multilineHeight="1" fieldName="'New EA: '  ||  &quot;new_ea&quot;" textOrientation="horizontal" fontSizeUnit="Point" fontStrikeout="0" stretchFactor="100" tabStopDistance="80" fontSize="9" namedStyle="Bold" tabStopDistanceMapUnitScale="3x:0,0,0,0,0,0" isExpression="1" textColor="238,98,194,255,hsv:0.88611111111111107,0.58823529411764708,0.93333333333333335,1" blendMode="0" legendString="Aa" forcedBold="0" fontSizeMapUnitScale="3x:0,0,0,0,0,0" tabStopDistanceUnit="Point" fontKerning="1" fontWeight="75" allowHtml="0" fontItalic="0" fontFamily="MS Shell Dlg 2" fontWordSpacing="0" textOpacity="1" previewBkgrdColor="255,255,255,255,rgb:1,1,1,1" multilineHeightUnit="Percentage" useSubstitutions="0" fontUnderline="0" fontLetterSpacing="0" capitalization="0">
+      <text-style forcedItalic="0" multilineHeight="1" fieldName="'New EA: '  ||  &quot;new_ean&quot;" textOrientation="horizontal" fontSizeUnit="Point" fontStrikeout="0" stretchFactor="100" tabStopDistance="80" fontSize="9" namedStyle="Bold" tabStopDistanceMapUnitScale="3x:0,0,0,0,0,0" isExpression="1" textColor="238,98,194,255,hsv:0.88611111111111107,0.58823529411764708,0.93333333333333335,1" blendMode="0" legendString="Aa" forcedBold="0" fontSizeMapUnitScale="3x:0,0,0,0,0,0" tabStopDistanceUnit="Point" fontKerning="1" fontWeight="75" allowHtml="0" fontItalic="0" fontFamily="MS Shell Dlg 2" fontWordSpacing="0" textOpacity="1" previewBkgrdColor="255,255,255,255,rgb:1,1,1,1" multilineHeightUnit="Percentage" useSubstitutions="0" fontUnderline="0" fontLetterSpacing="0" capitalization="0">
         <families/>
         <text-buffer bufferNoFill="1" bufferDraw="1" bufferColor="22,8,8,255,hsv:0,0.64271000228885333,0.0878919661249714,1" bufferSizeMapUnitScale="3x:0,0,0,0,0,0" bufferBlendMode="0" bufferOpacity="1" bufferSizeUnits="MM" bufferSize="1" bufferJoinStyle="128"/>
         <text-mask maskSizeMapUnitScale="3x:0,0,0,0,0,0" maskSize2="1.5" maskEnabled="0" maskSizeUnits="MM" maskType="0" maskJoinStyle="128" maskSize="1.5" maskOpacity="1" maskedSymbolLayers=""/>
@@ -503,7 +503,7 @@
         </config>
       </editWidget>
     </field>
-    <field configurationFlags="NoFlag" name="new_ea">
+    <field configurationFlags="NoFlag" name="new_ean">
       <editWidget type="TextEdit">
         <config>
           <Option/>
@@ -582,7 +582,7 @@
     <alias field="bldgcount" name="" index="11"/>
     <alias field="sy" name="" index="12"/>
     <alias field="split_by" name="" index="13"/>
-    <alias field="new_ea" name="" index="14"/>
+    <alias field="new_ean" name="" index="14"/>
     <alias field="bldg_count" name="" index="15"/>
     <alias field="hh_count" name="" index="16"/>
     <alias field="bldgpoints_value" name="" index="17"/>
@@ -607,7 +607,7 @@
     <policy field="bldgcount" policy="Duplicate"/>
     <policy field="sy" policy="Duplicate"/>
     <policy field="split_by" policy="Duplicate"/>
-    <policy field="new_ea" policy="Duplicate"/>
+    <policy field="new_ean" policy="Duplicate"/>
     <policy field="bldg_count" policy="Duplicate"/>
     <policy field="hh_count" policy="Duplicate"/>
     <policy field="bldgpoints_value" policy="Duplicate"/>
@@ -632,7 +632,7 @@
     <policy field="bldgcount" policy="Duplicate"/>
     <policy field="sy" policy="Duplicate"/>
     <policy field="split_by" policy="Duplicate"/>
-    <policy field="new_ea" policy="Duplicate"/>
+    <policy field="new_ean" policy="Duplicate"/>
     <policy field="bldg_count" policy="Duplicate"/>
     <policy field="hh_count" policy="Duplicate"/>
     <policy field="bldgpoints_value" policy="Duplicate"/>
@@ -657,7 +657,7 @@
     <default field="bldgcount" expression="" applyOnUpdate="0"/>
     <default field="sy" expression="" applyOnUpdate="0"/>
     <default field="split_by" expression="" applyOnUpdate="0"/>
-    <default field="new_ea" expression="" applyOnUpdate="0"/>
+    <default field="new_ean" expression="" applyOnUpdate="0"/>
     <default field="bldg_count" expression="" applyOnUpdate="0"/>
     <default field="hh_count" expression="" applyOnUpdate="0"/>
     <default field="bldgpoints_value" expression="" applyOnUpdate="0"/>
@@ -682,7 +682,7 @@
     <constraint field="bldgcount" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
     <constraint field="sy" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
     <constraint field="split_by" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
-    <constraint field="new_ea" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="new_ean" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
     <constraint field="bldg_count" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
     <constraint field="hh_count" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
     <constraint field="bldgpoints_value" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
@@ -707,7 +707,7 @@
     <constraint field="bldgcount" desc="" exp=""/>
     <constraint field="sy" desc="" exp=""/>
     <constraint field="split_by" desc="" exp=""/>
-    <constraint field="new_ea" desc="" exp=""/>
+    <constraint field="new_ean" desc="" exp=""/>
     <constraint field="bldg_count" desc="" exp=""/>
     <constraint field="hh_count" desc="" exp=""/>
     <constraint field="bldgpoints_value" desc="" exp=""/>
@@ -737,7 +737,7 @@
       <column type="field" width="-1" name="bldgcount" hidden="0"/>
       <column type="field" width="-1" name="sy" hidden="0"/>
       <column type="field" width="-1" name="split_by" hidden="0"/>
-      <column type="field" width="-1" name="new_ea" hidden="0"/>
+      <column type="field" width="-1" name="new_ean" hidden="0"/>
       <column type="field" width="-1" name="bldg_count" hidden="0"/>
       <column type="field" width="-1" name="hh_count" hidden="0"/>
       <column type="field" width="-1" name="bldgpoints_value" hidden="0"/>
@@ -794,7 +794,7 @@ def my_form_open(dialog, layer, feature):
     <field name="indicator" editable="1"/>
     <field name="map_uuid" editable="1"/>
     <field name="name" editable="1"/>
-    <field name="new_ea" editable="1"/>
+    <field name="new_ean" editable="1"/>
     <field name="province" editable="1"/>
     <field name="region" editable="1"/>
     <field name="remarks" editable="1"/>
@@ -820,7 +820,7 @@ def my_form_open(dialog, layer, feature):
     <field labelOnTop="0" name="indicator"/>
     <field labelOnTop="0" name="map_uuid"/>
     <field labelOnTop="0" name="name"/>
-    <field labelOnTop="0" name="new_ea"/>
+    <field labelOnTop="0" name="new_ean"/>
     <field labelOnTop="0" name="province"/>
     <field labelOnTop="0" name="region"/>
     <field labelOnTop="0" name="remarks"/>
@@ -846,7 +846,7 @@ def my_form_open(dialog, layer, feature):
     <field reuseLastValue="0" name="indicator"/>
     <field reuseLastValue="0" name="map_uuid"/>
     <field reuseLastValue="0" name="name"/>
-    <field reuseLastValue="0" name="new_ea"/>
+    <field reuseLastValue="0" name="new_ean"/>
     <field reuseLastValue="0" name="province"/>
     <field reuseLastValue="0" name="region"/>
     <field reuseLastValue="0" name="remarks"/>

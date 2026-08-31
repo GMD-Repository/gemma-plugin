@@ -375,7 +375,7 @@
   </selection>
   <labeling type="simple">
     <settings calloutType="simple">
-      <text-style forcedItalic="0" multilineHeight="1" fieldName="'New EA: '  ||  &quot;new_ea&quot;" textOrientation="horizontal" fontSizeUnit="Point" fontStrikeout="0" stretchFactor="100" tabStopDistance="80" fontSize="9" namedStyle="Bold" tabStopDistanceMapUnitScale="3x:0,0,0,0,0,0" isExpression="1" textColor="255,204,0,255,rgb:1,0.80000000000000004,0,1" blendMode="0" legendString="Aa" forcedBold="0" fontSizeMapUnitScale="3x:0,0,0,0,0,0" tabStopDistanceUnit="Point" fontKerning="1" fontWeight="75" allowHtml="0" fontItalic="0" fontFamily="MS Shell Dlg 2" fontWordSpacing="0" textOpacity="1" previewBkgrdColor="255,255,255,255,rgb:1,1,1,1" multilineHeightUnit="Percentage" useSubstitutions="0" fontUnderline="0" fontLetterSpacing="0" capitalization="0">
+      <text-style forcedItalic="0" multilineHeight="1" fieldName="'New EA: '  ||  &quot;new_ean&quot;" textOrientation="horizontal" fontSizeUnit="Point" fontStrikeout="0" stretchFactor="100" tabStopDistance="80" fontSize="9" namedStyle="Bold" tabStopDistanceMapUnitScale="3x:0,0,0,0,0,0" isExpression="1" textColor="255,204,0,255,rgb:1,0.80000000000000004,0,1" blendMode="0" legendString="Aa" forcedBold="0" fontSizeMapUnitScale="3x:0,0,0,0,0,0" tabStopDistanceUnit="Point" fontKerning="1" fontWeight="75" allowHtml="0" fontItalic="0" fontFamily="MS Shell Dlg 2" fontWordSpacing="0" textOpacity="1" previewBkgrdColor="255,255,255,255,rgb:1,1,1,1" multilineHeightUnit="Percentage" useSubstitutions="0" fontUnderline="0" fontLetterSpacing="0" capitalization="0">
         <families/>
         <text-buffer bufferNoFill="1" bufferDraw="1" bufferColor="22,8,8,255,hsv:0,0.64271000228885333,0.0878919661249714,1" bufferSizeMapUnitScale="3x:0,0,0,0,0,0" bufferBlendMode="0" bufferOpacity="1" bufferSizeUnits="MM" bufferSize="1" bufferJoinStyle="128"/>
         <text-mask maskSizeMapUnitScale="3x:0,0,0,0,0,0" maskSize2="1.5" maskEnabled="0" maskSizeUnits="MM" maskType="0" maskJoinStyle="128" maskSize="1.5" maskOpacity="1" maskedSymbolLayers=""/>
@@ -522,7 +522,7 @@
       <Option type="int" name="QFieldSync/tracking_time_requirement_interval_seconds" value="30"/>
       <Option type="int" name="QFieldSync/value_map_button_interface_threshold" value="0"/>
       <Option type="List" name="dualview/previewExpressions">
-        <Option type="QString" value="'New EA: '  ||  &quot;new_ea&quot;"/>
+        <Option type="QString" value="'New EA: '  ||  &quot;new_ean&quot;"/>
         <Option type="QString" value="COALESCE( &quot;NAME&quot;, '&lt;NULL>' )"/>
       </Option>
       <Option type="QString" name="embeddedWidgets/count" value="0"/>
@@ -809,7 +809,7 @@
         </config>
       </editWidget>
     </field>
-    <field configurationFlags="NoFlag" name="new_ea">
+    <field configurationFlags="NoFlag" name="new_ean">
       <editWidget type="TextEdit">
         <config>
           <Option type="Map">
@@ -901,7 +901,7 @@
     <alias field="ea_type" name="" index="18"/>
     <alias field="special_type" name="" index="19"/>
     <alias field="source_id" name="" index="20"/>
-    <alias field="new_ea" name="New Enumeration Area Number (EAN)" index="21"/>
+    <alias field="new_ean" name="New Enumeration Area Number (EAN)" index="21"/>
     <alias field="indicator" name="What is the Status of the Enumeration Area?" index="22"/>
     <alias field="remarks" name="Remarks" index="23"/>
     <alias field="gps" name="" index="24"/>
@@ -930,7 +930,7 @@
     <policy field="ea_type" policy="Duplicate"/>
     <policy field="special_type" policy="Duplicate"/>
     <policy field="source_id" policy="Duplicate"/>
-    <policy field="new_ea" policy="Duplicate"/>
+    <policy field="new_ean" policy="Duplicate"/>
     <policy field="indicator" policy="Duplicate"/>
     <policy field="remarks" policy="Duplicate"/>
     <policy field="gps" policy="Duplicate"/>
@@ -959,7 +959,7 @@
     <policy field="ea_type" policy="Duplicate"/>
     <policy field="special_type" policy="Duplicate"/>
     <policy field="source_id" policy="Duplicate"/>
-    <policy field="new_ea" policy="Duplicate"/>
+    <policy field="new_ean" policy="Duplicate"/>
     <policy field="indicator" policy="Duplicate"/>
     <policy field="remarks" policy="Duplicate"/>
     <policy field="gps" policy="Duplicate"/>
@@ -988,7 +988,7 @@
     <default field="ea_type" expression="" applyOnUpdate="0"/>
     <default field="special_type" expression="" applyOnUpdate="0"/>
     <default field="source_id" expression="" applyOnUpdate="0"/>
-    <default field="new_ea" expression="" applyOnUpdate="0"/>
+    <default field="new_ean" expression="" applyOnUpdate="0"/>
     <default field="indicator" expression="" applyOnUpdate="0"/>
     <default field="remarks" expression="" applyOnUpdate="0"/>
     <default field="gps" expression="case&#xa;    when &quot;min_circle&quot; is null or &#xa;    &quot;status&quot; is not current_value('status') or &#xa;    &quot;remarks_qp&quot; is not current_value('remarks_qp') then&#xa;round(&#xa;    distance(&#xa;        transform(coalesce(@position_coordinate, @gnss_coordinate),'EPSG:4326','EPSG:3857'),&#xa;        centroid(transform(minimal_circle($geometry),'EPSG:4326','EPSG:3857'))&#xa;    )&#xa;)&#xa;else&#xa;round(&#xa;    distance(&#xa;        transform(coalesce(@position_coordinate, @gnss_coordinate),'EPSG:4326','EPSG:3857'),&#xa;        centroid(transform(minimal_circle($geometry),'EPSG:4326','EPSG:3857'))&#xa;    )&#xa;)&#xa;end " applyOnUpdate="1"/>
@@ -1017,7 +1017,7 @@
     <constraint field="ea_type" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
     <constraint field="special_type" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
     <constraint field="source_id" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
-    <constraint field="new_ea" exp_strength="2" constraints="4" unique_strength="0" notnull_strength="0"/>
+    <constraint field="new_ean" exp_strength="2" constraints="4" unique_strength="0" notnull_strength="0"/>
     <constraint field="indicator" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
     <constraint field="remarks" exp_strength="1" constraints="4" unique_strength="0" notnull_strength="0"/>
     <constraint field="gps" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
@@ -1046,7 +1046,7 @@
     <constraint field="ea_type" desc="" exp=""/>
     <constraint field="special_type" desc="" exp=""/>
     <constraint field="source_id" desc="" exp=""/>
-    <constraint field="new_ea" desc="Kindly approach the EA boundary to proceed with verification." exp=" to_int(&quot;min_circle&quot;) >  to_int(&quot;gps&quot;)"/>
+    <constraint field="new_ean" desc="Kindly approach the EA boundary to proceed with verification." exp=" to_int(&quot;min_circle&quot;) >  to_int(&quot;gps&quot;)"/>
     <constraint field="indicator" desc="" exp=""/>
     <constraint field="remarks" desc="" exp="(&quot;indicator&quot; = 2 and &quot;remarks&quot; is not NULL) or &quot;indicator&quot; is not 2 "/>
     <constraint field="gps" desc="" exp=""/>
@@ -1084,7 +1084,7 @@
       <column type="field" width="-1" name="ea_type" hidden="0"/>
       <column type="field" width="-1" name="special_type" hidden="0"/>
       <column type="field" width="-1" name="source_id" hidden="0"/>
-      <column type="field" width="-1" name="new_ea" hidden="0"/>
+      <column type="field" width="-1" name="new_ean" hidden="0"/>
       <column type="field" width="-1" name="indicator" hidden="0"/>
       <column type="field" width="-1" name="gps" hidden="0"/>
       <column type="field" width="-1" name="min_circle" hidden="0"/>
@@ -1153,7 +1153,7 @@ def my_form_open(dialog, layer, feature):
         <labelFont strikethrough="0" bold="0" style="" description="MS Shell Dlg 2,8.25,-1,5,50,0,0,0,0,0" italic="0" underline="0"/>
       </labelStyle>
     </attributeEditorField>
-    <attributeEditorField name="new_ea" horizontalStretch="0" index="21" showLabel="1" verticalStretch="0">
+    <attributeEditorField name="new_ean" horizontalStretch="0" index="21" showLabel="1" verticalStretch="0">
       <labelStyle labelColor="" overrideLabelFont="0" overrideLabelColor="0">
         <labelFont strikethrough="0" bold="0" style="" description="MS Shell Dlg 2,8.25,-1,5,50,0,0,0,0,0" italic="0" underline="0"/>
       </labelStyle>
@@ -1223,7 +1223,7 @@ def my_form_open(dialog, layer, feature):
     <field name="min_circle" editable="1"/>
     <field name="mun_name" editable="1"/>
     <field name="name" editable="1"/>
-    <field name="new_ea" editable="1"/>
+    <field name="new_ean" editable="1"/>
     <field name="province" editable="1"/>
     <field name="province_code" editable="1"/>
     <field name="region" editable="1"/>
@@ -1296,7 +1296,7 @@ def my_form_open(dialog, layer, feature):
     <field labelOnTop="0" name="min_circle"/>
     <field labelOnTop="0" name="mun_name"/>
     <field labelOnTop="0" name="name"/>
-    <field labelOnTop="0" name="new_ea"/>
+    <field labelOnTop="0" name="new_ean"/>
     <field labelOnTop="0" name="province"/>
     <field labelOnTop="0" name="province_code"/>
     <field labelOnTop="0" name="region"/>
@@ -1362,7 +1362,7 @@ def my_form_open(dialog, layer, feature):
     <field reuseLastValue="0" name="min_circle"/>
     <field reuseLastValue="0" name="mun_name"/>
     <field reuseLastValue="0" name="name"/>
-    <field reuseLastValue="0" name="new_ea"/>
+    <field reuseLastValue="0" name="new_ean"/>
     <field reuseLastValue="0" name="province"/>
     <field reuseLastValue="0" name="province_code"/>
     <field reuseLastValue="0" name="region"/>
@@ -1408,7 +1408,7 @@ def my_form_open(dialog, layer, feature):
       <config/>
     </widget>
   </widgets>
-  <previewExpression>'New EA: '  ||  "new_ea"</previewExpression>
+  <previewExpression>'New EA: '  ||  "new_ean"</previewExpression>
   <mapTip enabled="1"></mapTip>
   <layerGeometryType>2</layerGeometryType>
 </qgis>
