@@ -189,6 +189,22 @@ _OUTPUT_FIELD_SPECS = (
 )
 
 
+def _ea_type_from_layer_name(layer_name: str) -> str:
+    """Derive EA type from layer name suffix (e.g. 01728011_delineated_ea2026 -> DELINEATED)."""
+    name_lower = layer_name.lower()
+    if "delineated" in name_lower:
+        return "DELINEATED"
+    if "merged" in name_lower:
+        return "MERGED"
+    if "special" in name_lower:
+        return "SPECIAL"
+    if "gap" in name_lower:
+        return "GAP"
+    if "overlap" in name_lower:
+        return "OVERLAP"
+    return "RETAINED"
+
+
 def _extract_feature_attribute(
     feat: QgsFeature,
     name_to_idx: dict,
@@ -199,11 +215,19 @@ def _extract_feature_attribute(
     name_lower = target_field_name.lower()
     from qgis.core import NULL
 
+    def _is_valid(val):
+        if val is None or val == NULL:
+            return False
+        s = str(val).strip()
+        if s.upper() in ("", "NULL", "NONE", "FALSE", "F"):
+            return False
+        return True
+
     # 1. Try exact match
     exact_idx = name_to_idx.get(name_lower, -1)
     if exact_idx != -1:
         val = feat.attribute(exact_idx)
-        if val is not None and val != NULL and str(val).strip() not in ("", "NULL", "None"):
+        if _is_valid(val):
             return val
 
     # 2. Try candidate aliases
@@ -212,7 +236,7 @@ def _extract_feature_attribute(
         cand_idx = name_to_idx.get(cand.lower(), -1)
         if cand_idx != -1:
             val = feat.attribute(cand_idx)
-            if val is not None and val != NULL and str(val).strip() not in ("", "NULL", "None"):
+            if _is_valid(val):
                 return val
 
     return None
@@ -528,7 +552,7 @@ class EAMergeProcessor:
 
                         if gpkg_layer.isValid():
                             from .helpers.style import apply_qml_to_layer
-                            apply_qml_to_layer(gpkg_layer, "12. Merged EA Polygon.qml")
+                            apply_qml_to_layer(gpkg_layer, "ea_output.qml")
                             output_layer = gpkg_layer
                             self._output_layer_name = final_layer_name
                             summary.output_layer_name = final_layer_name
@@ -574,16 +598,17 @@ class EAMergeProcessor:
             self._log("[INFO] Reading final output attribute table...")
 
             # ── Phase 13: Export Preliminary EARF Excel ────────────────────
-            excel_name = f"{geo_code}_earf_{citymun}.xlsx"
+            excel_base = f"{geo_code}_earf_{citymun}"
             if self.output_dir:
-                excel_path = os.path.join(self.output_dir, excel_name)
+                excel_path = get_unique_filepath(self.output_dir, excel_base, ".xlsx")
             else:
                 # Default: same directory as the QGIS project file
                 project_home = QgsProject.instance().homePath()
                 if project_home:
-                    excel_path = os.path.join(project_home, excel_name)
+                    excel_path = get_unique_filepath(project_home, excel_base, ".xlsx")
                 else:
-                    excel_path = os.path.join(os.path.expanduser("~"), excel_name)
+                    excel_path = get_unique_filepath(os.path.expanduser("~"), excel_base, ".xlsx")
+            excel_name = os.path.basename(excel_path)
 
             self._log(
                 f"[INFO] Generating Preliminary EARF Excel: {excel_name}"
@@ -946,7 +971,7 @@ class EAMergeProcessor:
                                 if val is None:
                                     val = _extract_feature_attribute(fallback_ea_feat, ea_name_to_idx, "ean")
                         elif ea_field_name == "ea_type":
-                            val = "RETAINED"
+                            val = _ea_type_from_layer_name(layer.name())
 
                     if val is not None:
                         # Safe type conversion based on target field type
@@ -1120,10 +1145,12 @@ class EAMergeProcessor:
                     raw_rmk = out_feat.attribute(_ghost_remarks_idx)
                     from qgis.core import NULL
                     if raw_rmk is not None and raw_rmk != NULL:
-                        existing_remarks = str(raw_rmk).strip()
+                        s_rmk = str(raw_rmk).strip()
+                        if s_rmk.upper() not in ("", "NULL", "NONE", "FALSE", "0", "F"):
+                            existing_remarks = s_rmk
 
                 if absorbing_new_ean:
-                    merged_note = f"Merged into {absorbing_new_ean}"
+                    merged_note = f"Merged to EA {absorbing_new_ean}"
                 else:
                     merged_note = "Merged EA"
 
@@ -1449,10 +1476,15 @@ class EAMergeProcessor:
                 return row
 
             # Data rows — spatial features
+            active_keys = set()
             for feat in layer.getFeatures(
                 QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry)
             ):
                 ws.append(_row_values(feat, fields))
+                g_code = str(feat.attribute("geocode") if "geocode" in field_names else (feat.attribute("GEOCODE") if "GEOCODE" in field_names else ""))[:8]
+                e_code = str(feat.attribute("ean") if "ean" in field_names else (feat.attribute("EA_NO") if "EA_NO" in field_names else (feat.attribute("ea") if "ea" in field_names else "")))
+                if e_code:
+                    active_keys.add((g_code, e_code))
 
             # Ghost rows — fully-consumed previous EAs (Excel-only reference rows)
             for ghost_feat in (ghost_features or []):
@@ -1464,6 +1496,13 @@ class EAMergeProcessor:
                     ghost_fields.at(i).name().lower(): i
                     for i in range(ghost_fields.count())
                 }
+
+                g_gcode = str(ghost_feat.attribute(ghost_name_to_idx.get("geocode", -1)) if "geocode" in ghost_name_to_idx else "")[:8]
+                g_ean = str(ghost_feat.attribute(ghost_name_to_idx.get("ean", -1)) if "ean" in ghost_name_to_idx else (ghost_feat.attribute(ghost_name_to_idx.get("ea_no", -1)) if "ea_no" in ghost_name_to_idx else (ghost_feat.attribute(ghost_name_to_idx.get("ea", -1)) if "ea" in ghost_name_to_idx else "")))
+                if g_ean and (g_gcode, g_ean) in active_keys:
+                    # Already represented by an active spatial row; do not duplicate
+                    continue
+
                 row = []
                 for fname in field_names:
                     idx = ghost_name_to_idx.get(fname.lower(), -1)
