@@ -439,7 +439,7 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
         target_cols = [
             "map_uuid", "geocode", "region", "province", "city_mun", "barangay",
             "province_code", "city_mun_code", "barangay_code", "region_code",
-            "office_region", "office_pso"
+            "office_region", "office_pso", "hhcount", "bldgcount"
         ]
 
         def _clean_segment(v, length=0):
@@ -452,6 +452,17 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
             if s and length > 0:
                 s = s.zfill(length)
             return s
+
+        def _parse_int(v):
+            if v is None or v == NULL:
+                return None
+            s = str(v).strip()
+            if s == "" or s.lower() in ("nan", "none", "null"):
+                return None
+            try:
+                return int(float(s))
+            except (ValueError, TypeError):
+                return None
 
         # Method 1: QgsVectorLayer via GDAL/OGR
         psgc_layer = QgsVectorLayer(f"{psgc_file_path}|layername=PSGC", "psgc_ref", "ogr")
@@ -502,13 +513,15 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
                         "barangay": _get_val("barangay"),
                         "office_region": _get_val("office_region"),
                         "office_pso": _get_val("office_pso"),
+                        "hhcount": _parse_int(feat.attribute(col_indices["hhcount"])) if "hhcount" in col_indices else None,
+                        "bldgcount": _parse_int(feat.attribute(col_indices["bldgcount"])) if "bldgcount" in col_indices else None,
                     }
                     all_records.append(rec)
 
         # Method 2: openpyxl fallback
         if not all_records:
             try:
-                wb = openpyxl.load_workbook(psgc_file_path, read_only=False, data_only=True)
+                wb = openpyxl.load_workbook(psgc_file_path, read_only=True, data_only=True)
                 sheet_name = "PSGC" if "PSGC" in wb.sheetnames else wb.sheetnames[0]
                 ws = wb[sheet_name]
                 rows_iter = ws.iter_rows(values_only=True)
@@ -553,6 +566,8 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
                             "barangay": _row_val("barangay"),
                             "office_region": _row_val("office_region"),
                             "office_pso": _row_val("office_pso"),
+                            "hhcount": _parse_int(row[col_indices["hhcount"]]) if "hhcount" in col_indices else None,
+                            "bldgcount": _parse_int(row[col_indices["bldgcount"]]) if "bldgcount" in col_indices else None,
                         }
                         all_records.append(rec)
                 wb.close()
@@ -583,10 +598,13 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
         psgc_cols = [
             "map_uuid", "geocode", "lgu_code", "region_code", "province_code",
             "city_mun_code", "barangay_code", "region", "province", "city_mun",
-            "barangay", "office_region", "office_pso"
+            "barangay", "office_region", "office_pso", "hhcount", "bldgcount"
         ]
         for col in psgc_cols:
-            psgc_fields.append(QgsField(col, QVariant.String, len=100))
+            if col in ("hhcount", "bldgcount"):
+                psgc_fields.append(QgsField(col, QVariant.Int))
+            else:
+                psgc_fields.append(QgsField(col, QVariant.String, len=100))
 
         (psgc_sink, psgc_dest_id) = self.parameterAsSink(
             parameters,
@@ -599,9 +617,15 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
 
         if psgc_sink is not None:
             for r in filtered_records:
+                if feedback.isCanceled():
+                    break
                 f_psgc = QgsFeature(psgc_fields)
                 for col in psgc_cols:
-                    f_psgc.setAttribute(col, str(r.get(col, "")))
+                    val = r.get(col)
+                    if col in ("hhcount", "bldgcount"):
+                        f_psgc.setAttribute(col, val if (val is not None and val != "" and val != NULL) else NULL)
+                    else:
+                        f_psgc.setAttribute(col, str(val) if (val is not None and val != NULL) else "")
                 psgc_sink.addFeature(f_psgc, QgsFeatureSink.FastInsert)
 
         # ── Build Reference Maps ────────────────────────────────────
@@ -651,11 +675,14 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
             self.custom_name = f"{actual_city_name} (Matched)"
             self.psgc_custom_name = f"{actual_city_name} (Filtered PSGC)"
 
-        # ── Process Features & Match ────────────────────────────────
+        # ── Process Features & Match with Match Cache Memoization ───
         stats = {
             'total': 0, 'exact': 0, 'fuzzy': 0,
             'multiple': 0, 'roman': 0, 'no_match': 0
         }
+
+        # Cache key: source_name string -> (final_name, error_detail, stat_type)
+        match_cache: Dict[str, Tuple[str, str, str]] = {}
 
         total_feats = source.featureCount()
         step = 100.0 / total_feats if total_feats else 0
@@ -670,74 +697,74 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
 
             raw_val = feat.attribute(field_name)
             source_name = str(raw_val).strip() if raw_val is not None and raw_val != NULL else ""
-
             title_cased = title_case_smart(source_name)
 
             out_feat = QgsFeature(output_fields)
             out_feat.setGeometry(feat.geometry())
             out_feat.setAttribute(field_name, title_cased if title_cased else source_name)
 
-            # 1. Exact match check
-            norm_source = normalize_name(source_name)
-            exact_match = exact_match_map.get(norm_source)
-
-            # 2. Roman numeral check
-            roman_match, roman_dist = fuzzy_match_roman_only(
-                source_name, reference_names, max_distance)
-
-            has_exact = bool(exact_match)
-            final_name = exact_match if has_exact else roman_match
-            out_feat.setAttribute('barangay name (Final Name)', final_name if final_name else "")
-
-            if has_exact:
-                out_feat.setAttribute('error_detail', '')
-                stats['exact'] += 1
+            # Check match cache first to bypass expensive Levenshtein recalculations
+            if source_name in match_cache:
+                final_name, error_detail, stat_type = match_cache[source_name]
+                out_feat.setAttribute('barangay name (Final Name)', final_name)
+                out_feat.setAttribute('error_detail', error_detail)
+                stats[stat_type] += 1
             else:
-                candidates = fuzzy_match_all(
+                # 1. Exact match check
+                norm_source = normalize_name(source_name)
+                exact_match = exact_match_map.get(norm_source)
+
+                # 2. Roman numeral check
+                roman_match, roman_dist = fuzzy_match_roman_only(
                     source_name, reference_names, max_distance)
 
-                if not candidates:
-                    out_feat.setAttribute(
-                        'error_detail',
-                        f'No match found for "{source_name}"'
-                    )
-                    stats['no_match'] += 1
+                has_exact = bool(exact_match)
+                final_name = exact_match if has_exact else (roman_match if roman_match else "")
+                error_detail = ""
+                stat_type = "exact"
 
-                elif len(candidates) == 1:
-                    best_name, best_dist, method = candidates[0]
-
-                    if method == 'ROMAN_NUMERAL':
-                        out_feat.setAttribute(
-                            'error_detail',
-                            f'Matched via Roman/Arabic normalization: '
-                            f'"{source_name}" → "{best_name}" (dist={best_dist})'
-                        )
-                        stats['roman'] += 1
-                    else:
-                        out_feat.setAttribute('error_detail', '')
-                        stats['fuzzy'] += 1
-
+                if has_exact:
+                    stat_type = "exact"
                 else:
-                    best_name, best_dist, method = candidates[0]
-                    same_dist = [c for c in candidates if c[1] == best_dist]
+                    candidates = fuzzy_match_all(
+                        source_name, reference_names, max_distance)
 
-                    if len(same_dist) > 1:
-                        out_feat.setAttribute(
-                            'error_detail',
-                            f'{len(same_dist)} candidates with same distance '
-                            f'{best_dist} for "{source_name}" — review needed'
-                        )
-                        stats['multiple'] += 1
-                    elif method == 'ROMAN_NUMERAL':
-                        out_feat.setAttribute(
-                            'error_detail',
-                            f'Matched via Roman/Arabic normalization: '
-                            f'"{source_name}" → "{best_name}" (dist={best_dist})'
-                        )
-                        stats['roman'] += 1
+                    if not candidates:
+                        error_detail = f'No match found for "{source_name}"'
+                        stat_type = "no_match"
+                    elif len(candidates) == 1:
+                        best_name, best_dist, method = candidates[0]
+                        if method == 'ROMAN_NUMERAL':
+                            error_detail = (
+                                f'Matched via Roman/Arabic normalization: '
+                                f'"{source_name}" → "{best_name}" (dist={best_dist})'
+                            )
+                            stat_type = "roman"
+                        else:
+                            stat_type = "fuzzy"
                     else:
-                        out_feat.setAttribute('error_detail', '')
-                        stats['fuzzy'] += 1
+                        best_name, best_dist, method = candidates[0]
+                        same_dist = [c for c in candidates if c[1] == best_dist]
+
+                        if len(same_dist) > 1:
+                            error_detail = (
+                                f'{len(same_dist)} candidates with same distance '
+                                f'{best_dist} for "{source_name}" — review needed'
+                            )
+                            stat_type = "multiple"
+                        elif method == 'ROMAN_NUMERAL':
+                            error_detail = (
+                                f'Matched via Roman/Arabic normalization: '
+                                f'"{source_name}" → "{best_name}" (dist={best_dist})'
+                            )
+                            stat_type = "roman"
+                        else:
+                            stat_type = "fuzzy"
+
+                match_cache[source_name] = (final_name, error_detail, stat_type)
+                out_feat.setAttribute('barangay name (Final Name)', final_name)
+                out_feat.setAttribute('error_detail', error_detail)
+                stats[stat_type] += 1
 
             sink.addFeature(out_feat, QgsFeatureSink.FastInsert)
             if step > 0:

@@ -125,11 +125,19 @@ def extract_attr(feature, candidate_names):
     if feature is None:
         return ""
     fields = feature.fields()
-    lower_map = {fields.at(i).name().lower(): fields.at(i).name() for i in range(fields.count())}
+    # Fast path: check exact candidate names first via fields.indexOf
     for name in candidate_names:
-        real_name = lower_map.get(name.lower())
-        if real_name is not None:
-            val = feature[real_name]
+        idx = fields.indexOf(name)
+        if idx != -1:
+            val = feature.attribute(idx)
+            if val not in (None, NULL, ""):
+                return normalize(val)
+    # Case-insensitive fallback
+    lower_map = {fields.at(i).name().lower(): i for i in range(fields.count())}
+    for name in candidate_names:
+        idx = lower_map.get(name.lower())
+        if idx is not None:
+            val = feature.attribute(idx)
             if val not in (None, NULL, ""):
                 return normalize(val)
     return ""
@@ -144,12 +152,12 @@ def safe_get(feature, field_name_or_candidates):
     fields = feature.fields()
     idx = fields.indexOf(field_name_or_candidates)
     if idx != -1:
-        return normalize(feature[field_name_or_candidates])
+        return normalize(feature.attribute(idx))
 
     lower_name = field_name_or_candidates.lower()
     for i in range(fields.count()):
         if fields.at(i).name().lower() == lower_name:
-            return normalize(feature[fields.at(i).name()])
+            return normalize(feature.attribute(i))
     return ""
 
 
@@ -160,10 +168,15 @@ def get_layer_field(layer, candidates):
     if layer is None:
         return None
     fields = layer.fields()
+    for cand in candidates:
+        idx = fields.indexOf(cand)
+        if idx != -1:
+            return fields.at(idx).name()
     lower_map = {fields.at(i).name().lower(): fields.at(i).name() for i in range(fields.count())}
     for cand in candidates:
-        if cand.lower() in lower_map:
-            return lower_map[cand.lower()]
+        cand_lower = cand.lower()
+        if cand_lower in lower_map:
+            return lower_map[cand_lower]
     return None
 
 
@@ -326,43 +339,67 @@ def spatial_match(checker_layer, reference_features, reference_crs):
     """
     idx = QgsSpatialIndex()
     for rf in reference_features:
-        idx.addFeature(rf)
+        if rf.hasGeometry() and not rf.geometry().isNull() and not rf.geometry().isEmpty():
+            idx.addFeature(rf)
 
     tr = None
-    if checker_layer.sourceCrs() != reference_crs:
-        tr = QgsCoordinateTransform(checker_layer.sourceCrs(), reference_crs, QgsProject.instance())
+    if checker_layer.sourceCrs() != reference_crs and checker_layer.sourceCrs().isValid() and reference_crs.isValid():
+        try:
+            tr = QgsCoordinateTransform(checker_layer.sourceCrs(), reference_crs, QgsProject.instance().transformContext())
+        except Exception:
+            tr = None
 
     ref_by_id = {rf.id(): rf for rf in reference_features}
 
     results = []
     for cf in checker_layer.getFeatures():
+        if not cf.hasGeometry() or cf.geometry().isNull() or cf.geometry().isEmpty():
+            continue
         g = QgsGeometry(cf.geometry())
+        if tr:
+            try:
+                g.transform(tr)
+            except Exception:
+                pass
         if g.isNull() or g.isEmpty():
             continue
-        if tr:
-            g.transform(tr)
 
         matched_refs = []
-        for rid in idx.intersects(g.boundingBox()):
+        try:
+            candidate_ids = idx.intersects(g.boundingBox())
+        except Exception:
+            candidate_ids = []
+
+        for rid in candidate_ids:
             rf = ref_by_id.get(rid)
-            if rf is None or not rf.geometry():
+            if rf is None or not rf.hasGeometry() or not rf.geometry():
                 continue
 
             rgeom = rf.geometry()
-
-            # Adjacent-only (shares boundary/vertex, no interior overlap) ->
-            # NOT a real match. This is what previously caused a brand-new
-            # case sitting next to a reference polygon to wrongly inherit
-            # that reference's status.
-            if rgeom.touches(g):
+            if rgeom.isNull() or rgeom.isEmpty():
                 continue
 
-            if rgeom.intersects(g):
-                # Extra safety: confirm the intersection has real area,
-                # guarding against near-zero sliver overlaps from snapping.
-                overlap_geom = rgeom.intersection(g)
-                if overlap_geom and not overlap_geom.isEmpty() and overlap_geom.area() > 0:
-                    matched_refs.append(rf)
+            try:
+                # Adjacent-only (shares boundary/vertex, no interior overlap) ->
+                # NOT a real match.
+                if rgeom.touches(g):
+                    continue
+
+                if rgeom.intersects(g):
+                    overlap_geom = rgeom.intersection(g)
+                    if overlap_geom and not overlap_geom.isEmpty() and overlap_geom.area() > 0:
+                        matched_refs.append(rf)
+            except Exception:
+                # In case of GEOS topology exception on corrupted input geometry, try makeValid
+                try:
+                    vg = g.makeValid() if not g.isGeosValid() else g
+                    vr = rgeom.makeValid() if not rgeom.isGeosValid() else rgeom
+                    if vr and vg and not vr.touches(vg) and vr.intersects(vg):
+                        overlap_geom = vr.intersection(vg)
+                        if overlap_geom and not overlap_geom.isEmpty() and overlap_geom.area() > 0:
+                            matched_refs.append(rf)
+                except Exception:
+                    pass
 
         results.append((cf, matched_refs))
     return results

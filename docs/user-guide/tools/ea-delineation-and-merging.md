@@ -133,8 +133,21 @@ The output layers `<geocode>_delineated_ea2026`, `<geocode>_merged_ea2026`, and 
 | **new_ean** | String | Newly assigned post-delineation 6-digit EA sequence number code (e.g. `001000`). |
 | **hh_count** | Integer | New total household count aggregated from building points assigned to this polygon (whole number). |
 | **bldg_count** | Integer | New total building point count contained in this polygon. |
-| **ea_type** | String | EA classification type (`STANDARD` or `SPECIAL`). |
+| **ea_type** | String | EA classification and transformation type (`DELINEATED`, `MERGED`, `RETAINED`, `GAP`, `OVERLAP`, or `SPECIAL`). |
 | **remarks** | String | Processing note detailing action or split strategy (e.g. `Split along road network`, `Merged EA`, `Generated from Gap layer`). |
+
+### Special EA `new_ean` Naming Convention
+
+Special EAs (`special_ea` output polygons, resolved gap features, and overlap polygons) in Tab 2 are assigned 6-digit `new_ean` codes (`PPP000`) based on the existing non-special EAs within their parent Barangay:
+
+1. **When Non-Zero Suffixes Exist (`highest_suffix > 0`)**:
+   * If any split/child EA exists in the barangay (e.g., `001004` $\rightarrow \text{highest suffix} = 4$), the Special EA prefix (`PPP`) follows `(highest_suffix + 1)` and suffix (`SSS`) is `"000"`.
+   * *Example*: Highest suffix is `004` $\rightarrow$ Special EA becomes **`005000`**.
+2. **When All Suffixes are Base Zero (`highest_suffix == 0`)**:
+   * If all EAs in the barangay have base suffix `"000"` (e.g. `001000`, `002000`, `003000` $\rightarrow \text{highest prefix} = 3$), the Special EA prefix (`PPP`) follows `(highest_prefix + 1)` and suffix (`SSS`) is `"000"`.
+   * *Example*: Highest prefix is `003` $\rightarrow$ Special EA becomes **`004000`**.
+3. **Multiple Special EAs in Same Barangay**:
+   * Subsequent Special EAs in the same barangay increment sequentially (e.g. `004000`, `005000`, `006000`).
 
 In addition, the **`merge_ea2026`** (`<geocode>_merged_ea2026`) output layer includes the following 3 additional fields:
 
