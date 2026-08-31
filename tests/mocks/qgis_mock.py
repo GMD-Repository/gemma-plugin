@@ -16,7 +16,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 try:
     import shapely
     import shapely.ops
-    from shapely.geometry import Polygon as ShapelyPolygon, MultiPolygon as ShapelyMultiPolygon, box as shapely_box
+    from shapely.geometry import (
+        Polygon as ShapelyPolygon,
+        MultiPolygon as ShapelyMultiPolygon,
+        Point as ShapelyPoint,
+        box as shapely_box,
+    )
     HAS_SHAPELY = True
 except ImportError:
     HAS_SHAPELY = False
@@ -164,6 +169,12 @@ class QgsGeometry:
         if not HAS_SHAPELY:
             return None
         try:
+            # Points carry their coordinate in _point, not in polygons --
+            # without this they fell through to the bounding-box fallback
+            # below and came back as a 10x10 box, so every point/polygon
+            # predicate (contains, intersects, distance) answered nonsense.
+            if getattr(self, '_point', None) is not None:
+                return ShapelyPoint(self._point.x(), self._point.y())
             if hasattr(self, 'polygons') and self.polygons:
                 spolys = []
                 for poly_rings in self.polygons:
@@ -206,7 +217,7 @@ class QgsGeometry:
         elif stype in ("LineString", "MultiLineString"):
             return QgsGeometry("LineString")
         elif stype == "Point":
-            return QgsGeometry("Point", QgsPointXY(sg.x, sg.y))
+            return QgsGeometry.fromPointXY(QgsPointXY(sg.x, sg.y))
         elif stype == "GeometryCollection":
             for geom in sg.geoms:
                 if geom.geom_type in ("Polygon", "MultiPolygon"):
@@ -394,14 +405,18 @@ class QgsGeometry:
     def asPoint(self): return getattr(self, '_point', QgsPointXY(0.0, 0.0))
 
     def boundingBox(self):
-        if self.polygons and self.polygons[0]:
-            first = self.polygons[0]
-            ring = first[0] if isinstance(first, list) and first and isinstance(first[0], list) else first
-            xs = [p.x() for p in ring if hasattr(p, 'x')]
-            ys = [p.y() for p in ring if hasattr(p, 'y')]
-            if xs and ys:
-                xmin, xmax = min(xs), max(xs)
-                ymin, ymax = min(ys), max(ys)
+        if getattr(self, '_point', None) is not None:
+            pt = self._point
+            xs = [pt.x()]
+            ys = [pt.y()]
+        elif self.polygons and self.polygons[0]:
+            xs = [p.x() for p in self.polygons[0]]
+            ys = [p.y() for p in self.polygons[0]]
+        else:
+            xs = ys = None
+        if xs:
+            xmin, xmax = min(xs), max(xs)
+            ymin, ymax = min(ys), max(ys)
             class MockBox:
                 def __init__(self, x0, x1, y0, y1):
                     self._x0, self._x1, self._y0, self._y1 = x0, x1, y0, y1
