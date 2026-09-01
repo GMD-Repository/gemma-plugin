@@ -5,12 +5,13 @@ on:
     branches:
       - main
       - master
-      - develop
+      - dev
       - 'enhance/**'
   push:
     branches:
       - main
       - master
+      - dev
 
 permissions:
   contents: read
