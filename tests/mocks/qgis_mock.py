@@ -1253,3 +1253,10 @@ def setup_qgis_mock_if_needed():
             import openpyxl
         except ImportError:
             sys.modules["openpyxl"] = DynamicMockModule("openpyxl")
+
+    # 5. requests module fallback
+    if "requests" not in sys.modules:
+        try:
+            import requests
+        except ImportError:
+            sys.modules["requests"] = DynamicMockModule("requests")

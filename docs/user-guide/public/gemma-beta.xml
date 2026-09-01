@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <?xml-stylesheet type="text/xsl" href=""?>
 <plugins>
-  <pyqgis_plugin name="GEMMA (Beta)" version="v0.0.0-r738">
-    <version>v0.0.0-r738</version>
+  <pyqgis_plugin name="GEMMA (Beta)" version="v1.0.0-r738">
+    <version>v1.0.0-r738</version>
     <description>GIS Extension for Map Management and Analysis (Beta)</description>
     <about>This plugin is developed by the Geospatial Management Division to provide a comprehenive set of tools that could be used for map management and analyses for different sorts of activities. (Beta Channel)</about>
     <author>Geospatial Management Division</author>
