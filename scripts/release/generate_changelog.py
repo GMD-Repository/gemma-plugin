@@ -14,6 +14,7 @@ import json
 import re
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 import requests
 
 from scripts.utils.changelog import highlights_to_changes
@@ -149,23 +150,25 @@ def _generate_hf_changelog(
     system_prompt = (
         "You are an expert open-source release manager for the GEMMA QGIS plugin. "
         "Your job is to transform raw developer commit logs into a clean, professional, "
-        "and user-friendly release changelog. Focus on clear technical summaries while "
-        "ALWAYS preserving author mentions (e.g. (@username) or ([@username](url))) "
-        "and PR/issue references (e.g. (#123) or ([#123](url))) at the end of each line."
+        "and user-friendly release changelog. Focus on clear technical summaries. "
+        "Do NOT include duplicate author tags or unlinked (@user #123) references inside the summary text. "
+        "Each bullet point should end with at most one linked author tag (e.g. ([@username](https://github.com/username))) "
+        "and at most one linked PR reference (e.g. ([#123](https://github.com/owner/repo/pull/123)))."
     )
     user_prompt = (
         f"Generate a production-ready release changelog for GEMMA QGIS Plugin version {version}.\n"
         f"Below are the recent commit notes (with author and PR references attached):\n{raw_text}\n\n"
         f"IMPORTANT INSTRUCTIONS:\n"
-        f"1. Categorize and rewrite these changes into professional release bullet points.\n"
-        f"2. CRITICAL: Retain and include the author tags (e.g. (@username)) and PR numbers (e.g. (#123)) at the end of each generated bullet point.\n\n"
+        f"1. Categorize and rewrite these changes into professional, concise release bullet points.\n"
+        f"2. Retain exactly one linked author tag (e.g. ([@username](https://github.com/username))) and/or one PR link (e.g. ([#123](url))) at the end of each generated bullet point.\n"
+        f"3. CRITICAL: Never produce duplicate author tags or unlinked compound tags like (@username #123).\n\n"
         f"Return ONLY valid JSON matching this schema:\n"
         f"{{\n"
-        f'  "features": ["Descriptive bullet point ending with author (@user) and PR (#123) tags"],\n'
-        f'  "improvements": ["Descriptive bullet point ending with author (@user) and PR (#123) tags"],\n'
-        f'  "fixes": ["Descriptive bullet point ending with author (@user) and PR (#123) tags"],\n'
-        f'  "documentation": ["Descriptive bullet point ending with author (@user) and PR (#123) tags"],\n'
-        f'  "breaking_changes": ["Descriptive bullet point ending with author (@user) and PR (#123) tags"]\n'
+        f'  "features": ["Descriptive bullet point ending with author and PR tags"],\n'
+        f'  "improvements": ["Descriptive bullet point ending with author and PR tags"],\n'
+        f'  "fixes": ["Descriptive bullet point ending with author and PR tags"],\n'
+        f'  "documentation": ["Descriptive bullet point ending with author and PR tags"],\n'
+        f'  "breaking_changes": ["Descriptive bullet point ending with author and PR tags"]\n'
         f"}}\n"
     )
 
@@ -207,16 +210,12 @@ def _generate_hf_changelog(
     except Exception as err:
         logger.warning("⚠️ InferenceClient initialization failed: %s", err)
 
-    # Method 2: HTTP requests fallback — use the general Inference Providers
-    # router which auto-selects from all available providers (DeepInfra,
-    # Novita, etc.) instead of pinning to `hf-inference` (HF's own
-    # small-model backend that does NOT support large LLMs).
+    # Method 2: HTTP requests fallback — use the general Inference Providers router
     if not generated_text:
         headers = {
             "Authorization": f"Bearer {hf_token}",
             "Content-Type": "application/json",
         }
-        # General router auto-routes to the best available provider
         ROUTER_URL = "https://router.huggingface.co/v1/chat/completions"
 
         for model in candidate_models:
@@ -285,75 +284,175 @@ def _generate_hf_changelog(
         return None
 
 
+def _parse_item_tags(text: str) -> tuple[str, str | None, str | None, str | None]:
+    """Parse a line into clean description text, author username, PR number, and PR URL.
+
+    Strips all variations of author mentions and PR tags from the text.
+    """
+    cleaned = text.strip()
+
+    # 1. Extract PR number and URL
+    pr_num = None
+    pr_url = None
+    url_match = re.search(r"https?://github\.com/([^/]+)/([^/]+)/(?:pull|issues)/(\d+)", cleaned)
+    if url_match:
+        pr_num = url_match.group(3)
+        pr_url = url_match.group(0)
+    else:
+        md_pr_match = re.search(r"\[\s*#(\d+)\s*\]\((https?://[^\s)]+)\)", cleaned)
+        if md_pr_match:
+            pr_num = md_pr_match.group(1)
+            pr_url = md_pr_match.group(2)
+        else:
+            compound_match = re.search(r"\(@[\w-]+\s*(?:[,&/-]\s*|\s+)#?(\d+)\)", cleaned)
+            if compound_match:
+                pr_num = compound_match.group(1)
+            else:
+                num_match = re.search(r"\(\s*#(\d+)\s*\)", cleaned)
+                if num_match:
+                    pr_num = num_match.group(1)
+                else:
+                    trailing_num = re.search(r"(?:^|\s)#(\d+)(?:\s*$)", cleaned)
+                    if trailing_num:
+                        pr_num = trailing_num.group(1)
+
+    # 2. Extract author
+    author = None
+    embedded_author = re.search(
+        r"\(\s*\[?@([\w-]+)\]?(?:\([^)]*\))?(?:\s*[,&/-]?\s*#?\d+)?\s*\)", cleaned
+    )
+    if embedded_author:
+        author = embedded_author.group(1)
+    else:
+        md_author = re.search(r"\[\s*@([\w-]+)\s*\](?:\([^)]*\))?", cleaned)
+        if md_author:
+            author = md_author.group(1)
+        else:
+            by_author = re.search(r"\sby\s+@([\w-]+)", cleaned)
+            if by_author:
+                author = by_author.group(1)
+
+    if author and ("[bot]" in author.lower() or "github-actions" in author.lower()):
+        author = None
+
+    # 3. Strip all tags, URLs, and markers from description text
+    cleaned = re.sub(r"^[\s*\-•]+\s*", "", cleaned)
+    # Strip "by @user in https://..." or "in https://..." (safe against eating parens)
+    cleaned = re.sub(r"\s+by\s+@[\w-]+(?:\s+in\s+https?://[^\s)]+)?", "", cleaned)
+    cleaned = re.sub(r"\s+in\s+https?://[^\s)]+", "", cleaned)
+    # Strip outer parens enclosing markdown links: ([@user](url)) or ([#123](url))
+    cleaned = re.sub(r"\(\s*\[\s*@[\w-]+\s*\]\([^)]+\)\s*\)", "", cleaned)
+    cleaned = re.sub(r"\(\s*\[\s*#\d+\s*\]\([^)]+\)\s*\)", "", cleaned)
+    # Strip compound author/PR parenthesized tags: (@user #123), (@user, #123), ([@user](url) [#123](url))
+    cleaned = re.sub(
+        r"\(\s*\[?@[\w-]+\]?(?:\([^)]*\))?\s*(?:[,&/\-]\s*|\s+)?\[?#\d+\]?(?:\([^)]*\))?\s*\)",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"\(\s*\[?#\d+\]?(?:\([^)]*\))?\s*(?:[,&/\-]\s*|\s+)?\[?@[\w-]+\]?(?:\([^)]*\))?\s*\)",
+        "",
+        cleaned,
+    )
+    # Strip single parenthesized tags: (@user), (#123)
+    cleaned = re.sub(r"\(\s*\[?@[\w-]+\]?(?:\([^)]*\))?\s*\)", "", cleaned)
+    cleaned = re.sub(r"\(\s*\[?#\d+\]?(?:\([^)]*\))?\s*\)", "", cleaned)
+    # Strip bare markdown links or brackets: [@user](url), [#123](url)
+    cleaned = re.sub(r"\[\s*@[\w-]+\s*\]\([^)]+\)", "", cleaned)
+    cleaned = re.sub(r"\[\s*#\d+\s*\]\([^)]+\)", "", cleaned)
+    cleaned = re.sub(r"\[\s*@[\w-]+\s*\]", "", cleaned)
+    cleaned = re.sub(r"\[\s*#\d+\s*\]", "", cleaned)
+    # Strip remaining bare URLs without consuming closing parens
+    cleaned = re.sub(r"https?://[^\s)]+", "", cleaned)
+    # Strip standalone @user or #123 tokens
+    cleaned = re.sub(r"(?:^|\s)@[\w-]+(?:\s|$)", " ", cleaned)
+    cleaned = re.sub(r"(?:^|\s)#\d+(?:\s|$)", " ", cleaned)
+    # Strip conventional commit prefixes (e.g. feat:, fix(scope):, feat!:)
+    cleaned = re.sub(
+        r"^(feat|fix|refactor|perf|docs|style|test|chore|build|ci)(\([^)]*\))?[!:]\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    # Strip trailing ellipsis and punctuation
+    cleaned = re.sub(r"[…\.]+$", "", cleaned)
+    cleaned = re.sub(r"[\s,;:\-()]+$", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+    return cleaned, author, pr_num, pr_url
+
+
 def _enrich_with_author_and_pr_tags(
     changes: dict[str, list[str]], raw_lines: list[str]
 ) -> dict[str, list[str]]:
-    """Ensure every line in changes retains the *linked* author tag and PR link from the raw commits.
+    """Ensure every line in changes has exactly ONE linked author and ONE linked PR tag.
 
-    The AI often rewrites ``([@user](https://github.com/user))`` into plain
-    ``(@user)`` and ``([#123](url))`` into ``(#123)``.  This function detects
-    those plain-text references and replaces them with the proper markdown
-    linked versions extracted from the original raw commit lines.
+    Extracts authoritative author/PR links from raw commit lines or the generated item,
+    completely strips any duplicate, plain, or compound tags from the description text,
+    and attaches canonical Markdown links at the end.
     """
-    # ── Build a lookup from keywords → linked references ──────────────────
-    ref_map: dict[str, tuple[str, str]] = {}
-    for line in raw_lines:
-        author_match = re.search(r"(\[\s*@[\w-]+\s*\]\([^)]+\)|\(@[\w-]+\))", line)
-        pr_match = re.search(r"(\[\s*#\d+\s*\]\([^)]+\)|\(#\d+\))", line)
-
-        author_tag = author_match.group(1) if author_match else ""
-        pr_tag = pr_match.group(1) if pr_match else ""
-
-        words = re.sub(r"[^\w\s]", "", line.lower()).split()
-        for w in words:
-            if len(w) > 4 and (author_tag or pr_tag):
-                ref_map[w] = (author_tag, pr_tag)
-
-    # Patterns for *linked* markdown format (the format we want to keep)
-    _LINKED_AUTHOR = re.compile(r"\[@[\w-]+\]\([^)]+\)")
-    _LINKED_PR = re.compile(r"\[#\d+\]\([^)]+\)")
-
-    # Patterns for *plain* text format (the format the AI often produces)
-    _PLAIN_AUTHOR = re.compile(r"\(\s*@[\w-]+\s*\)")
-    _PLAIN_PR = re.compile(r"\(\s*#\d+\s*\)")
+    # ── Parse authoritative data from raw lines ───────────────────────────
+    raw_entries: list[dict[str, Any]] = []
+    for raw in raw_lines:
+        clean_txt, auth, p_num, p_url = _parse_item_tags(raw)
+        words = set(w for w in re.sub(r"[^\w\s]", "", clean_txt.lower()).split() if len(w) > 3)
+        raw_entries.append({
+            "clean": clean_txt,
+            "author": auth,
+            "pr_num": p_num,
+            "pr_url": p_url,
+            "words": words,
+        })
 
     enriched_changes: dict[str, list[str]] = {}
     for category, items in changes.items():
         new_items: list[str] = []
         for item in items:
-            has_linked_author = bool(_LINKED_AUTHOR.search(item))
-            has_linked_pr = bool(_LINKED_PR.search(item))
+            item_clean, item_author, item_pr_num, item_pr_url = _parse_item_tags(item)
+            if not item_clean:
+                continue
 
-            # Find the linked references from the raw lines via keyword matching
-            linked_author, linked_pr = "", ""
-            item_words = re.sub(r"[^\w\s]", "", item.lower()).split()
-            for w in item_words:
-                if w in ref_map:
-                    linked_author, linked_pr = ref_map[w]
-                    if linked_author or linked_pr:
+            item_words = set(w for w in re.sub(r"[^\w\s]", "", item_clean.lower()).split() if len(w) > 3)
+
+            # Match against raw entries to find authoritative author & PR info
+            matched_entry: dict[str, Any] | None = None
+
+            # 1. Match by PR number if present
+            if item_pr_num:
+                for entry in raw_entries:
+                    if entry["pr_num"] == item_pr_num:
+                        matched_entry = entry
                         break
 
-            # If the AI produced plain (@user) but the raw data has a linked
-            # version, strip the plain tag and use the linked one instead.
-            if not has_linked_author and linked_author:
-                item = _PLAIN_AUTHOR.sub("", item).rstrip()
+            # 2. Match by highest keyword overlap
+            if not matched_entry and item_words:
+                best_score = 0
+                for entry in raw_entries:
+                    score = len(item_words & entry["words"])
+                    if score > best_score:
+                        best_score = score
+                        matched_entry = entry
 
-            if not has_linked_pr and linked_pr:
-                item = _PLAIN_PR.sub("", item).rstrip()
+            # Determine final author and PR
+            final_author = matched_entry["author"] if matched_entry and matched_entry["author"] else item_author
+            final_pr_num = matched_entry["pr_num"] if matched_entry and matched_entry["pr_num"] else item_pr_num
+            final_pr_url = matched_entry["pr_url"] if matched_entry and matched_entry["pr_url"] else item_pr_url
 
-            # Append linked references that are missing
-            suffix: list[str] = []
-            if not has_linked_author and linked_author:
-                # Wrap bare markdown link in parentheses if it isn't already
-                tag = linked_author if linked_author.startswith("(") else f"({linked_author})"
-                suffix.append(tag)
-            if not has_linked_pr and linked_pr:
-                tag = linked_pr if linked_pr.startswith("(") else f"({linked_pr})"
-                suffix.append(tag)
+            # Construct canonical suffix tags
+            suffix_parts: list[str] = []
+            if final_author:
+                suffix_parts.append(f"([@{final_author}](https://github.com/{final_author}))")
+            if final_pr_num:
+                if final_pr_url:
+                    suffix_parts.append(f"([#{final_pr_num}]({final_pr_url}))")
+                else:
+                    suffix_parts.append(f"(#{final_pr_num})")
 
-            if suffix:
-                item = f"{item} {' '.join(suffix)}"
-            new_items.append(item)
+            if suffix_parts:
+                new_items.append(f"{item_clean} {' '.join(suffix_parts)}")
+            else:
+                new_items.append(item_clean)
+
         enriched_changes[category] = new_items
 
     return enriched_changes
