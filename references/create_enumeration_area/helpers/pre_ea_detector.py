@@ -206,7 +206,7 @@ def detect_project_from_layer(layer, subfolder_name: Optional[str] = None) -> Op
     try:
         src = getattr(layer, 'source', lambda: '')() if hasattr(layer, 'source') else ''
         if src and isinstance(src, str):
-            clean_path = src.split("|")[0].strip().replace("/", "\\")
+            clean_path = os.path.normpath(src.split("|")[0].strip())
 
             # Regex 1: Matches <drive>:\PSA-GIS\<CO or Province or CityMun>\...
             m1 = re.search(r"^(?P<drive>[a-zA-Z]:)[/\\]PSA-GIS[/\\](?P<root>[^/\\]+)", clean_path, re.IGNORECASE)
@@ -215,7 +215,7 @@ def detect_project_from_layer(layer, subfolder_name: Optional[str] = None) -> Op
                 # Filter out auxiliary utility folders like 'Activity', 'Important', etc.
                 if root_name.lower() not in ("activity", "geopackage", "important", "temporary files", "temp", "scratch"):
                     drive = m1.group("drive")
-                    target = os.path.join(drive, "\\PSA-GIS", root_name, "Project 1MAP", "3_EA Delineation and Merging", "2_Pre-Processing")
+                    target = os.path.join(drive + os.sep, "PSA-GIS", root_name, "Project 1MAP", "3_EA Delineation and Merging", "2_Pre-Processing")
                     return os.path.join(target, subfolder_name) if subfolder_name else target
 
             # Regex 2: Matches any path containing Project 1MAP
