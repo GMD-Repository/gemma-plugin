@@ -1060,26 +1060,37 @@ class EAMergeProcessor:
 
             if fid in candidate_id_set:
                 # Spatial index says bounding boxes overlap — confirm with exact
-                # geometric intersection before computing the expensive difference.
+                # geometric intersection before computing the difference.
                 if ea_geom.intersects(combined_replacement):
-                    remaining = ea_geom.difference(combined_replacement)
-                    if remaining is None or remaining.isNull() or remaining.isEmpty():
-                        # EA is fully covered — capture as ghost, do not add to
-                        # the spatial output.
+                    orig_area = ea_geom.area()
+                    inter = ea_geom.intersection(combined_replacement)
+                    inter_area = inter.area() if (inter and not inter.isNull() and not inter.isEmpty()) else 0.0
+
+                    # Relative overlap ratio: works identically for projected (meters) and geographic (degrees).
+                    # If >= 99.9% of the original EA is covered by the replacement polygon, treat as fully consumed.
+                    if orig_area > 0 and (inter_area / orig_area) >= 0.999:
                         modified_count += 1
                         fully_consumed = True
                     else:
-                        remaining = _repair_geometry(remaining)
+                        remaining = ea_geom.difference(combined_replacement)
                         if remaining is None or remaining.isNull() or remaining.isEmpty():
                             modified_count += 1
                             fully_consumed = True
                         else:
-                            # Count as modified if area actually changed
-                            orig_area = ea_geom.area()
-                            rem_area = remaining.area()
-                            if abs(orig_area - rem_area) > 1e-6:
+                            remaining = _repair_geometry(remaining)
+                            if remaining is None or remaining.isNull() or remaining.isEmpty():
                                 modified_count += 1
-                            geom_to_keep = remaining
+                                fully_consumed = True
+                            else:
+                                rem_area = remaining.area()
+                                # Clean up tiny sliver fragments (< 0.1% of original area)
+                                if orig_area > 0 and (rem_area / orig_area) < 0.001:
+                                    modified_count += 1
+                                    fully_consumed = True
+                                else:
+                                    if abs(orig_area - rem_area) > (orig_area * 1e-6):
+                                        modified_count += 1
+                                    geom_to_keep = remaining
                 else:
                     # Bounding-box overlap but no actual geometric intersection
                     geom_to_keep = ea_geom
@@ -1137,9 +1148,11 @@ class EAMergeProcessor:
                     out_feat.setAttribute(_ghost_eacount_idx, None)
 
                 # Annotate remarks with the absorbing replacement's new_ean
-                absorbing_new_ean = self._absorbing_replacement_new_ean(
+                absorbing_repl_feat, absorbing_new_ean = self._absorbing_replacement_feat_and_new_ean(
                     ea_geom, replacement_features or []
                 )
+                consumed_ea_code = str(_extract_feature_attribute(feat, ea_name_to_idx, "ean") or "")
+
                 existing_remarks = ""
                 if _ghost_remarks_idx != -1:
                     raw_rmk = out_feat.attribute(_ghost_remarks_idx)
@@ -1164,29 +1177,42 @@ class EAMergeProcessor:
                 if _ghost_remarks_idx != -1:
                     out_feat.setAttribute(_ghost_remarks_idx, new_remarks)
 
+                # Also annotate the absorbing replacement feature's remarks with the absorbed EA
+                if absorbing_repl_feat is not None and consumed_ea_code and _ghost_remarks_idx != -1:
+                    repl_rmk = str(absorbing_repl_feat.attribute(_ghost_remarks_idx) or "").strip()
+                    if repl_rmk.upper() in ("", "NULL", "NONE", "FALSE", "0", "F"):
+                        repl_rmk = ""
+                    if consumed_ea_code != absorbing_new_ean and consumed_ea_code not in repl_rmk:
+                        if not repl_rmk:
+                            absorbing_repl_feat.setAttribute(_ghost_remarks_idx, f"Merged with EA {consumed_ea_code}")
+                        elif "merged with" in repl_rmk.lower():
+                            absorbing_repl_feat.setAttribute(_ghost_remarks_idx, f"{repl_rmk}, {consumed_ea_code}")
+                        else:
+                            absorbing_repl_feat.setAttribute(_ghost_remarks_idx, f"Merged with EA {consumed_ea_code}; {repl_rmk}")
+
                 ghost_features.append(out_feat)
             else:
                 remaining_features.append(out_feat)
 
         return remaining_features, ghost_features, modified_count
 
-    def _absorbing_replacement_new_ean(
+    def _absorbing_replacement_feat_and_new_ean(
         self,
         consumed_geom: QgsGeometry,
         replacement_features: list,
-    ) -> Optional[str]:
-        """Find the new_ean of the replacement feature that most overlaps consumed_geom.
+    ) -> tuple[Optional[QgsFeature], Optional[str]]:
+        """Find the replacement feature and its new_ean that most overlaps consumed_geom.
 
         Iterates through already-built replacement QgsFeature objects, computes
-        intersection area, and returns the new_ean of the best-overlap candidate.
-        Returns None when no match is found or when the replacement list is empty.
+        intersection area, and returns (best_repl_feat, best_new_ean).
         """
         if not replacement_features or consumed_geom is None or consumed_geom.isNull():
-            return None
+            return None, None
 
         from qgis.core import NULL
 
         best_area = 0.0
+        best_repl_feat: Optional[QgsFeature] = None
         best_new_ean: Optional[str] = None
 
         for repl_feat in replacement_features:
@@ -1199,6 +1225,7 @@ class EAMergeProcessor:
             area = inter.area()
             if area > best_area:
                 best_area = area
+                best_repl_feat = repl_feat
                 # Read new_ean from the replacement feature's attributes
                 repl_fields = repl_feat.fields()
                 if repl_fields is not None:
@@ -1213,11 +1240,20 @@ class EAMergeProcessor:
                         raw = _extract_feature_attribute(
                             repl_feat, repl_name_to_idx, "ean"
                         )
+                    if raw is None:
+                        for fname in ("new_eacode", "new_ea", "ea_no", "eano", "ea"):
+                            raw = _extract_feature_attribute(repl_feat, repl_name_to_idx, fname)
+                            if raw is not None:
+                                break
+
                     if raw is not None and raw != NULL:
                         s = str(raw).strip()
-                        best_new_ean = s if s not in ("", "NULL", "None") else None
+                        if s not in ("", "NULL", "None"):
+                            if s.isdigit() and len(s) < 6:
+                                s = s.zfill(6)
+                            best_new_ean = s
 
-        return best_new_ean
+        return best_repl_feat, best_new_ean
 
     def _populate_ea_counts(
         self,
