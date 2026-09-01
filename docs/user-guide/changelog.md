@@ -2,6 +2,20 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.1
+<time>Sep 01, 2026</time>
+
+### ⚡ Improvements & Fixes
+- Implemented automated release management and changelog generation workflow ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### 🐛 Bug Fixes
+- Resolved duplicate author/PR tags and purged v0.0.0 entries ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#196](https://github.com/GMD-Repository/gemma-plugin/pull/196))
+
+### 💥 Breaking Changes
+- Hidden EA Delineation and Merging tool on V1.0.0 ([@velascojasper0](https://github.com/velascojasper0)) ([#195](https://github.com/GMD-Repository/gemma-plugin/pull/195))
+
+<Contributors :contributors="['kentemman-gmd', 'velascojasper0']" />
+
 ## 1.0.0
 <time>Aug 31, 2026</time>
 

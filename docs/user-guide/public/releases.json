@@ -1,3 +1,37 @@
 {
-  "releases": []
+  "releases": [
+    {
+      "version": "1.0.1",
+      "date": "2026-09-01",
+      "tag": "v1.0.1",
+      "prerelease": false,
+      "contributors": [
+        "kentemman-gmd",
+        "velascojasper0"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.1/gemma-plugin-v1.0.1.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.1",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [],
+        "improvements": [
+          "Implemented automated release management and changelog generation workflow ([@kentemman-gmd](https://github.com/kentemman-gmd))"
+        ],
+        "changes": [],
+        "fixes": [
+          "Resolved duplicate author/PR tags and purged v0.0.0 entries ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#196](https://github.com/GMD-Repository/gemma-plugin/pull/196))"
+        ],
+        "breaking": [
+          "Hidden EA Delineation and Merging tool on V1.0.0 ([@velascojasper0](https://github.com/velascojasper0)) ([#195](https://github.com/GMD-Repository/gemma-plugin/pull/195))"
+        ],
+        "deprecated": [],
+        "dependencies": []
+      }
+    }
+  ],
+  "latest": "1.0.1"
 }
