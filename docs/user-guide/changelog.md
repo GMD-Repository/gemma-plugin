@@ -2,48 +2,38 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
-## 0.0.0
-<time>Aug 28, 2026</time>
+## 1.0.0
+<time>Aug 31, 2026</time>
 
 ### ✨ New Features
-- **MBI Checker**: Gaps and Overlaps Checker for boundary polygon integrity validation ([@kentemman-gmd](https://github.com/kentemman-gmd), [@pacoleslaw](https://github.com/pacoleslaw), [@velascojasper0](https://github.com/velascojasper0))
-- **Create Enumeration Areas & QP Generation**: Automated EA delineation and Quick Plan generation ([@velascojasper0](https://github.com/velascojasper0), [@kentemman-gmd](https://github.com/kentemman-gmd))
-- **Fix LGU CRS & Geometry**: Coordinate reference system alignment algorithm and geometry repair tools ([@velascojasper0](https://github.com/velascojasper0), [@kentemman-gmd](https://github.com/kentemman-gmd))
-- **Fill Polygon Gaps**: Automatic gap identification and filling for polygon layers ([@pacoleslaw](https://github.com/pacoleslaw), [@kentemman-gmd](https://github.com/kentemman-gmd))
-- **Geometry Repair Toolkit**: Comprehensive toolkit for fixing invalid geometries and topological errors ([@kentemman-gmd](https://github.com/kentemman-gmd), [@velascojasper0](https://github.com/velascojasper0))
-- **Export Preliminary Polygons**: Export tools for field survey preliminary polygon data ([@pacoleslaw](https://github.com/pacoleslaw), [@kentemman-gmd](https://github.com/kentemman-gmd))
-- **Package for QField**: Packaging dialog and tools for offline mobile GIS workflows in QField ([@velascojasper0](https://github.com/velascojasper0), [@kentemman-gmd](https://github.com/kentemman-gmd))
-- **Join Barangay Attributes**: Advanced fuzzy matching algorithm for joining administrative attributes ([@psacjperez](https://github.com/psacjperez), [@kentemman-gmd](https://github.com/kentemman-gmd))
-- Implemented MBI validator tool, enhancing data validation capabilities (@psacjperez) (#139)
-- Modularize EA creation pipeline, refine processing UI, and add user documentation ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#127](https://github.com/GMD-Repository/gemma-plugin/pull/127))
-- Implement Create Enumeration Areas algorithm and automated QGIS testing pipeline ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#131](https://github.com/GMD-Repository/gemma-plugin/pull/131))
-- Add EA processing, geometry cleaning, and delineation tools ([@pacoleslaw](https://github.com/pacoleslaw)) ([#134](https://github.com/GMD-Repository/gemma-plugin/pull/134))
-- implement Auto Arrange tool with QML styling, single-symbol gap/overlap rendering, and PSGC grouping ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#136](https://github.com/GMD-Repository/gemma-plugin/pull/136))
-- enhance Pre-Processing digitizing workflow & Topology Checker automation ([@velascojasper0](https://github.com/velascojasper0)) ([#120](https://github.com/GMD-Repository/gemma-plugin/pull/120))
-- add digitize dock widget, single feature edit guard, and snapping options ([@velascojasper0](https://github.com/velascojasper0)) ([#122](https://github.com/GMD-Repository/gemma-plugin/pull/122))
-- implement Check and Update tool for boundary georeferencing, geometry repair, and metadata updates ([@velascojasper0](https://github.com/velascojasper0))
-- implement automated stable release pipeline ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#117](https://github.com/GMD-Repository/gemma-plugin/pull/117))
+- Implemented EA merge processor, EARF Excel writer, and phase 8 output ([@pacoleslaw](https://github.com/pacoleslaw)) ([#192](https://github.com/GMD-Repository/gemma-plugin/pull/192))
+- Implemented EA delineation and merging workflow, launcher UI, and EARF generation ([@pacoleslaw](https://github.com/pacoleslaw)) ([#193](https://github.com/GMD-Repository/gemma-plugin/pull/193))
+- Implemented Create Enumeration Area UI and modular processing phase scripts ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#193](https://github.com/GMD-Repository/gemma-plugin/pull/193))
+- Implemented EA candidate identification and delineation phase logic with supporting test mocks and utilities ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#195](https://github.com/GMD-Repository/gemma-plugin/pull/195))
+- Implemented EA output phase with geometric refinement, vertex cleanup, and unit testing infrastructure ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#196](https://github.com/GMD-Repository/gemma-plugin/pull/196))
+- Implemented geometric splitting and hybrid Voronoi-road clustering for EA delineation ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#197](https://github.com/GMD-Repository/gemma-plugin/pull/197))
+- Implemented geometric EA splitting and voronoi-based clustering logic in phase5_delineate ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#198](https://github.com/GMD-Repository/gemma-plugin/pull/198))
+- Implemented EA Delineation tool with dialog interface and algorithm logic ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#199](https://github.com/GMD-Repository/gemma-plugin/pull/199))
+- Implemented enumeration area creation pipeline with modular processing phases and documentation ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#200](https://github.com/GMD-Repository/gemma-plugin/pull/200))
+- Implemented EADMCandidatesAlgorithm for automated enumeration area delineation and merging pipeline ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#201](https://github.com/GMD-Repository/gemma-plugin/pull/201))
+- Implemented Pre-EA processor workflow to automate boundary clipping and gap assignment ([@pacoleslaw](https://github.com/pacoleslaw)) ([#202](https://github.com/GMD-Repository/gemma-plugin/pull/202))
+- Added pre-EA processing, geometry cleaning, and output generation modules for Enumeration Area creation ([@pacoleslaw](https://github.com/pacoleslaw)) ([#203](https://github.com/GMD-Repository/gemma-plugin/pull/203))
 
 ### ⚡ Improvements & Fixes
-- Improved Package Dialog functionality and introduced default presets for user convenience ([@velascojasper0](https://github.com/velascojasper0), [@kentemman-gmd](https://github.com/kentemman-gmd))
-- Enhanced drag-and-drop support for improved user experience ([@kentemman-gmd](https://github.com/kentemman-gmd))
-- Harmonized legacy plugin references and updated repository metadata ([@kentemman-gmd](https://github.com/kentemman-gmd))
-- Enhanced changelog link generation to ensure accurate references ([@kentemman-gmd](https://github.com/kentemman-gmd))
-- Added support for duplicate vertices fix in geometry repair toolkit (@psacjperez)
-- Modified update metadata and joined barangay attributes for improved data handling (@psacjperez) (#139)
-- Supported 'len' and 'length' keyword arguments in QgsField mock for better compatibility (@psacjperez) (#139)
-- streamline LGU geocode metadata export, topology validation, and auto-numbered GPKG saving ([@velascojasper0](https://github.com/velascojasper0)) ([#125](https://github.com/GMD-Repository/gemma-plugin/pull/125))
+- Optimized geometry repair, attribute matching, and metadata processing for stability ([@psacjperez](https://github.com/psacjperez)) ([#189](https://github.com/GMD-Repository/gemma-plugin/pull/189))
+- Implemented phase 8 for spatial EA sorting, vertex cleanup, and feature output generation ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#192](https://github.com/GMD-Repository/gemma-plugin/pull/192))
+- Implemented phase 8 output processing module for feature cleaning and refinement alongside associated test suite and mocks ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#192](https://github.com/GMD-Repository/gemma-plugin/pull/192))
+- Implemented phase 8 for output feature generation, geometric cleanup, and EA processing ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#192](https://github.com/GMD-Repository/gemma-plugin/pull/192))
 
 ### 🐛 Bug Fixes
-- Corrected HuggingFace Inference API endpoints to resolve connectivity issues ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#143](https://github.com/GMD-Repository/gemma-plugin/pull/143))
-- Fixed HuggingFace Inference API endpoints and improved the model fallback chain (#142) ([@kentemman-gmd](https://github.com/kentemman-gmd))
-- Fixed HuggingFace Inference API endpoints and model fallback chain to ensure stable performance (@kentemman-gmd) (#141)
-- extract legacy geometry check tool, replace Tab 2 with repair toolkit, and remove metadata placeholder ([@velascojasper0](https://github.com/velascojasper0)) ([#132](https://github.com/GMD-Repository/gemma-plugin/pull/132))
+- Fixed inconsistencies related to Building Outside the LGU Boundary ([@ftating19](https://github.com/ftating19)) ([#194](https://github.com/GMD-Repository/gemma-plugin/pull/194))
+
+### 💥 Breaking Changes
+- Migrated geom_repair_toolkit to legacy status and introduced new geometry check and repair module ([@velascojasper0](https://github.com/velascojasper0)) ([#190](https://github.com/GMD-Repository/gemma-plugin/pull/190))
 
 ### 📚 Documentation
-- Initialized VitePress documentation site with comprehensive user guides and tool documentation ([@kentemman-gmd](https://github.com/kentemman-gmd))
-- Implemented automated GitHub Actions workflows for plugin packaging, release management, and preview builds ([@kentemman-gmd](https://github.com/kentemman-gmd))
-- Added project documentation and utilities for geometry and attribute processing (@psacjperez) (#139)
+- Initialized VitePress documentation site ([@pacoleslaw](https://github.com/pacoleslaw)) ([#193](https://github.com/GMD-Repository/gemma-plugin/pull/193))
 
-<Contributors :contributors="['kentemman-gmd', 'velascojasper0', 'pacoleslaw', 'psacjperez', 'nbacquiano-ui', 'nlb-sketch']" />
+<Contributors :contributors="['pacoleslaw', 'kentemman-gmd', 'psacjperez', 'ftating19', 'velascojasper0']" />
+
 
