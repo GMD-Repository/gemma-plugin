@@ -161,7 +161,6 @@ def _generate_hf_changelog(
         f"2. CRITICAL: Retain and include the author tags (e.g. (@username)) and PR numbers (e.g. (#123)) at the end of each generated bullet point.\n\n"
         f"Return ONLY valid JSON matching this schema:\n"
         f"{{\n"
-        f'  "summary": "1-2 sentence executive summary of the release.",\n'
         f'  "features": ["Descriptive bullet point ending with author (@user) and PR (#123) tags"],\n'
         f'  "improvements": ["Descriptive bullet point ending with author (@user) and PR (#123) tags"],\n'
         f'  "fixes": ["Descriptive bullet point ending with author (@user) and PR (#123) tags"],\n'

@@ -276,7 +276,7 @@ class UpdateLguByGeocodeAlgorithm(QgsProcessingAlgorithm):
         row_count = 0
         target_cols = [
             "map_uuid", "geocode", "region", "province", "city_mun", "barangay",
-            "province_code", "city_mun_code", "barangay_code"
+            "province_code", "city_mun_code", "barangay_code", "hhcount", "bldgcount"
         ]
 
         def _clean_segment(v, length=0):
@@ -289,6 +289,17 @@ class UpdateLguByGeocodeAlgorithm(QgsProcessingAlgorithm):
             if s and length > 0:
                 s = s.zfill(length)
             return s
+
+        def _parse_int(v):
+            if v is None or v == NULL:
+                return None
+            s = str(v).strip()
+            if s == "" or s.lower() in ("nan", "none", "null"):
+                return None
+            try:
+                return int(float(s))
+            except (ValueError, TypeError):
+                return None
 
         # Method 1: Try QgsVectorLayer via GDAL/OGR (Thread-safe & Fast)
         psgc_layer = QgsVectorLayer(f"{psgc_file_path}|layername=PSGC", "psgc_ref", "ogr")
@@ -332,6 +343,8 @@ class UpdateLguByGeocodeAlgorithm(QgsProcessingAlgorithm):
                         "province": _get_val("province"),
                         "city_mun": _get_val("city_mun"),
                         "barangay": _get_val("barangay"),
+                        "hhcount": _parse_int(feat.attribute(col_indices["hhcount"])) if "hhcount" in col_indices else None,
+                        "bldgcount": _parse_int(feat.attribute(col_indices["bldgcount"])) if "bldgcount" in col_indices else None,
                     }
 
                     # Index by multiple keys for maximum match robustness
@@ -387,6 +400,8 @@ class UpdateLguByGeocodeAlgorithm(QgsProcessingAlgorithm):
                             "province": _row_val("province"),
                             "city_mun": _row_val("city_mun"),
                             "barangay": _row_val("barangay"),
+                            "hhcount": _parse_int(row[col_indices["hhcount"]]) if "hhcount" in col_indices else None,
+                            "bldgcount": _parse_int(row[col_indices["bldgcount"]]) if "bldgcount" in col_indices else None,
                         }
 
                         if concat_key:
@@ -544,8 +559,8 @@ class UpdateLguByGeocodeAlgorithm(QgsProcessingAlgorithm):
             out_feat.setAttribute("code", "1003")
             out_feat.setAttribute("remarks", NULL)
             out_feat.setAttribute("source", _attr_or_null(source_val))
-            out_feat.setAttribute("hhcount", NULL)
-            out_feat.setAttribute("bldgcount", NULL)
+            out_feat.setAttribute("hhcount", _attr_or_null(psgc_match.get("hhcount")))
+            out_feat.setAttribute("bldgcount", _attr_or_null(psgc_match.get("bldgcount")))
             out_feat.setAttribute("sy", _attr_or_null(source_year_val))
             out_feat.setAttribute("boundary", "Barangay")
             out_feat.setAttribute("lgu_bgy_name", _attr_or_null(lgu_bgy_name_str))
