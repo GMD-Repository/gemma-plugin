@@ -108,7 +108,9 @@ def export_features_to_sink(alg, parameters, param_name, context, fields, wkb_ty
     if sink is None:
         raise QgsProcessingException(alg.invalidSinkError(parameters, param_name))
 
-    for f in features:
+    feature_list = features.getFeatures() if hasattr(features, "getFeatures") else features
+
+    for f in feature_list:
         if feedback and feedback.isCanceled():
             break
         sink.addFeature(f, QgsFeatureSink.FastInsert)
@@ -199,3 +201,86 @@ def set_status_bar(self, status_bar):
     status_bar.setValue(0)
     status_bar.setFormat("Ready")
     self.status_bar = status_bar
+
+
+REF_SELECT_MV_COLS  = [
+    "map_uuid",
+    "bsn_geoid",
+    "region_code",
+    "province_code",
+    "city_mun_code",
+    "barangay_code",
+    "ean",
+    "bsn",
+    "ea_geocode",
+    "en_code",
+]
+
+
+def select_mv(layer, *extra_fields, context=None, feedback=None, base_fields=None):
+    """
+    Selects and retains specific columns from a layer using QGIS native:retainfields.
+
+    Pre-selects standard CBMS columns by default:
+        map_uuid, bsn_geoid, region_code, province_code, city_mun_code,
+        barangay_code, ean, bsn, ea_geocode, en_code
+
+    Appends any extra user-specified columns.
+
+    Usage examples:
+        # 1. Multiple additional columns
+        final_output = select_mv(semi_final_output, ["ref_map_uuid", "ref_bsn_geoid"])
+
+        # 2. Single additional column
+        final_output = select_mv(semi_final_output, ["ref_bsn_geoid"])
+
+        # 3. Default columns only (no extra columns)
+        final_output = select_mv(semi_final_output, [])
+        # or
+        final_output = select_mv(semi_final_output)
+
+    """
+    if layer is None:
+        return None
+
+    initial_fields = list(base_fields) if base_fields is not None else list(REF_SELECT_MV_COLS )
+
+    fields_to_add = []
+    for arg in extra_fields:
+        if isinstance(arg, (list, tuple, set)):
+            fields_to_add.extend(list(arg))
+        elif isinstance(arg, str):
+            fields_to_add.append(arg)
+
+    target_names = []
+    for f in initial_fields + fields_to_add:
+        if f and isinstance(f, str) and f not in target_names:
+            target_names.append(f)
+
+    existing_fields = {}
+    if hasattr(layer, "fields") and layer.fields() is not None:
+        for f in layer.fields():
+            existing_fields[f.name().lower()] = f.name()
+
+    fields_to_retain = []
+    if existing_fields:
+        for name in target_names:
+            name_lower = name.lower()
+            if name_lower in existing_fields:
+                fields_to_retain.append(existing_fields[name_lower])
+    else:
+        fields_to_retain = target_names
+
+    if not fields_to_retain:
+        return layer
+
+    return processing.run(
+        "native:retainfields",
+        {
+            "INPUT": layer,
+            "FIELDS": fields_to_retain,
+            "OUTPUT": "memory:",
+        },
+        context=context,
+        feedback=feedback,
+    )["OUTPUT"]
