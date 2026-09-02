@@ -1141,6 +1141,7 @@ class EALauncherDialog(QDialog):
         self.bar_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
         inputs_layout.addWidget(self.bar_combo)
         self.bar_status_lbl = QLabel("No layer selected.")
+        self.bar_status_lbl.setWordWrap(True)
         inputs_layout.addWidget(self.bar_status_lbl)
 
         # Building Points
@@ -1149,6 +1150,7 @@ class EALauncherDialog(QDialog):
         self.bldg_combo.setFilters(QgsMapLayerProxyModel.PointLayer)
         inputs_layout.addWidget(self.bldg_combo)
         self.bldg_status_lbl = QLabel("No layer selected.")
+        self.bldg_status_lbl.setWordWrap(True)
         inputs_layout.addWidget(self.bldg_status_lbl)
 
         # Previous EAs
@@ -1157,6 +1159,7 @@ class EALauncherDialog(QDialog):
         self.prev_ea_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
         inputs_layout.addWidget(self.prev_ea_combo)
         self.prev_ea_status_lbl = QLabel("No layer selected.")
+        self.prev_ea_status_lbl.setWordWrap(True)
         inputs_layout.addWidget(self.prev_ea_status_lbl)
 
         # Road (Optional)
@@ -1167,6 +1170,7 @@ class EALauncherDialog(QDialog):
         self.road_combo.setLayer(None)
         inputs_layout.addWidget(self.road_combo)
         self.road_status_lbl = QLabel("Optional.")
+        self.road_status_lbl.setWordWrap(True)
         inputs_layout.addWidget(self.road_status_lbl)
 
         # River (Optional)
@@ -1177,6 +1181,7 @@ class EALauncherDialog(QDialog):
         self.river_combo.setLayer(None)
         inputs_layout.addWidget(self.river_combo)
         self.river_status_lbl = QLabel("Optional.")
+        self.river_status_lbl.setWordWrap(True)
         inputs_layout.addWidget(self.river_status_lbl)
 
         # Gap (Optional)
@@ -1187,6 +1192,7 @@ class EALauncherDialog(QDialog):
         self.gap_combo.setLayer(None)
         inputs_layout.addWidget(self.gap_combo)
         self.gap_status_lbl = QLabel("Optional.")
+        self.gap_status_lbl.setWordWrap(True)
         inputs_layout.addWidget(self.gap_status_lbl)
 
         # Overlap (Optional)
@@ -1197,6 +1203,7 @@ class EALauncherDialog(QDialog):
         self.overlap_combo.setLayer(None)
         inputs_layout.addWidget(self.overlap_combo)
         self.overlap_status_lbl = QLabel("Optional.")
+        self.overlap_status_lbl.setWordWrap(True)
         inputs_layout.addWidget(self.overlap_status_lbl)
 
         # Designated Output Folder
@@ -1286,59 +1293,58 @@ class EALauncherDialog(QDialog):
         # 3. Outputs Section (QGroupBox)
         outputs_group = QGroupBox("Output Preview")
         outputs_layout = QVBoxLayout(outputs_group)
-        outputs_layout.setContentsMargins(8, 8, 8, 8)
+        outputs_layout.setContentsMargins(10, 8, 10, 8)
         outputs_layout.setSpacing(6)
 
-        grid = QGridLayout()
-        grid.setSpacing(4)
-
         # Permanent outputs
-        grid.addWidget(QLabel("<b>Permanent Output Layers (.gpkg):</b>"), 0, 0, 1, 2)
+        perm_title = QLabel("<b>Permanent Output Layers (.gpkg):</b>")
+        perm_title.setWordWrap(True)
+        outputs_layout.addWidget(perm_title)
 
-        grid.addWidget(QLabel("Delineated EAs:"), 1, 0)
-        self.out_delineated_lbl = QLabel("-")
-        self.out_delineated_lbl.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        grid.addWidget(self.out_delineated_lbl, 1, 1)
+        self.out_delineated_lbl = QLabel("• Delineated EAs: <i>-</i>")
+        self.out_delineated_lbl.setWordWrap(True)
+        self.out_delineated_lbl.setFont(QFont("Segoe UI", 9))
+        outputs_layout.addWidget(self.out_delineated_lbl)
 
-        grid.addWidget(QLabel("Merged EAs:"), 2, 0)
-        self.out_merged_lbl = QLabel("-")
-        self.out_merged_lbl.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        grid.addWidget(self.out_merged_lbl, 2, 1)
+        self.out_merged_lbl = QLabel("• Merged EAs: <i>-</i>")
+        self.out_merged_lbl.setWordWrap(True)
+        self.out_merged_lbl.setFont(QFont("Segoe UI", 9))
+        outputs_layout.addWidget(self.out_merged_lbl)
 
-        grid.addWidget(QLabel("Special EAs (Gap/Overlap):"), 3, 0)
-        self.out_special_lbl = QLabel("-")
-        self.out_special_lbl.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        grid.addWidget(self.out_special_lbl, 3, 1)
+        self.out_special_lbl = QLabel("• Special EAs (Gap/Overlap): <i>-</i>")
+        self.out_special_lbl.setWordWrap(True)
+        self.out_special_lbl.setFont(QFont("Segoe UI", 9))
+        outputs_layout.addWidget(self.out_special_lbl)
 
-        grid.addWidget(QLabel("Splitting Lines:"), 4, 0)
-        self.out_splitting_lines_lbl = QLabel("-")
-        self.out_splitting_lines_lbl.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        grid.addWidget(self.out_splitting_lines_lbl, 4, 1)
+        self.out_splitting_lines_lbl = QLabel("• Splitting Lines: <i>-</i>")
+        self.out_splitting_lines_lbl.setWordWrap(True)
+        self.out_splitting_lines_lbl.setFont(QFont("Segoe UI", 9))
+        outputs_layout.addWidget(self.out_splitting_lines_lbl)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
         sep.setFrameShadow(QFrame.Sunken)
-        grid.addWidget(sep, 5, 0, 1, 2)
+        outputs_layout.addWidget(sep)
 
         # Temporary scratch outputs
-        grid.addWidget(QLabel("<b>Temporary Scratch Layers:</b>"), 6, 0, 1, 2)
+        temp_title = QLabel("<b>Temporary Scratch Layers:</b>")
+        temp_title.setWordWrap(True)
+        outputs_layout.addWidget(temp_title)
 
-        grid.addWidget(QLabel("Delineation Candidates:"), 7, 0)
-        self.out_delin_cand_lbl = QLabel("[Temporary Scratch Layer]")
-        self.out_delin_cand_lbl.setStyleSheet("color: #7F8C8D;")
-        grid.addWidget(self.out_delin_cand_lbl, 7, 1)
+        self.out_delin_cand_lbl = QLabel("• Delineation Candidates: <span style='color:#7F8C8D;'>[Scratch]</span>")
+        self.out_delin_cand_lbl.setWordWrap(True)
+        self.out_delin_cand_lbl.setFont(QFont("Segoe UI", 9))
+        outputs_layout.addWidget(self.out_delin_cand_lbl)
 
-        grid.addWidget(QLabel("Merge Candidates:"), 7, 0)
-        self.out_merge_cand_lbl = QLabel("[Temporary Scratch Layer]")
-        self.out_merge_cand_lbl.setStyleSheet("color: #7F8C8D;")
-        grid.addWidget(self.out_merge_cand_lbl, 7, 1)
+        self.out_merge_cand_lbl = QLabel("• Merge Candidates: <span style='color:#7F8C8D;'>[Scratch]</span>")
+        self.out_merge_cand_lbl.setWordWrap(True)
+        self.out_merge_cand_lbl.setFont(QFont("Segoe UI", 9))
+        outputs_layout.addWidget(self.out_merge_cand_lbl)
 
-        grid.addWidget(QLabel("Extracted Buildings:"), 8, 0)
-        self.out_extracted_bldg_lbl = QLabel("[Temporary Scratch Layer]")
-        self.out_extracted_bldg_lbl.setStyleSheet("color: #7F8C8D;")
-        grid.addWidget(self.out_extracted_bldg_lbl, 8, 1)
-
-        outputs_layout.addLayout(grid)
+        self.out_extracted_bldg_lbl = QLabel("• Extracted Buildings: <span style='color:#7F8C8D;'>[Scratch]</span>")
+        self.out_extracted_bldg_lbl.setWordWrap(True)
+        self.out_extracted_bldg_lbl.setFont(QFont("Segoe UI", 9))
+        outputs_layout.addWidget(self.out_extracted_bldg_lbl)
 
         scroll_layout.addWidget(outputs_group)
         scroll.setWidget(scroll_content)
@@ -1841,10 +1847,14 @@ class EALauncherDialog(QDialog):
         # 3. Reset output folder, preview labels, line edits and search filter
         if hasattr(self, 'output_folder_widget'):
             self.output_folder_widget.setFilePath("")
-        for attr in ['out_delineated_lbl', 'out_merged_lbl', 'out_special_lbl', 'out_splitting_lines_lbl']:
-            lbl = getattr(self, attr, None)
-            if lbl:
-                lbl.setText("-")
+        if hasattr(self, 'out_delineated_lbl'):
+            self.out_delineated_lbl.setText("• Delineated EAs: <i>-</i>")
+        if hasattr(self, 'out_merged_lbl'):
+            self.out_merged_lbl.setText("• Merged EAs: <i>-</i>")
+        if hasattr(self, 'out_special_lbl'):
+            self.out_special_lbl.setText("• Special EAs (Gap/Overlap): <i>-</i>")
+        if hasattr(self, 'out_splitting_lines_lbl'):
+            self.out_splitting_lines_lbl.setText("• Splitting Lines: <i>-</i>")
         for edit in [
             getattr(self, 'delineated_edit', None),
             getattr(self, 'merged_edit', None),
@@ -2064,13 +2074,13 @@ class EALauncherDialog(QDialog):
         geo5 = self._extract_5digit_geocode()
         if geo5:
             if hasattr(self, 'out_delineated_lbl'):
-                self.out_delineated_lbl.setText(f"{geo5}_delineated_ea2026.gpkg")
+                self.out_delineated_lbl.setText(f"• Delineated EAs: <b>{geo5}_delineated_ea2026.gpkg</b>")
             if hasattr(self, 'out_merged_lbl'):
-                self.out_merged_lbl.setText(f"{geo5}_merged_ea2026.gpkg")
+                self.out_merged_lbl.setText(f"• Merged EAs: <b>{geo5}_merged_ea2026.gpkg</b>")
             if hasattr(self, 'out_special_lbl'):
-                self.out_special_lbl.setText(f"{geo5}_special_ea.gpkg")
+                self.out_special_lbl.setText(f"• Special EAs (Gap/Overlap): <b>{geo5}_special_ea.gpkg</b>")
             if hasattr(self, 'out_splitting_lines_lbl'):
-                self.out_splitting_lines_lbl.setText(f"{geo5}_eadel_update.gpkg")
+                self.out_splitting_lines_lbl.setText(f"• Splitting Lines: <b>{geo5}_eadel_update.gpkg</b>")
 
             if hasattr(self, 'delineated_edit'):
                 self.delineated_edit.setPlaceholderText(f"{geo5}_delineated_ea2026")
@@ -2086,13 +2096,13 @@ class EALauncherDialog(QDialog):
                 self.extracted_bldg_edit.setPlaceholderText(f"{geo5}_extracted_bldgpts")
         else:
             if hasattr(self, 'out_delineated_lbl'):
-                self.out_delineated_lbl.setText("-")
+                self.out_delineated_lbl.setText("• Delineated EAs: <i>-</i>")
             if hasattr(self, 'out_merged_lbl'):
-                self.out_merged_lbl.setText("-")
+                self.out_merged_lbl.setText("• Merged EAs: <i>-</i>")
             if hasattr(self, 'out_special_lbl'):
-                self.out_special_lbl.setText("-")
+                self.out_special_lbl.setText("• Special EAs (Gap/Overlap): <i>-</i>")
             if hasattr(self, 'out_splitting_lines_lbl'):
-                self.out_splitting_lines_lbl.setText("-")
+                self.out_splitting_lines_lbl.setText("• Splitting Lines: <i>-</i>")
 
             if hasattr(self, 'delineated_edit'):
                 self.delineated_edit.setPlaceholderText("[Temporary Scratch Layer]")
