@@ -321,7 +321,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 self.MIN_HOUSEHOLD,
                 "Minimum Household Count per EA",
                 type=QgsProcessingParameterNumber.Integer,
-                defaultValue=100,
+                defaultValue=99,
                 minValue=1,
             )
         )
