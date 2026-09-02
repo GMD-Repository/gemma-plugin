@@ -1234,7 +1234,7 @@ class EALauncherDialog(QDialog):
         params_layout.addWidget(self.min_hh_label)
         self.min_hh_spin = QSpinBox()
         self.min_hh_spin.setRange(1, 99999)
-        self.min_hh_spin.setValue(100)
+        self.min_hh_spin.setValue(99)
         params_layout.addWidget(self.min_hh_spin)
 
         # Max Household
@@ -1828,7 +1828,7 @@ class EALauncherDialog(QDialog):
         if hasattr(self, 'enable_thresholds_chk'):
             self.enable_thresholds_chk.setChecked(False)
         if hasattr(self, 'min_hh_spin'):
-            self.min_hh_spin.setValue(100)
+            self.min_hh_spin.setValue(99)
         if hasattr(self, 'max_hh_spin'):
             self.max_hh_spin.setValue(300)
         if hasattr(self, 'tolerance_spin'):
