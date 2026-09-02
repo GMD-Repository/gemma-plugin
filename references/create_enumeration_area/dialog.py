@@ -2585,7 +2585,7 @@ class EALauncherDialog(QDialog):
                                         except Exception:
                                             pass
                                     self.log_console.append(
-                                        f"<span style='color:#7F8C8D;'>[INFO] Output layer '{target_name}' has 0 features; skipping permanent layer creation.</span>"
+                                        f"<span style='color:#7F8C8D;'>[INFO] Output layer '{target_name}' has 0 features; skipping layer generation.</span>"
                                     )
                                     continue
 
@@ -2615,6 +2615,15 @@ class EALauncherDialog(QDialog):
                                         clone = lnode.clone()
                                         target_group.addChildNode(clone)
                                         lnode.parent().removeChildNode(lnode)
+                        else:
+                            # Not in results dictionary (0 features produced)
+                            self.log_console.append(
+                                f"<span style='color:#7F8C8D;'>[INFO] Output layer '{target_name}' has 0 features; skipping layer generation.</span>"
+                            )
+                            # Remove any dangling layer with target_name if loaded with 0 features
+                            for lyr_id, lyr_obj in list(QgsProject.instance().mapLayers().items()):
+                                if lyr_obj.name() == target_name and lyr_obj.featureCount() == 0:
+                                    QgsProject.instance().removeMapLayer(lyr_id)
 
                 # Group and persist any generated splitting line layers (ending with _eadel_update) into Splitting Lines
                 has_splitting_lines = False
@@ -2631,7 +2640,7 @@ class EALauncherDialog(QDialog):
                                 except Exception:
                                     pass
                             self.log_console.append(
-                                f"<span style='color:#7F8C8D;'>[INFO] Splitting lines layer '{target_line_name}' has 0 features; skipping permanent layer creation.</span>"
+                                f"<span style='color:#7F8C8D;'>[INFO] Splitting lines layer '{target_line_name}' has 0 features; skipping layer generation.</span>"
                             )
                         else:
                             has_splitting_lines = True
