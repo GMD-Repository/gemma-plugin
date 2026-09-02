@@ -450,26 +450,26 @@ class PackageDialog(QDialog, DialogUi):
             # Auto-detect role based on layer name
             lname = layer_name.lower()
             detected_role = None
-            if any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_bldg_point", "_bldgpts", "_bldg_points")):
-                detected_role = "_ea_combo_bldg"
-            elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_geocode", "_geotagged", "pppmmbbbeeeeee")):
-                detected_role = "_ea_combo_geocode"
-            elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_bgy",)):
-                detected_role = "_ea_combo_bgy"
-            elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_ea",)):
-                detected_role = "_ea_combo_ea"
-            elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_landmark",)):
-                detected_role = "_ea_combo_landmark"
-            elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_block",)):
-                detected_role = "_ea_combo_block"
-            elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_road",)):
-                detected_role = "_ea_combo_road"
-            elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_river",)):
-                detected_role = "_ea_combo_river"
-            elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_bridge",)):
-                detected_role = "_ea_combo_bridge"
-            elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_railroad",)):
-                detected_role = "_ea_combo_railroad"
+                if any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_bldg_point", "_bldgpts", "_bldg_points")):
+                    detected_role = "_ea_combo_bldg"
+                elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_geocode", "_geotagged", "pppmmbbbeeeeee")):
+                    detected_role = "_ea_combo_geocode"
+                elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_bgy",)):
+                    detected_role = "_ea_combo_bgy"
+                elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_ea",)):
+                    detected_role = "_ea_combo_ea"
+                elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_landmark",)):
+                    detected_role = "_ea_combo_landmark"
+                elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_block",)):
+                    detected_role = "_ea_combo_block"
+                elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_road",)):
+                    detected_role = "_ea_combo_road"
+                elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_river",)):
+                    detected_role = "_ea_combo_river"
+                elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_bridge",)):
+                    detected_role = "_ea_combo_bridge"
+                elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_railroad",)):
+                    detected_role = "_ea_combo_railroad"
                 
             if detected_role:
                 for i in range(role_combo.count()):
@@ -5895,7 +5895,7 @@ class PackageDialog(QDialog, DialogUi):
 
             self.layers = {
                 layer.id(): layer for layer in QgsProject.instance().mapLayers().values()
-                if layer.name().endswith((
+                if not (layer.name() or "").lower().endswith('_special_ea') and (layer.name() or "").lower().endswith((
                     '_bgy', '_ea', '_ea_update', '_block',
                     '_bldgpts', '_bldg_point', '_bldg_points',
                     '_landmark', '_road', '_river', '_bridge', '_railroad'
