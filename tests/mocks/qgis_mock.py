@@ -1004,6 +1004,10 @@ class MockQCoreApplication:
 class MockQThread: pass
 class MockQObject:
     def __init__(self, parent=None): pass
+    def tr(self, s, *args, **kwargs): return s
+    def blockSignals(self, b): pass
+    def setProperty(self, name, val): pass
+    def property(self, name): return None
 
 
 class MockQWidget(MockGenericClass):
@@ -1011,6 +1015,7 @@ class MockQWidget(MockGenericClass):
 
 
 class MockQDialog(MockQWidget): pass
+class MockUiForm(metaclass=MockMetaClass): pass
 
 
 class MockProcessing:
@@ -1196,7 +1201,17 @@ def setup_qgis_mock_if_needed():
     qgis_mod.gui = gui_mod
     qgis_mod.utils = utils_mod
     qgis_mod.analysis = analysis_mod
-    qgis_mod.PyQt = pyqt_mod
+    qgis_mod.__path__ = []
+    pyqt_mod.__path__ = []
+    qtxml_mod = DynamicMockModule("qgis.PyQt.QtXml")
+    qtnetwork_mod = DynamicMockModule("qgis.PyQt.QtNetwork")
+    qtsvg_mod = DynamicMockModule("qgis.PyQt.QtSvg")
+    qtuic_mod = DynamicMockModule("qgis.PyQt.uic")
+    qtuic_mod.loadUiType = lambda *args, **kwargs: (MockUiForm, MockGenericClass)
+    pyqt_mod.QtXml = qtxml_mod
+    pyqt_mod.QtNetwork = qtnetwork_mod
+    pyqt_mod.QtSvg = qtsvg_mod
+    pyqt_mod.uic = qtuic_mod
 
     sys.modules["qgis"] = qgis_mod
     sys.modules["qgis.core"] = core_mod
@@ -1207,6 +1222,10 @@ def setup_qgis_mock_if_needed():
     sys.modules["qgis.PyQt.QtCore"] = qtcore_mod
     sys.modules["qgis.PyQt.QtWidgets"] = qtgui_mod
     sys.modules["qgis.PyQt.QtGui"] = qtwidgets_mod
+    sys.modules["qgis.PyQt.QtXml"] = qtxml_mod
+    sys.modules["qgis.PyQt.QtNetwork"] = qtnetwork_mod
+    sys.modules["qgis.PyQt.QtSvg"] = qtsvg_mod
+    sys.modules["qgis.PyQt.uic"] = qtuic_mod
 
     # 2. PyQt5 standalone fallback
     if "PyQt5" not in sys.modules:
@@ -1260,3 +1279,29 @@ def setup_qgis_mock_if_needed():
             import requests
         except ImportError:
             sys.modules["requests"] = DynamicMockModule("requests")
+
+    # 6. osgeo module fallback
+    if "osgeo" not in sys.modules:
+        try:
+            import osgeo
+        except ImportError:
+            osgeo_mod = DynamicMockModule("osgeo")
+            osgeo_mod.__path__ = []
+            osgeo_mod.gdal = DynamicMockModule("osgeo.gdal")
+            osgeo_mod.gdal.VersionInfo = lambda *args, **kwargs: "3040000"
+            osgeo_mod.ogr = DynamicMockModule("osgeo.ogr")
+            osgeo_mod.osr = DynamicMockModule("osgeo.osr")
+            sys.modules["osgeo"] = osgeo_mod
+            sys.modules["osgeo.gdal"] = osgeo_mod.gdal
+            sys.modules["osgeo.ogr"] = osgeo_mod.ogr
+            sys.modules["osgeo.osr"] = osgeo_mod.osr
+
+    # 7. sip module fallback
+    if "sip" not in sys.modules:
+        try:
+            import sip
+        except ImportError:
+            sip_mod = DynamicMockModule("sip")
+            sip_mod.isdeleted = lambda obj: False
+            sys.modules["sip"] = sip_mod
+

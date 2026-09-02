@@ -450,26 +450,28 @@ class PackageDialog(QDialog, DialogUi):
             # Auto-detect role based on layer name
             lname = layer_name.lower()
             detected_role = None
-                if any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_bldg_point", "_bldgpts", "_bldg_points")):
-                    detected_role = "_ea_combo_bldg"
-                elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_geocode", "_geotagged", "pppmmbbbeeeeee")):
-                    detected_role = "_ea_combo_geocode"
-                elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_bgy",)):
-                    detected_role = "_ea_combo_bgy"
-                elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_ea",)):
-                    detected_role = "_ea_combo_ea"
-                elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_landmark",)):
-                    detected_role = "_ea_combo_landmark"
-                elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_block",)):
-                    detected_role = "_ea_combo_block"
-                elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_road",)):
-                    detected_role = "_ea_combo_road"
-                elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_river",)):
-                    detected_role = "_ea_combo_river"
-                elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_bridge",)):
-                    detected_role = "_ea_combo_bridge"
-                elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_railroad",)):
-                    detected_role = "_ea_combo_railroad"
+            if lname.endswith("_special_ea"):
+                detected_role = None
+            elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_bldg_point", "_bldgpts", "_bldg_points")):
+                detected_role = "_ea_combo_bldg"
+            elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_geocode", "_geotagged", "pppmmbbbeeeeee")):
+                detected_role = "_ea_combo_geocode"
+            elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_bgy",)):
+                detected_role = "_ea_combo_bgy"
+            elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_ea",)):
+                detected_role = "_ea_combo_ea"
+            elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_landmark",)):
+                detected_role = "_ea_combo_landmark"
+            elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_block",)):
+                detected_role = "_ea_combo_block"
+            elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_road",)):
+                detected_role = "_ea_combo_road"
+            elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_river",)):
+                detected_role = "_ea_combo_river"
+            elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_bridge",)):
+                detected_role = "_ea_combo_bridge"
+            elif any(lname.endswith(s) or lname.endswith(s + " (offline)") for s in ("_railroad",)):
+                detected_role = "_ea_combo_railroad"
                 
             if detected_role:
                 for i in range(role_combo.count()):
@@ -502,34 +504,48 @@ class PackageDialog(QDialog, DialogUi):
                 
         layer_item.setText(2, style_combo.currentText())
 
-        lyr = None
         layer_id = layer_item.data(0, Qt.UserRole)
-        if layer_id:
-            lyr = QgsProject.instance().mapLayer(layer_id)
-        if not lyr:
-            layers = QgsProject.instance().mapLayersByName(layer_name)
-            if layers:
-                lyr = layers[0]
-                
+
         style_combo.currentTextChanged.connect(
-            lambda text, item=layer_item, l=lyr, name=layer_name: self._on_qml_combo_changed(item, l or name, text)
+            lambda text, item=layer_item, lid=layer_id, name=layer_name: self._on_qml_combo_changed(item, lid, name, text)
         )
         self.layer_groups_tree.setItemWidget(layer_item, 2, style_combo)
         return style_combo
 
-    def _on_qml_combo_changed(self, layer_item, layer, text):
-        layer_item.setText(2, text)
-        layer_name = layer.name() if hasattr(layer, 'name') else str(layer)
+    def _on_qml_combo_changed(self, layer_item, layer_id, layer_name, text):
+        try:
+            if layer_item and not sip.isdeleted(layer_item):
+                layer_item.setText(2, text)
+        except Exception:
+            pass
+
         settings = QSettings()
         if text == self.tr("(None)"):
             settings.remove(f"gmd_pipeline/qml_for_layer_{layer_name}")
         else:
             settings.setValue(f"gmd_pipeline/qml_for_layer_{layer_name}", text)
-            if hasattr(layer, 'name'):
-                from ..utils.style_utils import get_qml_file_path, apply_qml_to_layer
-                qml_path = get_qml_file_path(text)
-                if qml_path and os.path.isfile(qml_path):
-                    apply_qml_to_layer(layer, text)
+            lyr = None
+            if layer_id:
+                try:
+                    lyr = QgsProject.instance().mapLayer(layer_id)
+                except Exception:
+                    lyr = None
+            if not lyr:
+                try:
+                    layers = QgsProject.instance().mapLayersByName(layer_name)
+                    if layers:
+                        lyr = layers[0]
+                except Exception:
+                    lyr = None
+            if lyr is not None:
+                try:
+                    if not sip.isdeleted(lyr) and lyr.isValid():
+                        from ..utils.style_utils import get_qml_file_path, apply_qml_to_layer
+                        qml_path = get_qml_file_path(text)
+                        if qml_path and os.path.isfile(qml_path):
+                            apply_qml_to_layer(lyr, text)
+                except Exception:
+                    pass
 
     def _on_add_group(self):
         """Prompt user for a new group name and add a new group to the Layer Groups & Styles tree."""
@@ -802,22 +818,44 @@ class PackageDialog(QDialog, DialogUi):
         applied_summary = []
 
         def find_map_layer_for_item(item):
+            try:
+                if sip.isdeleted(item):
+                    return None
+            except Exception:
+                pass
+
             layer_id = item.data(0, Qt.UserRole)
             if layer_id:
-                lyr = project.mapLayer(layer_id)
-                if lyr: return lyr
+                try:
+                    lyr = project.mapLayer(layer_id)
+                    if lyr and not sip.isdeleted(lyr) and lyr.isValid():
+                        return lyr
+                except Exception:
+                    pass
             
             raw_name = item.text(0).strip()
-            match = project.mapLayersByName(raw_name)
-            if match: return match[0]
+            try:
+                match = project.mapLayersByName(raw_name)
+                if match and not sip.isdeleted(match[0]) and match[0].isValid():
+                    return match[0]
+            except Exception:
+                pass
             
             clean_name = re.sub(r"\s*\(\s*offline\s*\)$", "", raw_name, flags=re.IGNORECASE).strip()
-            match = project.mapLayersByName(clean_name)
-            if match: return match[0]
+            try:
+                match = project.mapLayersByName(clean_name)
+                if match and not sip.isdeleted(match[0]) and match[0].isValid():
+                    return match[0]
+            except Exception:
+                pass
             
-            for lyr in project.mapLayers().values():
-                if lyr.name().lower() == raw_name.lower() or lyr.name().lower() == clean_name.lower():
-                    return lyr
+            try:
+                for lyr in project.mapLayers().values():
+                    if lyr and not sip.isdeleted(lyr) and lyr.isValid():
+                        if lyr.name().lower() == raw_name.lower() or lyr.name().lower() == clean_name.lower():
+                            return lyr
+            except Exception:
+                pass
             return None
 
         # 1. Apply QML styles ONLY when explicitly requested (e.g. via 'Apply Groups & Styles' button)
@@ -3690,6 +3728,8 @@ class PackageDialog(QDialog, DialogUi):
         
         for lyr in all_vector_layers:
             lname = lyr.name().lower()
+            if lname.endswith("_special_ea"):
+                continue
             if any(lname.endswith(s) for s in suffixes) or any(lname.endswith(s + " (offline)") for s in suffixes):
                 return lyr
                 
@@ -5566,7 +5606,10 @@ class PackageDialog(QDialog, DialogUi):
                 fmt = layer_ds_override["format"]
 
             if not fmt:
-                if norm_name.endswith(("_ea_update", "_bgy_update", "_geocode", "_geotag")) or "geotag" in norm_name or "update" in norm_name:
+                if norm_name.endswith("_special_ea"):
+                    fmt = ".gpkg"
+                    suffix = "_special_ea"
+                elif norm_name.endswith(("_ea_update", "_bgy_update", "_geocode", "_geotag")) or "geotag" in norm_name or "update" in norm_name:
                     fmt = ".shp"
                     suffix = ""
                 elif norm_name.endswith(("_bldg_point", "_bldgpts", "_bldg_points")):
@@ -5885,7 +5928,7 @@ class PackageDialog(QDialog, DialogUi):
             
             print(f"Selected layer: {selected_layer.name()}")
             required = '_ea' if self.output_dropdown.currentText() == self.tr("EA Level") else '_bgy'
-            if not selected_layer.name().endswith(required):
+            if not selected_layer.name().endswith(required) or selected_layer.name().lower().endswith('_special_ea'):
                 QMessageBox.warning(self, "Layer Error", f"The selected layer must have the suffix '{required}'.")
                 return
 
@@ -5895,7 +5938,7 @@ class PackageDialog(QDialog, DialogUi):
 
             self.layers = {
                 layer.id(): layer for layer in QgsProject.instance().mapLayers().values()
-                if not (layer.name() or "").lower().endswith('_special_ea') and (layer.name() or "").lower().endswith((
+                if (not self._normalized_layer_name(layer.name()).lower().endswith('_special_ea')) and layer.name().endswith((
                     '_bgy', '_ea', '_ea_update', '_block',
                     '_bldgpts', '_bldg_point', '_bldg_points',
                     '_landmark', '_road', '_river', '_bridge', '_railroad'
@@ -5923,6 +5966,8 @@ class PackageDialog(QDialog, DialogUi):
                 if 'Base Layers' in group.name():  # Check for "Base Layers" group
                     for layer in group.findLayers():
                         layer_name = self._normalized_layer_name(layer.layer().name()).lower()
+                        if layer_name.endswith('_special_ea'):
+                            continue
                         # `prefix` was determined earlier from the selected geocode/output level
                         if layer_name.endswith('_bgy'):
                             new_name = f"{prefix}_bgy"
@@ -5976,6 +6021,8 @@ class PackageDialog(QDialog, DialogUi):
                 elif 'For Verification' in group.name():  # Check for "For Verification" group
                     for layer in group.findLayers():
                         layer_name = self._normalized_layer_name(layer.layer().name()).lower()
+                        if layer_name.endswith('_special_ea'):
+                            continue
                         if layer_name.endswith('_ea_update'):
                             new_name = f"{prefix}_ea_update"
                             layer.layer().setName(new_name)
@@ -7171,6 +7218,8 @@ class PackageDialog(QDialog, DialogUi):
                 if group.name() == 'Base Layers':  
                     for layer in group.findLayers():
                         layer_name = self._normalized_layer_name(layer.layer().name()).lower()
+                        if layer_name.endswith('_special_ea'):
+                            continue
                         # determine base prefix (up to underscore) then trim by output level
                         base_pref = selected_geocode.split('_', 1)[0] if selected_geocode else default_prefix
                         if self.output_dropdown.currentText() == self.tr("EA Level"):
@@ -7209,6 +7258,8 @@ class PackageDialog(QDialog, DialogUi):
                 elif group.name() == 'For Verification':  
                     for layer in group.findLayers():
                         layer_name = self._normalized_layer_name(layer.layer().name()).lower()
+                        if layer_name.endswith('_special_ea'):
+                            continue
                         # determine prefix according to output level
                         base_pref = selected_geocode.split('_', 1)[0] if selected_geocode else default_prefix
                         if self.output_dropdown.currentText() == self.tr("EA Level"):
@@ -7274,6 +7325,8 @@ class PackageDialog(QDialog, DialogUi):
 
         for layer in QgsProject.instance().mapLayers().values():
             name = self._normalized_layer_name(layer.name()).lower()
+            if name.endswith("_special_ea"):
+                continue
             for sfx in (
                 '_bgy', '_ea', '_ea_update', '_block',
                 '_bldgpts', '_bldg_point', '_bldg_points',
@@ -7300,7 +7353,9 @@ class PackageDialog(QDialog, DialogUi):
             if layer is not None and layer.isValid():
                 # Apply filters based on suffixes
                 layer_name = self._normalized_layer_name(layer.name())
-                if layer_name.endswith('_bgy'):
+                if layer_name.lower().endswith('_special_ea'):
+                    continue
+                elif layer_name.endswith('_bgy'):
                     layer.setSubsetString(f"geocode LIKE '{prefix}%'")
                     updated_layers.append(layer)
                 elif layer_name.endswith('_ea'):
@@ -7453,7 +7508,10 @@ class PackageDialog(QDialog, DialogUi):
                     QgsProject.instance().mapLayers().values(),
                     key=lambda l: l.name(),
                 ):
-                    if self._normalized_layer_name(layer_obj.name()).lower().endswith("_ea"):
+                    name_lower = self._normalized_layer_name(layer_obj.name()).lower()
+                    if name_lower.endswith("_special_ea"):
+                        continue
+                    if name_lower.endswith("_ea"):
                         self.layer_dropdown.addItem(layer_obj.name(), layer_obj.id())
                 if self.layer_dropdown.count() > 0:
                     self.layer_dropdown.setCurrentIndex(0)
@@ -7500,7 +7558,10 @@ class PackageDialog(QDialog, DialogUi):
             for layer in layers:
                 layer_obj = layer.layer()
                 name = layer_obj.name() if layer_obj is not None else layer.name()
-                if not name.lower().endswith(desired):
+                name_lower = name.lower()
+                if name_lower.endswith("_special_ea"):
+                    continue
+                if not name_lower.endswith(desired):
                     continue
                 layer_id = layer_obj.id() if layer_obj is not None else None
                 self.layer_dropdown.addItem(name, layer_id)
@@ -7944,6 +8005,9 @@ class PackageDialog(QDialog, DialogUi):
         modified = False  # Track if any changes were made
 
         for layer in project.mapLayers().values():
+            name_lower = self._normalized_layer_name(layer.name()).lower()
+            if name_lower.endswith("_special_ea"):
+                continue
             if layer.name().endswith(target_suffixes) and isinstance(layer, QgsVectorLayer):  
                 # Check if read-only is already set in project metadata
                 key = f"ReadOnlyLayers/{layer.id()}"
