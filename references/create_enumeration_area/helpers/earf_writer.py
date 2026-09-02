@@ -9,51 +9,51 @@ Template layout (matching PSA census format):
 
   Row  1 : Title  — "2026 Preliminary Enumeration Area Reference File"
   Row  2 : Sub-title — "As of <Mmm> <YYYY>"
-  Row  3 : (blank spacer)
-  Row  4 : Column group headers (merged):
+  Row  3 : Column group headers (merged):
              Geographic Identification | 2024 EARF | 2024 Estimated |
-             2026 Preliminary EAs
-  Rows 5–8: Sub-header labels (merged vertically, word-wrapped)
-  Row  9 : Column number codes  (1) (2) … (15)
-  Row 10 : (blank spacer)
-  Row 11+: Data block
-             - City/Mun summary row  (bold, gray fill)
-             - For each barangay:
-                 Barangay summary row (bold, lighter fill)
-                 EA data rows         (one per feature)
+             2026 Preliminary EA
+  Row  4 : Sub-header labels (word-wrapped)
+  Row  5 : Column number codes  (2) (3) … (14)
+  Row  6+: Data block (4-level hierarchy):
+             - Level 1: Province summary row (bold, dark fill: #4F81BD)
+             - Level 2: City/Mun summary row (bold, medium fill: #D9E1F2)
+             - Level 3: Barangay summary row (bold, light fill: #DCE6F1)
+             - Level 4: EA data rows         (one per feature)
 
-Column layout (A–O, 15 columns):
-  A  Reg          — 2-digit region code
-  B  Prov         — 5-digit province/city-mun code
-  C  Mun          — city-mun portion
-  D  Brgy         — 3-digit barangay suffix
-  E  EA           — EA code (ean)
-  F  Number of EAs                                         2024 EARF
-  G  Province, City, Municipality, Barangay, and EA        2024 EARF
-  H  Number of Households                                  2024 Estimated
-  I  Number of Buildings                                   2024 Estimated
-  J  New Enumeration Area Code                             2026 Preliminary EAs
-  K  Number of Household                                   2026 Preliminary EAs
-  L  Number of Buildings                                   2026 Preliminary EAs
-  M  EA Type                                               2026 Preliminary EAs
-  N  Source Year                                           2026 Preliminary EAs
-  O  Remarks                                               2026 Preliminary EAs
+Column layout (A–N, 14 columns):
+  A  Prov         — 3-digit province code (e.g. 017)
+  B  Mun          — 2-digit municipality code (e.g. 28)
+  C  Brgy         — 3-digit barangay code (e.g. 001)
+  D  EA           — 6-digit EA code (e.g. 001000)
+  E  Number of EAs                                         2024 EARF
+  F  Province, City, Municipality, Barangay, and EA        2024 EARF
+  G  Number of Households                                  2024 Estimated
+  H  Number of Buildings                                   2024 Estimated
+  I  New Enumeration Area Code                             2026 Preliminary EA
+  J  Household Count                                       2026 Preliminary EA
+  K  Building Count                                        2026 Preliminary EA
+  L  EA Type                                               2026 Preliminary EA
+  M  Source Year                                           2026 Preliminary EA
+  N  Remarks                                               2026 Preliminary EA
 
 Data sources (standard 19-field merged-layer schema):
-  geocode (8-digit) → Reg / Prov / Mun / Brgy codes
-  ean               → col E
-  eacount           → col F
-  name              → col G
-  hhcount           → col H  (2024 baseline)
-  bldgcount         → col I  (2024 baseline)
-  new_ean           → col J
-  hh_count          → col K  (2026 estimated)
-  bldg_count        → col L  (2026 estimated)
-  ea_type           → col M
-  sy                → col N
-  remarks           → col O
+  geocode (8-digit) → Prov / Mun / Brgy codes
+  ean               → col D
+  eacount           → col E
+  name              → col F
+  hhcount           → col G  (2024 baseline)
+  bldgcount         → col H  (2024 baseline)
+  new_ean           → col I
+  hh_count          → col J  (2026 estimated)
+  bldg_count        → col K  (2026 estimated)
+  ea_type           → col L
+  sy                → col M
+  remarks           → col N
 
-Delineated EAs : Each child feature appears on its own row.
+Delineated EAs : Child features appear on separate rows. To prevent double-counting
+                 baseline totals, 2024 counts (cols E, G, H) are populated only on the
+                 first child part; subsequent child parts leave 2024 counts blank while
+                 retaining the parent EA identifier in col D.
 Merged EAs     : Included once (prevailing EA); "Merged EA" appended to remarks.
 Special EAs    : Included with ea_type as-is (GAP / OVERLAP / SPECIAL).
 

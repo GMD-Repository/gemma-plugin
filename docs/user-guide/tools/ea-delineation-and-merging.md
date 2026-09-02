@@ -184,9 +184,23 @@ Replacement polygons take precedence over the previous EA layer: any overlapping
 | Output | Format | Description |
 |--------|--------|-------------|
 | **Consolidated EA Layer** | QGIS Layer (Polygon) | `<5-digit geocode>_ea2026` memory layer added to current project containing updated geometries with original EA attributes. |
-| **Consolidated Excel Table** | File (`.xlsx`) | `<5-digit geocode>_earf_<citymun>.xlsx` attribute table export with primary sheet `EA2026`. Columns dynamically mirror output layer fields. |
+| **Consolidated Excel Table** | File (`.xlsx`) | `<5-digit geocode>_earf_<citymun>.xlsx` attribute table export with structured 4-level hierarchy (Province, Municipality, Barangay, EA) and deduplicated baseline statistics. |
 
----
+### EARF Excel Workbook Format & Layout
+
+The generated EARF workbook follows official PSA census reporting structure across 14 columns (A–N):
+
+- **4-Level Hierarchical Aggregation**:
+  - **Level 1 (Province Summary)**: Formatted with dark header fill (`#4F81BD`) and bold text.
+  - **Level 2 (City/Municipality Summary)**: Formatted with medium header fill (`#D9E1F2`) and bold text.
+  - **Level 3 (Barangay Summary)**: Formatted with light header fill (`#DCE6F1`) and bold text.
+  - **Level 4 (EA Feature Rows)**: Individual EA feature rows with respective attributes.
+- **Column Layout (14 Columns)**:
+  - **Col A–D (Geographic Identification)**: `Prov`, `Mun`, `Brgy`, `EA`.
+  - **Col E–F (2024 EARF Baseline)**: `Number of EAs`, `Province, City, Municipality, Barangay, and EA`.
+  - **Col G–H (2024 Estimated Counts)**: `Number of Households`, `Number of Buildings`.
+  - **Col I–N (2026 Preliminary EA)**: `New Enumeration Area Code`, `Household Count`, `Building Count`, `EA Type`, `Source Year`, `Remarks`.
+- **Baseline Deduplication**: For delineated child parts belonging to the same parent EA, 2024 baseline statistics are displayed exclusively on the first child row, leaving subsequent child rows blank in Columns E, G, and H to prevent inflated summary calculations while keeping parent EA references in Column D.
 
 ## How It Works
 
@@ -209,9 +223,10 @@ Replacement polygons take precedence over the previous EA layer: any overlapping
 
 5. **Enumeration Area Merge (Tab 3)**:
    - Takes previous EA layer and multiple 8-digit replacement polygon layers.
+   - Reconciles coordinate reference systems across projected and geographic (EPSG:4326) layers, ensuring unreplaced EAs are properly retained.
    - Performs geometric difference on existing EAs against combined replacement polygons.
    - Inserts replacement geometries and builds `<5-digit geocode>_ea2026` layer.
-   - Dynamically exports attribute table to `<5-digit geocode>_earf_<citymun>.xlsx`.
+   - Dynamically exports attribute table to `<5-digit geocode>_earf_<citymun>.xlsx` with the 4-level hierarchy and styling.
 
 ## Supported Geometry Types
 
