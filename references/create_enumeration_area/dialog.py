@@ -1199,6 +1199,14 @@ class EALauncherDialog(QDialog):
         self.overlap_status_lbl = QLabel("Optional.")
         inputs_layout.addWidget(self.overlap_status_lbl)
 
+        # Designated Output Folder
+        inputs_layout.addWidget(QLabel("Designated Output Folder*"))
+        self.output_folder_widget = QgsFileWidget()
+        self.output_folder_widget.setStorageMode(QgsFileWidget.GetDirectory)
+        self.output_folder_widget.setDialogTitle("Designate Output Folder for EA Delineation and Merging")
+        inputs_layout.addWidget(self.output_folder_widget)
+        self.output_folder_widget.fileChanged.connect(self.validate_layer_inputs)
+
         scroll_layout.addWidget(inputs_group)
 
         # 2. Parameters Section (Collapsible QGroupBox)
@@ -1276,39 +1284,61 @@ class EALauncherDialog(QDialog):
         scroll_layout.addWidget(self.params_group)
 
         # 3. Outputs Section (QGroupBox)
-        outputs_group = QGroupBox("Output Layers")
+        outputs_group = QGroupBox("Output Preview")
         outputs_layout = QVBoxLayout(outputs_group)
-        outputs_layout.setSpacing(8)
+        outputs_layout.setContentsMargins(8, 8, 8, 8)
+        outputs_layout.setSpacing(6)
 
-        # Delineated EAs Layer
-        outputs_layout.addWidget(QLabel("Delineated EAs Layer"))
-        self.delineated_path, self.delineated_edit = self._file_picker_row()
-        outputs_layout.addLayout(self.delineated_path)
+        grid = QGridLayout()
+        grid.setSpacing(4)
 
-        # Merged EAs Layer
-        outputs_layout.addWidget(QLabel("Merged EAs Layer"))
-        self.merged_path, self.merged_edit = self._file_picker_row()
-        outputs_layout.addLayout(self.merged_path)
+        # Permanent outputs
+        grid.addWidget(QLabel("<b>Permanent Output Layers (.gpkg):</b>"), 0, 0, 1, 2)
 
-        # Special EAs Layer (Gap/Overlap)
-        outputs_layout.addWidget(QLabel("Special EAs Layer (Gap/Overlap)"))
-        self.special_ea_path, self.special_ea_edit = self._file_picker_row()
-        outputs_layout.addLayout(self.special_ea_path)
+        grid.addWidget(QLabel("Delineated EAs:"), 1, 0)
+        self.out_delineated_lbl = QLabel("-")
+        self.out_delineated_lbl.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        grid.addWidget(self.out_delineated_lbl, 1, 1)
 
-        # Candidate for Delineation Layer
-        outputs_layout.addWidget(QLabel("Delineation Candidate Layer"))
-        self.delin_cand_path, self.delin_cand_edit = self._file_picker_row()
-        outputs_layout.addLayout(self.delin_cand_path)
+        grid.addWidget(QLabel("Merged EAs:"), 2, 0)
+        self.out_merged_lbl = QLabel("-")
+        self.out_merged_lbl.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        grid.addWidget(self.out_merged_lbl, 2, 1)
 
-        # Candidate for Merging Layer
-        outputs_layout.addWidget(QLabel("Merge Candidate Layer"))
-        self.merge_cand_path, self.merge_cand_edit = self._file_picker_row()
-        outputs_layout.addLayout(self.merge_cand_path)
+        grid.addWidget(QLabel("Special EAs (Gap/Overlap):"), 3, 0)
+        self.out_special_lbl = QLabel("-")
+        self.out_special_lbl.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        grid.addWidget(self.out_special_lbl, 3, 1)
 
-        # Extracted Building Points Layer
-        outputs_layout.addWidget(QLabel("Extracted Building Points Layer"))
-        self.extracted_bldg_path, self.extracted_bldg_edit = self._file_picker_row()
-        outputs_layout.addLayout(self.extracted_bldg_path)
+        grid.addWidget(QLabel("Splitting Lines:"), 4, 0)
+        self.out_splitting_lines_lbl = QLabel("-")
+        self.out_splitting_lines_lbl.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        grid.addWidget(self.out_splitting_lines_lbl, 4, 1)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        grid.addWidget(sep, 5, 0, 1, 2)
+
+        # Temporary scratch outputs
+        grid.addWidget(QLabel("<b>Temporary Scratch Layers:</b>"), 6, 0, 1, 2)
+
+        grid.addWidget(QLabel("Delineation Candidates:"), 7, 0)
+        self.out_delin_cand_lbl = QLabel("[Temporary Scratch Layer]")
+        self.out_delin_cand_lbl.setStyleSheet("color: #7F8C8D;")
+        grid.addWidget(self.out_delin_cand_lbl, 7, 1)
+
+        grid.addWidget(QLabel("Merge Candidates:"), 7, 0)
+        self.out_merge_cand_lbl = QLabel("[Temporary Scratch Layer]")
+        self.out_merge_cand_lbl.setStyleSheet("color: #7F8C8D;")
+        grid.addWidget(self.out_merge_cand_lbl, 7, 1)
+
+        grid.addWidget(QLabel("Extracted Buildings:"), 8, 0)
+        self.out_extracted_bldg_lbl = QLabel("[Temporary Scratch Layer]")
+        self.out_extracted_bldg_lbl.setStyleSheet("color: #7F8C8D;")
+        grid.addWidget(self.out_extracted_bldg_lbl, 8, 1)
+
+        outputs_layout.addLayout(grid)
 
         scroll_layout.addWidget(outputs_group)
         scroll.setWidget(scroll_content)
@@ -1808,7 +1838,13 @@ class EALauncherDialog(QDialog):
         if hasattr(self, 'params_group') and hasattr(self.params_group, 'setCollapsed'):
             self.params_group.setCollapsed(True)
 
-        # 3. Reset output line edits and search filter
+        # 3. Reset output folder, preview labels, line edits and search filter
+        if hasattr(self, 'output_folder_widget'):
+            self.output_folder_widget.setFilePath("")
+        for attr in ['out_delineated_lbl', 'out_merged_lbl', 'out_special_lbl', 'out_splitting_lines_lbl']:
+            lbl = getattr(self, attr, None)
+            if lbl:
+                lbl.setText("-")
         for edit in [
             getattr(self, 'delineated_edit', None),
             getattr(self, 'merged_edit', None),
@@ -1925,6 +1961,18 @@ class EALauncherDialog(QDialog):
             self._safe_set_layer(self.gap_combo, candidates["gap"])
         if candidates["overlap"]:
             self._safe_set_layer(self.overlap_combo, candidates["overlap"])
+
+        # Auto-detect designated output folder if not yet set
+        if hasattr(self, 'output_folder_widget'):
+            current_out = self.output_folder_widget.filePath().strip()
+            if not current_out:
+                ref_layer = candidates["prev_ea"] or candidates["bar"]
+                if ref_layer:
+                    src = getattr(ref_layer, 'source', lambda: '')() if hasattr(ref_layer, 'source') else ''
+                    clean_src = src.split("|")[0].strip() if src else ""
+                    if clean_src and os.path.exists(clean_src):
+                        self.output_folder_widget.setFilePath(os.path.dirname(clean_src))
+
         self.validate_layer_inputs()
 
     def auto_arrange_and_detect_layers(self):
@@ -2012,22 +2060,58 @@ class EALauncherDialog(QDialog):
         else:
             self.overlap_status_lbl.setText(f"Active: {overlap_layer.featureCount()} polygon features loaded.")
             
-        # Update output layer placeholders using 5-digit geocode prefix
+        # Update output layer placeholders and preview labels using 5-digit geocode prefix
         geo5 = self._extract_5digit_geocode()
         if geo5:
-            self.delineated_edit.setPlaceholderText(f"{geo5}_delineated_ea2026")
-            self.merged_edit.setPlaceholderText(f"{geo5}_merged_ea2026")
-            self.special_ea_edit.setPlaceholderText(f"{geo5}_special_ea")
-            self.delin_cand_edit.setPlaceholderText(f"{geo5}_delineation_candidates")
-            self.merge_cand_edit.setPlaceholderText(f"{geo5}_merge_candidates")
-            self.extracted_bldg_edit.setPlaceholderText(f"{geo5}_extracted_bldgpts")
+            if hasattr(self, 'out_delineated_lbl'):
+                self.out_delineated_lbl.setText(f"{geo5}_delineated_ea2026.gpkg")
+            if hasattr(self, 'out_merged_lbl'):
+                self.out_merged_lbl.setText(f"{geo5}_merged_ea2026.gpkg")
+            if hasattr(self, 'out_special_lbl'):
+                self.out_special_lbl.setText(f"{geo5}_special_ea.gpkg")
+            if hasattr(self, 'out_splitting_lines_lbl'):
+                self.out_splitting_lines_lbl.setText(f"{geo5}_eadel_update.gpkg")
+
+            if hasattr(self, 'delineated_edit'):
+                self.delineated_edit.setPlaceholderText(f"{geo5}_delineated_ea2026")
+            if hasattr(self, 'merged_edit'):
+                self.merged_edit.setPlaceholderText(f"{geo5}_merged_ea2026")
+            if hasattr(self, 'special_ea_edit'):
+                self.special_ea_edit.setPlaceholderText(f"{geo5}_special_ea")
+            if hasattr(self, 'delin_cand_edit'):
+                self.delin_cand_edit.setPlaceholderText(f"{geo5}_delineation_candidates")
+            if hasattr(self, 'merge_cand_edit'):
+                self.merge_cand_edit.setPlaceholderText(f"{geo5}_merge_candidates")
+            if hasattr(self, 'extracted_bldg_edit'):
+                self.extracted_bldg_edit.setPlaceholderText(f"{geo5}_extracted_bldgpts")
         else:
-            self.delineated_edit.setPlaceholderText("[Temporary Scratch Layer]")
-            self.merged_edit.setPlaceholderText("[Temporary Scratch Layer]")
-            self.special_ea_edit.setPlaceholderText("[Temporary Scratch Layer]")
-            self.delin_cand_edit.setPlaceholderText("[Temporary Scratch Layer]")
-            self.merge_cand_edit.setPlaceholderText("[Temporary Scratch Layer]")
-            self.extracted_bldg_edit.setPlaceholderText("[Temporary Scratch Layer]")
+            if hasattr(self, 'out_delineated_lbl'):
+                self.out_delineated_lbl.setText("-")
+            if hasattr(self, 'out_merged_lbl'):
+                self.out_merged_lbl.setText("-")
+            if hasattr(self, 'out_special_lbl'):
+                self.out_special_lbl.setText("-")
+            if hasattr(self, 'out_splitting_lines_lbl'):
+                self.out_splitting_lines_lbl.setText("-")
+
+            if hasattr(self, 'delineated_edit'):
+                self.delineated_edit.setPlaceholderText("[Temporary Scratch Layer]")
+            if hasattr(self, 'merged_edit'):
+                self.merged_edit.setPlaceholderText("[Temporary Scratch Layer]")
+            if hasattr(self, 'special_ea_edit'):
+                self.special_ea_edit.setPlaceholderText("[Temporary Scratch Layer]")
+            if hasattr(self, 'delin_cand_edit'):
+                self.delin_cand_edit.setPlaceholderText("[Temporary Scratch Layer]")
+            if hasattr(self, 'merge_cand_edit'):
+                self.merge_cand_edit.setPlaceholderText("[Temporary Scratch Layer]")
+            if hasattr(self, 'extracted_bldg_edit'):
+                self.extracted_bldg_edit.setPlaceholderText("[Temporary Scratch Layer]")
+
+        # Validate designated output folder
+        has_output = bool(self.output_folder_widget.filePath().strip()) if hasattr(self, 'output_folder_widget') else False
+        can_run = bool(bar_layer and bldg_layer and prev_ea_layer and hh_found and ean_found and has_output)
+        if hasattr(self, 'run_btn'):
+            self.run_btn.setEnabled(can_run)
 
         self.trigger_auto_refresh()
 
@@ -2168,7 +2252,9 @@ class EALauncherDialog(QDialog):
         self.filter_previews()
 
         # Re-enable controls
-        self.run_btn.setEnabled(True)
+        has_out = bool(self.output_folder_widget.filePath().strip()) if hasattr(self, 'output_folder_widget') else False
+        can_run = bool(prev_ea_layer and has_out)
+        self.run_btn.setEnabled(can_run)
         self.refresh_btn.setEnabled(True)
         self.detect_btn.setEnabled(True)
 
@@ -2246,6 +2332,65 @@ class EALauncherDialog(QDialog):
 
     # ── Pipeline Execution ──────────────────────────────────────────────────
 
+    @staticmethod
+    def _export_layer_to_gpkg(layer: QgsVectorLayer, file_path: str, layer_name: str) -> bool:
+        """Export a vector layer to a permanent GeoPackage (.gpkg) file on disk."""
+        if not layer or not layer.isValid():
+            return False
+        try:
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            from qgis import processing
+            params = {
+                "INPUT": layer,
+                "OUTPUT": file_path,
+                "LAYER_NAME": layer_name,
+            }
+            res = processing.run("native:savefeatures", params)
+            if res and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                return True
+        except Exception:
+            pass
+
+        try:
+            from qgis.core import (
+                QgsCoordinateTransformContext,
+                QgsVectorFileWriter,
+                QgsProject,
+            )
+            save_options = QgsVectorFileWriter.SaveVectorOptions()
+            save_options.driverName = "GPKG"
+            save_options.layerName = layer_name
+            save_options.fileEncoding = "UTF-8"
+            if os.path.exists(file_path):
+                save_options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+            else:
+                save_options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteFile
+
+            ctx = (
+                QgsProject.instance().transformContext()
+                if (QgsProject.instance() and hasattr(QgsProject.instance(), 'transformContext'))
+                else QgsCoordinateTransformContext()
+            )
+
+            if hasattr(QgsVectorFileWriter, 'writeAsVectorFormatV3'):
+                res = QgsVectorFileWriter.writeAsVectorFormatV3(layer, file_path, ctx, save_options)
+                if res[0] == QgsVectorFileWriter.NoError:
+                    return True
+
+            if hasattr(QgsVectorFileWriter, 'writeAsVectorFormatV2'):
+                res = QgsVectorFileWriter.writeAsVectorFormatV2(layer, file_path, ctx, save_options)
+                if res[0] == QgsVectorFileWriter.NoError:
+                    return True
+
+            if hasattr(QgsVectorFileWriter, 'writeAsVectorFormat'):
+                res = QgsVectorFileWriter.writeAsVectorFormat(layer, file_path, "UTF-8", layer.crs(), "GPKG")
+                if res == QgsVectorFileWriter.NoError:
+                    return True
+        except Exception:
+            pass
+
+        return os.path.exists(file_path) and os.path.getsize(file_path) > 0
+
     def run_pipeline(self):
         """Execute processing algorithm directly using custom feedback."""
         bar_layer = self._safe_get_layer(self.bar_combo)
@@ -2264,7 +2409,22 @@ class EALauncherDialog(QDialog):
             self.tab_widget.setCurrentIndex(1)
             return
 
-        # Prepare parameters
+        out_folder = self.output_folder_widget.filePath().strip() if hasattr(self, 'output_folder_widget') else ""
+        if not out_folder:
+            QMessageBox.warning(self, "Missing Output Folder", "Please designate an output folder before running.")
+            if hasattr(self, 'run_btn'):
+                self.run_btn.setEnabled(False)
+            return
+
+        os.makedirs(out_folder, exist_ok=True)
+        geo5 = self._extract_5digit_geocode() or "00000"
+
+        # Define permanent output layer file paths (.gpkg)
+        delineated_file = os.path.normpath(os.path.join(out_folder, f"{geo5}_delineated_ea2026.gpkg")).replace("\\", "/")
+        merged_file = os.path.normpath(os.path.join(out_folder, f"{geo5}_merged_ea2026.gpkg")).replace("\\", "/")
+        special_ea_file = os.path.normpath(os.path.join(out_folder, f"{geo5}_special_ea.gpkg")).replace("\\", "/")
+
+        # Prepare parameters: Execute algorithm in-memory first; permanent .gpkg files are created ONLY if features exist
         parameters = {
             'BARANGAY_INPUT': bar_layer,
             'BUILDING_INPUT': bldg_layer,
@@ -2285,13 +2445,13 @@ class EALauncherDialog(QDialog):
             'TARGET_CRS': self.crs_widget.crs(),
             'PREVIEW_ONLY': False,
             
-            # Outputs
-            'DELINEATED_OUTPUT': self.delineated_edit.text() or 'TEMPORARY_OUTPUT',
-            'MERGED_OUTPUT': self.merged_edit.text() or 'TEMPORARY_OUTPUT',
-            'SPECIAL_EA_OUTPUT': self.special_ea_edit.text() or 'TEMPORARY_OUTPUT',
-            'DELINEATION_CANDIDATE_OUTPUT': self.delin_cand_edit.text() or 'TEMPORARY_OUTPUT',
-            'MERGE_CANDIDATE_OUTPUT': self.merge_cand_edit.text() or 'TEMPORARY_OUTPUT',
-            'EXTRACTED_BUILDINGS_OUTPUT': self.extracted_bldg_edit.text() or 'TEMPORARY_OUTPUT',
+            # Temporary scratch sinks during processing execution
+            'DELINEATED_OUTPUT': 'TEMPORARY_OUTPUT',
+            'MERGED_OUTPUT': 'TEMPORARY_OUTPUT',
+            'SPECIAL_EA_OUTPUT': 'TEMPORARY_OUTPUT',
+            'DELINEATION_CANDIDATE_OUTPUT': 'TEMPORARY_OUTPUT',
+            'MERGE_CANDIDATE_OUTPUT': 'TEMPORARY_OUTPUT',
+            'EXTRACTED_BUILDINGS_OUTPUT': 'TEMPORARY_OUTPUT',
         }
 
         # Clear UI state
@@ -2303,6 +2463,7 @@ class EALauncherDialog(QDialog):
         self.status_banner.setText("⏳ Processing algorithm... Please wait.")
 
         self.log_console.append("<span style='color:#1a7f37; font-weight:bold;'>[START] Starting EA Delineation and Merging...</span>")
+        self.log_console.append(f"<span style='color:#0969da; font-weight:bold;'>[INFO] Designated Output Folder: {out_folder}</span>")
         QCoreApplication.processEvents()
 
         # Instantiate feedback
@@ -2328,7 +2489,6 @@ class EALauncherDialog(QDialog):
                 self.log_console.append("<span style='color:#d17a00; font-weight:bold;'>[CANCEL] Pipeline execution cancelled by user.</span>")
             else:
                 # Rename and organize loaded layers into structured QGIS Layer Sub-Groups
-                geo5 = self._extract_5digit_geocode() or "00000"
                 from qgis.core import QgsProject, QgsMapLayer
 
                 root = QgsProject.instance().layerTreeRoot()
@@ -2383,19 +2543,20 @@ class EALauncherDialog(QDialog):
                                 candidates_group = cloned
 
                 # Output layers in exact top-to-bottom order for each group
+                # tuple: (out_key, target_name, target_group, qml_filename, is_permanent, file_path)
                 output_mapping_ordered = [
-                    ('EXTRACTED_BUILDINGS_OUTPUT', f"{geo5}_extracted_bldgpts", reference_group, "1. Base Layer Building Points.qml"),
-                    ('DELINEATED_OUTPUT', f"{geo5}_delineated_ea2026", eas_group, "ea_output.qml"),
-                    ('MERGED_OUTPUT', f"{geo5}_merged_ea2026", eas_group, "ea_output.qml"),
-                    ('SPECIAL_EA_OUTPUT', f"{geo5}_special_ea", eas_group, "ea_output.qml"),
-                    ('DELINEATION_CANDIDATE_OUTPUT', f"{geo5}_delineation_candidates", candidates_group, "delineation_candidates.qml"),
-                    ('MERGE_CANDIDATE_OUTPUT', f"{geo5}_merge_candidates", candidates_group, "merge_candidates.qml"),
+                    ('EXTRACTED_BUILDINGS_OUTPUT', f"{geo5}_extracted_bldgpts", reference_group, "1. Base Layer Building Points.qml", False, None),
+                    ('DELINEATED_OUTPUT', f"{geo5}_delineated_ea2026", eas_group, "ea_output.qml", True, delineated_file),
+                    ('MERGED_OUTPUT', f"{geo5}_merged_ea2026", eas_group, "ea_output.qml", True, merged_file),
+                    ('SPECIAL_EA_OUTPUT', f"{geo5}_special_ea", eas_group, "ea_output.qml", True, special_ea_file),
+                    ('DELINEATION_CANDIDATE_OUTPUT', f"{geo5}_delineation_candidates", candidates_group, "delineation_candidates.qml", False, None),
+                    ('MERGE_CANDIDATE_OUTPUT', f"{geo5}_merge_candidates", candidates_group, "merge_candidates.qml", False, None),
                 ]
 
                 from .helpers.style import apply_qml_to_layer
 
                 if isinstance(results, dict):
-                    for out_key, target_name, target_group, qml_filename in output_mapping_ordered:
+                    for out_key, target_name, target_group, qml_filename, is_perm, f_path in output_mapping_ordered:
                         if out_key in results:
                             layer_ref = results[out_key]
                             layer = None
@@ -2406,9 +2567,35 @@ class EALauncherDialog(QDialog):
                             
                             if layer:
                                 if layer.featureCount() == 0:
-                                    # If there are no values in the output layer, do not generate/keep it
+                                    # If 0 features, do NOT create a permanent file and do not keep on canvas
                                     QgsProject.instance().removeMapLayer(layer.id())
+                                    if f_path and os.path.exists(f_path):
+                                        try:
+                                            os.remove(f_path)
+                                        except Exception:
+                                            pass
+                                    self.log_console.append(
+                                        f"<span style='color:#7F8C8D;'>[INFO] Output layer '{target_name}' has 0 features; skipping permanent layer creation.</span>"
+                                    )
                                     continue
+
+                                if is_perm and f_path:
+                                    # Export to permanent GeoPackage ONLY when layer has features (> 0)
+                                    if self._export_layer_to_gpkg(layer, f_path, target_name):
+                                        perm_layer = QgsVectorLayer(f"{f_path}|layername={target_name}", target_name, "ogr")
+                                        if not perm_layer.isValid():
+                                            perm_layer = QgsVectorLayer(f_path, target_name, "ogr")
+                                        
+                                        if perm_layer.isValid():
+                                            QgsProject.instance().removeMapLayer(layer.id())
+                                            QgsProject.instance().addMapLayer(perm_layer, False)
+                                            apply_qml_to_layer(perm_layer, qml_filename)
+                                            target_group.addLayer(perm_layer)
+                                            self.log_console.append(
+                                                f"<span style='color:#0969da; font-weight:bold;'>[INFO]</span> "
+                                                f"Permanent GeoPackage layer (.gpkg) saved: {target_name} ({f_path})"
+                                            )
+                                            continue
 
                                 layer.setName(target_name)
                                 apply_qml_to_layer(layer, qml_filename)
@@ -2419,14 +2606,42 @@ class EALauncherDialog(QDialog):
                                         target_group.addChildNode(clone)
                                         lnode.parent().removeChildNode(lnode)
 
-                # Group any generated splitting line layers (ending with _eadel_update) into Splitting Lines
+                # Group and persist any generated splitting line layers (ending with _eadel_update) into Splitting Lines
                 has_splitting_lines = False
                 for layer_id, proj_layer in list(QgsProject.instance().mapLayers().items()):
                     if proj_layer.name().endswith("_eadel_update"):
+                        target_line_name = proj_layer.name()
+                        line_gpkg_path = os.path.normpath(os.path.join(out_folder, f"{target_line_name}.gpkg")).replace("\\", "/")
                         if proj_layer.featureCount() == 0:
+                            # If 0 features, do not create permanent file and remove from project
                             QgsProject.instance().removeMapLayer(layer_id)
+                            if os.path.exists(line_gpkg_path):
+                                try:
+                                    os.remove(line_gpkg_path)
+                                except Exception:
+                                    pass
+                            self.log_console.append(
+                                f"<span style='color:#7F8C8D;'>[INFO] Splitting lines layer '{target_line_name}' has 0 features; skipping permanent layer creation.</span>"
+                            )
                         else:
                             has_splitting_lines = True
+                            # Convert in-memory splitting line layer to permanent GeoPackage on disk ONLY when it has features
+                            if not proj_layer.source().lower().endswith(".gpkg"):
+                                if self._export_layer_to_gpkg(proj_layer, line_gpkg_path, target_line_name):
+                                    perm_line_layer = QgsVectorLayer(f"{line_gpkg_path}|layername={target_line_name}", target_line_name, "ogr")
+                                    if not perm_line_layer.isValid():
+                                        perm_line_layer = QgsVectorLayer(line_gpkg_path, target_line_name, "ogr")
+                                    if perm_line_layer.isValid():
+                                        QgsProject.instance().removeMapLayer(layer_id)
+                                        QgsProject.instance().addMapLayer(perm_line_layer, False)
+                                        apply_qml_to_layer(perm_line_layer, "eadel_update_lines.qml")
+                                        splitting_lines_group.addLayer(perm_line_layer)
+                                        self.log_console.append(
+                                            f"<span style='color:#0969da; font-weight:bold;'>[INFO]</span> "
+                                            f"Permanent GeoPackage layer (.gpkg) saved: {target_line_name} ({line_gpkg_path})"
+                                        )
+                                        continue
+
                             lnode = root.findLayer(layer_id)
                             if lnode and lnode.parent() != splitting_lines_group:
                                 clone = lnode.clone()

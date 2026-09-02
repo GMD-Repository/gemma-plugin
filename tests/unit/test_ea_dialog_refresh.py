@@ -92,6 +92,7 @@ class TestEADialogRefresh(unittest.TestCase):
         mock_dlg.sliver_combo = MagicMock()
         mock_dlg.crs_widget = MagicMock()
         mock_dlg.params_group = MagicMock()
+        mock_dlg.output_folder_widget = MagicMock()
         mock_dlg.delineated_edit = MagicMock()
         mock_dlg.merged_edit = MagicMock()
         mock_dlg.search_edit = MagicMock()
@@ -113,6 +114,7 @@ class TestEADialogRefresh(unittest.TestCase):
 
         self.assertEqual(len(mock_dlg.all_delineation_candidates), 0)
         self.assertEqual(len(mock_dlg.all_merge_candidates), 0)
+        mock_dlg.output_folder_widget.setFilePath.assert_called_once_with("")
         mock_dlg.enable_thresholds_chk.setChecked.assert_called_once_with(False)
         mock_dlg.min_hh_spin.setValue.assert_called_once_with(100)
         mock_dlg.max_hh_spin.setValue.assert_called_once_with(300)
