@@ -409,9 +409,20 @@ class QgsGeometry:
             pt = self._point
             xs = [pt.x()]
             ys = [pt.y()]
-        elif self.polygons and self.polygons[0]:
-            xs = [p.x() for p in self.polygons[0]]
-            ys = [p.y() for p in self.polygons[0]]
+        elif self.polygons:
+            pts = []
+            def _extract_pts(obj):
+                if hasattr(obj, 'x') and hasattr(obj, 'y'):
+                    pts.append(obj)
+                elif isinstance(obj, (list, tuple)):
+                    for item in obj:
+                        _extract_pts(item)
+            _extract_pts(self.polygons)
+            if pts:
+                xs = [p.x() for p in pts]
+                ys = [p.y() for p in pts]
+            else:
+                xs = ys = None
         else:
             xs = ys = None
         if xs:

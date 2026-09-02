@@ -1777,8 +1777,14 @@ def run_phase_8(
 
     feedback.pushInfo("Successfully created and structured Enumeration Areas.")
 
-    total_proc = getattr(alg, 'total_ea_processed', 0)
-    total_cand = getattr(alg, 'total_delin_candidates', 0)
+    try:
+        total_proc = int(getattr(alg, 'total_ea_processed', 0) or 0)
+    except Exception:
+        total_proc = 0
+    try:
+        total_cand = int(getattr(alg, 'total_delin_candidates', 0) or 0)
+    except Exception:
+        total_cand = 0
     feedback.pushInfo("--------------------------------------------------")
     # Count primary over-populated areas (>300 HH)
     primary_delin_cnt = 3 if len(delineation_candidate_ids) >= 3 else len(delineation_candidate_ids)
