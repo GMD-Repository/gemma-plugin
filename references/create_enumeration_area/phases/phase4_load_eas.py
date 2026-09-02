@@ -170,8 +170,14 @@ def run_phase_4(alg, parameters, context, feedback, multi_feedback, p1, p2, prev
 
         is_delineation = feat.id() in delineation_candidate_ids
         is_merge = feat.id() in merge_candidate_ids or _orig_hhcount == 0.0
+        is_special = feat.id() in special_ea_ids
 
-        if is_delineation:
+        if is_special:
+            needed_ea_ids.add(feat.id())
+            bar_geo = _resolve_bar(feat)
+            if bar_geo:
+                active_barangays.add(bar_geo)
+        elif is_delineation:
             needed_ea_ids.add(feat.id())
             bar_geo = _resolve_bar(feat)
             if bar_geo:
@@ -312,10 +318,10 @@ def run_phase_4(alg, parameters, context, feedback, multi_feedback, p1, p2, prev
         if (gap_source is not None or overlap_source is not None) and feat.id() in special_ea_ids:
             spec_info = special_ea_info[feat.id()]
             ea_dict['is_special_ea'] = True
-            ea_dict['ea_type'] = 'SPECIAL'
-            ea_dict['special_type'] = spec_info['special_type']
-            ea_dict['source_id'] = spec_info['source_id']
-            ea_dict['remarks'] = spec_info['remarks']
+            ea_dict['ea_type'] = spec_info.get('special_type', 'SPECIAL')
+            ea_dict['special_type'] = spec_info.get('special_type', 'SPECIAL')
+            ea_dict['source_id'] = spec_info.get('source_id', '')
+            ea_dict['remarks'] = spec_info.get('remarks', '')
             ea_dict['is_new'] = True
 
             if _ea_hh_count >= min_household:

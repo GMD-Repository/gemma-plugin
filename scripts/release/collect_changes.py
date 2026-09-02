@@ -34,61 +34,131 @@ class CollectedChanges:
 
 
 def _clean_line(line: str, author_login: str | None = None, owner: str = "", repo: str = "") -> str:
-    """Clean a single change line by removing noise and attaching author mention link and PR/issue links.
+    """Clean a single change line by removing noise, stripping embedded tags, and attaching canonical author mention link and PR/issue links.
 
     Strips:
-    - Leading bullet markers (* )
+    - Leading bullet markers (*, -)
+    - Embedded author & PR tags (e.g. (@user #123), (@user), (#123), ([@user](url)), ([#123](url)))
     - Author attributions (by @user in https://...)
-    - Trailing URLs (after extracting PR link)
+    - Trailing URLs
     - Trailing ellipsis
     - Conventional commit prefixes (feat:, fix:, etc.)
     """
-    author = author_login
-    author_match = re.search(r"\sby\s+@([\w-]+)", line)
-    if author_match and not author:
-        author = author_match.group(1)
+    cleaned = line.strip()
 
+    # 1. Extract PR number and URL
     pr_num = None
     pr_url = None
-    pr_match = re.search(r"https?://github\.com/([^/]+)/([^/]+)/(?:pull|issues)/(\d+)", line)
-    if pr_match:
-        pr_num = pr_match.group(3)
-        pr_url = pr_match.group(0)
+    # 1a. Explicit PR / issue URL
+    url_match = re.search(r"https?://github\.com/([^/]+)/([^/]+)/(?:pull|issues)/(\d+)", cleaned)
+    if url_match:
+        pr_num = url_match.group(3)
+        pr_url = url_match.group(0)
     else:
-        num_match = re.search(r"\(#(\d+)\)", line)
-        if num_match:
-            pr_num = num_match.group(1)
-            # Construct the full GitHub PR URL when only a bare number is found
-            if owner and repo:
-                pr_url = f"https://github.com/{owner}/{repo}/pull/{pr_num}"
+        # 1b. Markdown PR link: [#123](url)
+        md_pr_match = re.search(r"\[\s*#(\d+)\s*\]\((https?://[^\s)]+)\)", cleaned)
+        if md_pr_match:
+            pr_num = md_pr_match.group(1)
+            pr_url = md_pr_match.group(2)
+        else:
+            # 1c. Compound parenthesized tag: (@user #123) or (@user, #123)
+            compound_match = re.search(r"\(@[\w-]+\s*(?:[,&/-]\s*|\s+)#?(\d+)\)", cleaned)
+            if compound_match:
+                pr_num = compound_match.group(1)
+            else:
+                # 1d. Plain (#123) or trailing #123
+                num_match = re.search(r"\(\s*#(\d+)\s*\)", cleaned)
+                if num_match:
+                    pr_num = num_match.group(1)
+                else:
+                    trailing_num = re.search(r"(?:^|\s)#(\d+)(?:\s*$)", cleaned)
+                    if trailing_num:
+                        pr_num = trailing_num.group(1)
 
-    cleaned = line.strip()
-    cleaned = re.sub(r"^\*\s+", "", cleaned)
-    cleaned = re.sub(r"\s+by @[\w-]+ in https?://\S+", "", cleaned)
-    cleaned = re.sub(r"\s+in https?://\S+", "", cleaned)
-    cleaned = re.sub(r"\s+\(#\d+\)", "", cleaned)
-    cleaned = re.sub(r"…$", "", cleaned)
+    if pr_num and not pr_url and owner and repo:
+        pr_url = f"https://github.com/{owner}/{repo}/pull/{pr_num}"
+
+    # 2. Extract author username (prioritize embedded user tag over commit author)
+    author = None
+    # 2a. Embedded in (@user #123) or (@user) or ([@user](...))
+    embedded_author_match = re.search(
+        r"\(\s*\[?@([\w-]+)\]?(?:\([^)]*\))?(?:\s*[,&/-]?\s*#?\d+)?\s*\)", cleaned
+    )
+    if embedded_author_match:
+        author = embedded_author_match.group(1)
+    else:
+        # 2b. Markdown link [@user](...)
+        md_author_match = re.search(r"\[\s*@([\w-]+)\s*\](?:\([^)]*\))?", cleaned)
+        if md_author_match:
+            author = md_author_match.group(1)
+        else:
+            # 2c. "by @user" in release notes
+            by_author_match = re.search(r"\sby\s+@([\w-]+)", cleaned)
+            if by_author_match:
+                author = by_author_match.group(1)
+            elif author_login:
+                author = author_login
+
+    if author and ("[bot]" in author.lower() or "github-actions" in author.lower()):
+        author = None
+
+    # 3. Strip noise, prefixes, and all embedded author / PR tags from the text
+    # Strip leading bullet points
+    cleaned = re.sub(r"^[\s*\-•]+\s*", "", cleaned)
+    # Strip "by @user in https://..." or "in https://..." (safe against eating parens)
+    cleaned = re.sub(r"\s+by\s+@[\w-]+(?:\s+in\s+https?://[^\s)]+)?", "", cleaned)
+    cleaned = re.sub(r"\s+in\s+https?://[^\s)]+", "", cleaned)
+    # Strip outer parens enclosing markdown links: ([@user](url)) or ([#123](url))
+    cleaned = re.sub(r"\(\s*\[\s*@[\w-]+\s*\]\([^)]+\)\s*\)", "", cleaned)
+    cleaned = re.sub(r"\(\s*\[\s*#\d+\s*\]\([^)]+\)\s*\)", "", cleaned)
+    # Strip compound author/PR parenthesized tags: (@user #123), (@user, #123), ([@user](url) [#123](url))
     cleaned = re.sub(
-        r"^(feat|fix|refactor|perf|docs|style|test|chore|build)(\([^)]*\))?[!:]?\s*",
+        r"\(\s*\[?@[\w-]+\]?(?:\([^)]*\))?\s*(?:[,&/\-]\s*|\s+)?\[?#\d+\]?(?:\([^)]*\))?\s*\)",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"\(\s*\[?#\d+\]?(?:\([^)]*\))?\s*(?:[,&/\-]\s*|\s+)?\[?@[\w-]+\]?(?:\([^)]*\))?\s*\)",
+        "",
+        cleaned,
+    )
+    # Strip single parenthesized tags: (@user), (#123)
+    cleaned = re.sub(r"\(\s*\[?@[\w-]+\]?(?:\([^)]*\))?\s*\)", "", cleaned)
+    cleaned = re.sub(r"\(\s*\[?#\d+\]?(?:\([^)]*\))?\s*\)", "", cleaned)
+    # Strip bare markdown links or brackets: [@user](url), [#123](url)
+    cleaned = re.sub(r"\[\s*@[\w-]+\s*\]\([^)]+\)", "", cleaned)
+    cleaned = re.sub(r"\[\s*#\d+\s*\]\([^)]+\)", "", cleaned)
+    cleaned = re.sub(r"\[\s*@[\w-]+\s*\]", "", cleaned)
+    cleaned = re.sub(r"\[\s*#\d+\s*\]", "", cleaned)
+    # Strip remaining bare URLs without consuming closing parens
+    cleaned = re.sub(r"https?://[^\s)]+", "", cleaned)
+    # Strip standalone @user or #123 tokens
+    cleaned = re.sub(r"(?:^|\s)@[\w-]+(?:\s|$)", " ", cleaned)
+    cleaned = re.sub(r"(?:^|\s)#\d+(?:\s|$)", " ", cleaned)
+    # Strip conventional commit prefixes (e.g. feat:, fix(scope):, feat!:)
+    cleaned = re.sub(
+        r"^(feat|fix|refactor|perf|docs|style|test|chore|build|ci)(\([^)]*\))?[!:]\s*",
         "",
         cleaned,
         flags=re.IGNORECASE,
     )
-    cleaned = cleaned.strip()
+    # Strip trailing ellipsis and punctuation
+    cleaned = re.sub(r"[…\.]+$", "", cleaned)
+    cleaned = re.sub(r"[\s,;:\-()]+$", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
 
-    if author and not ("[bot]" in author or "github-actions" in author):
-        mention = f"([@{author}](https://github.com/{author}))"
-        if mention not in cleaned:
-            cleaned = f"{cleaned} {mention}"
-
+    # 4. Attach single canonical linked author and PR tags
+    suffix_parts: list[str] = []
+    if author:
+        suffix_parts.append(f"([@{author}](https://github.com/{author}))")
     if pr_num:
         if pr_url:
-            pr_ref = f"([#{pr_num}]({pr_url}))"
+            suffix_parts.append(f"([#{pr_num}]({pr_url}))")
         else:
-            pr_ref = f"(#{pr_num})"
-        if pr_ref not in cleaned and f"#{pr_num}" not in cleaned:
-            cleaned = f"{cleaned} {pr_ref}"
+            suffix_parts.append(f"(#{pr_num})")
 
+    if suffix_parts:
+        return f"{cleaned} {' '.join(suffix_parts)}"
     return cleaned
 
 

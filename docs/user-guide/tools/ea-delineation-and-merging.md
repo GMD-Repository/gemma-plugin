@@ -49,16 +49,25 @@ The **EA Preprocessing** tab prepares starting EA boundaries before running deli
 |-----------|------|-------------|
 | **Barangay Layer** | Vector (Polygon) | Administrative barangay polygon boundaries. Must contain a `geocode` field used to assign parent barangay codes. Required. |
 | **EA Layer** | Vector (Polygon) | Starting EA polygon boundaries to be pre-processed. Optional; if left unselected, a new EA layer is automatically created based on the Barangay layer input. |
+| **Designated Output Folder** | Folder Path | Directory where the output `.gpkg` GeoPackage file will be saved. Defaults to standard PSA-GIS / Project 1MAP preprocessing subfolder (`1_Reset EAs` or `2_Adjusted EAs`). Required. |
 | **Gap Area Tolerance (m²)** | Double | Minimum area threshold (default: `1.0 m²`) for a gap to be processed; smaller gaps are treated as geometry precision slivers and skipped. |
 | **Clip EA to Barangay Boundary** | Boolean | When enabled (default: `True`), clips any portion of an EA extending outside its parent Barangay boundary. |
 | **Detect Uncovered Barangay Areas** | Boolean | When enabled (default: `True`), identifies uncovered gaps within each Barangay after clipping. |
 | **Assign Gaps to Contiguous EA** | Boolean | When enabled (default: `True`), assigns each detected gap to the adjacent EA sharing the longest boundary edge. |
 
+### Designated Output Folder & Permanent GeoPackage (.gpkg) Export
+
+Tab 1 allows you to designate the target destination directory before running:
+- **Auto-Populated Default Directory**: Automatically detects the drive and province to populate:
+  `<drive>:\PSA-GIS\<province name>\Project 1MAP\3_EA Delineation and Merging\2_Pre-Processing\<1_Reset EAs or 2_Adjusted EAs>`
+- **Directory Browser**: Click the `...` folder picker button to designate or browse to any custom folder on any drive.
+- **Permanent Export**: When **Run** is executed, the preprocessed layer is saved directly into the designated folder as `<pppmm>_ea2026_preprocessed.gpkg` using QGIS Processing (`native:savefeatures`), and the permanent layer is loaded onto your QGIS canvas.
+
 ### EA Preprocessing Output & Attribute Fields
 
 | Output / Field Name | Type | Description |
 |---------------------|------|-------------|
-| **Pre-Processed EA Layer** | Vector (Polygon) | In-memory polygon layer (`<5-digit geocode>_ea2026_preprocessed`) containing aligned and gap-filled EAs. |
+| **Pre-Processed EA Layer** | Vector (Polygon / GeoPackage) | Saved GeoPackage polygon layer (`<5-digit geocode>_ea2026_preprocessed.gpkg`) inside designated sub-folder (`1_Reset EAs` or `2_Adjusted EAs`) containing aligned and gap-filled EAs. |
 | **hhcount** | Double | Household count for the EA polygon. |
 | **bldgcount** | Integer | Building count for the EA polygon. |
 | **original_area** | Double | Original surface area of the starting EA polygon in square metres. |
@@ -124,8 +133,21 @@ The output layers `<geocode>_delineated_ea2026`, `<geocode>_merged_ea2026`, and 
 | **new_ean** | String | Newly assigned post-delineation 6-digit EA sequence number code (e.g. `001000`). |
 | **hh_count** | Integer | New total household count aggregated from building points assigned to this polygon (whole number). |
 | **bldg_count** | Integer | New total building point count contained in this polygon. |
-| **ea_type** | String | EA classification type (`STANDARD` or `SPECIAL`). |
+| **ea_type** | String | EA classification and transformation type (`DELINEATED`, `MERGED`, `RETAINED`, `GAP`, `OVERLAP`, or `SPECIAL`). |
 | **remarks** | String | Processing note detailing action or split strategy (e.g. `Split along road network`, `Merged EA`, `Generated from Gap layer`). |
+
+### Special EA `new_ean` Naming Convention
+
+Special EAs (`special_ea` output polygons, resolved gap features, and overlap polygons) in Tab 2 are assigned 6-digit `new_ean` codes (`PPP000`) based on the existing non-special EAs within their parent Barangay:
+
+1. **When Non-Zero Suffixes Exist (`highest_suffix > 0`)**:
+   * If any split/child EA exists in the barangay (e.g., `001004` $\rightarrow \text{highest suffix} = 4$), the Special EA prefix (`PPP`) follows `(highest_suffix + 1)` and suffix (`SSS`) is `"000"`.
+   * *Example*: Highest suffix is `004` $\rightarrow$ Special EA becomes **`005000`**.
+2. **When All Suffixes are Base Zero (`highest_suffix == 0`)**:
+   * If all EAs in the barangay have base suffix `"000"` (e.g. `001000`, `002000`, `003000` $\rightarrow \text{highest prefix} = 3$), the Special EA prefix (`PPP`) follows `(highest_prefix + 1)` and suffix (`SSS`) is `"000"`.
+   * *Example*: Highest prefix is `003` $\rightarrow$ Special EA becomes **`004000`**.
+3. **Multiple Special EAs in Same Barangay**:
+   * Subsequent Special EAs in the same barangay increment sequentially (e.g. `004000`, `005000`, `006000`).
 
 In addition, the **`merge_ea2026`** (`<geocode>_merged_ea2026`) output layer includes the following 3 additional fields:
 

@@ -380,7 +380,7 @@ def run_phase_8(
     eas = list(p7.get("eas") or p7.get("split_eas", []))
     previous_ea_source = p1["previous_ea_source"]
     building_source = p1["building_source"]
-    out_fields = p2.get("out_fields") or p1.get("out_fields")
+    out_fields = p2.get("out_fields") if p2.get("out_fields") is not None else p1.get("out_fields")
     target_crs = p1["target_crs"]
     max_ea_number = p4.get("max_ea_number") if p4 else p1.get("max_ea_number", {})
     area_threshold = p1["area_threshold"]
@@ -409,6 +409,15 @@ def run_phase_8(
     merged_sink = p2.get("merged_sink") or p1.get("merged_sink")
     special_ea_sink = p2.get("special_ea_sink") or p1.get("special_ea_sink")
     extracted_buildings_sink = p2.get("extracted_buildings_sink") or p1.get("extracted_buildings_sink")
+    delineated_dest_id = p2.get("delineated_dest_id")
+    merged_dest_id = p2.get("merged_dest_id")
+    special_ea_dest_id = p2.get("special_ea_dest_id")
+    extracted_buildings_dest_id = p2.get("extracted_buildings_dest_id")
+    delin_candidate_dest_id = p2.get("delin_candidate_dest_id")
+    merge_candidate_dest_id = p2.get("merge_candidate_dest_id")
+    delin_candidate_feat_count = p2.get("delin_candidate_feat_count", 0)
+    merge_candidate_feat_count = p2.get("merge_candidate_feat_count", 0)
+    extracted_bldg_feat_count = p2.get("extracted_bldg_feat_count", 0)
 
     export_fields = p2.get("export_fields")
     if not export_fields:
@@ -447,6 +456,8 @@ def run_phase_8(
             if f.name() in ("hhcount", "bldgcount"):
                 continue
             special_ea_export_fields.append(f)
+    if special_ea_export_fields.indexOf("special_type") == -1:
+        special_ea_export_fields.append(QgsField("special_type", QVariant.String))
 
     def make_export_feature(src_feat: QgsFeature, exp_fields: QgsFields) -> QgsFeature:
         exp_feat = QgsFeature(exp_fields)
@@ -463,14 +474,43 @@ def run_phase_8(
             if idx != -1:
                 val = src_feat.attribute(idx)
             else:
-                val = src_feat.attribute(f.name())
+                val = None
             if f.name().lower() == "sy":
                 val = "2026"
             elif f.name().lower() in ("remarks", "remark", "delin_remark", "delin_remarks"):
-                val = ""
+                if val is None or val == NULL:
+                    val = ""
             exp_attrs.append(val if val is not None else None)
         exp_feat.setAttributes(exp_attrs)
         return exp_feat
+
+    def get_text_attr(feat: QgsFeature, candidate_names: list, prefer_text: bool = True):
+        if not feat or not feat.isValid():
+            return None
+        fields = feat.fields()
+        best_val = None
+        for name in candidate_names:
+            idx = fields.indexOf(name)
+            if idx == -1:
+                for j in range(fields.count()):
+                    if fields.at(j).name().lower() == name.lower():
+                        idx = j
+                        break
+            if idx != -1:
+                val = feat.attribute(idx)
+                if val is not None and val != NULL and not (isinstance(val, QVariant) and val.isNull()):
+                    val_str = str(val).strip()
+                    if val_str not in ('', 'NULL', 'None'):
+                        if val_str.endswith(".0"):
+                            val_str = val_str[:-2]
+                        if prefer_text:
+                            if not val_str.isdigit():
+                                return val_str
+                            elif best_val is None:
+                                best_val = val_str
+                        else:
+                            return val_str
+        return best_val
 
     delineated_feat_count = 0
     merged_feat_count = 0
@@ -497,10 +537,17 @@ def run_phase_8(
 
     bar_geocode_field = p1.get("bar_geocode_field", "geocode")
 
+    # Accumulate (barangay_geocode, gap_geom, parent_bgy_feat) tuples for all internally detected
+    # Barangay gaps and (barangay_geocode, overlap_geom, parent_bgy_feat) for EA-to-EA overlaps
+    # so they can be written to SPECIAL_EA_OUTPUT after the main loop.
+    internal_gap_geoms: list = []  # List[Tuple[str, QgsGeometry, Optional[QgsFeature]]]
+    internal_overlap_geoms: list = []  # List[Tuple[str, QgsGeometry, Optional[QgsFeature]]]
+    special_prefix_by_barangay: dict = {}  # Dict[str, int] tracked per barangay
+
     for bar in sorted(barangay_to_final_eas.keys(), key=lambda k: str(k) if k is not None else ""):
         bar_eas = barangay_to_final_eas[bar]
 
-        # Allocate uncovered Barangay gaps into constituent EAs
+        # Resolve parent_bgy_feat first
         parent_bgy_feat = None
         bar_str = str(bar).strip() if bar is not None else ""
         if bar_str.endswith(".0"):
@@ -517,8 +564,36 @@ def run_phase_8(
         if parent_bgy_feat is None and isinstance(bar, int) and bar in barangay_by_id:
             parent_bgy_feat = barangay_by_id[bar]
 
+        _bar_geocode = (
+            get_text_attr(parent_bgy_feat, ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code", "psgc"], prefer_text=False)
+            or bar_str
+        )
+        if _bar_geocode.endswith(".0"):
+            _bar_geocode = _bar_geocode[:-2]
+
+        # 1. Detect any EA-to-EA overlaps within this barangay
+        for _ea_i in range(len(bar_eas)):
+            _g_i = bar_eas[_ea_i].get('geom')
+            if not _g_i or _g_i.isEmpty():
+                continue
+            for _ea_j in range(_ea_i + 1, len(bar_eas)):
+                _g_j = bar_eas[_ea_j].get('geom')
+                if not _g_j or _g_j.isEmpty():
+                    continue
+                if _g_i.intersects(_g_j):
+                    _inter = _g_i.intersection(_g_j)
+                    if _inter and not _inter.isEmpty() and _inter.area() >= 1.0:
+                        _inter_polys = get_polygons_from_geom(_inter)
+                        for _ip in _inter_polys:
+                            if _ip and not _ip.isEmpty() and _ip.area() >= 1.0:
+                                internal_overlap_geoms.append((_bar_geocode, _ip, parent_bgy_feat))
+
+        # 2. Allocate uncovered Barangay gaps into constituent EAs
         if parent_bgy_feat and parent_bgy_feat.geometry() and not parent_bgy_feat.geometry().isEmpty():
-            allocate_gaps_to_parts(bar_eas, parent_bgy_feat.geometry())
+            bar_eas, _detected_gaps = allocate_gaps_to_parts(bar_eas, parent_bgy_feat.geometry())
+            if _detected_gaps:
+                for _gap_geom in _detected_gaps:
+                    internal_gap_geoms.append((_bar_geocode, _gap_geom, parent_bgy_feat))
 
         # Determine maximum starting sequence (child YYY) already in use in this barangay.
         # Scan both the in-memory loaded EAs AND all sibling EA codes collected from the
@@ -633,17 +708,16 @@ def run_phase_8(
             pid = ea_item.get('original_id', id(ea_item))
             parent_groups.setdefault(pid, []).append(ea_item)
 
+        # Step 1: Assign new_ea_code to non-special EAs first (retained, merged, delineated)
         for pid, group in parent_groups.items():
             if len(group) == 1:
                 ea = group[0]
+                if ea.get('is_special_ea', False) or ea.get('is_new', False):
+                    continue  # Handled in Step 3 for Special EAs
                 code_6, orig_last3 = extract_parent_code_and_prefix(ea)
                 if ea.get('from_merge', False):
                     if not ea.get('new_ea_code'):
                         ea['new_ea_code'] = ea.get('original_code', '000000')
-                elif ea.get('is_new', False):
-                    max_seq += 1
-                    seq_str = f"{max_seq:03d}"
-                    ea['new_ea_code'] = (seq_str + "000") if orig_last3 == "000" else (orig_last3 + seq_str)
                 else:
                     if orig_last3 == "000" or code_6 in ("000000", "000", "0"):
                         ea['new_ea_code'] = "000000"
@@ -678,6 +752,79 @@ def run_phase_8(
                             seq_str = f"{max_seq:03d}"
                             ea['new_ea_code'] = orig_last3 + seq_str
 
+        # Step 2: Determine highest_prefix and highest_suffix among non-special EAs in barangay
+        highest_prefix = 0
+        highest_suffix = 0
+
+        # Scan non-special EAs in bar_eas
+        for ea_item in bar_eas:
+            if ea_item.get('is_special_ea', False) or ea_item.get('is_new', False):
+                continue
+            c_val = str(ea_item.get('new_ea_code') or ea_item.get('original_code', '')).strip()
+            if c_val.endswith(".0"):
+                c_val = c_val[:-2]
+            digits = "".join([c for c in c_val if c.isdigit()])
+            if len(digits) == 6:
+                try:
+                    p_val = int(digits[:3])
+                    s_val = int(digits[3:])
+                    if p_val > highest_prefix:
+                        highest_prefix = p_val
+                    if s_val > highest_suffix:
+                        highest_suffix = s_val
+                except ValueError:
+                    pass
+            elif len(digits) >= 3:
+                try:
+                    p_val = int(digits[:3])
+                    if p_val > highest_prefix:
+                        highest_prefix = p_val
+                except ValueError:
+                    pass
+
+        # Scan sibling EAs in whole barangay registry
+        for sib_code in sibling_codes:
+            sib_digits = "".join([c for c in str(sib_code) if c.isdigit()])
+            if len(sib_digits) == 6:
+                try:
+                    p_val = int(sib_digits[:3])
+                    s_val = int(sib_digits[3:])
+                    if p_val > highest_prefix:
+                        highest_prefix = p_val
+                    if s_val > highest_suffix:
+                        highest_suffix = s_val
+                except ValueError:
+                    pass
+            elif len(sib_digits) >= 3:
+                try:
+                    p_val = int(sib_digits[:3])
+                    if p_val > highest_prefix:
+                        highest_prefix = p_val
+                except ValueError:
+                    pass
+
+        # Step 3: Determine starting prefix for Special EAs:
+        # If highest suffix > 0, prefix follows highest suffix + 1.
+        # If highest suffix == 0 (e.g. only 000 suffixes), prefix follows highest prefix + 1.
+        if highest_suffix > 0:
+            special_prefix = highest_suffix + 1
+        else:
+            special_prefix = highest_prefix + 1
+
+        # Step 4: Assign new_ea_code to Special EAs in bar_eas
+        for pid, group in parent_groups.items():
+            if len(group) == 1:
+                ea = group[0]
+                if ea.get('is_special_ea', False) or ea.get('is_new', False):
+                    seq_str = f"{special_prefix:03d}"
+                    ea['new_ea_code'] = f"{seq_str}000"
+                    special_prefix += 1
+
+        # Track special_prefix for this barangay so internally detected gaps/overlaps can continue numbering
+        special_prefix_by_barangay[_bar_geocode] = special_prefix
+        if bar_str:
+            special_prefix_by_barangay[bar_str] = special_prefix
+
         # Re-sort all EAs in barangay spatially for sort_index
         has_delin = any(ea.get('original_id') in delineation_candidate_ids for ea in bar_eas)
         if has_delin:
@@ -694,8 +841,9 @@ def run_phase_8(
             ea['sort_index'] = i
 
     # Phase 8: Output Generation & Writing
-    multi_feedback.setCurrentStep(7)
-    multi_feedback.setProgressText(f"{_PHASE_LABELS[7]} [0/{len(eas):,}]...")
+    if multi_feedback:
+        multi_feedback.setCurrentStep(7)
+        multi_feedback.setProgressText(f"{_PHASE_LABELS[7]} [0/{len(eas):,}]...")
     feedback.pushInfo("Phase 8/8: Writing output features...")
 
     source_crs = previous_ea_source.sourceCrs()
@@ -716,40 +864,13 @@ def run_phase_8(
     barangay_to_target = None
     if previous_ea_source.sourceCrs() != target_crs:
         feedback.pushInfo(f"Transforming output to {target_crs.authid()}...")
+        t_ctx = context.transformContext() if context is not None else QgsProject.instance().transformContext()
         barangay_to_target = QgsCoordinateTransform(
-            previous_ea_source.sourceCrs(), target_crs, context.transformContext()
+            previous_ea_source.sourceCrs(), target_crs, t_ctx
         )
 
     barangay_index = p1.get("barangay_index")
     full_ea_by_id = {feat.id(): feat for feat in p1.get("all_ea_features", [])}
-
-    def get_text_attr(feat: QgsFeature, candidate_names: list, prefer_text: bool = True):
-        if not feat or not feat.isValid():
-            return None
-        fields = feat.fields()
-        best_val = None
-        for name in candidate_names:
-            idx = fields.indexOf(name)
-            if idx == -1:
-                for j in range(fields.count()):
-                    if fields.at(j).name().lower() == name.lower():
-                        idx = j
-                        break
-            if idx != -1:
-                val = feat.attribute(idx)
-                if val is not None and val != NULL and not (isinstance(val, QVariant) and val.isNull()):
-                    val_str = str(val).strip()
-                    if val_str not in ('', 'NULL', 'None'):
-                        if val_str.endswith(".0"):
-                            val_str = val_str[:-2]
-                        if prefer_text:
-                            if not val_str.isdigit():
-                                return val_str
-                            elif best_val is None:
-                                best_val = val_str
-                        else:
-                            return val_str
-        return best_val
 
     def get_field_val(f: QgsFeature, fname, default=0):
         if not f or not f.isValid():
@@ -777,7 +898,7 @@ def run_phase_8(
     final_geom_by_candidate = {}
 
     for i, ea in enumerate(eas):
-        if multi_feedback.isCanceled():
+        if (multi_feedback and multi_feedback.isCanceled()) or (feedback and feedback.isCanceled()):
             raise QgsProcessingException("Algorithm cancelled by user.")
         yield_to_ui(i, 50)
 
@@ -851,28 +972,17 @@ def run_phase_8(
                 if parent_bgy_feat is None and isinstance(bar, int) and bar in barangay_by_id:
                     parent_bgy_feat = barangay_by_id[bar]
 
-        final_pop = ea['original_hhcount'] if is_unchanged_retain else ea['hh_count']
+        final_pop = ea.get('original_hhcount', ea.get('hh_count', 0.0)) if is_unchanged_retain else ea.get('hh_count', 0.0)
 
         pop_idx = out_fields.indexOf(output_hh_field)
         if pop_idx != -1 and output_hh_field.lower() not in ("hhcount", "bldgcount"):
             out_feat.setAttribute(pop_idx, final_pop)
 
         fid_idx = out_fields.indexOf("fid")
+        cur_fid = i + 1
         if fid_idx != -1:
-            cur_fid = out_feat.attribute(fid_idx)
-            if cur_fid is None or cur_fid == NULL or str(cur_fid).strip() in ('', 'NULL', 'None'):
-                if parent_feat and parent_feat.isValid():
-                    p_fid = parent_feat.attribute("fid") if parent_feat.fields().indexOf("fid") != -1 else None
-                    if p_fid is None or p_fid == NULL or str(p_fid).strip() in ('', 'NULL', 'None'):
-                        p_fid = parent_feat.id()
-                    try:
-                        cur_fid = int(p_fid)
-                    except (ValueError, TypeError):
-                        cur_fid = p_fid
-                elif _ea_id is not None and isinstance(_ea_id, int) and _ea_id > 0:
-                    cur_fid = _ea_id
-            if cur_fid is not None and cur_fid != NULL and str(cur_fid).strip() not in ('', 'NULL', 'None'):
-                out_feat.setAttribute(fid_idx, cur_fid)
+            out_feat.setAttribute(fid_idx, cur_fid)
+        out_feat.setId(cur_fid)
 
         new_ea_idx = out_fields.indexOf("new_ean")
         if new_ea_idx == -1:
@@ -894,12 +1004,12 @@ def run_phase_8(
         geocode_idx = out_fields.indexOf("geocode")
         if geocode_idx != -1:
             cur_gc = out_feat.attribute(geocode_idx)
+            inh_gc = (
+                get_text_attr(parent_feat, ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code", "psgc"], prefer_text=False)
+                or get_text_attr(parent_bgy_feat, ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code", "psgc"], prefer_text=False)
+                or ea.get('parent_barangay')
+            )
             if cur_gc is None or cur_gc == NULL or str(cur_gc).strip() in ('', 'NULL', 'None'):
-                inh_gc = (
-                    get_text_attr(parent_feat, ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code", "psgc"], prefer_text=False)
-                    or get_text_attr(parent_bgy_feat, ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code", "psgc"], prefer_text=False)
-                    or ea.get('parent_barangay')
-                )
                 if inh_gc:
                     inh_gc_str = str(inh_gc).strip()
                     if inh_gc_str.endswith(".0"):
@@ -909,6 +1019,12 @@ def run_phase_8(
                 gc_str = str(cur_gc).strip()
                 if gc_str.endswith(".0"):
                     gc_str = gc_str[:-2]
+                if inh_gc:
+                    inh_gc_str = str(inh_gc).strip()
+                    if inh_gc_str.endswith(".0"):
+                        inh_gc_str = inh_gc_str[:-2]
+                    if len(inh_gc_str) > len(gc_str) and (inh_gc_str.startswith(gc_str) or gc_str in inh_gc_str):
+                        gc_str = inh_gc_str
                 out_feat.setAttribute(geocode_idx, gc_str)
 
         def safe_float(val, default=0.0):
@@ -1005,9 +1121,39 @@ def run_phase_8(
         if sy_idx != -1:
             out_feat.setAttribute(sy_idx, "2026")
 
-        # Special EAs inherit calculated hh_count for hhcount, while Merged EAs preserve original hhcount
+        # Special EAs rule: if bldg_count is 0 or empty/null, hh_count must also be set to 0 or empty/null
         if ea.get('is_special_ea', False):
-            val_hh = safe_float(ea.get('hh_count', ea.get('original_hhcount', 0.0)), 0.0)
+            special_bldgs = ea.get('buildings', [])
+            raw_bldg_cnt = ea.get('bldg_count')
+            if raw_bldg_cnt is None and not special_bldgs:
+                # If explicitly None and no buildings
+                if 'bldg_count' in ea and ea['bldg_count'] is None:
+                    raw_bldg_cnt = None
+                else:
+                    raw_bldg_cnt = 0
+            elif special_bldgs:
+                raw_bldg_cnt = len(special_bldgs)
+
+            if raw_bldg_cnt is None or (isinstance(raw_bldg_cnt, str) and raw_bldg_cnt.strip() in ('', 'NULL', 'None')):
+                ea['bldg_count'] = None
+                ea['hh_count'] = None
+                val_bldg = None
+                val_hh = None
+                new_bldg_val = None
+                new_hh_val = None
+            elif safe_int(raw_bldg_cnt, 0) == 0:
+                ea['bldg_count'] = 0
+                ea['hh_count'] = 0.0
+                val_bldg = 0
+                val_hh = 0.0
+                new_bldg_val = 0
+                new_hh_val = 0
+            else:
+                ea['bldg_count'] = len(special_bldgs) if special_bldgs else safe_int(raw_bldg_cnt, 0)
+                val_bldg = ea['bldg_count']
+                new_bldg_val = val_bldg
+                val_hh = safe_float(ea.get('hh_count', ea.get('original_hhcount', 0.0)), 0.0)
+                new_hh_val = safe_int(val_hh, 0)
         else:
             val_hh = ea.get('original_hhcount')
             if val_hh is None:
@@ -1026,22 +1172,6 @@ def run_phase_8(
                             break
                 val_hh = safe_float(cur_hh, 0.0) if cur_hh is not None and str(cur_hh).strip() not in ('', 'NULL', 'None') else 0.0
 
-        for j in range(out_fields.count()):
-            if out_fields.at(j).name().lower() == "hhcount":
-                out_feat.setAttribute(j, val_hh)
-
-        # hh_count holds the new calculated household count
-        new_hh_val = safe_int(ea.get('hh_count', 0.0), 0)
-        for j in range(out_fields.count()):
-            if out_fields.at(j).name().lower() == "hh_count":
-                out_feat.setAttribute(j, new_hh_val)
-
-        # Special EAs inherit calculated building count for bldgcount, while Merged EAs preserve original_bldgcount
-        if ea.get('is_special_ea', False):
-            special_bldgs = ea.get('buildings', [])
-            ea['bldg_count'] = len(special_bldgs)
-            val_bldg = len(special_bldgs)
-        else:
             # Delineated EA bldgcount inherits directly from original_bldgcount / parent feature
             val_bldg = ea.get('original_bldgcount')
             if val_bldg is None:
@@ -1049,25 +1179,31 @@ def run_phase_8(
                 if bldgcount_field and bldgcount_field not in bldg_names:
                     bldg_names.insert(0, bldgcount_field)
                 val_bldg = get_field_val(parent_feat, bldg_names, default=None)
-        if val_bldg is not None:
-            val_bldg = safe_int(val_bldg, 0)
-        else:
-            cur_bldg = None
-            for j in range(out_fields.count()):
-                if out_fields.at(j).name().lower() == "bldgcount":
-                    cur_bldg = out_feat.attribute(j)
-                    if cur_bldg is not None and cur_bldg != NULL and str(cur_bldg).strip() not in ('', 'NULL', 'None'):
-                        break
-            val_bldg = safe_int(cur_bldg, 0) if cur_bldg is not None and str(cur_bldg).strip() not in ('', 'NULL', 'None') else 0
+            if val_bldg is not None:
+                val_bldg = safe_int(val_bldg, 0)
+            else:
+                cur_bldg = None
+                for j in range(out_fields.count()):
+                    if out_fields.at(j).name().lower() == "bldgcount":
+                        cur_bldg = out_feat.attribute(j)
+                        if cur_bldg is not None and cur_bldg != NULL and str(cur_bldg).strip() not in ('', 'NULL', 'None'):
+                            break
+                val_bldg = safe_int(cur_bldg, 0) if cur_bldg is not None and str(cur_bldg).strip() not in ('', 'NULL', 'None') else 0
+
+            # hh_count holds the new calculated household count
+            new_hh_val = safe_int(ea.get('hh_count', 0.0), 0)
+
+            # bldg_count holds the new calculated building count
+            new_bldg_val = safe_int(ea.get('bldg_count', len(ea.get('buildings', []))), 0)
 
         for j in range(out_fields.count()):
-            if out_fields.at(j).name().lower() == "bldgcount":
+            if out_fields.at(j).name().lower() == "hhcount":
+                out_feat.setAttribute(j, val_hh)
+            elif out_fields.at(j).name().lower() == "hh_count":
+                out_feat.setAttribute(j, new_hh_val)
+            elif out_fields.at(j).name().lower() == "bldgcount":
                 out_feat.setAttribute(j, val_bldg)
-
-        # bldg_count holds the new calculated building count
-        new_bldg_val = safe_int(ea.get('bldg_count', len(ea.get('buildings', []))), 0)
-        for j in range(out_fields.count()):
-            if out_fields.at(j).name().lower() == "bldg_count":
+            elif out_fields.at(j).name().lower() == "bldg_count":
                 out_feat.setAttribute(j, new_bldg_val)
 
         bldgpts_val_idx = out_fields.indexOf("bldgpoints_value")
@@ -1102,7 +1238,18 @@ def run_phase_8(
 
         ea_type_idx = out_fields.indexOf("ea_type")
         if ea_type_idx != -1:
-            out_feat.setAttribute(ea_type_idx, ea.get('ea_type', 'STANDARD'))
+            explicit_ea_type = ea.get('ea_type')
+            if explicit_ea_type and str(explicit_ea_type).strip() not in ('RETAINED', '', 'None', 'NULL'):
+                ea_type_val = str(explicit_ea_type).strip()
+            elif ea.get('from_split', False):
+                ea_type_val = 'DELINEATED'
+            elif ea.get('from_merge', False):
+                ea_type_val = 'MERGED'
+            elif ea.get('is_special_ea', False):
+                ea_type_val = str(ea.get('special_type', 'SPECIAL'))
+            else:
+                ea_type_val = 'RETAINED'
+            out_feat.setAttribute(ea_type_idx, ea_type_val)
 
         special_type_idx = out_fields.indexOf("special_type")
         if special_type_idx != -1:
@@ -1163,6 +1310,11 @@ def run_phase_8(
             if ea.get('is_special_ea', False):
                 if special_ea_sink is not None:
                     exp_feat_special = make_export_feature(out_feat, special_ea_export_fields)
+                    special_ea_fid = special_ea_feat_count + 1
+                    fid_idx_spec = special_ea_export_fields.indexOf("fid")
+                    if fid_idx_spec != -1:
+                        exp_feat_special.setAttribute(fid_idx_spec, special_ea_fid)
+                    exp_feat_special.setId(special_ea_fid)
                     if special_ea_sink.addFeature(exp_feat_special, QgsFeatureSink.Flag.FastInsert):
                         special_ea_feat_count += 1
                     else:
@@ -1174,6 +1326,11 @@ def run_phase_8(
                 sb = ea.get('split_by', 'point_based')
                 split_by_counts[sb] = split_by_counts.get(sb, 0) + 1
                 if delineated_sink is not None:
+                    delin_fid = delineated_feat_count + 1
+                    fid_idx_delin = export_fields.indexOf("fid")
+                    if fid_idx_delin != -1:
+                        exp_feat.setAttribute(fid_idx_delin, delin_fid)
+                    exp_feat.setId(delin_fid)
                     if delineated_sink.addFeature(exp_feat, QgsFeatureSink.Flag.FastInsert):
                         delineated_feat_count += 1
                     else:
@@ -1183,6 +1340,11 @@ def run_phase_8(
             if ea.get('from_merge', False) and not ea.get('is_special_ea', False):
                 if merged_sink is not None:
                     exp_feat_merged = make_export_feature(out_feat, merged_export_fields)
+                    merged_fid = merged_feat_count + 1
+                    fid_idx_merged = merged_export_fields.indexOf("fid")
+                    if fid_idx_merged != -1:
+                        exp_feat_merged.setAttribute(fid_idx_merged, merged_fid)
+                    exp_feat_merged.setId(merged_fid)
                     indicator_merged_idx = merged_export_fields.indexOf("indicator")
                     if indicator_merged_idx != -1:
                         exp_feat_merged.setAttribute(indicator_merged_idx, "")
@@ -1245,20 +1407,185 @@ def run_phase_8(
                     if parent_ean_idx != -1:
                         b_attrs[parent_ean_idx] = str(parent_ean_val)
 
+                    bldg_fid = extracted_bldg_feat_count + 1
+                    fid_idx_bldg = bldg_out_fields.indexOf("fid")
+                    if fid_idx_bldg != -1:
+                        b_attrs[fid_idx_bldg] = bldg_fid
+
                     b_feat.setAttributes(b_attrs)
+                    b_feat.setId(bldg_fid)
                     if extracted_buildings_sink.addFeature(b_feat, QgsFeatureSink.Flag.FastInsert):
                         extracted_bldg_feat_count += 1
                     else:
                         feedback.reportWarning("Failed to add building point to extracted buildings sink.")
 
-        _out_pct = int((i + 1) / max(len(eas), 1) * 100)
-        multi_feedback.setProgress(_out_pct)
-        if i % 100 == 0 or _out_pct == 100:
-            multi_feedback.setProgressText(
-                f"{_PHASE_LABELS[7]} [{i + 1:,}/{len(eas):,}]..."
-            )
+        if multi_feedback:
+            _out_pct = int((i + 1) / max(len(eas), 1) * 100)
+            multi_feedback.setProgress(_out_pct)
+            if i % 100 == 0 or _out_pct == 100:
+                multi_feedback.setProgressText(
+                    f"{_PHASE_LABELS[7]} [{i + 1:,}/{len(eas):,}]..."
+                )
 
-    multi_feedback.setProgress(100)
+    if multi_feedback:
+        multi_feedback.setProgress(100)
+
+    # ── Write internally detected Barangay gaps & overlaps to SPECIAL_EA_OUTPUT ──
+    # These include gaps inside Barangay boundaries and EA-to-EA overlaps that
+    # existed in the data. We write them as additional features in the
+    # SPECIAL_EA_OUTPUT layer so users have a complete spatial record of every
+    # area that required gap-filling or overlap resolution.
+    if special_ea_sink is not None and (internal_gap_geoms or internal_overlap_geoms):
+        _fid_idx = special_ea_export_fields.indexOf("fid")
+        _geocode_idx = special_ea_export_fields.indexOf("geocode")
+        _ea_type_idx = special_ea_export_fields.indexOf("ea_type")
+        _special_type_idx = special_ea_export_fields.indexOf("special_type")
+        _sy_idx = special_ea_export_fields.indexOf("sy")
+        _remarks_idx = special_ea_export_fields.indexOf("remarks")
+        _bldg_cnt_idx = special_ea_export_fields.indexOf("bldg_count")
+        _hh_cnt_idx = special_ea_export_fields.indexOf("hh_count")
+        _new_ean_idx = special_ea_export_fields.indexOf("new_ean")
+        if _new_ean_idx == -1:
+            _new_ean_idx = special_ea_export_fields.indexOf("new_ea")
+        _ean_idx = special_ea_export_fields.indexOf("ean")
+        _name_idx = special_ea_export_fields.indexOf("name")
+        _code_idx = special_ea_export_fields.indexOf("code")
+
+        if internal_gap_geoms:
+            feedback.pushInfo(
+                f"Writing {len(internal_gap_geoms)} internally detected Barangay gap(s) to Special EA output..."
+            )
+            for _item in internal_gap_geoms:
+                _bar_geocode = _item[0]
+                _gap_geom = _item[1]
+                _bgy_feat = _item[2] if len(_item) > 2 else None
+                if barangay_to_target:
+                    _gap_geom = QgsGeometry(_gap_geom)
+                    _gap_geom.transform(barangay_to_target)
+                _gap_feat = QgsFeature(special_ea_export_fields)
+                _gap_feat.setGeometry(_gap_geom)
+                _gap_fid = special_ea_feat_count + 1
+                if _fid_idx != -1:
+                    _gap_feat.setAttribute(_fid_idx, _gap_fid)
+                _gap_feat.setId(_gap_fid)
+
+                _sp_prefix = special_prefix_by_barangay.get(_bar_geocode, 1)
+                _sp_ean = f"{_sp_prefix:03d}000"
+                special_prefix_by_barangay[_bar_geocode] = _sp_prefix + 1
+
+                if _new_ean_idx != -1:
+                    _gap_feat.setAttribute(_new_ean_idx, _sp_ean)
+                if _ean_idx != -1:
+                    _gap_feat.setAttribute(_ean_idx, _sp_ean)
+                if _name_idx != -1:
+                    _gap_feat.setAttribute(_name_idx, f"EA {_sp_ean}")
+                if _code_idx != -1:
+                    _gap_feat.setAttribute(_code_idx, _sp_ean)
+                if _geocode_idx != -1:
+                    _gc_prefix = _bar_geocode if len(_bar_geocode) <= 9 else _bar_geocode[:9]
+                    _gap_feat.setAttribute(_geocode_idx, _gc_prefix + _sp_ean)
+                if _ea_type_idx != -1:
+                    _gap_feat.setAttribute(_ea_type_idx, "GAP")
+                if _special_type_idx != -1:
+                    _gap_feat.setAttribute(_special_type_idx, "GAP")
+                if _sy_idx != -1:
+                    _gap_feat.setAttribute(_sy_idx, "2026")
+                if _remarks_idx != -1:
+                    _gap_feat.setAttribute(_remarks_idx, "Internal Barangay Gap")
+                if _bldg_cnt_idx != -1:
+                    _gap_feat.setAttribute(_bldg_cnt_idx, 0)
+                if _hh_cnt_idx != -1:
+                    _gap_feat.setAttribute(_hh_cnt_idx, 0)
+                if _bgy_feat:
+                    for _fname, _cands in [
+                        ("map_uuid", ["map_uuid", "mapuuid", "uuid", "map_id"]),
+                        ("region", ["region", "reg_name", "region_name", "reg_desc", "adm1_en", "reg", "region_n", "reg_n"]),
+                        ("province", ["province", "prov_name", "province_name", "prov_desc", "adm2_en", "prov", "province_n", "prov_n"]),
+                        ("city_mun", ["city_mun", "citymun", "city_municipality", "city_name", "mun_name", "adm3_en", "city", "municipality", "mun", "citymun_n"]),
+                        ("barangay", ["barangay", "bgy_name", "brgy_name", "adm4_en", "bgy", "brgy", "barangay_n", "bgy_n"]),
+                        ("code", ["code", "bgy_code", "brgy_code", "barangay_code", "adm4_pcode"]),
+                    ]:
+                        _f_idx = special_ea_export_fields.indexOf(_fname)
+                        if _f_idx != -1:
+                            _v = get_text_attr(_bgy_feat, _cands)
+                            if _v:
+                                _gap_feat.setAttribute(_f_idx, _v)
+                if special_ea_sink.addFeature(_gap_feat, QgsFeatureSink.Flag.FastInsert):
+                    special_ea_feat_count += 1
+                else:
+                    feedback.reportError(
+                        f"Failed to write internally detected gap in barangay '{_bar_geocode}' to Special EA sink."
+                    )
+
+        if internal_overlap_geoms:
+            feedback.pushInfo(
+                f"Writing {len(internal_overlap_geoms)} internally detected EA overlap(s) to Special EA output..."
+            )
+            for _item in internal_overlap_geoms:
+                _bar_geocode = _item[0]
+                _overlap_geom = _item[1]
+                _bgy_feat = _item[2] if len(_item) > 2 else None
+                if barangay_to_target:
+                    _overlap_geom = QgsGeometry(_overlap_geom)
+                    _overlap_geom.transform(barangay_to_target)
+                _ov_feat = QgsFeature(special_ea_export_fields)
+                _ov_feat.setGeometry(_overlap_geom)
+                _ov_fid = special_ea_feat_count + 1
+                if _fid_idx != -1:
+                    _ov_feat.setAttribute(_fid_idx, _ov_fid)
+                _ov_feat.setId(_ov_fid)
+
+                _sp_prefix = special_prefix_by_barangay.get(_bar_geocode, 1)
+                _sp_ean = f"{_sp_prefix:03d}000"
+                special_prefix_by_barangay[_bar_geocode] = _sp_prefix + 1
+
+                if _new_ean_idx != -1:
+                    _ov_feat.setAttribute(_new_ean_idx, _sp_ean)
+                if _ean_idx != -1:
+                    _ov_feat.setAttribute(_ean_idx, _sp_ean)
+                if _name_idx != -1:
+                    _ov_feat.setAttribute(_name_idx, f"EA {_sp_ean}")
+                if _code_idx != -1:
+                    _ov_feat.setAttribute(_code_idx, _sp_ean)
+                if _geocode_idx != -1:
+                    _gc_prefix = _bar_geocode if len(_bar_geocode) <= 9 else _bar_geocode[:9]
+                    _ov_feat.setAttribute(_geocode_idx, _gc_prefix + _sp_ean)
+                if _ea_type_idx != -1:
+                    _ov_feat.setAttribute(_ea_type_idx, "OVERLAP")
+                if _special_type_idx != -1:
+                    _ov_feat.setAttribute(_special_type_idx, "OVERLAP")
+                if _sy_idx != -1:
+                    _ov_feat.setAttribute(_sy_idx, "2026")
+                if _remarks_idx != -1:
+                    _ov_feat.setAttribute(_remarks_idx, "Internal EA Overlap")
+                if _bldg_cnt_idx != -1:
+                    _ov_feat.setAttribute(_bldg_cnt_idx, 0)
+                if _hh_cnt_idx != -1:
+                    _ov_feat.setAttribute(_hh_cnt_idx, 0)
+                if _bgy_feat:
+                    for _fname, _cands in [
+                        ("map_uuid", ["map_uuid", "mapuuid", "uuid", "map_id"]),
+                        ("region", ["region", "reg_name", "region_name", "reg_desc", "adm1_en", "reg", "region_n", "reg_n"]),
+                        ("province", ["province", "prov_name", "province_name", "prov_desc", "adm2_en", "prov", "province_n", "prov_n"]),
+                        ("city_mun", ["city_mun", "citymun", "city_municipality", "city_name", "mun_name", "adm3_en", "city", "municipality", "mun", "citymun_n"]),
+                        ("barangay", ["barangay", "bgy_name", "brgy_name", "adm4_en", "bgy", "brgy", "barangay_n", "bgy_n"]),
+                        ("code", ["code", "bgy_code", "brgy_code", "barangay_code", "adm4_pcode"]),
+                    ]:
+                        _f_idx = special_ea_export_fields.indexOf(_fname)
+                        if _f_idx != -1:
+                            _v = get_text_attr(_bgy_feat, _cands)
+                            if _v:
+                                _ov_feat.setAttribute(_f_idx, _v)
+                if special_ea_sink.addFeature(_ov_feat, QgsFeatureSink.Flag.FastInsert):
+                    special_ea_feat_count += 1
+                else:
+                    feedback.reportError(
+                        f"Failed to write internally detected overlap in barangay '{_bar_geocode}' to Special EA sink."
+                    )
+
+        feedback.pushInfo(
+            f"Done — {special_ea_feat_count} total Special EA feature(s) written (includes all gaps and overlaps)."
+        )
 
     # ── Output Splitting Lines Layer (Single Unified Layer: {geo5}_eadel_update) ──
     full_ea_by_id = {feat.id(): feat for feat in p1.get("all_ea_features", [])}
@@ -1407,41 +1734,46 @@ def run_phase_8(
         layer_name = f"{geo5}_eadel_update"
 
         crs_auth_id = target_crs.authid()
-        uri = f"MultiLineString?crs={crs_auth_id}&field=geocode:string&field=ean:string&field=region:string&field=province:string&field=city_mun:string&field=barangay:string&field=indicator:string&field=remarks:string"
-        line_layer = QgsVectorLayer(uri, layer_name, "memory")
+        uri = f"MultiLineString?crs={crs_auth_id}&field=fid:int&field=geocode:string&field=ean:string&field=region:string&field=province:string&field=city_mun:string&field=barangay:string&field=indicator:string&field=remarks:string"
 
-        if line_layer.isValid():
-            pr = line_layer.dataProvider()
-            features_to_add = []
-            for line_geom, attrs in all_splitting_lines:
-                if not line_geom.isMultipart():
-                    line_geom.convertToMultiType()
-                f = QgsFeature(line_layer.fields())
-                f.setGeometry(line_geom)
-                f.setAttribute("geocode", attrs.get('geocode', ''))
-                f.setAttribute("ean", attrs.get('ean', ''))
-                f.setAttribute("region", attrs.get('region', ''))
-                f.setAttribute("province", attrs.get('province', ''))
-                f.setAttribute("city_mun", attrs.get('city_mun', ''))
-                f.setAttribute("barangay", attrs.get('barangay', ''))
-                f.setAttribute("indicator", attrs.get('indicator', ''))
-                f.setAttribute("remarks", attrs.get('remarks', ''))
-                features_to_add.append(f)
+        features_to_add = []
+        for line_idx, (line_geom, attrs) in enumerate(all_splitting_lines, start=1):
+            if not line_geom.isMultipart():
+                line_geom.convertToMultiType()
+            f = QgsFeature()
+            f.setGeometry(line_geom)
+            f.setId(line_idx)
+            f.setAttributes([
+                line_idx,
+                attrs.get('geocode', ''),
+                attrs.get('ean', ''),
+                attrs.get('region', ''),
+                attrs.get('province', ''),
+                attrs.get('city_mun', ''),
+                attrs.get('barangay', ''),
+                attrs.get('indicator', ''),
+                attrs.get('remarks', ''),
+            ])
+            features_to_add.append(f)
 
-            pr.addFeatures(features_to_add)
-            line_layer.updateExtents()
+        if features_to_add:
+            line_layer = QgsVectorLayer(uri, layer_name, "memory")
+            if line_layer.isValid():
+                pr = line_layer.dataProvider()
+                pr.addFeatures(features_to_add)
+                line_layer.updateExtents()
 
-            apply_qml_to_layer(line_layer, "eadel_update_lines.qml")
+                apply_qml_to_layer(line_layer, "eadel_update_lines.qml")
 
-            project = QgsProject.instance()
-            if project:
-                project.addMapLayer(line_layer)
-            feedback.pushInfo(
-                f"Created line layer '{layer_name}' with {len(features_to_add)} "
-                f"feature(s) ({len(final_geom_by_candidate)} candidate(s) processed)."
-            )
-        else:
-            feedback.reportError(f"Failed to create memory layer for {layer_name}")
+                project = QgsProject.instance()
+                if project:
+                    project.addMapLayer(line_layer)
+                feedback.pushInfo(
+                    f"Created line layer '{layer_name}' with {len(features_to_add)} "
+                    f"feature(s) ({len(final_geom_by_candidate)} candidate(s) processed)."
+                )
+            else:
+                feedback.reportError(f"Failed to create memory layer for {layer_name}")
 
     feedback.pushInfo("Successfully created and structured Enumeration Areas.")
 
@@ -1585,8 +1917,18 @@ def run_phase_8(
         + "</html_table>"
     )
 
-    feedback.pushInfo(html_table)
-    feedback.pushInfo("--------------------------------------------------")
-    feedback.pushInfo("Completed.")
+    final_outputs = {}
+    if delineated_feat_count > 0 and delineated_dest_id is not None:
+        final_outputs[getattr(alg, 'DELINEATED_OUTPUT', 'DELINEATED_OUTPUT')] = delineated_dest_id
+    if merged_feat_count > 0 and merged_dest_id is not None:
+        final_outputs[getattr(alg, 'MERGED_OUTPUT', 'MERGED_OUTPUT')] = merged_dest_id
+    if special_ea_feat_count > 0 and special_ea_dest_id is not None:
+        final_outputs[getattr(alg, 'SPECIAL_EA_OUTPUT', 'SPECIAL_EA_OUTPUT')] = special_ea_dest_id
+    if delin_candidate_feat_count > 0 and delin_candidate_dest_id is not None:
+        final_outputs[getattr(alg, 'DELINEATION_CANDIDATE_OUTPUT', 'DELINEATION_CANDIDATE_OUTPUT')] = delin_candidate_dest_id
+    if merge_candidate_feat_count > 0 and merge_candidate_dest_id is not None:
+        final_outputs[getattr(alg, 'MERGE_CANDIDATE_OUTPUT', 'MERGE_CANDIDATE_OUTPUT')] = merge_candidate_dest_id
+    if extracted_bldg_feat_count > 0 and extracted_buildings_dest_id is not None:
+        final_outputs[getattr(alg, 'EXTRACTED_BUILDINGS_OUTPUT', 'EXTRACTED_BUILDINGS_OUTPUT')] = extracted_buildings_dest_id
 
-    return p2.get("outputs") or p1.get("outputs", {})
+    return final_outputs

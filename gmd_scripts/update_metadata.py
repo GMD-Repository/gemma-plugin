@@ -685,7 +685,9 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
             "region": ["region", "reg"],
             "province": ["province", "prov"],
             "city_mun": ["city_mun", "city/municipality", "municipality", "city", "citymun"],
-            "barangay": ["barangay", "bgy", "brgy"]
+            "barangay": ["barangay", "bgy", "brgy"],
+            "hhcount": ["hhcount", "hh_count", "total_hhcount", "total_hh", "household_count"],
+            "bldgcount": ["bldgcount", "bldg_count", "total_bldgcount", "total_bldg", "building_count"],
         }.items():
             for name in aliases:
                 f = self._find_field_case_insensitive(fields, name)
@@ -782,6 +784,8 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
         actual_prov_col = mapping["province"]
         actual_citymun_col = mapping["city_mun"]
         actual_uuid_col = mapping.get("map_uuid")   # optional — may not exist in older sheets
+        actual_hh_col = mapping.get("hhcount")
+        actual_bldg_col = mapping.get("bldgcount")
         
         for feat in table_layer.getFeatures():
             reg_val = str(feat.attribute(actual_reg_col)).strip()
@@ -816,6 +820,25 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
                 raw_uuid = feat.attribute(actual_uuid_col)
                 if raw_uuid is not None and raw_uuid != NULL:
                     psgc_uuid_val = str(raw_uuid).strip()
+
+            # Read hhcount and bldgcount
+            hh_val = None
+            if actual_hh_col:
+                raw_hh = feat.attribute(actual_hh_col)
+                if raw_hh is not None and raw_hh != NULL and str(raw_hh).strip() not in ("", "nan", "None", "NULL"):
+                    try:
+                        hh_val = int(float(str(raw_hh).strip()))
+                    except (ValueError, TypeError):
+                        hh_val = None
+
+            bldg_val = None
+            if actual_bldg_col:
+                raw_bldg = feat.attribute(actual_bldg_col)
+                if raw_bldg is not None and raw_bldg != NULL and str(raw_bldg).strip() not in ("", "nan", "None", "NULL"):
+                    try:
+                        bldg_val = int(float(str(raw_bldg).strip()))
+                    except (ValueError, TypeError):
+                        bldg_val = None
             
             psgc_data = {
                 "map_uuid": psgc_uuid_val,
@@ -823,7 +846,9 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
                 "region": reg_val,
                 "province": prov_val,
                 "city_mun": citymun_val,
-                "barangay": brgy_val
+                "barangay": brgy_val,
+                "hhcount": hh_val,
+                "bldgcount": bldg_val,
             }
             
             if exact_key:
@@ -833,27 +858,32 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
                 if norm_key not in normalized_psgc_keys:
                     normalized_psgc_keys.append(norm_key)
 
-        # Loop LGU layer features and calculate matches/populate preview rows
+        # Loop LGU layer features and calculate matches/populate preview rows with memoization
         matched_count = 0
         total_features = lgu_layer.featureCount()
         preview_rows = []
+        preview_match_cache = {}
         
         for current, feature in enumerate(lgu_layer.getFeatures()):
             lgu_key_val = feature.attribute(field_val)
             lgu_key_str = str(lgu_key_val).strip() if lgu_key_val is not None and lgu_key_val != NULL else ""
             
-            exact_key = lgu_key_str.lower().strip()
-            norm_key = normalize_barangay_name(lgu_key_str)
-            
-            psgc_data = None
-            if exact_key in psgc_lookup:
-                psgc_data = psgc_lookup[exact_key]
-            elif norm_key in psgc_lookup:
-                psgc_data = psgc_lookup[norm_key]
-            elif norm_key and normalized_psgc_keys:
-                close_matches = difflib.get_close_matches(norm_key, normalized_psgc_keys, n=1, cutoff=0.75)
-                if close_matches:
-                    psgc_data = psgc_lookup[close_matches[0]]
+            if lgu_key_str in preview_match_cache:
+                psgc_data = preview_match_cache[lgu_key_str]
+            else:
+                exact_key = lgu_key_str.lower().strip()
+                norm_key = normalize_barangay_name(lgu_key_str)
+                
+                psgc_data = None
+                if exact_key in psgc_lookup:
+                    psgc_data = psgc_lookup[exact_key]
+                elif norm_key in psgc_lookup:
+                    psgc_data = psgc_lookup[norm_key]
+                elif norm_key and normalized_psgc_keys:
+                    close_matches = difflib.get_close_matches(norm_key, normalized_psgc_keys, n=1, cutoff=0.75)
+                    if close_matches:
+                        psgc_data = psgc_lookup[close_matches[0]]
+                preview_match_cache[lgu_key_str] = psgc_data
                     
             if psgc_data:
                 matched_count += 1
@@ -882,6 +912,8 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
                 self._unmatched_features.append(feature)
 
             fid_val = current + 1
+            preview_hh = str(psgc_data.get("hhcount")) if (psgc_data and psgc_data.get("hhcount") is not None) else "NULL"
+            preview_bldg = str(psgc_data.get("bldgcount")) if (psgc_data and psgc_data.get("bldgcount") is not None) else "NULL"
 
             row_data = [
                 str(fid_val),
@@ -894,8 +926,8 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
                 "1003",
                 "",
                 source_val,
-                "NULL",
-                "NULL",
+                preview_hh,
+                preview_bldg,
                 sy_val,
                 boundary_val,       # boundary
                 preview_lgu_name,   # lgu_bgy_name
@@ -1269,6 +1301,20 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
             if f:
                 mapping["barangay"] = f
                 break
+
+        # 6. Household Count (hhcount)
+        for name in ["hhcount", "hh_count", "total_hhcount", "total_hh", "household_count"]:
+            f = self._find_field_case_insensitive(fields, name)
+            if f:
+                mapping["hhcount"] = f
+                break
+
+        # 7. Building Count (bldgcount)
+        for name in ["bldgcount", "bldg_count", "total_bldgcount", "total_bldg", "building_count"]:
+            f = self._find_field_case_insensitive(fields, name)
+            if f:
+                mapping["bldgcount"] = f
+                break
                 
         return mapping
 
@@ -1347,6 +1393,8 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
         actual_prov_col = mapping["province"]
         actual_citymun_col = mapping["city_mun"]
         actual_uuid_col = mapping.get("map_uuid")   # optional — may not exist in older sheets
+        actual_hh_col = mapping.get("hhcount")
+        actual_bldg_col = mapping.get("bldgcount")
         
         filtered_count = 0
         total_table_count = table_source.featureCount()
@@ -1395,6 +1443,25 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
                 raw_uuid = feat.attribute(actual_uuid_col)
                 if raw_uuid is not None and raw_uuid != NULL:
                     psgc_uuid_val = str(raw_uuid).strip()
+
+            # Read hhcount and bldgcount
+            hh_val = None
+            if actual_hh_col:
+                raw_hh = feat.attribute(actual_hh_col)
+                if raw_hh is not None and raw_hh != NULL and str(raw_hh).strip() not in ("", "nan", "None", "NULL"):
+                    try:
+                        hh_val = int(float(str(raw_hh).strip()))
+                    except (ValueError, TypeError):
+                        hh_val = None
+
+            bldg_val = None
+            if actual_bldg_col:
+                raw_bldg = feat.attribute(actual_bldg_col)
+                if raw_bldg is not None and raw_bldg != NULL and str(raw_bldg).strip() not in ("", "nan", "None", "NULL"):
+                    try:
+                        bldg_val = int(float(str(raw_bldg).strip()))
+                    except (ValueError, TypeError):
+                        bldg_val = None
             
             psgc_data = {
                 "map_uuid": psgc_uuid_val,
@@ -1402,7 +1469,9 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
                 "region": reg_val,
                 "province": prov_val,
                 "city_mun": citymun_val,
-                "barangay": brgy_val
+                "barangay": brgy_val,
+                "hhcount": hh_val,
+                "bldgcount": bldg_val,
             }
             
             if exact_key:
@@ -1576,6 +1645,8 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
                     "province":     psgc_data["province"],
                     "city_mun":     psgc_data["city_mun"],
                     "barangay":     psgc_data["barangay"],
+                    "hhcount":      psgc_data.get("hhcount"),
+                    "bldgcount":    psgc_data.get("bldgcount"),
                     "boundary":     "Barangay",
                     "lgu_bgy_name": lgu_bgy_name_val,
                     "bdry_status":  None,
@@ -1588,6 +1659,8 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
                     "province":     "",
                     "city_mun":     "",
                     "barangay":     None,           # NULL for Contested
+                    "hhcount":      None,
+                    "bldgcount":    None,
                     "boundary":     "Contested",
                     "lgu_bgy_name": lgu_bgy_name_val,
                     "bdry_status":  None,
@@ -1642,22 +1715,41 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
             for cand_id in candidates:
                 j = bgy_map[cand_id]
                 geom_b = staged[j]["geom"]
-
-                # Compute shared boundary length
-                intersection = geom_c.intersection(geom_b)
-                if intersection is None or intersection.isEmpty():
+                if geom_b is None or geom_b.isNull() or geom_b.isEmpty():
                     continue
-                shared_len = intersection.length()   # 0 for point touches; > 0 for shared edges
-                if shared_len > best_len:
-                    best_len = shared_len
-                    best_idx = j
+
+                # Compute shared boundary length safely with GEOS protection
+                try:
+                    intersection = geom_c.intersection(geom_b)
+                    if intersection is None or intersection.isEmpty():
+                        continue
+                    shared_len = intersection.length()   # 0 for point touches; > 0 for shared edges
+                    if shared_len > best_len:
+                        best_len = shared_len
+                        best_idx = j
+                except Exception:
+                    try:
+                        vg_c = geom_c.makeValid() if not geom_c.isGeosValid() else geom_c
+                        vg_b = geom_b.makeValid() if not geom_b.isGeosValid() else geom_b
+                        if vg_c and vg_b and not vg_c.isEmpty() and not vg_b.isEmpty():
+                            intersection = vg_c.intersection(vg_b)
+                            if intersection and not intersection.isEmpty():
+                                shared_len = intersection.length()
+                                if shared_len > best_len:
+                                    best_len = shared_len
+                                    best_idx = j
+                    except Exception:
+                        pass
 
             # Fallback: no edge-sharing neighbour found — use nearest centroid
             if best_idx is None and bgy_map:
-                centroid_c = geom_c.centroid().asPoint()
-                nearest_ids = bgy_index.nearestNeighbor(centroid_c, 1)
-                if nearest_ids:
-                    best_idx = bgy_map[nearest_ids[0]]
+                try:
+                    centroid_c = geom_c.centroid().asPoint()
+                    nearest_ids = bgy_index.nearestNeighbor(centroid_c, 1)
+                    if nearest_ids:
+                        best_idx = bgy_map[nearest_ids[0]]
+                except Exception:
+                    pass
 
             if best_idx is not None:
                 donor = staged[best_idx]["attrs"]
@@ -1707,8 +1799,8 @@ class UpdateLguPsgcMetadataAlgorithm(QgsProcessingAlgorithm):
                 "1003",              # code
                 "",                  # remarks
                 source_meta_val,     # source
-                None,                # hhcount
-                None,                # bldgcount
+                a.get("hhcount"),    # hhcount
+                a.get("bldgcount"),  # bldgcount
                 sy_val,              # sy
                 a["boundary"],       # boundary
                 a["lgu_bgy_name"],   # lgu_bgy_name
