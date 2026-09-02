@@ -1661,14 +1661,15 @@ class PackageDialog(QDialog, DialogUi):
 
     def _is_excluded_data_source_layer(self, layer_name):
         """
-        Check if a layer name matches any of the excluded system role layer pattern suffixes.
-        Only excludes when the layer name ends with an excluded pattern and has the exact same count
-        of underscores ('_') as that pattern (e.g. '<code/prefix>_ea' has 1 underscore matching '_ea',
-        whereas '<code/prefix>_special_ea' has 2 underscores so it is not excluded).
+        Check if a layer name ends with any of the excluded system role layer pattern suffixes:
+        _bldg_point, _bldgpts, _bgy, _ea, _landmark, _block, _road, _river, _bridge, _railroad.
+        Exempts layers ending with '_special_ea'.
         """
         if not layer_name:
             return True
         name_lower = layer_name.strip().lower()
+        if name_lower.endswith("_special_ea"):
+            return False
         excluded_patterns = [
             "_bldg_point",
             "_bldgpts",
@@ -1682,7 +1683,7 @@ class PackageDialog(QDialog, DialogUi):
             "_railroad",
         ]
         for pat in excluded_patterns:
-            if name_lower.endswith(pat) and name_lower.count('_') == pat.count('_'):
+            if name_lower.endswith(pat):
                 return True
         return False
 
