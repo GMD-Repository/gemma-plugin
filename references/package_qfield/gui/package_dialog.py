@@ -1201,8 +1201,8 @@ class PackageDialog(QDialog, DialogUi):
         # (combo box named in the .ui file as "output_dropdown")
         self.output_dropdown.clear()
         self.output_dropdown.addItems([
-            self.tr("EA Level"),
             self.tr("Barangay Level"),
+            self.tr("EA Level"),
         ])
         # only repopulate layers when output level changes; renaming happens on Filter click
         self.output_dropdown.currentTextChanged.connect(self.populate_layers_dropdown)
@@ -1661,8 +1661,10 @@ class PackageDialog(QDialog, DialogUi):
 
     def _is_excluded_data_source_layer(self, layer_name):
         """
-        Check if a layer name matches any of the 10 excluded system role layer pattern names/suffixes:
-        _bldg_point, _bldgpts, _bgy, _ea, _landmark, _block, _road, _river, _bridge, _railroad.
+        Check if a layer name matches any of the excluded system role layer pattern suffixes.
+        Only excludes when the layer name ends with an excluded pattern and has the exact same count
+        of underscores ('_') as that pattern (e.g. '<code/prefix>_ea' has 1 underscore matching '_ea',
+        whereas '<code/prefix>_special_ea' has 2 underscores so it is not excluded).
         """
         if not layer_name:
             return True
@@ -1680,9 +1682,7 @@ class PackageDialog(QDialog, DialogUi):
             "_railroad",
         ]
         for pat in excluded_patterns:
-            if name_lower.endswith(pat) or name_lower == pat or (pat + "_") in name_lower:
-                return True
-            if pat in ["_bldg_point", "_bldgpts", "_landmark", "_railroad", "_bridge"] and pat in name_lower:
+            if name_lower.endswith(pat) and name_lower.count('_') == pat.count('_'):
                 return True
         return False
 
@@ -2563,8 +2563,9 @@ class PackageDialog(QDialog, DialogUi):
                         if not active_name or active_name == self.tr("— None —"):
                             continue
                         combo = self.layer_groups_tree.itemWidget(layer_item, 1)
-                        if combo and combo.currentData() is not None:
-                            assigned_layer_ids.add(combo.currentData())
+                        layer_id = layer_item.data(0, Qt.UserRole)
+                        if layer_id:
+                            assigned_layer_ids.add(layer_id)
                         else:
                             layers_by_name = project.mapLayersByName(active_name)
                             if layers_by_name:
@@ -4682,7 +4683,7 @@ class PackageDialog(QDialog, DialogUi):
                     processed_ml_ids.add(matched_xml_id)
                 config["_applied"] = True
                 
-                # Rename the layer in the QGZ XML using the matched ID
+                # Rename the layer in the QGZ XML using the matched ID and ensure provider is ogr
                 if matched_xml_id:
                     for ml in root_xml.findall(".//maplayer"):
                         id_el = ml.find("id")
@@ -4693,6 +4694,9 @@ class PackageDialog(QDialog, DialogUi):
                             title_el = ml.find("title")
                             if title_el is not None:
                                 title_el.text = config["target_name"]
+                            provider_el = ml.find("provider")
+                            if provider_el is not None:
+                                provider_el.text = "ogr"
                             break
                 
                 # Rename in layer-tree-layer using matched ID
@@ -4814,6 +4818,9 @@ class PackageDialog(QDialog, DialogUi):
                 title_el = ml.find("title")
                 if title_el is not None:
                     title_el.text = matched_config["target_name"]
+                provider_el = ml.find("provider")
+                if provider_el is not None:
+                    provider_el.text = "ogr"
 
                 # Rename layer-tree-layer
                 if xml_id:
@@ -5657,8 +5664,27 @@ class PackageDialog(QDialog, DialogUi):
             self._update_qgz_datasources(project_path, new_datasources)
 
         # Clean up any leftover raw source GPKG files (e.g. 04920_Pantabangan.gpkg) in subfolder
+        referenced_files = set()
+        if os.path.exists(project_path):
+            try:
+                import re
+                if project_path.lower().endswith('.qgz'):
+                    with zipfile.ZipFile(project_path, 'r') as zin:
+                        qgs_name = next((n for n in zin.namelist() if n.lower().endswith('.qgs')), None)
+                        if qgs_name:
+                            qgs_text = zin.read(qgs_name).decode('utf-8', errors='ignore')
+                            for ds_match in re.findall(r'<datasource>([^<]+)</datasource>', qgs_text, flags=re.IGNORECASE):
+                                referenced_files.add(os.path.basename(ds_match.split('|')[0]))
+                else:
+                    with open(project_path, 'r', encoding='utf-8', errors='ignore') as f_in:
+                        qgs_text = f_in.read()
+                        for ds_match in re.findall(r'<datasource>([^<]+)</datasource>', qgs_text, flags=re.IGNORECASE):
+                            referenced_files.add(os.path.basename(ds_match.split('|')[0]))
+            except Exception:
+                pass
+
         for f in os.listdir(str(subfolder_path)):
-            if f.endswith(".gpkg") and f != "data.gpkg" and not f.startswith(code_digits):
+            if f.endswith(".gpkg") and f != "data.gpkg" and not f.startswith(code_digits) and f not in referenced_files:
                 raw_gpkg_path = os.path.join(str(subfolder_path), f)
                 try:
                     os.remove(raw_gpkg_path)
@@ -5694,6 +5720,9 @@ class PackageDialog(QDialog, DialogUi):
                             sub_elem = layer_elem.find("subsetexpression")
                             if sub_elem is not None:
                                 sub_elem.text = ""
+                            provider_elem = layer_elem.find("provider")
+                            if provider_elem is not None:
+                                provider_elem.text = "ogr"
 
                     updated_qgs = ET.tostring(root, encoding='utf-8')
 
