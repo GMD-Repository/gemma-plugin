@@ -90,95 +90,98 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
 
         source_fields = geojson_data.fields()
         fields = QgsFields(source_fields)
+        if fields.indexOf("status") == -1:
+            fields.append(QgsField("status", QVariant.String))
 
-        def ensure_field(flds, name, ftype=QVariant.String):
-            if flds.indexOf(name) == -1:
-                flds.append(QgsField(name, ftype))
+        def clean(v: Any) -> str:
+            if v is None or v == NULL or (isinstance(v, QVariant) and v.isNull()):
+                return ""
+            s = str(v).strip()
+            return "" if s.lower() in ("null", "none", "na", "n/a", "nan") else s
 
-        ensure_field(fields, "status", QVariant.String)
-
-        # Helper to find field name case-insensitively from list of candidates
-        def resolve_field_name(field_list, candidate_names):
-            for candidate in candidate_names:
-                for fld in field_list:
-                    if fld.name().lower() == candidate.lower():
-                        return fld.name()
-            return None
-
-        # Helper to check if a value is missing, null, na, n/a, none, or empty
-        def is_na(val: Any) -> bool:
-            if val is None or val == NULL:
-                return True
-            if isinstance(val, QVariant) and val.isNull():
-                return True
-            val_str = str(val).strip().lower()
-            return val_str in ("", "null", "none", "na", "n/a", "nan")
-
-        # Extract records list from JSON data (Form 2 datafile)
-        records = []
-        if isinstance(json_data, list):
-            records = json_data
-        elif isinstance(json_data, dict):
-            if "records" in json_data and isinstance(json_data["records"], list):
-                records = json_data["records"]
-            elif "features" in json_data and isinstance(json_data["features"], list):
-                records = json_data["features"]
-            elif "data" in json_data and isinstance(json_data["data"], list):
-                records = json_data["data"]
-            else:
-                records = [json_data]
-
-        # Collect set of all GeoIDs / Map UUIDs present in Form 2 JSON records
-        form2_ids = set()
-        for rec in records:
-            if feedback and feedback.isCanceled():
-                break
-
-            rec_dict = rec if isinstance(rec, dict) else {}
-            if "properties" in rec_dict and isinstance(rec_dict["properties"], dict):
-                rec_props = rec_dict["properties"]
-            else:
-                rec_props = rec_dict
-
-            rec_id = None
-            for k, v in rec_props.items():
-                if k.lower() == "map_uuid" and not is_na(v):
-                    rec_id = str(v).strip()
+        # Index Form 2 JSON records by 19-digit bsn_geoid:
+        # province (3) + city_mun (2) + barangay (3) + ean (6) + bsn (5)
+        form2_by_geoid: Dict[str, Set[str]] = {}
+        if json_data:
+            records = json_data if isinstance(json_data, list) else (
+                json_data.get("records") or json_data.get("features") or json_data.get("data") or [json_data]
+            )
+            for rec in records:
+                if feedback and feedback.isCanceled():
                     break
+                p = rec.get("properties", rec) if isinstance(rec, dict) else {}
+                if not isinstance(p, dict):
+                    continue
 
-            if rec_id:
-                form2_ids.add(rec_id)
+                gid = clean(p.get("bsn_geoid"))
+                if not gid:
+                    try:
+                        prov = int(p.get("province_code", 0))
+                        mun = int(p.get("city_mun_code", 0))
+                        bgy = int(p.get("barangay_code", 0))
+                        ean = int(p.get("ean", 0))
+                        bsn = int(p.get("bsn_code", p.get("bsn", 0)))
+                        gid = f"{prov:03d}{mun:02d}{bgy:03d}{ean:06d}{bsn:05d}"
+                    except (ValueError, TypeError):
+                        gid = ""
 
-        uuid_field = resolve_field_name(source_fields, ["map_uuid"])
+                uuid = clean(p.get("map_uuid"))
+                if gid:
+                    entry = form2_by_geoid.setdefault(gid, set())
+                    if uuid:
+                        entry.add(uuid)
+
         invalid_features = []
 
-        # Iterate over geotagged point features and check for missing/null/na/n/a map_uuid or missing Form 2 record
         for f in geojson_data.getFeatures():
             if feedback and feedback.isCanceled():
                 break
 
-            feat_uuid = f.attribute(uuid_field) if uuid_field else None
+            bsn = clean(f["bsn"])
+            geoid = clean(f["bsn_geoid"])
 
-            # Flag if map_uuid is missing, NULL, NA, N/A, None, or not found in Form 2 datafile
-            if is_na(feat_uuid) or str(feat_uuid).strip() not in form2_ids:
-                geom = f.geometry()
-                out_feat = QgsFeature(fields)
-                if geom is not None:
-                    out_feat.setGeometry(geom)
+            # Skip BSN 0 / 00000 points
+            if bsn in ("0", "00", "000", "0000", "00000") or geoid.endswith("00000"):
+                continue
 
-                # Copy existing attributes
-                for i in range(source_fields.count()):
-                    out_feat.setAttribute(source_fields.at(i).name(), f.attribute(i))
+            uuid = clean(f["map_uuid"])
+            status = None
 
-                if is_na(feat_uuid):
-                    out_feat.setAttribute("status", "Missing/NULL Map UUID")
+            if not uuid:
+                status = "Missing/NULL Map UUID in GeoJSON"
+            elif json_data is not None:
+                if geoid in form2_by_geoid:
+                    uuids = form2_by_geoid[geoid]
+                    if not uuids:
+                        status = "Datafile exists but missing map_uuid"
+                    elif uuid not in uuids:
+                        status = "Map UUID mismatch with Form 2 Datafile"
                 else:
-                    out_feat.setAttribute("status", "Missing Form 2 Datafile Record")
+                    status = "Missing Form 2 Datafile Record"
 
+            if status:
+                out_feat = QgsFeature(fields)
+                if f.geometry() is not None:
+                    out_feat.setGeometry(f.geometry())
+                out_feat.setAttributes(list(f.attributes()) + [status])
                 invalid_features.append(out_feat)
 
-        feedback.pushInfo(
-            f"Results: {len(invalid_features)} geotagged points with missing/NULL map_uuid or missing Form 2 records."
+        feedback.pushInfo(f"Results: {len(invalid_features)} flagged features.")
+
+        # Create in-memory temp_layer from flagged features
+        geom_type = QgsWkbTypes.displayString(geojson_data.wkbType())
+        crs_authid = geojson_data.sourceCrs().authid()
+        temp_layer = QgsVectorLayer(f"{geom_type}?crs={crs_authid}", "temp_layer", "memory")
+        temp_layer.dataProvider().addAttributes(fields)
+        temp_layer.updateFields()
+        temp_layer.dataProvider().addFeatures(invalid_features)
+
+        # Select & organize columns using select_mv
+        final_output = gmdhelpers.select_mv(
+            temp_layer,
+            ["ref_ea_geocode"],
+            context=context,
+            feedback=feedback,
         )
 
         return gmdhelpers.export_features_to_sink(
@@ -186,13 +189,12 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
             parameters,
             self.OUTPUT,
             context,
-            fields,
-            geojson_data.wkbType(),
-            geojson_data.sourceCrs(),
-            invalid_features,
+            final_output.fields(),
+            final_output.wkbType(),
+            final_output.sourceCrs(),
+            final_output.getFeatures(),
             feedback,
         )
-
 
     def createInstance(self):
         return self.__class__()
