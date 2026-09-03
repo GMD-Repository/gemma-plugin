@@ -89,7 +89,8 @@ jobs:
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
           from: ${{ secrets.MAIL_FROM || secrets.MAIL_USERNAME }}
-          to: ${{ steps.gsheet-emails.outputs.recipients || secrets.EMAIL_TO }}
+          to: ${{ secrets.MAIL_FROM || secrets.MAIL_USERNAME }}
+          bcc: ${{ steps.gsheet-emails.outputs.recipients || secrets.EMAIL_TO }}
           reply_to: ${{ secrets.MAIL_REPLY_TO || secrets.MAIL_FROM || secrets.MAIL_USERNAME }}
           subject: "[GEMMA Plugin] v${{ steps.release.outputs.version }} — Stable Release Ready"
           html_body: |

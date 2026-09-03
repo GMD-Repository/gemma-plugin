@@ -321,7 +321,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 self.MIN_HOUSEHOLD,
                 "Minimum Household Count per EA",
                 type=QgsProcessingParameterNumber.Integer,
-                defaultValue=100,
+                defaultValue=99,
                 minValue=1,
             )
         )
@@ -695,13 +695,18 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 layer_id = self.parameterAsOutputLayer(context, param_name)
                 if layer_id:
                     layer = context.getMapLayer(layer_id)
-                    if layer is not None:
+                    if layer is not None and layer.featureCount() > 0:
                         apply_qml_to_layer(layer, qml_filename)
         except Exception as e:
             if feedback:
                 feedback.pushInfo(f"Note: Could not auto-apply QML style: {str(e)}")
 
-        return super().postProcessAlgorithm(context, feedback)
+        if hasattr(super(), "postProcessAlgorithm"):
+            try:
+                return super().postProcessAlgorithm(context, feedback)
+            except AttributeError:
+                pass
+        return {}
 
     def createInstance(self):
         """Create a new instance of this algorithm."""

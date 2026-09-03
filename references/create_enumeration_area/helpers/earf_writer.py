@@ -9,51 +9,51 @@ Template layout (matching PSA census format):
 
   Row  1 : Title  — "2026 Preliminary Enumeration Area Reference File"
   Row  2 : Sub-title — "As of <Mmm> <YYYY>"
-  Row  3 : (blank spacer)
-  Row  4 : Column group headers (merged):
+  Row  3 : Column group headers (merged):
              Geographic Identification | 2024 EARF | 2024 Estimated |
-             2026 Preliminary EAs
-  Rows 5–8: Sub-header labels (merged vertically, word-wrapped)
-  Row  9 : Column number codes  (1) (2) … (15)
-  Row 10 : (blank spacer)
-  Row 11+: Data block
-             - City/Mun summary row  (bold, gray fill)
-             - For each barangay:
-                 Barangay summary row (bold, lighter fill)
-                 EA data rows         (one per feature)
+             2026 Preliminary EA
+  Row  4 : Sub-header labels (word-wrapped)
+  Row  5 : Column number codes  (2) (3) … (14)
+  Row  6+: Data block (4-level hierarchy):
+             - Level 1: Province summary row (bold, dark fill: #4F81BD)
+             - Level 2: City/Mun summary row (bold, medium fill: #D9E1F2)
+             - Level 3: Barangay summary row (bold, light fill: #DCE6F1)
+             - Level 4: EA data rows         (one per feature)
 
-Column layout (A–O, 15 columns):
-  A  Reg          — 2-digit region code
-  B  Prov         — 5-digit province/city-mun code
-  C  Mun          — city-mun portion
-  D  Brgy         — 3-digit barangay suffix
-  E  EA           — EA code (ean)
-  F  Number of EAs                                         2024 EARF
-  G  Province, City, Municipality, Barangay, and EA        2024 EARF
-  H  Number of Households                                  2024 Estimated
-  I  Number of Buildings                                   2024 Estimated
-  J  New Enumeration Area Code                             2026 Preliminary EAs
-  K  Number of Household                                   2026 Preliminary EAs
-  L  Number of Buildings                                   2026 Preliminary EAs
-  M  EA Type                                               2026 Preliminary EAs
-  N  Source Year                                           2026 Preliminary EAs
-  O  Remarks                                               2026 Preliminary EAs
+Column layout (A–N, 14 columns):
+  A  Prov         — 3-digit province code (e.g. 017)
+  B  Mun          — 2-digit municipality code (e.g. 28)
+  C  Brgy         — 3-digit barangay code (e.g. 001)
+  D  EA           — 6-digit EA code (e.g. 001000)
+  E  Number of EAs                                         2024 EARF
+  F  Province, City, Municipality, Barangay, and EA        2024 EARF
+  G  Number of Households                                  2024 Estimated
+  H  Number of Buildings                                   2024 Estimated
+  I  New Enumeration Area Code                             2026 Preliminary EA
+  J  Household Count                                       2026 Preliminary EA
+  K  Building Count                                        2026 Preliminary EA
+  L  EA Type                                               2026 Preliminary EA
+  M  Source Year                                           2026 Preliminary EA
+  N  Remarks                                               2026 Preliminary EA
 
 Data sources (standard 19-field merged-layer schema):
-  geocode (8-digit) → Reg / Prov / Mun / Brgy codes
-  ean               → col E
-  eacount           → col F
-  name              → col G
-  hhcount           → col H  (2024 baseline)
-  bldgcount         → col I  (2024 baseline)
-  new_ean           → col J
-  hh_count          → col K  (2026 estimated)
-  bldg_count        → col L  (2026 estimated)
-  ea_type           → col M
-  sy                → col N
-  remarks           → col O
+  geocode (8-digit) → Prov / Mun / Brgy codes
+  ean               → col D
+  eacount           → col E
+  name              → col F
+  hhcount           → col G  (2024 baseline)
+  bldgcount         → col H  (2024 baseline)
+  new_ean           → col I
+  hh_count          → col J  (2026 estimated)
+  bldg_count        → col K  (2026 estimated)
+  ea_type           → col L
+  sy                → col M
+  remarks           → col N
 
-Delineated EAs : Each child feature appears on its own row.
+Delineated EAs : Child features appear on separate rows. To prevent double-counting
+                 baseline totals, 2024 counts (cols E, G, H) are populated only on the
+                 first child part; subsequent child parts leave 2024 counts blank while
+                 retaining the parent EA identifier in col D.
 Merged EAs     : Included once (prevailing EA); "Merged EA" appended to remarks.
 Special EAs    : Included with ea_type as-is (GAP / OVERLAP / SPECIAL).
 
@@ -91,27 +91,23 @@ _TOTAL_COLS = 14   # A–N
 # ---------------------------------------------------------------------------
 _ROW_TITLE     = 1
 _ROW_AS_OF     = 2
-_ROW_SPACER1   = 3
-_ROW_GRP_HDR   = 4
-_ROW_SUBHDR_S  = 5   # sub-header start (rows 5–8 merged per column)
-_ROW_SUBHDR_E  = 8   # sub-header end
-_ROW_NUM_CODES = 9
-_ROW_SPACER2   = 10
-_DATA_START    = 11
+_ROW_GRP_HDR   = 3
+_ROW_SUBHDR    = 4
+_ROW_NUM_CODES = 5
+_DATA_START    = 6
 
 # ---------------------------------------------------------------------------
 # Column-group definitions  (1-indexed, inclusive)
 # Format: (label, start_col, end_col)
 # ---------------------------------------------------------------------------
 _COL_GROUPS = [
-    ("Geographic Identification", 1,  4),   # A–D
-    ("2024 EARF",                 5,  6),   # E–F
-    ("2024 Estimated",            7,  8),   # G–H
-    ("2026 Preliminary EA",       9, 14),   # I–N
+    ("2024 EARF",           5,  6),   # E–F
+    ("2024 Estimated",      7,  8),   # G–H
+    ("2026 Preliminary EA", 9, 14),   # I–N
 ]
 
 # ---------------------------------------------------------------------------
-# Sub-header texts per column (displayed in rows 5–8, merged vertically)
+# Sub-header texts per column (displayed in row 4)
 # ---------------------------------------------------------------------------
 _SUBHDR = [
     "Prov",
@@ -123,14 +119,14 @@ _SUBHDR = [
     "Number of\nHouseholds",
     "Number of\nBuildings",
     "New Enumeration\nArea Code",
-    "Number of\nHousehold",
-    "Number of\nBuildings",
+    "Household\nCount",
+    "Building\nCount",
     "EA Type",
     "Source\nYear",
     "Remarks",
 ]
 
-# Number codes row 9
+# Number codes row 5
 _NUM_CODES = [
     "(2)", "(3)", "(4)", "(5)",
     "(6)", "(7)", "(8)", "(9)",
@@ -237,14 +233,13 @@ class EARFWriter:
             for col_idx, width in enumerate(_COL_WIDTHS, start=1):
                 from openpyxl.utils import get_column_letter
                 ws.column_dimensions[get_column_letter(col_idx)].width = width
-
+            
             # Row heights for header section
-            ws.row_dimensions[_ROW_TITLE].height    = 16
-            ws.row_dimensions[_ROW_AS_OF].height    = 14
-            ws.row_dimensions[_ROW_GRP_HDR].height  = 18
-            for r in range(_ROW_SUBHDR_S, _ROW_SUBHDR_E + 1):
-                ws.row_dimensions[r].height = 14
-            ws.row_dimensions[_ROW_NUM_CODES].height = 13
+            ws.row_dimensions[_ROW_TITLE].height     = 18
+            ws.row_dimensions[_ROW_AS_OF].height     = 15
+            ws.row_dimensions[_ROW_GRP_HDR].height   = 18
+            ws.row_dimensions[_ROW_SUBHDR].height    = 28
+            ws.row_dimensions[_ROW_NUM_CODES].height = 14
 
             # Freeze panes: keep headers visible when scrolling
             ws.freeze_panes = ws.cell(row=_DATA_START, column=1)
@@ -267,10 +262,11 @@ class EARFWriter:
         """Read features from the layer and return ordered row dicts.
 
         Order:
-          1. City/Mun summary row
-          2. For each barangay (sorted by 8-digit geocode):
+          1. Province summary row
+          2. City/Mun summary row
+          3. For each barangay (sorted by 8-digit geocode):
              a. Barangay summary row
-             b. EA rows sorted by ean
+             b. EA rows sorted by Mother EA and new_ean
         """
         try:
             from qgis.core import NULL
@@ -317,6 +313,7 @@ class EARFWriter:
 
         # ── Collect raw EA rows ──────────────────────────────────────────
         raw_rows: List[Dict[str, Any]] = []
+        prov_name = ""
 
         for feat in layer.getFeatures():
             geocode_raw = _str(feat, "geocode") or ""
@@ -354,6 +351,10 @@ class EARFWriter:
                 or ""
             )
 
+            p_cand = _str(feat, "province") or _str(feat, "prov_name") or _str(feat, "prov") or ""
+            if p_cand and not prov_name:
+                prov_name = p_cand
+
             raw_rows.append({
                 # Geographic identifiers
                 "prov":          prov,
@@ -363,7 +364,7 @@ class EARFWriter:
                 "geocode_8":     geocode_8,
                 "barangay_name": brgy_name_val,
                 # 2024 EARF columns
-                "eacount":    _num(feat, "eacount"),
+                "eacount":    _num(feat, "eacount") if _num(feat, "eacount") is not None else 1,
                 "name":       _str(feat, "name")     or "",
                 "hhcount":    _num(feat, "hhcount"),
                 "bldgcount":  _num(feat, "bldgcount"),
@@ -375,6 +376,7 @@ class EARFWriter:
                 "sy":         _str(feat, "sy")        or "2026",
                 "remarks":    remarks_val,
                 # Row type
+                "is_province_summary": False,
                 "is_citymun_summary":  False,
                 "is_barangay_summary": False,
                 "is_ea_row":           True,
@@ -382,9 +384,6 @@ class EARFWriter:
             })
 
         # ── Process ghost rows (fully-consumed previous EAs) ────────────
-        # Ghost features are emitted by _replace_ea_geometries() when a
-        # previous EA is entirely covered by replacement polygons.  They
-        # carry ea_type=MERGED and NULL 2026 counts / new_ean.
         active_keys = {
             (r.get("geocode_8", ""), r.get("ea", ""))
             for r in raw_rows
@@ -474,6 +473,10 @@ class EARFWriter:
                 or ""
             )
 
+            p_cand = _g_str("province") or _g_str("prov_name") or _g_str("prov") or ""
+            if p_cand and not prov_name:
+                prov_name = p_cand
+
             raw_rows.append({
                 "prov":          prov,
                 "mun":           mun,
@@ -494,37 +497,64 @@ class EARFWriter:
                 "sy":         _g_str("sy")       or "2024",
                 "remarks":    ghost_rmk,
                 # Row type
+                "is_province_summary": False,
                 "is_citymun_summary":  False,
                 "is_barangay_summary": False,
                 "is_ea_row":           True,
                 "is_ghost":            True,
             })
 
-        # ── City/Mun totals ──────────────────────────────────────────────
+        # ── City/Mun and Province totals ────────────────────────────────
         def _sum(rows, key):
             vals = [r[key] for r in rows if r.get(key) is not None]
             return sum(vals) if vals else None
 
         first = raw_rows[0] if raw_rows else {}
-        # City/Mun summary row (geocode_8 = 5-digit geocode + 000)
         first_prov = first.get("prov", "") or (self._geo_code[:3] if len(self._geo_code) >= 3 else "")
         first_mun = first.get("mun", "") or (self._geo_code[3:5] if len(self._geo_code) >= 5 else "")
+
+        # Level 1: Province summary row (PPP 00 000 000000)
+        province_row = {
+            "prov":                first_prov,
+            "mun":                 "00",
+            "brgy":                "000",
+            "ea":                  "000000",
+            "geocode_8":           first_prov.ljust(8, "0"),
+            "eacount":             _sum(raw_rows, "eacount"),
+            "name":                prov_name.upper() if prov_name else f"PROVINCE {first_prov}",
+            "hhcount":             _sum(raw_rows, "hhcount"),
+            "bldgcount":           _sum(raw_rows, "bldgcount"),
+            "new_ean":             "",
+            "hh_count":            None,
+            "bldg_count":          None,
+            "ea_type":             "",
+            "sy":                  "",
+            "remarks":             "",
+            "is_province_summary": True,
+            "is_citymun_summary":  False,
+            "is_barangay_summary": False,
+            "is_ea_row":           False,
+            "is_ghost":            False,
+        }
+
+        # Level 2: City/Mun summary row (PPP MM 000 000000)
         citymun_row = {
-            "prov":   first_prov,
-            "mun":    first_mun,
-            "brgy":   "000",
-            "ea":     "000000",
-            "geocode_8": self._geo_code.ljust(8, "0")[:8],
-            "eacount":   _sum(raw_rows, "eacount"),
-            "name":      self._citymun.upper(),
-            "hhcount":   _sum(raw_rows, "hhcount"),
-            "bldgcount": _sum(raw_rows, "bldgcount"),
-            "new_ean":   "",
-            "hh_count":  _sum(raw_rows, "hh_count"),
-            "bldg_count":_sum(raw_rows, "bldg_count"),
-            "ea_type":   "",
-            "sy":        "",
-            "remarks":   "",
+            "prov":                first_prov,
+            "mun":                 first_mun,
+            "brgy":                "000",
+            "ea":                  "000000",
+            "geocode_8":           self._geo_code.ljust(8, "0")[:8],
+            "eacount":             None,
+            "name":                self._citymun.upper(),
+            "hhcount":             None,
+            "bldgcount":           None,
+            "new_ean":             "",
+            "hh_count":            None,
+            "bldg_count":          None,
+            "ea_type":             "",
+            "sy":                  "",
+            "remarks":             "",
+            "is_province_summary": False,
             "is_citymun_summary":  True,
             "is_barangay_summary": False,
             "is_ea_row":           False,
@@ -537,7 +567,7 @@ class EARFWriter:
             brgy_groups.setdefault(r["geocode_8"], []).append(r)
 
         # ── Build ordered output ─────────────────────────────────────────
-        output: List[Dict[str, Any]] = [citymun_row]
+        output: List[Dict[str, Any]] = [province_row, citymun_row]
 
         for brgy_code in sorted(brgy_groups.keys()):
             ea_rows = brgy_groups[brgy_code]
@@ -569,22 +599,24 @@ class EARFWriter:
                 brgy_suffix = first_ea.get("brgy", "") or brgy_code[-3:]
                 brgy_name = f"BARANGAY {brgy_suffix}".upper()
 
+            # Level 3: Barangay summary row
             brgy_row = {
-                "prov":   first_ea.get("prov", ""),
-                "mun":    first_ea.get("mun",  ""),
-                "brgy":   first_ea.get("brgy", ""),
-                "ea":     "000000",
-                "geocode_8": brgy_code,
-                "eacount":   _sum(ea_rows, "eacount"),
-                "name":      brgy_name,
-                "hhcount":   _sum(ea_rows, "hhcount"),
-                "bldgcount": _sum(ea_rows, "bldgcount"),
-                "new_ean":   "",
-                "hh_count":  _sum(ea_rows, "hh_count"),
-                "bldg_count":_sum(ea_rows, "bldg_count"),
-                "ea_type":   "",
-                "sy":        "",
-                "remarks":   "",
+                "prov":                first_ea.get("prov", ""),
+                "mun":                 first_ea.get("mun",  ""),
+                "brgy":                first_ea.get("brgy", ""),
+                "ea":                  "000000",
+                "geocode_8":           brgy_code,
+                "eacount":             None,
+                "name":                brgy_name,
+                "hhcount":             None,
+                "bldgcount":           None,
+                "new_ean":             "",
+                "hh_count":            None,
+                "bldg_count":          None,
+                "ea_type":             "",
+                "sy":                  "",
+                "remarks":             "",
+                "is_province_summary": False,
                 "is_citymun_summary":  False,
                 "is_barangay_summary": True,
                 "is_ea_row":           False,
@@ -592,8 +624,58 @@ class EARFWriter:
             }
             output.append(brgy_row)
 
-            for ea_row in sorted(ea_rows, key=lambda r: (r.get("ea", "") or "", r.get("new_ean", "") or "")):
-                output.append(ea_row)
+            # Enrich and guarantee complete remarks for all merged EAs in this barangay
+            active_merged = [
+                r for r in ea_rows
+                if (r.get("ea_type") or "").upper() == "MERGED" and not r.get("is_ghost")
+            ]
+            ghost_merged = [
+                r for r in ea_rows
+                if (r.get("ea_type") or "").upper() == "MERGED" and r.get("is_ghost")
+            ]
+
+            if ghost_merged and active_merged:
+                prevailing_ean = active_merged[0].get("new_ean") or active_merged[0].get("ea") or ""
+                # Ensure each ghost partner row states the prevailing EA it merged into
+                for g_row in ghost_merged:
+                    cur_rmk = (g_row.get("remarks") or "").strip()
+                    if not cur_rmk or cur_rmk.upper() in ("", "MERGED EA", "MERGED"):
+                        g_row["remarks"] = f"Merged to EA {prevailing_ean}"
+                    elif "merged to" not in cur_rmk.lower() and "merged with" not in cur_rmk.lower():
+                        g_row["remarks"] = f"Merged to EA {prevailing_ean}; {cur_rmk}"
+
+                # Ensure each active prevailing merged EA row lists its absorbed partner(s)
+                for a_row in active_merged:
+                    absorbed_list = [
+                        g.get("ea") for g in ghost_merged
+                        if g.get("ea") and g.get("ea") != a_row.get("ea") and g.get("ea") != a_row.get("new_ean")
+                    ]
+                    if absorbed_list:
+                        cur_rmk = (a_row.get("remarks") or "").strip()
+                        if not cur_rmk or cur_rmk.upper() in ("", "MERGED EA", "MERGED"):
+                            a_row["remarks"] = f"Merged with EA {', '.join(absorbed_list)}"
+                        elif "merged" not in cur_rmk.lower():
+                            a_row["remarks"] = f"Merged with EA {', '.join(absorbed_list)}; {cur_rmk}"
+
+            # Level 4: EA rows under this barangay grouped by Mother EA
+            mother_ea_groups: Dict[str, List[Dict]] = {}
+            for r in ea_rows:
+                m_ea = r.get("ea", "") or ""
+                mother_ea_groups.setdefault(m_ea, []).append(r)
+
+            for m_ea in sorted(mother_ea_groups.keys()):
+                group_rows = mother_ea_groups[m_ea]
+                # Sort child rows by new_ean
+                group_rows.sort(key=lambda r: (r.get("new_ean", "") or "", r.get("remarks", "") or ""))
+
+                for idx, ea_row in enumerate(group_rows):
+                    if idx > 0:
+                        # For subsequent child rows of a delineated EA:
+                        # Suppress 2024 baseline counts to prevent double-counting
+                        ea_row["eacount"] = None
+                        ea_row["hhcount"] = None
+                        ea_row["bldgcount"] = None
+                    output.append(ea_row)
 
         return output
 
@@ -602,7 +684,7 @@ class EARFWriter:
     # ------------------------------------------------------------------
 
     def _write_title_block(self, ws, styles) -> None:
-        """Rows 1–3: title, as-of date, blank spacer."""
+        """Rows 1–2: title and as-of date."""
         # Row 1
         cell = ws.cell(row=_ROW_TITLE, column=1,
                        value="2026 Preliminary Enumeration Area Reference File")
@@ -622,16 +704,19 @@ class EARFWriter:
             start_row=_ROW_AS_OF, start_column=1,
             end_row=_ROW_AS_OF,   end_column=_TOTAL_COLS,
         )
-        # Row 3 — spacer, leave blank
 
     def _write_group_headers(self, ws, styles) -> None:
-        """Row 4: merged column-group header cells."""
+        """Row 3: merged column-group header cells."""
         group_fills = {
-            "Geographic Identification": styles.fill_geo,
-            "2024 EARF":                 styles.fill_2024,
-            "2024 Estimated":            styles.fill_est,
-            "2026 Preliminary EA":       styles.fill_2026,
+            "2024 EARF":           styles.fill_2024,
+            "2024 Estimated":      styles.fill_est,
+            "2026 Preliminary EA": styles.fill_2026,
         }
+
+        # Apply borders to columns 1..4 in row 3
+        for c in range(1, 5):
+            mc = ws.cell(row=_ROW_GRP_HDR, column=c)
+            mc.border = styles.border_thin
 
         for label, start_col, end_col in _COL_GROUPS:
             fill = group_fills.get(label, styles.fill_subhdr)
@@ -656,26 +741,16 @@ class EARFWriter:
                 mc.border = styles.border_thin
 
     def _write_sub_headers(self, ws, styles) -> None:
-        """Rows 5–8 (merged vertically) + row 9 number codes."""
+        """Row 4 subheaders + Row 5 number codes."""
+        # Row 4 — Sub-headers
         for col_idx, label in enumerate(_SUBHDR, start=1):
-            # Write label in the first row; merge rows 5–8
-            cell = ws.cell(row=_ROW_SUBHDR_S, column=col_idx, value=label)
+            cell = ws.cell(row=_ROW_SUBHDR, column=col_idx, value=label)
             cell.font      = styles.font_subhdr
             cell.alignment = styles.align_center_wrap
             cell.fill      = styles.fill_subhdr
             cell.border    = styles.border_thin
 
-            ws.merge_cells(
-                start_row=_ROW_SUBHDR_S, start_column=col_idx,
-                end_row=_ROW_SUBHDR_E,   end_column=col_idx,
-            )
-            # Apply fill/border to all merged cells
-            for r in range(_ROW_SUBHDR_S, _ROW_SUBHDR_E + 1):
-                mc = ws.cell(row=r, column=col_idx)
-                mc.fill   = styles.fill_subhdr
-                mc.border = styles.border_thin
-
-        # Row 9 — number codes
+        # Row 5 — Number codes
         for col_idx, code in enumerate(_NUM_CODES, start=1):
             cell = ws.cell(row=_ROW_NUM_CODES, column=col_idx, value=code)
             cell.font      = styles.font_num_code
@@ -685,20 +760,26 @@ class EARFWriter:
 
     def _write_data_block(self, ws, styles,
                           data_rows: List[Dict[str, Any]]) -> None:
-        """Write city/mun summary, barangay summaries, and EA rows."""
+        """Write province summary, city/mun summary, barangay summaries, and EA rows."""
         for offset, row_data in enumerate(data_rows):
             row = _DATA_START + offset
-            if row_data["is_citymun_summary"]:
+            if row_data.get("is_province_summary"):
+                self._write_row(ws, styles, row, row_data, kind="province")
+            elif row_data.get("is_citymun_summary"):
                 self._write_row(ws, styles, row, row_data, kind="citymun")
-            elif row_data["is_barangay_summary"]:
+            elif row_data.get("is_barangay_summary"):
                 self._write_row(ws, styles, row, row_data, kind="barangay")
             else:
                 self._write_row(ws, styles, row, row_data, kind="ea")
 
     def _write_row(self, ws, styles, row: int,
                    row_data: Dict, kind: str) -> None:
-        """Write a single row; kind = 'citymun' | 'barangay' | 'ea'."""
-        if kind == "citymun":
+        """Write a single row; kind = 'province' | 'citymun' | 'barangay' | 'ea'."""
+        if kind == "province":
+            font   = styles.font_summary_province
+            fill   = styles.fill_summary_province
+            border = styles.border_summary_province
+        elif kind == "citymun":
             font   = styles.font_summary_citymun
             fill   = styles.fill_summary_citymun
             border = styles.border_thin
@@ -753,6 +834,8 @@ class EARFWriter:
             zero = col_idx - 1  # 0-based column index
             if zero in _NUMERIC_COLS:
                 cell.alignment = styles.align_right
+                if isinstance(val, (int, float)):
+                    cell.number_format = "#,##0"
             elif zero in _CENTER_COLS:
                 cell.alignment = styles.align_center
             else:
@@ -770,16 +853,17 @@ class _Styles:
         from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
         # ── Fonts ────────────────────────────────────────────────────────
-        self.font_title           = Font(name="Arial", size=12, bold=True)
-        self.font_normal_bold     = Font(name="Arial", size=10, bold=True)
-        self.font_group_hdr       = Font(name="Arial", size=9,  bold=True)
-        self.font_subhdr          = Font(name="Arial", size=8,  bold=True)
-        self.font_num_code        = Font(name="Arial", size=8,  bold=False)
-        self.font_summary_citymun = Font(name="Arial", size=9,  bold=True)
-        self.font_summary_brgy    = Font(name="Arial", size=8,  bold=True)
-        self.font_data            = Font(name="Arial", size=8)
+        self.font_title            = Font(name="Arial", size=12, bold=True)
+        self.font_normal_bold      = Font(name="Arial", size=10, bold=True)
+        self.font_group_hdr        = Font(name="Arial", size=9,  bold=True)
+        self.font_subhdr           = Font(name="Arial", size=8,  bold=True)
+        self.font_num_code         = Font(name="Arial", size=8,  bold=False)
+        self.font_summary_province = Font(name="Arial", size=9,  bold=True)
+        self.font_summary_citymun  = Font(name="Arial", size=9,  bold=True)
+        self.font_summary_brgy     = Font(name="Arial", size=8,  bold=True)
+        self.font_data             = Font(name="Arial", size=8)
         # Ghost rows: italic to signal they are reference-only rows
-        self.font_ghost           = Font(name="Arial", size=8, italic=True)
+        self.font_ghost            = Font(name="Arial", size=8, italic=True)
 
         # ── Alignments ───────────────────────────────────────────────────
         self.align_left         = Alignment(horizontal="left",   vertical="center")
@@ -792,13 +876,13 @@ class _Styles:
         def _fill(hex_color: str) -> PatternFill:
             return PatternFill(fill_type="solid", fgColor=hex_color)
 
-        self.fill_geo             = _fill("E2EFDA")   # Geographic ID — soft green
-        self.fill_2024            = _fill("D6E4BC")   # 2024 EARF — light green
-        self.fill_est             = _fill("FFFFC1")   # 2024 Estimated — light yellow
-        self.fill_2026            = _fill("C5D9F1")   # 2026 Preliminary — light blue
-        self.fill_subhdr          = _fill("F2F2F2")   # Sub-header — light gray
-        self.fill_summary_citymun = _fill("D9D9D9")   # City/Mun row — medium gray
-        self.fill_summary_brgy    = _fill("EFEFEF")   # Barangay row — lighter gray
+        self.fill_2024             = _fill("D6E4BC")   # 2024 EARF — light green
+        self.fill_est              = _fill("FFFFC1")   # 2024 Estimated — light yellow
+        self.fill_2026             = _fill("C5D9F1")   # 2026 Preliminary — light blue
+        self.fill_subhdr           = _fill("F2F2F2")   # Sub-header — light gray
+        self.fill_summary_province = _fill("E2EFDA")   # Province row — soft green
+        self.fill_summary_citymun  = _fill("EDF2E8")   # City/Mun row — light soft green
+        self.fill_summary_brgy     = _fill("EFEFEF")   # Barangay row — soft light gray
 
         # Row highlighting fills for EA categories:
         self.fill_merged          = _fill("FFF0E6")   # Merged EAs — Soft Light Peach
@@ -808,12 +892,16 @@ class _Styles:
         self.fill_none            = PatternFill(fill_type=None)
 
         # ── Borders ──────────────────────────────────────────────────────
-        _thin  = Side(style="thin")
-        _hair  = Side(style="hair")
+        _thin   = Side(style="thin")
+        _double = Side(style="double")
+        _hair   = Side(style="hair")
 
         self.border_thin = Border(
             left=_thin, right=_thin, top=_thin, bottom=_thin,
         )
         self.border_thin_light = Border(
             left=_hair, right=_hair, top=_hair, bottom=_hair,
+        )
+        self.border_summary_province = Border(
+            left=_thin, right=_thin, top=_thin, bottom=_double,
         )
