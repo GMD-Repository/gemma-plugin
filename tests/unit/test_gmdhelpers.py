@@ -67,5 +67,10 @@ class TestGmdhelpers(unittest.TestCase):
             self.skipTest(f"Skipping test due to processing environment error: {e}")
 
 
+    def test_load_base_layer_helper_exists(self):
+        """Verify load_base_layer helper function is present in gmdhelpers."""
+        self.assertTrue(hasattr(self.mod, "load_base_layer"))
+
+
 if __name__ == "__main__":
     unittest.main()

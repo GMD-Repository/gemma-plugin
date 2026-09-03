@@ -158,6 +158,42 @@ def load_cbms_json(alg, parameters, param_name, context, feedback=None):
     return json_data
 
 
+def load_base_layer(alg, parameters, param_name, context, suffix="_bldg_point"):
+    """Loads a reference sub-layer ending with suffix (default: '_bldg_point') from a BASE_LAYER GeoPackage parameter."""
+    base_layer_path = alg.parameterAsFile(parameters, param_name, context)
+    ref_bldg_point = None
+
+    if base_layer_path and os.path.exists(base_layer_path):
+        bldg_point_sublayer = None
+        tmp_layer = QgsVectorLayer(base_layer_path, "tmp_gpkg", "ogr")
+        if tmp_layer and tmp_layer.isValid():
+            for sub_item in tmp_layer.dataProvider().subLayers():
+                parts = sub_item.split("!!::!!") if "!!::!!" in sub_item else sub_item.split(":")
+                for part in parts:
+                    if part.endswith(suffix):
+                        bldg_point_sublayer = part
+                        break
+                if bldg_point_sublayer:
+                    break
+
+        if bldg_point_sublayer:
+            ref_bldg_point = QgsVectorLayer(
+                f"{base_layer_path}|layername={bldg_point_sublayer}",
+                bldg_point_sublayer,
+                "ogr",
+            )
+
+    if not ref_bldg_point or not ref_bldg_point.isValid():
+        source = alg.parameterAsSource(parameters, param_name, context)
+        if source is not None:
+            return source
+        raise QgsProcessingException(
+            f"Could not load reference building point layer ending with '{suffix}' from '{base_layer_path}'"
+        )
+
+    return ref_bldg_point
+
+
 def install_package(package_name):
     try:
         importlib.import_module(package_name)

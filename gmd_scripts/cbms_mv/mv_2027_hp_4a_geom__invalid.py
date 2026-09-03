@@ -22,6 +22,8 @@ from qgis.core import (
     QgsWkbTypes,
     QgsCoordinateReferenceSystem,
     QgsProviderRegistry,
+    QgsDistanceArea,
+    QgsPointXY,
 )
 from PyQt5.QtGui import QIcon
 from .. import gmdhelpers
@@ -102,75 +104,110 @@ class mv_2027_hp_4a_geom__invalid(QgsProcessingAlgorithm):
 
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
-        
-        base_layer_path = self.parameterAsFile(parameters, self.BASE_LAYER, context)
-        ref_bldg_point = None
+        ref_bldg_point = gmdhelpers.load_base_layer(self, parameters, self.BASE_LAYER, context)
 
-        if base_layer_path and os.path.exists(base_layer_path):
-            bldg_point_sublayer = None
-            tmp_layer = QgsVectorLayer(base_layer_path, "tmp_gpkg", "ogr")
-            if tmp_layer and tmp_layer.isValid():
-                for sub_item in tmp_layer.dataProvider().subLayers():
-                    parts = sub_item.split("!!::!!") if "!!::!!" in sub_item else sub_item.split(":")
-                    for part in parts:
-                        if part.endswith("_bldg_point"):
-                            bldg_point_sublayer = part
-                            break
-                    if bldg_point_sublayer:
-                        break
+        # 1. Build map_uuid lookup dictionary for reference building points
+        ref_map = {}
+        for ref_f in ref_bldg_point.getFeatures():
+            if feedback and feedback.isCanceled():
+                break
+            uuid_val = ref_f.attribute("map_uuid")
+            if uuid_val is not None and uuid_val != NULL:
+                ref_map[str(uuid_val)] = {
+                    "geom": ref_f.geometry(),
+                    "bsn_geoid": ref_f.attribute("bsn_geoid") if hasattr(ref_f, "attribute") else NULL,
+                }
 
-            if bldg_point_sublayer:
-                ref_bldg_point = QgsVectorLayer(
-                    f"{base_layer_path}|layername={bldg_point_sublayer}",
-                    bldg_point_sublayer,
-                    "ogr",
-                )
+        # 2. Setup ellipsoidal distance calculator (measures distance in meters)
+        distance_calc = QgsDistanceArea()
+        crs = geojson_data.sourceCrs()
+        if not crs.isValid():
+            crs = QgsCoordinateReferenceSystem("EPSG:4326")
+        distance_calc.setSourceCrs(crs, context.transformContext())
+        distance_calc.setEllipsoid("WGS84")
 
-        if not ref_bldg_point or not ref_bldg_point.isValid():
-            raise QgsProcessingException(
-                f"Could not load reference building point layer ending with '_bldg_point' from '{base_layer_path}'"
-            )
+        # 3. Construct output fields (source fields + ref_map_uuid + ref_bsn_geoid + distance_m)
+        source_fields = geojson_data.fields()
+        out_fields = QgsFields(source_fields)
 
-        regular_bldg = processing.run(
-            "native:extractbyexpression",
-            {
-                "INPUT": geojson_data,
-                "EXPRESSION": 'to_int("bsn") > 0 AND to_int("bsn") < 55555',
-                "OUTPUT": "memory:",
-            },
-            context=context,
-            feedback=feedback,
-        )["OUTPUT"]
+        def ensure_field(flds, name, ftype=QVariant.String):
+            if flds.indexOf(name) == -1:
+                flds.append(QgsField(name, ftype))
 
-        joined_layer = processing.run(
-            "native:joinattributestable",
-            {
-                "INPUT": regular_bldg,
-                "FIELD": "map_uuid",
-                "INPUT_2": ref_bldg_point,
-                "FIELD_2": "map_uuid",
-                "FIELDS_TO_COPY": ["map_uuid"],
-                "METHOD": 1,
-                "DISCARD_NONMATCHING": False,
-                "PREFIX": "ref_",
-                "OUTPUT": "memory:",
-            },
-            context=context,
-            feedback=feedback,
-        )["OUTPUT"]
+        ensure_field(out_fields, "ref_map_uuid", QVariant.String)
+        ensure_field(out_fields, "ref_bsn_geoid", QVariant.String)
+        ensure_field(out_fields, "distance_m", QVariant.Double)
+
+        ref_map_uuid_idx = out_fields.indexOf("ref_map_uuid")
+        ref_bsn_geoid_idx = out_fields.indexOf("ref_bsn_geoid")
+        distance_m_idx = out_fields.indexOf("distance_m")
+
+        matched_features = []
+
+        # 4. Process features from geojson_data that have matching map_uuid in ref_bldg_point
+        for f in geojson_data.getFeatures():
+            if feedback and feedback.isCanceled():
+                break
+            uuid_val = f.attribute("map_uuid")
+            if uuid_val is None or uuid_val == NULL:
+                continue
+
+            uuid_str = str(uuid_val)
+            if uuid_str in ref_map:
+                ref_info = ref_map[uuid_str]
+                g1 = f.geometry()
+                g2 = ref_info["geom"]
+
+                dist_m = NULL
+                if g1 and not g1.isEmpty() and g2 and not g2.isEmpty():
+                    p1 = QgsPointXY(g1.centroid().asPoint())
+                    p2 = QgsPointXY(g2.centroid().asPoint())
+                    dist_m = round(float(distance_calc.measureLine(p1, p2)), 3)
+
+                out_feat = QgsFeature(out_fields)
+                out_feat.setGeometry(g1)
+                attrs = list(f.attributes())
+                while len(attrs) < out_fields.count():
+                    attrs.append(NULL)
+
+                attrs[ref_map_uuid_idx] = uuid_str
+                attrs[ref_bsn_geoid_idx] = ref_info["bsn_geoid"] if ref_info["bsn_geoid"] is not None else NULL
+                attrs[distance_m_idx] = dist_m
+
+                out_feat.setAttributes(attrs)
+                matched_features.append(out_feat)
+
+        # 5. Create temporary memory layer for matched features
+        wkb_type_str = QgsWkbTypes.displayString(geojson_data.wkbType())
+        temp_layer = QgsVectorLayer(
+            f"{wkb_type_str}?crs={crs.authid()}",
+            "matched_layer",
+            "memory",
+        )
+        dp = temp_layer.dataProvider()
+        dp.addAttributes(out_fields)
+        temp_layer.updateFields()
+        dp.addFeatures(matched_features)
+
 
         extracted_joined = processing.run(
             "native:extractbyexpression",
             {
-                "INPUT": joined_layer,
-                "EXPRESSION": '"ref_map_uuid" IS NULL',
+                "INPUT": temp_layer,
+                "EXPRESSION": 'to_int("distance_m") > 50',
                 "OUTPUT": "memory:",
             },
             context=context,
             feedback=feedback,
         )["OUTPUT"]
 
-        final_output = gmdhelpers.select_mv(extracted_joined, ["ref_map_uuid", "ref_bsn_geoid"])
+        # 6. Select & organize columns using select_mv
+        final_output = gmdhelpers.select_mv(
+            extracted_joined,
+            ["ref_map_uuid", "ref_bsn_geoid", "distance_m"],
+            context=context,
+            feedback=feedback,
+        )
 
         return gmdhelpers.export_features_to_sink(
             self,

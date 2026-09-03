@@ -103,33 +103,7 @@ class mv_2027_hp_4a_bsn_geoid__invalid(QgsProcessingAlgorithm):
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
         
-        base_layer_path = self.parameterAsFile(parameters, self.BASE_LAYER, context)
-        ref_bldg_point = None
-
-        if base_layer_path and os.path.exists(base_layer_path):
-            bldg_point_sublayer = None
-            tmp_layer = QgsVectorLayer(base_layer_path, "tmp_gpkg", "ogr")
-            if tmp_layer and tmp_layer.isValid():
-                for sub_item in tmp_layer.dataProvider().subLayers():
-                    parts = sub_item.split("!!::!!") if "!!::!!" in sub_item else sub_item.split(":")
-                    for part in parts:
-                        if part.endswith("_bldg_point"):
-                            bldg_point_sublayer = part
-                            break
-                    if bldg_point_sublayer:
-                        break
-
-            if bldg_point_sublayer:
-                ref_bldg_point = QgsVectorLayer(
-                    f"{base_layer_path}|layername={bldg_point_sublayer}",
-                    bldg_point_sublayer,
-                    "ogr",
-                )
-
-        if not ref_bldg_point or not ref_bldg_point.isValid():
-            raise QgsProcessingException(
-                f"Could not load reference building point layer ending with '_bldg_point' from '{base_layer_path}'"
-            )
+        ref_bldg_point = gmdhelpers.load_base_layer(self, parameters, self.BASE_LAYER, context)
 
         regular_bldg = processing.run(
             "native:extractbyexpression",

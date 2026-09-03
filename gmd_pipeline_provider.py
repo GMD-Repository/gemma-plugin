@@ -42,6 +42,7 @@ from .gmd_scripts.cbms_mv.mv_2027_hp_4a_map_uuid__missing import mv_2027_hp_4a_m
 from .gmd_scripts.cbms_mv.mv_2027_hp_4a_map_uuid__invalid import mv_2027_hp_4a_map_uuid__invalid
 from .gmd_scripts.cbms_mv.mv_2027_hp_4a_bsn_geoid__invalid import mv_2027_hp_4a_bsn_geoid__invalid
 from .gmd_scripts.cbms_mv.mv_2027_hp_4a_geom__invalid import mv_2027_hp_4a_geom__invalid
+from .gmd_scripts.cbms_mv.mv_2027_hp_4a_ea_geocode__invalid import mv_2027_hp_4a_ea_geocode__invalid
 
 
 #from .gmd_scripts.gsheet_csv import
@@ -96,6 +97,7 @@ class GmdPipelineProvider(QgsProcessingProvider):
         self.addAlgorithm(mv_2027_hp_4a_map_uuid__invalid())
         self.addAlgorithm(mv_2027_hp_4a_bsn_geoid__invalid())
         self.addAlgorithm(mv_2027_hp_4a_geom__invalid())
+        self.addAlgorithm(mv_2027_hp_4a_ea_geocode__invalid())
 
     def id(self):
         return 'gmd_pipeline'
