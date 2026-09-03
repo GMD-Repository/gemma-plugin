@@ -15,6 +15,7 @@ console interface.
 
 import os
 import re
+import math
 from qgis.core import (
     Qgis, QgsMessageLog,
     QgsApplication, QgsProject, QgsVectorLayer, QgsCoordinateTransform, QgsSpatialIndex,
@@ -1129,9 +1130,9 @@ class EALauncherDialog(QDialog):
         self.detect_btn.clicked.connect(self.auto_detect_layers)
         inputs_btn_layout.addWidget(self.detect_btn)
 
-        self.fill_missing_btn = QPushButton("Fill missing hhcount")
-        self.fill_missing_btn.setToolTip("Compute and populate missing EA hhcount values from building points within each EA polygon.")
-        self.fill_missing_btn.clicked.connect(self.fill_missing_hhcount)
+        self.fill_missing_btn = QPushButton("Fill missing hh_count")
+        self.fill_missing_btn.setToolTip("Compute and populate missing EA hh_count values from building points within each EA polygon.")
+        self.fill_missing_btn.clicked.connect(self.fill_missing_hh_count)
         inputs_btn_layout.addWidget(self.fill_missing_btn)
         inputs_layout.addLayout(inputs_btn_layout)
 
@@ -1692,31 +1693,30 @@ class EALauncherDialog(QDialog):
                 return f"EA {ean_str}"
         return "EA Unknown"
 
-    def fill_missing_hhcount(self):
-        """Populate null/empty hhcount values in the EA layer from building points inside each EA."""
+    def fill_missing_hh_count(self):
+        """Populate null/empty hh_count values in the EA layer from building points inside each EA."""
         prev_ea_layer = self._safe_get_layer(self.prev_ea_combo)
         bldg_layer = self._safe_get_layer(self.bldg_combo)
         if not prev_ea_layer or not bldg_layer:
             QMessageBox.warning(
                 self,
                 "Missing Layers",
-                "Please select both Previous EA and Building Point layers before filling missing hhcount values."
+                "Please select both Previous EA and Building Point layers before filling missing hh_count values."
             )
             return
 
-        # Resolve household field index in EA layer
+        # Resolve household field index in EA layer (strictly hh_count)
         prev_fields = prev_ea_layer.fields()
         hh_field = None
         for i in range(prev_fields.count()):
-            name_lower = prev_fields.at(i).name().lower()
-            if name_lower in ["hhcount", "hh_count", "household", "household_count"]:
+            if prev_fields.at(i).name().lower() == "hh_count":
                 hh_field = prev_fields.at(i).name()
                 break
         if not hh_field:
             QMessageBox.critical(
                 self,
                 "Field Not Found",
-                "Previous EA layer does not contain a household field (hhcount / hh_count / household / household_count)."
+                "Previous EA layer does not contain 'hh_count' field."
             )
             return
 
@@ -1724,7 +1724,7 @@ class EALauncherDialog(QDialog):
         ea_index = QgsSpatialIndex(prev_ea_layer.getFeatures())
         ea_by_id = {feat.id(): feat for feat in prev_ea_layer.getFeatures()}
 
-        # Map EA feature id -> total HHcount from buildings inside it
+        # Map EA feature id -> total HH count from buildings inside it
         hh_updates = {}
         building_fields = bldg_layer.fields()
         bldg_hh_idx = -1
@@ -1736,11 +1736,11 @@ class EALauncherDialog(QDialog):
             QMessageBox.critical(
                 self,
                 "Field Not Found",
-                "Building point layer does not contain a household field (hhcount / hh_count / household / household_count)."
+                "Building point layer does not contain 'hhcount' (or 'hh_count') field."
             )
             return
 
-        # Track EA features that currently have empty/null hhcount
+        # Track EA features that currently have empty/null hh_count
         missing_ea_ids = []
         for feat in prev_ea_layer.getFeatures():
             hh_val = feat.attribute(hh_field)
@@ -1750,8 +1750,8 @@ class EALauncherDialog(QDialog):
         if not missing_ea_ids:
             QMessageBox.information(
                 self,
-                "No Missing hhcount",
-                "No missing or empty hhcount values were detected on the selected Previous EA layer."
+                "No Missing hh_count",
+                "No missing or empty hh_count values were detected on the selected Previous EA layer."
             )
             return
 
@@ -1781,15 +1781,93 @@ class EALauncherDialog(QDialog):
             QMessageBox.warning(
                 self,
                 "No Building Matches",
-                "No building points were found inside EA polygons with missing hhcount values."
+                "No building points were found inside EA polygons with missing hh_count values."
             )
             return
+
+        # Check for base hhcount field (parent EA candidate baseline) and parent grouping field
+        base_hh_field = None
+        for i in range(prev_fields.count()):
+            name_lower = prev_fields.at(i).name().lower()
+            if name_lower in ["hhcount", "original_hhcount"]:
+                base_hh_field = prev_fields.at(i).name()
+                break
+
+        parent_code_field = None
+        for i in range(prev_fields.count()):
+            name_lower = prev_fields.at(i).name().lower()
+            if name_lower in ["code", "parent_ean", "parent_code", "orig_code", "original_code", "orig_ean"]:
+                parent_code_field = prev_fields.at(i).name()
+                break
+
+        # Group missing EA features by parent key to proportionally scale sub-EAs
+        groups = {}
+        for ea_id in missing_ea_ids:
+            feat = ea_by_id[ea_id]
+            base_hh = None
+            if base_hh_field:
+                val = feat.attribute(base_hh_field)
+                try:
+                    if val is not None and str(val).strip() not in ("", "NULL", "None"):
+                        base_hh = float(val)
+                except (TypeError, ValueError):
+                    base_hh = None
+
+            p_code = ""
+            if parent_code_field:
+                p_code = str(feat.attribute(parent_code_field) or "").strip()
+
+            bgy_idx = prev_fields.indexOf("barangay")
+            bgy_val = str(feat.attribute(bgy_idx) or "").strip() if bgy_idx != -1 else ""
+
+            if p_code:
+                group_key = f"{bgy_val}_{p_code}"
+            elif base_hh is not None and base_hh > 0:
+                group_key = f"{bgy_val}_{base_hh:.2f}"
+            else:
+                group_key = f"single_{ea_id}"
+
+            groups.setdefault(group_key, {"base_hh": base_hh, "ea_ids": []})["ea_ids"].append(ea_id)
+
+        # Apply proportional scaling (Solution 2 - Largest Remainder / Hare-Niemeyer method)
+        final_hh_updates = {}
+        for group in groups.values():
+            ea_ids = group["ea_ids"]
+            base_hh = group["base_hh"]
+            raw_sum = sum(hh_updates.get(eid, 0.0) for eid in ea_ids)
+
+            if base_hh is not None and base_hh > 0 and raw_sum > 0:
+                target_total = int(round(base_hh))
+                quotas = [(hh_updates.get(eid, 0.0) * target_total) / raw_sum for eid in ea_ids]
+                int_parts = [int(math.floor(q)) for q in quotas]
+                remainder = target_total - sum(int_parts)
+
+                fractions = [(quotas[i] - int_parts[i], i) for i in range(len(ea_ids))]
+                fractions.sort(key=lambda x: x[0], reverse=True)
+
+                for r in range(min(remainder, len(ea_ids))):
+                    int_parts[fractions[r][1]] += 1
+
+                for i, eid in enumerate(ea_ids):
+                    final_hh_updates[eid] = float(int_parts[i])
+            elif base_hh is not None and base_hh > 0 and raw_sum == 0:
+                target_total = int(round(base_hh))
+                quotas = [target_total / len(ea_ids)] * len(ea_ids)
+                int_parts = [int(math.floor(q)) for q in quotas]
+                remainder = target_total - sum(int_parts)
+                for r in range(min(remainder, len(ea_ids))):
+                    int_parts[r] += 1
+                for i, eid in enumerate(ea_ids):
+                    final_hh_updates[eid] = float(int_parts[i])
+            else:
+                for eid in ea_ids:
+                    final_hh_updates[eid] = hh_updates.get(eid, 0.0)
 
         # Write values back to the EA layer
         if not prev_ea_layer.isEditable():
             prev_ea_layer.startEditing()
         updated_count = 0
-        for ea_id, hh_total in hh_updates.items():
+        for ea_id, hh_total in final_hh_updates.items():
             feat = prev_ea_layer.getFeature(ea_id)
             if feat.isValid():
                 prev_ea_layer.changeAttributeValue(ea_id, prev_fields.indexOf(hh_field), hh_total)
@@ -1798,16 +1876,18 @@ class EALauncherDialog(QDialog):
         if prev_ea_layer.commitChanges():
             QMessageBox.information(
                 self,
-                "hhcount Updated",
-                f"Updated hhcount for {updated_count} EA(s) from building points."
+                "hh_count Updated",
+                f"Updated hh_count for {updated_count} EA(s) from building points."
             )
             self.generate_preview()
         else:
             QMessageBox.critical(
                 self,
                 "Update Failed",
-                "Failed to save hhcount updates to the EA layer. Check layer edit permissions."
+                "Failed to save hh_count updates to the EA layer. Check layer edit permissions."
             )
+
+    fill_missing_hhcount = fill_missing_hh_count
 
     def _create_ea_refresh(self):
         """Reset and refresh Tab 2 (Create Enumeration Areas) inputs, processes, and results."""
@@ -2031,11 +2111,11 @@ class EALauncherDialog(QDialog):
             self.prev_ea_status_lbl.setText("Previous EA Layer is required.")
         else:
             fields = [f.name().lower() for f in prev_ea_layer.fields()]
-            hh_found = any(f in fields for f in ["hhcount", "hh_count", "household", "household_count"])
+            hh_found = "hh_count" in fields
             ean_found = any(f in fields for f in ["ean", "ea_number", "ea_code", "id", "geocode"])
 
             if not hh_found:
-                self.prev_ea_status_lbl.setText("Error: Missing 'hhcount' or 'household' field.")
+                self.prev_ea_status_lbl.setText("Error: Missing 'hh_count' field.")
             elif not ean_found:
                 self.prev_ea_status_lbl.setText("Error: Missing 'ean' or 'ea_number' geocode field.")
             else:
