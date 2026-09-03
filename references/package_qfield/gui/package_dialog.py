@@ -4284,15 +4284,17 @@ class PackageDialog(QDialog, DialogUi):
             except Exception as e:
                 print(f"Could not update QGZ zip entries for duplicate code cleanup: {e}")
 
-    def _filter_unassigned_layer(self, layer, target_geocode, is_ea_level, missing_field_warnings=None):
-        """Filter an unassigned layer based on ea_geocode / geocode fields."""
+    def _filter_unassigned_layer(self, layer, target_geocode, is_ea_level):
+        """Filter an unassigned layer based on ea_geocode / geocode fields.
+        
+        If no ea_geocode or geocode field exists, or if all attribute values are null/empty,
+        does nothing and keeps the layer unfiltered.
+        """
         if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
             return
 
         if layer.isEditable():
             layer.rollBack()
-
-        layer_name = self._normalized_layer_name(layer.name()).strip()
 
         fields = layer.fields()
         has_ea_geocode = fields.indexOf("ea_geocode") != -1
@@ -4327,6 +4329,7 @@ class PackageDialog(QDialog, DialogUi):
 
         if not has_data:
             # Layer has no features or no data/values in the attribute column -> do nothing
+            layer.setCustomProperty("QFieldSync/action", "copy")
             return
 
         raw_geocode = str(target_geocode).split('_', 1)[0].strip() if target_geocode else ""
@@ -4412,21 +4415,12 @@ class PackageDialog(QDialog, DialogUi):
                 lyr.setSubsetString("")
 
         # Filter unassigned layers
-        missing_warnings = []
         unassigned_layers = self._get_unassigned_map_layers()
         for lyr in unassigned_layers:
             if self._normalized_layer_name(lyr.name()).lower().endswith("_ea_update"):
                 lyr.setSubsetString("")
                 continue
-            self._filter_unassigned_layer(lyr, ea_geocode, is_ea_level=True, missing_field_warnings=missing_warnings)
-
-        if missing_warnings:
-            QMessageBox.warning(
-                self,
-                "Missing Geocode Fields",
-                "The following unassigned layers are missing both 'ea_geocode' and 'geocode' fields:\n\n"
-                + "\n".join(f"  • {w}" for w in missing_warnings)
-            )
+            self._filter_unassigned_layer(lyr, ea_geocode, is_ea_level=True)
 
         # Optional linear layers: select by location against the bgy layer
         linear_layers = [l for l in (road_layer, river_layer, bridge_layer, railroad_layer) if l]
@@ -6366,21 +6360,12 @@ class PackageDialog(QDialog, DialogUi):
                 lyr.setSubsetString("")
 
         # Filter unassigned layers for Barangay level
-        missing_warnings = []
         unassigned_layers = self._get_unassigned_map_layers()
         for lyr in unassigned_layers:
             if self._normalized_layer_name(lyr.name()).lower().endswith("_ea_update"):
                 lyr.setSubsetString("")
                 continue
-            self._filter_unassigned_layer(lyr, bgy_geocode, is_ea_level=False, missing_field_warnings=missing_warnings)
-
-        if missing_warnings:
-            QMessageBox.warning(
-                self,
-                "Missing Geocode Fields",
-                "The following unassigned layers are missing both 'ea_geocode' and 'geocode' fields:\n\n"
-                + "\n".join(f"  • {w}" for w in missing_warnings)
-            )
+            self._filter_unassigned_layer(lyr, bgy_geocode, is_ea_level=False)
 
         # Optional linear layers: select by location against the bgy layer
         linear_layers = [l for l in (road_layer, river_layer, bridge_layer, railroad_layer) if l]

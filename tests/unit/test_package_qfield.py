@@ -146,6 +146,56 @@ class TestPackageQfield(unittest.TestCase):
         PackageDialog._filter_unassigned_layer(dlg, layer_bgy, "01728001001001", is_ea_level=True)
         self.assertEqual(layer_bgy.subsetString(), '"geocode" = \'01728001001001\'')
 
+    def test_offline_converter_on_offline_editing_next_layer_bounds(self):
+        """Verify _on_offline_editing_next_layer safely handles 0, negative, out-of-range, and empty layer lists."""
+        from libqfieldsync.offline_converter import OfflineConverter
+
+        converter = OfflineConverter.__new__(OfflineConverter)
+        converter.trUtf8 = lambda s: s
+        converter.tr = lambda s: s
+        converter._OfflineConverter__offline_layer_names = []
+
+        emitted_signals = []
+        class MockSignal:
+            def emit(self, idx, count, msg):
+                emitted_signals.append((idx, count, msg))
+
+        converter.total_progress_updated = MockSignal()
+
+        # Test with empty layer names list
+        converter._on_offline_editing_next_layer(0, 0)
+        self.assertEqual(len(emitted_signals), 1)
+        self.assertEqual(emitted_signals[-1][0], 0)
+
+        converter._on_offline_editing_next_layer(1, 0)
+        self.assertEqual(len(emitted_signals), 2)
+
+        converter._on_offline_editing_next_layer(-1, 0)
+        self.assertEqual(len(emitted_signals), 3)
+
+        # Test with populated layer names list
+        converter._OfflineConverter__offline_layer_names = ["Layer_A", "Layer_B"]
+
+        # Valid 1-based index 1
+        converter._on_offline_editing_next_layer(1, 2)
+        self.assertIn("Layer_A", emitted_signals[-1][2])
+
+        # Valid 1-based index 2
+        converter._on_offline_editing_next_layer(2, 2)
+        self.assertIn("Layer_B", emitted_signals[-1][2])
+
+        # Out-of-bounds layer_index = 0
+        converter._on_offline_editing_next_layer(0, 2)
+        self.assertEqual(emitted_signals[-1][0], 0)
+
+        # Out-of-bounds layer_index = 5
+        converter._on_offline_editing_next_layer(5, 2)
+        self.assertEqual(emitted_signals[-1][0], 5)
+
+        # Negative layer_index = -5
+        converter._on_offline_editing_next_layer(-5, 2)
+        self.assertEqual(emitted_signals[-1][0], -5)
+
 
 if __name__ == "__main__":
     unittest.main()
