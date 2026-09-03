@@ -126,8 +126,8 @@ jobs:
                   custom_version: ''
                 }
               });
-              console.log('🚀 Triggered Release Gemma Plugin (Stable) workflow');
+              console.log('🚀 Successfully triggered Release Gemma Plugin (Stable) workflow');
             } catch (err) {
               console.log('⚠️ Could not trigger stable release:', err.message);
-              core.setFailed('Failed to trigger stable release workflow: ' + err.message);
+              core.setFailed('Failed to trigger stable release workflow');
             }
