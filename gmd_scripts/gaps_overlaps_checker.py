@@ -1,7 +1,7 @@
 # ----------------------------------------------------------------------
 # MBI Gaps / Overlaps / Disputed Areas Checker
 # Last updated: 2026-09-03
-# Version: v11
+# Version: v12
 #
 # Changelog:
 #   v1 - Initial Gaps/Overlaps detection between LGU and PSA polygons.
@@ -40,6 +40,14 @@
 #         'mbi_type' field, excluding the input layers) is retained for
 #         programmatic callers, but is unreachable from the dialog now that
 #         the parameter is required.
+#   v12 - Fixed overlaps being silently dropped when the two overlapping
+#         polygons belong to the SAME barangay (e.g. adjacent EAs inside one
+#         barangay) or carry no barangay/city_mun attributes at all.
+#         get_involved() grouped participants by barangay label, so such a
+#         pair collapsed into one entry and failed the 'len(involved) < 2'
+#         test. Overlap detection now groups by feature (by_feature=True),
+#         so each polygon counts separately. Gap detection keeps the
+#         original per-barangay grouping.
 # ----------------------------------------------------------------------
 
 __author__ = 'Geospatial Management Division'
@@ -170,7 +178,7 @@ class GapsOverlaps(QgsProcessingAlgorithm):
                 self.REF_MBI_CASES,
                 'Reference MBI Cases Layer (ref_mbi_cases)',
                 QgsProcessing.TypeVectorPolygon,
-                optional=False
+                optional=True
             )
         )
         self.addParameter(
@@ -482,7 +490,17 @@ class GapsOverlaps(QgsProcessingAlgorithm):
                     pass
             return cnt
 
-        def get_involved(finding_geom, gap_mode=False):
+        def get_involved(finding_geom, gap_mode=False, by_feature=False):
+            """
+            List the polygons that take part in a finding.
+
+            by_feature=False groups them by barangay label, so one barangay
+            counts once no matter how many of its polygons touch the finding.
+            by_feature=True keeps every polygon as its own entry — required for
+            overlaps, where two polygons of the SAME barangay (e.g. adjacent
+            EAs, or polygons with no barangay attributes at all) share a label
+            and would otherwise collapse into a single entry and be discarded.
+            """
             search_geom = finding_geom.buffer(0.50, 5) if gap_mode else finding_geom
             grouped = {}
             for fid in polygon_index.intersects(search_geom.boundingBox()):
@@ -505,18 +523,20 @@ class GapsOverlaps(QgsProcessingAlgorithm):
                 except Exception:
                     continue
                 label = label_from_info(info)
-                if label not in grouped:
-                    grouped[label] = {'info': info, 'covered_area': 0.0}
-                grouped[label]['covered_area'] += covered
+                key   = fid if by_feature else label
+                if key not in grouped:
+                    grouped[key] = {'info': info, 'label': label, 'covered_area': 0.0}
+                grouped[key]['covered_area'] += covered
 
             if gap_mode and grouped:
                 share = safe_area(finding_geom) / len(grouped)
-                for label in grouped:
-                    grouped[label]['covered_area'] = share
+                for key in grouped:
+                    grouped[key]['covered_area'] = share
 
             out = [
-                {'label': label, 'info': data['info'], 'covered_area': data['covered_area']}
-                for label, data in grouped.items()
+                {'label': data['label'], 'info': data['info'],
+                 'covered_area': data['covered_area']}
+                for data in grouped.values()
             ]
             out.sort(key=lambda x: x['label'])
             return out
@@ -714,7 +734,7 @@ class GapsOverlaps(QgsProcessingAlgorithm):
                             if safe_area(part) <= 0.10:
                                 continue
 
-                            involved = get_involved(part, gap_mode=False)
+                            involved = get_involved(part, gap_mode=False, by_feature=True)
                             if len(involved) < 2:
                                 continue
 
@@ -915,5 +935,5 @@ class GapsOverlaps(QgsProcessingAlgorithm):
 
             feedback.setProgress(100)
 
-        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v11.")
+        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v12.")
         return results
