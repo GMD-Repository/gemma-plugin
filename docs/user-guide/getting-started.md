@@ -4,15 +4,15 @@
 
 **GEMMA** stands for **GIS Extension for Map Management and Analysis**. It is a QGIS processing plugin developed by the **Geospatial Management Division (GMD)** of the **Philippine Statistics Authority (PSA)**.
 
-The plugin provides a comprehensive set of GIS tools for map management and analysis activities, including boundary checking, geometry repair, metadata management, and field data collection packaging.
+The plugin provides a comprehensive suite of GIS tools for official boundary management, topology checking, geometry repair, PSGC metadata standardization, enumeration area delineation, and mobile field data collection packaging.
 
 ## Requirements
 
-| Requirement | Minimum Version |
-|-------------|----------------|
-| QGIS        | 3.0 or later   |
-| Python      | 3.x (bundled with QGIS) |
-| OS          | Windows, macOS, or Linux |
+| Requirement | Minimum Version | Recommended Version |
+|-------------|-----------------|---------------------|
+| QGIS        | 3.0 or later    | QGIS 3.40 LTR       |
+| Python      | 3.x (bundled with QGIS) | Python 3.9+ |
+| OS          | Windows, macOS, or Linux | Windows 10/11 |
 
 ## Installation
 
@@ -28,11 +28,8 @@ Installing via custom repository allows QGIS to automatically detect and notify 
    ```
    https://gemma-plugin.vercel.app/gemma.xml
    ```
-
 6. Click **OK**, then click **Reload All Repositories**.
 7. Go to the **All** tab, search for **GEMMA**, and click **Install Plugin**.
-
----
 
 ### Method 2: Install from ZIP
 
@@ -43,56 +40,79 @@ Installing via custom repository allows QGIS to automatically detect and notify 
 5. Click **Browse** and select the downloaded `gemma-plugin-v*.zip` file.
 6. Click **Install Plugin**.
 
----
+## User Interface & Menu Overview
 
-## Verify Installation
+After installation, GEMMA tools can be accessed through three interfaces in QGIS: the **Gemma Menu**, the **Gemma Toolbar**, and the **Processing Toolbox**.
 
-After installation, verify that everything is working:
+### Gemma Menu Bar
 
-1. Check the **Gemma** menu in the menu bar — you should see submenus for **Updating of Boundaries**, **EA Delineation**, and **Others**.
-2. Open the **Processing Toolbox** (`Ctrl+Alt+T`) and look for the **GMD Pipeline** group — you should see all the tools listed there.
-3. The **Gemma Toolbar** should display icons for **Check and Update**, **EA Delineation and Merging**, and **Package for QField**.
+The **Gemma** menu is added to the top menu bar in QGIS, structured into logical submenus:
 
-## Plugin Structure
+| Submenu | Action / Tool | Shortcut | Description |
+|---------|---------------|----------|-------------|
+| **Updating of Boundaries** | [Check and Update](/tools/check-and-update) | — | 3-Phase dialog for georeferencing navigation, error scanning/repair, and PSGC metadata updating |
+| **Updating of Boundaries** | [PSA - LGU Comparison Review](/tools/psa-lgu-comparison#comparison-review-panel) | — | Opens the comparison dock panel to review matched PSA and LGU boundary layers side-by-side |
+| **EA Delineation** | [EA Delineation and Merging](/tools/ea-delineation-and-merging) | — | Launcher dialog for pre-processing, gap filling, delineation, and merging of enumeration areas |
+| **EA Delineation** | [Package for QField](/tools/package-qfield) | `Ctrl+Alt+Q` | Offline project packaging dialog for field data collection with QField |
+| **Others** | [Geometry Repair Toolkit](/tools/geometry-repair-toolkit) | — | Standalone dialog for scanning, canvas highlighting, and in-place polygon geometry repairs |
 
-The GEMMA plugin organizes its tools into the following categories:
+### Gemma Toolbar
+
+The **Gemma Toolbar** provides immediate one-click access to core interactive dialog workflows:
+
+| Icon | Tool | Access | Description |
+|------|------|--------|-------------|
+| <img src="/icons/check_and_update.svg" width="20" height="20" style="vertical-align: middle; display: inline-block;" /> | [Check and Update](/tools/check-and-update) | Toolbar Button | Open the 3-Phase boundary management dialog |
+| <img src="/icons/create_ea.svg" width="20" height="20" style="vertical-align: middle; display: inline-block;" /> | [EA Delineation and Merging](/tools/ea-delineation-and-merging) | Toolbar Button | Open the Enumeration Area delineation launcher |
+| <img src="/icons/packager.svg" width="20" height="20" style="vertical-align: middle; display: inline-block;" /> | [Package for QField](/tools/package-qfield) | Toolbar Button | Package layers for mobile field data collection (`Ctrl+Alt+Q`) |
 
 ### Processing Toolbox — GMD Pipeline
 
-These tools are accessible from the **QGIS Processing Toolbox** under the **GMD Pipeline** provider:
+All batch processing algorithms are integrated into the QGIS Processing framework under the **GMD Pipeline** provider:
 
-| Tool | Description |
-|------|-------------|
-| [MBI Checker](/tools/mbi-checker) | Detect gaps and overlaps in barangay boundaries |
-| [MBI Validator](/tools/mbi-validator) | Cross-check Reference MBI layers against Checker GAP/OVERLAP layers to audit status mismatches |
-| [Fill Polygon Gaps](/tools/fill-polygon-gaps) | Fill gaps between polygon boundaries |
-| [Export Preliminary Polygons](/tools/export-preliminary-polygons) | Merge and export resolved boundary layers |
-| [Update Metadata](/tools/update-metadata) | Enrich LGU boundary layers with PSGC metadata and export consolidated GeoPackages |
-| [Update Metadata (by Geocode)](/tools/update-metadata-by-geocode) | Perform PSGC left-join on LGU boundary layers using geocodes |
-| [Fix LGU CRS](/tools/fix-lgu-crs) | Batch-correct local grid coordinates (~0 to ~100,000) to EPSG:4326 |
-| [Join Barangay Attributes](/tools/join-barangay-attributes) | Match vector attributes with official PSGC tables via fuzzy matching and Roman numeral normalization |
-| [Scan Geometry Errors](/tools/scan-geometry-errors) | Scan polygon layers for specific geometry and topology defects and generate a Point Error Layer |
-| [Repair Polygon Geometries](/tools/repair-polygon-geometries) | Reconstruct invalid polygon geometries and recover missing shapes into a clean vector output layer |
-| [Clip Project Layers by Extent](/tools/clip-project-layers) | Batch clip multiple vector layers to a target administrative polygon boundary with optional buffer |
+1. Open the Processing Toolbox by clicking **Processing → Toolbox** or pressing `Ctrl+Alt+T`.
+2. Expand the **GMD Pipeline** provider tree to access individual processing algorithms.
 
-### Gemma Menu — Updating of Boundaries
+## Tool Directory
 
-| Tool | Access |
-|------|--------|
-| [Check and Update](/tools/check-and-update) | Gemma → Updating of Boundaries → Check and Update |
+GEMMA tools are organized into three primary functional suites matching the documentation guides:
 
-### Gemma Menu — EA Delineation
+### 1Map Tools
 
-| Tool | Access |
-|------|--------|
-| [EA Delineation and Merging](/tools/ea-delineation-and-merging) | Gemma → EA Delineation → EA Delineation and Merging |
+Tools designed for LGU boundary management, 1Map data harmonization, topology auditing, and official PSGC metadata standardization:
 
-### Gemma Menu — Others
+| Tool | Access | Description |
+|------|--------|-------------|
+| [MBI Checker](/tools/mbi-checker) | Processing Toolbox | Detect gaps and overlaps between barangay polygon boundaries with building point validation |
+| [MBI Validator](/tools/mbi-validator) | Processing Toolbox | Cross-check Reference MBI layers against Checker GAP/OVERLAP layers to audit status mismatches |
+| [Fill Polygon Gaps](/tools/fill-polygon-gaps) | Processing Toolbox | Automatically fill gaps between polygons and assign them to neighboring barangays |
+| [Export Preliminary Polygons](/tools/export-preliminary-polygons) | Processing Toolbox | Merge and export resolved boundary layers into consolidated GeoPackages for 1Map submission |
+| [Update Metadata](/tools/update-metadata) | Processing Toolbox | Standardize LGU boundary layers with PSGC geocodes, cascading administrative filters, and GPKG export |
+| [Update Metadata (by Geocode)](/tools/update-metadata-by-geocode) | Processing Toolbox | Perform direct PSGC left-join on LGU boundary layers using geocodes, auto-populating 15-attribute schemas |
+| [Fix LGU CRS / Geometry](/tools/fix-lgu-crs) | Processing Toolbox | Batch-correct local arbitrary grid coordinates (~0 to ~100,000) to standard WGS 84 (EPSG:4326) |
+| [Join Barangay Attributes](/tools/join-barangay-attributes) | Processing Toolbox | Match vector attributes with official PSGC tables via fuzzy matching and Roman numeral normalization |
+| [Check and Update](/tools/check-and-update) | Menu & Toolbar | Interactive 3-Phase dialog workflow for georeferencing, geometry error scanning/repair, and metadata updating |
+| [PSA - LGU Boundary Comparison](/tools/psa-lgu-comparison) | Processing Toolbox | Audit PSA reference boundaries against LGU-submitted polygons using geocodes, alignment models, and building point validation |
 
-| Tool | Access | Shortcut |
-|------|--------|----------|
-| [Package for QField](/tools/package-qfield) | Gemma → EA Delineation → Package for QField | `Ctrl+Alt+Q` |
-| [Geometry Repair Toolkit](/tools/geometry-repair-toolkit) | Gemma → Others → Geometry Repair Toolkit | — |
+### Geometry & Repair
+
+Tools for validating, diagnosing, and repairing vector polygon geometry defects:
+
+| Tool | Access | Description |
+|------|--------|-------------|
+| [Geometry Repair Toolkit](/tools/geometry-repair-toolkit) | Gemma → Others | Standalone interactive dialog to scan, highlight on map canvas, and repair invalid geometries in-place |
+| [Scan Geometry Errors](/tools/scan-geometry-errors) | Processing Toolbox | Scan vector polygon layers for specific geometry and topology defects and generate a Point Error Layer |
+| [Repair Polygon Geometries](/tools/repair-polygon-geometries) | Processing Toolbox | Reconstruct invalid polygon geometries and recover missing shapes into a clean vector output layer |
+| [Clip Project Layers by Extent](/tools/clip-project-layers) | Processing Toolbox | Batch clip multiple vector layers to a target administrative polygon boundary with optional buffer |
+
+### QField & Enumeration
+
+Tools for field data collection packaging and census Enumeration Area delineation:
+
+| Tool | Access | Description |
+|------|--------|-------------|
+| [Package for QField](/tools/package-qfield) | Menu & Toolbar (`Ctrl+Alt+Q`) | Package QGIS project layers for mobile offline field data collection with QField |
+| [EA Delineation and Merging](/tools/ea-delineation-and-merging) | Menu & Toolbar | Unified module for pre-processing, gap filling, delineation (splitting), and merging of Enumeration Area boundaries |
 
 ## Updating the Plugin
 
