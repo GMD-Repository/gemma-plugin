@@ -1,0 +1,89 @@
+[33m0117a72[m[33m ([m[1;31morigin/cbms_main[m[33m)[m Merge pull request #208 from GMD-Repository/duane_cbms
+[33m325b95c[m[33m ([m[1;31morigin/duane_cbms[m[33m)[m feat: add gmdhelpers utility module and new validation script templates for CBMS pipeline
+[33m65dcc5f[m feat: add CBMS data validation scripts and core helper utilities with corresponding unit tests
+[33mfd1b7c5[m Merge branch 'duane_cbms' of https://github.com/GMD-Repository/gemma-plugin into duane_cbms
+[33m799d671[m Merge pull request #187 from GMD-Repository/feature/dev-pipeline-setup
+[33m770e672[m chore(release): update metadata and release data for v1.0.1 [skip ci]
+[33m0f075db[m Merge pull request #196 from GMD-Repository/feat/change
+[33m24dc5bc[m Merge pull request #195 from GMD-Repository/RC1
+[33m635cc00[m feat: implement automated release management and changelog generation workflow
+[33ma240738[m[33m ([m[1;31morigin/RC1[m[33m)[m "Hiding EA Delineation and Merging tool on V1.0.0"
+[33m521d0fd[m[33m ([m[1;31morigin/carlo[m[33m)[m chore(release): update metadata and release data for v1.0.0 [skip ci]
+[33m2a35737[m chore: update beta channel files for preview r738 [skip ci]
+[33m162c4e6[m Merge pull request #194 from GMD-Repository/TatsDevNgaya
+[33m5c574a0[m Merge branch 'main' into TatsDevNgaya
+[33m1239b15[m Fix Building Outside the LGU Boundary inconsitencies
+[33m4647735[m chore: update beta channel files for preview r734 [skip ci]
+[33m42d4cff[m Merge pull request #193 from GMD-Repository/cole
+[33m2ef6b77[m feat: implement EALauncherDialog UI and integrate refresh logic into gmd_pipeline
+[33m1601a8e[m feat: implement EA delineation and merging pipeline with documentation and unit tests
+[33mcb5c737[m feat: implement custom processing UI and backend logic for EA delineation and merging workflow
+[33mfc8c3f6[m feat: implement EA merge processor and UI dialog for handling polygon replacement workflows
+[33m83bf4db[m Merge branch 'main' of https://github.com/GMD-Repository/gemma-plugin into cole
+[33md575470[m feat: implement Enumeration Area merging functionality and associated QGIS styling
+[33m9bb977a[m feat: add EARF Excel report generation and EA merge processing logic
+[33mbeba658[m chore: update beta channel files for preview r725 [skip ci]
+[33mc64d5aa[m Merge pull request #192 from GMD-Repository/cole
+[33m1267192[m feat: implement EARFWriter class to export 2026 Preliminary EARF Excel reports
+[33m51f70a3[m feat: implement EARF Excel writer and merge processor to generate enumeration area reports
+[33m62b81de[m feat: implement phase 8 output processing for EA feature generation, geometry cleanup, and summary reporting
+[33mf0cd04c[m feat: add EARF Excel export utilities and merge processing logic for 2026 EA data
+[33m8c79db6[m test: add unit tests for EA pipeline candidate classification and barangay merge logic.
+[33m155298c[m feat: add EA merge processor and corresponding QML style and unit tests
+[33mfc8b109[m feat: implement EA merge processor logic and add corresponding QML style and unit tests
+[33mabbfe9b[m chore: update beta channel files for preview r716 [skip ci]
+[33m4c20476[m Merge pull request #191 from GMD-Repository/cole
+[33mebf01c9[m feat: implement enumeration area merging logic and corresponding unit tests
+[33mfc29ae1[m chore: update beta channel files for preview r713 [skip ci]
+[33m29cec35[m Merge pull request #190 from GMD-Repository/carlo
+[33m76c6af2[m add geom_repair_toolkit.py containing shared UI helpers and topology error definitions for QGIS plugins.
+[33md373239[m chore: update beta channel files for preview r710 [skip ci]
+[33m08bb554[m Merge pull request #188 from GMD-Repository/update/version
+[33m85cb5c9[m Merge pull request #189 from GMD-Repository/carlo
+[33mde4662a[m feat: add validation and utility scripts for QGIS plugin geometry processing and metadata management
+[33m27c1b06[m feat: implement automated barangay attribute matching and metadata update scripts with integrated PSGC reference data
+[33ma7e51a2[m chore: update beta channel files for preview r703 [skip ci]
+[33m192c525[m Merge pull request #186 from GMD-Repository/TatsDevNgaya
+[33m11962a4[m feat: enhance layer selection logic and add unit tests for default layer identification
+[33m6cffe1a[m Merge pull request #174 from GMD-Repository/neil_cbms
+[33m1212d04[m[33m ([m[1;31morigin/neil_cbms[m[33m)[m Merge branch 'cbms' into neil_cbms
+[33m9cc5eb3[m Merge pull request #171 from GMD-Repository/dexx
+[33mf738062[m refactor: rename bsn_geoid validation script and update pipeline provider references
+[33mc9cfe43[m feat: add unit tests for JoinBarangayAttributes and PsaLguComparisonPanel along with supporting mocks and pipeline documentation
+[33m4904de0[m feat: add GitHub Actions workflows for automated testing, preview releases, and deployment management
+[33m654346f[m Merge branch 'main' of https://github.com/GMD-Repository/gemma-plugin into update/version
+[33m482f073[m chore: update beta channel files for preview r701 [skip ci]
+[33mc19ecef[m Merge pull request #181 from GMD-Repository/carlo
+[33m59101e9[m docs(geom-repair): document progressive tolerance sweep and validation for duplicate vertex repairs
+[33m44488c8[m feat: add geom_repair_toolkit.py to deprecated scripts for QGIS geometry validation utilities
+[33m2e32f09[m feat: add automated changelog generation scripts and documentation structure while resetting metadata version to 0.0.0
+[33m51a95d1[m chore: update beta channel files for preview r697 [skip ci]
+[33m2e6c2e5[m Merge pull request #180 from GMD-Repository/cole
+[33m626d9ec[m feat(create-ea): add permanent geopackage output export to enumeration area merge workflow
+[33m7140ac6[m feat: implement enumeration area merge processor and associated UI workflow
+[33mfb82462[m chore: update beta channel files for preview r691 [skip ci]
+[33m5b976fe[m Merge pull request #178 from GMD-Repository/cole
+[33m307e1b2[m feat: implement EA merge processor pipeline with supporting helper scripts and unit tests
+[33mcc6a461[m chore: update beta channel files for preview r688 [skip ci]
+[33mddbbb1b[m Merge pull request #176 from GMD-Repository/carlo
+[33m6281423[m Merge pull request #177 from GMD-Repository/cole
+[33mb19960d[m feat: implement EA delineation and merging workflow UI and backend processing tools
+[33m43dee5f[m feat: implement MBI validator tool for cross-verifying map boundary issues against checker layers
+[33me896f24[m feat: add QGIS processing scripts for CBMS data validation and quality control
+[33m37e5c82[m[33m ([m[1;31morigin/dexx[m[33m)[m feat: add mv_2027_hp_4a_map_uuid__missing processing algorithm to plugin provider
+[33m9e4b11c[m feat: add processing algorithm to detect geotagged points missing CBMS Form 2 map_uuid association
+[33m1d19db4[m feat: implement EA preprocessing workflow for boundary alignment and gap resolution with unit tests
+[33m95c5fb3[m chore: update beta channel files for preview r680 [skip ci]
+[33m6b29ebc[m feat: implement core initialization and processing modules for enumeration area pipeline
+[33m0a91c87[m Merge pull request #175 from GMD-Repository/TATS
+[33m6692917[m feat: add metadata update algorithm and integrate multiple CBMS validation checks into pipeline
+[33ma02a7c1[m[33m ([m[1;31morigin/TATS[m[33m)[m Add PSA and LGU boundary comparison algorithm with unit tests
+[33md98509f[m Merge pull request #173 from GMD-Repository/carlo
+[33m93afd83[m feat: implement EA delineation pipeline with multi-phase processing logic, validation scripts, and expanded documentation
+[33m35c6c0d[m feat: add EA preprocessing dialog, backend processor, and associated unit test suite
+[33m7d73417[m Merge branch 'main' of https://github.com/GMD-Repository/gemma-plugin into carlo
+[33mfc4fd70[m chore: update beta channel files for preview r673 [skip ci]
+[33m94a31e7[m Merge pull request #172 from GMD-Repository/cole
+[33m22cc03d[m feat: implement EA merge pipeline logic and add unit tests for candidate classification
+[33m9363b1a[m Fix pipeline provider bug
+[33m9bda67e[m feat: add processing
