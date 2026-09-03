@@ -116,7 +116,7 @@ class TestEADialogRefresh(unittest.TestCase):
         self.assertEqual(len(mock_dlg.all_merge_candidates), 0)
         mock_dlg.output_folder_widget.setFilePath.assert_called_once_with("")
         mock_dlg.enable_thresholds_chk.setChecked.assert_called_once_with(False)
-        mock_dlg.min_hh_spin.setValue.assert_called_once_with(100)
+        mock_dlg.min_hh_spin.setValue.assert_called_once_with(99)
         mock_dlg.max_hh_spin.setValue.assert_called_once_with(300)
         mock_dlg.params_group.setCollapsed.assert_called_once_with(True)
         mock_dlg.progress_bar.setValue.assert_called_once_with(0)
@@ -159,6 +159,210 @@ class TestEADialogRefresh(unittest.TestCase):
         mock_dlg.ea_merge_log_console.clear.assert_called_once()
         mock_dlg._ea_merge_auto_detect_ea_layer.assert_called_once()
         mock_dlg.ea_merge_right_tabs.setCurrentIndex.assert_called_once_with(0)
+
+    @patch("references.create_enumeration_area.dialog.QMessageBox")
+    def test_fill_missing_hh_count_strictly_requires_hh_count_in_ea_layer(self, mock_msgbox):
+        """Verify that fill_missing_hh_count rejects layers having only 'hhcount' or 'household'."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+        from qgis.core import QgsVectorLayer, QgsField, QVariant
+
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.bldg_combo = MagicMock()
+
+        # EA layer with legacy 'hhcount' instead of 'hh_count'
+        ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Test_EA", "memory")
+        ea_layer.dataProvider().addAttributes([QgsField("hhcount", QVariant.Double)])
+        ea_layer.updateFields()
+
+        bldg_layer = QgsVectorLayer("Point?crs=epsg:4326", "Test_Bldg", "memory")
+        bldg_layer.dataProvider().addAttributes([QgsField("hh_count", QVariant.Double)])
+        bldg_layer.updateFields()
+
+        def safe_get_layer(combo):
+            if combo is mock_dlg.prev_ea_combo:
+                return ea_layer
+            if combo is mock_dlg.bldg_combo:
+                return bldg_layer
+            return None
+
+        mock_dlg._safe_get_layer.side_effect = safe_get_layer
+
+        EALauncherDialog.fill_missing_hh_count(mock_dlg)
+
+        mock_msgbox.critical.assert_called_once()
+        args = mock_msgbox.critical.call_args[0]
+        self.assertIn("Previous EA layer does not contain 'hh_count' field", args[2])
+
+    @patch("references.create_enumeration_area.dialog.QMessageBox")
+    def test_fill_missing_hh_count_rejects_missing_household_in_bldg_layer(self, mock_msgbox):
+        """Verify that fill_missing_hh_count rejects building layers lacking hhcount/hh_count."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+        from qgis.core import QgsVectorLayer, QgsField, QVariant
+
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.bldg_combo = MagicMock()
+
+        ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Test_EA", "memory")
+        ea_layer.dataProvider().addAttributes([QgsField("hh_count", QVariant.Double)])
+        ea_layer.updateFields()
+
+        # Bldg layer with irrelevant field
+        bldg_layer = QgsVectorLayer("Point?crs=epsg:4326", "Test_Bldg", "memory")
+        bldg_layer.dataProvider().addAttributes([QgsField("other_field", QVariant.Double)])
+        bldg_layer.updateFields()
+
+        def safe_get_layer(combo):
+            if combo is mock_dlg.prev_ea_combo:
+                return ea_layer
+            if combo is mock_dlg.bldg_combo:
+                return bldg_layer
+            return None
+
+        mock_dlg._safe_get_layer.side_effect = safe_get_layer
+
+        EALauncherDialog.fill_missing_hh_count(mock_dlg)
+
+        mock_msgbox.critical.assert_called_once()
+        args = mock_msgbox.critical.call_args[0]
+        self.assertIn("Building point layer does not contain 'hhcount'", args[2])
+
+    @patch("references.create_enumeration_area.dialog.QMessageBox")
+    def test_fill_missing_hh_count_populates_from_bldg_hhcount(self, mock_msgbox):
+        """Verify that fill_missing_hh_count computes and updates missing hh_count in EA from building 'hhcount'."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+        from qgis.core import QgsVectorLayer, QgsField, QVariant, QgsFeature, QgsGeometry, QgsPointXY
+
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.bldg_combo = MagicMock()
+        mock_dlg.generate_preview = MagicMock()
+
+        ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Test_EA", "memory")
+        ea_layer.dataProvider().addAttributes([QgsField("ean", QVariant.String), QgsField("hh_count", QVariant.Double)])
+        ea_layer.updateFields()
+
+        ea_feat = QgsFeature(ea_layer.fields())
+        ea_feat.setAttribute("ean", "001")
+        ea_feat.setAttribute("hh_count", None) # Missing hh_count
+        ea_feat.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        ea_layer.dataProvider().addFeatures([ea_feat])
+
+        bldg_layer = QgsVectorLayer("Point?crs=epsg:4326", "Test_Bldg", "memory")
+        bldg_layer.dataProvider().addAttributes([QgsField("hhcount", QVariant.Double)])
+        bldg_layer.updateFields()
+
+        pt1 = QgsFeature(bldg_layer.fields())
+        pt1.setAttribute("hhcount", 3.0)
+        pt1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(2, 2)))
+
+        pt2 = QgsFeature(bldg_layer.fields())
+        pt2.setAttribute("hhcount", 5.0)
+        pt2.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(4, 4)))
+
+        bldg_layer.dataProvider().addFeatures([pt1, pt2])
+
+        def safe_get_layer(combo):
+            if combo is mock_dlg.prev_ea_combo:
+                return ea_layer
+            if combo is mock_dlg.bldg_combo:
+                return bldg_layer
+            return None
+
+        mock_dlg._safe_get_layer.side_effect = safe_get_layer
+
+        EALauncherDialog.fill_missing_hh_count(mock_dlg)
+
+        updated_feats = list(ea_layer.getFeatures())
+        self.assertEqual(len(updated_feats), 1)
+        self.assertEqual(float(updated_feats[0].attribute("hh_count")), 8.0)
+        mock_dlg.generate_preview.assert_called_once()
+        mock_msgbox.information.assert_called_once()
+
+    @patch("references.create_enumeration_area.dialog.QMessageBox")
+    def test_fill_missing_hh_count_proportional_scaling_to_parent_hhcount(self, mock_msgbox):
+        """Verify that fill_missing_hh_count proportionally scales building point counts to match parent hhcount."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+        from qgis.core import QgsVectorLayer, QgsField, QVariant, QgsFeature, QgsGeometry, QgsPointXY
+
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.bldg_combo = MagicMock()
+        mock_dlg.generate_preview = MagicMock()
+
+        ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Test_Delineated_EA", "memory")
+        ea_layer.dataProvider().addAttributes([
+            QgsField("code", QVariant.String),
+            QgsField("ean", QVariant.String),
+            QgsField("hhcount", QVariant.Double),
+            QgsField("hh_count", QVariant.Double),
+        ])
+        ea_layer.updateFields()
+
+        # Sub-EA 1 (001000) from parent 000000 with hhcount 302
+        sub_ea1 = QgsFeature(ea_layer.fields())
+        sub_ea1.setAttribute("code", "000000")
+        sub_ea1.setAttribute("ean", "001000")
+        sub_ea1.setAttribute("hhcount", 302.0)
+        sub_ea1.setAttribute("hh_count", None)
+        sub_ea1.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(5, 0), QgsPointXY(5, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+
+        # Sub-EA 2 (002000) from parent 000000 with hhcount 302
+        sub_ea2 = QgsFeature(ea_layer.fields())
+        sub_ea2.setAttribute("code", "000000")
+        sub_ea2.setAttribute("ean", "002000")
+        sub_ea2.setAttribute("hhcount", 302.0)
+        sub_ea2.setAttribute("hh_count", None)
+        sub_ea2.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(5, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(5, 10), QgsPointXY(5, 0)
+        ]]))
+
+        ea_layer.dataProvider().addFeatures([sub_ea1, sub_ea2])
+
+        bldg_layer = QgsVectorLayer("Point?crs=epsg:4326", "Test_Bldg", "memory")
+        bldg_layer.dataProvider().addAttributes([QgsField("hhcount", QVariant.Double)])
+        bldg_layer.updateFields()
+
+        # 204 HH inside Sub-EA 1
+        pt1 = QgsFeature(bldg_layer.fields())
+        pt1.setAttribute("hhcount", 204.0)
+        pt1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(2, 5)))
+
+        # 106 HH inside Sub-EA 2
+        pt2 = QgsFeature(bldg_layer.fields())
+        pt2.setAttribute("hhcount", 106.0)
+        pt2.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(7, 5)))
+
+        bldg_layer.dataProvider().addFeatures([pt1, pt2])
+
+        def safe_get_layer(combo):
+            if combo is mock_dlg.prev_ea_combo:
+                return ea_layer
+            if combo is mock_dlg.bldg_combo:
+                return bldg_layer
+            return None
+
+        mock_dlg._safe_get_layer.side_effect = safe_get_layer
+
+        EALauncherDialog.fill_missing_hh_count(mock_dlg)
+
+        updated_feats = list(ea_layer.getFeatures())
+        self.assertEqual(len(updated_feats), 2)
+
+        feat_by_ean = {f.attribute("ean"): float(f.attribute("hh_count")) for f in updated_feats}
+        # 204 * 302 / 310 = 198.748 -> 199
+        self.assertEqual(feat_by_ean["001000"], 199.0)
+        # 106 * 302 / 310 = 103.251 -> 103
+        self.assertEqual(feat_by_ean["002000"], 103.0)
+        # Total sum matches parent hhcount 302.0
+        self.assertEqual(feat_by_ean["001000"] + feat_by_ean["002000"], 302.0)
+        mock_dlg.generate_preview.assert_called_once()
+        mock_msgbox.information.assert_called_once()
 
 
 if __name__ == "__main__":
