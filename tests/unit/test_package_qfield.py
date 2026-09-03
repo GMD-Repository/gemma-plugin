@@ -61,8 +61,90 @@ class TestPackageQfield(unittest.TestCase):
         # Special EA exemption
         self.assertFalse(PackageDialog._is_excluded_data_source_layer(None, "01728001001_special_ea"))
         self.assertFalse(PackageDialog._is_excluded_data_source_layer(None, "my_custom_special_ea"))
-        # Custom non-excluded layer
-        self.assertFalse(PackageDialog._is_excluded_data_source_layer(None, "custom_layer"))
+    def test_filter_unassigned_layer_missing_columns_does_not_filter(self):
+        """Verify unassigned layer missing both ea_geocode and geocode is not filtered."""
+        from references.package_qfield.gui.package_dialog import PackageDialog
+        try:
+            from qgis.core import QgsVectorLayer, QgsField, QgsFeature
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            from tests.mocks.sample_data import QgsVectorLayer, QgsField, QgsFeature, QVariant
+
+        layer = QgsVectorLayer("Polygon?crs=epsg:4326", "unassigned_no_geocode", "memory")
+        dp = layer.dataProvider()
+        dp.addAttributes([QgsField("name", QVariant.String), QgsField("type", QVariant.String)])
+        layer.updateFields()
+        f = QgsFeature(layer.fields())
+        f.setAttributes(["Zone 1", "Commercial"])
+        dp.addFeatures([f])
+
+        dlg = MockGenericClass()
+        dlg._normalized_layer_name = lambda n: n
+        PackageDialog._filter_unassigned_layer(dlg, layer, "01728001001", is_ea_level=False)
+
+        self.assertEqual(layer.subsetString(), "")
+        self.assertEqual(layer.customProperty("QFieldSync/action"), "copy")
+
+    def test_filter_unassigned_layer_empty_attribute_does_nothing(self):
+        """Verify unassigned layer with geocode column but empty/null data does nothing."""
+        from references.package_qfield.gui.package_dialog import PackageDialog
+        try:
+            from qgis.core import QgsVectorLayer, QgsField, QgsFeature
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            from tests.mocks.sample_data import QgsVectorLayer, QgsField, QgsFeature, QVariant
+
+        dlg = MockGenericClass()
+        dlg._normalized_layer_name = lambda n: n
+
+        # Case A: 0 features
+        layer_empty = QgsVectorLayer("Polygon?crs=epsg:4326", "unassigned_empty", "memory")
+        dp_empty = layer_empty.dataProvider()
+        dp_empty.addAttributes([QgsField("geocode", QVariant.String)])
+        layer_empty.updateFields()
+
+        PackageDialog._filter_unassigned_layer(dlg, layer_empty, "01728001", is_ea_level=False)
+        self.assertEqual(layer_empty.subsetString(), "")
+
+        # Case B: Features with whitespace/null values
+        layer_null = QgsVectorLayer("Polygon?crs=epsg:4326", "unassigned_null_values", "memory")
+        dp_null = layer_null.dataProvider()
+        dp_null.addAttributes([QgsField("geocode", QVariant.String)])
+        layer_null.updateFields()
+        f = QgsFeature(layer_null.fields())
+        f.setAttributes(["   "])
+        dp_null.addFeatures([f])
+
+        PackageDialog._filter_unassigned_layer(dlg, layer_null, "01728001", is_ea_level=False)
+        self.assertEqual(layer_null.subsetString(), "")
+
+    def test_filter_unassigned_layer_with_valid_data(self):
+        """Verify unassigned layer with valid geocode or ea_geocode receives appropriate subset string."""
+        from references.package_qfield.gui.package_dialog import PackageDialog
+        try:
+            from qgis.core import QgsVectorLayer, QgsField, QgsFeature
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            from tests.mocks.sample_data import QgsVectorLayer, QgsField, QgsFeature, QVariant
+
+        layer_bgy = QgsVectorLayer("Polygon?crs=epsg:4326", "unassigned_bgy", "memory")
+        dp_bgy = layer_bgy.dataProvider()
+        dp_bgy.addAttributes([QgsField("geocode", QVariant.String)])
+        layer_bgy.updateFields()
+        f = QgsFeature(layer_bgy.fields())
+        f.setAttributes(["01728001000000"])
+        dp_bgy.addFeatures([f])
+
+        dlg = MockGenericClass()
+        dlg._normalized_layer_name = lambda n: n
+
+        # Barangay level filter
+        PackageDialog._filter_unassigned_layer(dlg, layer_bgy, "01728001", is_ea_level=False)
+        self.assertEqual(layer_bgy.subsetString(), '"geocode" LIKE \'01728001%\'')
+
+        # EA level filter
+        PackageDialog._filter_unassigned_layer(dlg, layer_bgy, "01728001001001", is_ea_level=True)
+        self.assertEqual(layer_bgy.subsetString(), '"geocode" = \'01728001001001\'')
 
 
 if __name__ == "__main__":

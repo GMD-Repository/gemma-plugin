@@ -46,8 +46,8 @@ from libqfieldsync.project import ProjectConfiguration
 from libqfieldsync.project_checker import ProjectChecker
 from libqfieldsync.utils.file_utils import fileparts
 from libqfieldsync.utils.qgis import get_project_title
-from qgis.core import Qgis, QgsApplication, QgsProject, QgsLayerTreeGroup, QgsLayerTreeLayer, QgsVectorLayer, QgsRasterLayer, QgsVectorFileWriter, QgsTask, QgsTaskManager, QgsSnappingConfig, QgsTolerance, QgsGeometry, QgsFeatureRequest, QgsCoordinateTransform, QgsMapLayer
-from qgis.PyQt.QtCore import QDir, Qt, QUrl, QTimer, QEvent
+from qgis.core import Qgis, QgsApplication, QgsProject, QgsLayerTreeGroup, QgsLayerTreeLayer, QgsVectorLayer, QgsRasterLayer, QgsVectorFileWriter, QgsTask, QgsTaskManager, QgsSnappingConfig, QgsTolerance, QgsGeometry, QgsFeatureRequest, QgsCoordinateTransform, QgsMapLayer, NULL
+from qgis.PyQt.QtCore import QDir, Qt, QUrl, QTimer, QEvent, QVariant
 from qgis.PyQt.QtGui import QIcon, QBrush, QPixmap, QImage, QPainter
 from qgis.PyQt.QtSvg import QSvgRenderer
 from qgis.PyQt.QtWidgets import QApplication, QDialog, QDialogButtonBox, QMessageBox, QLabel, QListWidget, QListWidgetItem, QWidget, QHBoxLayout, QPushButton, QComboBox, QGridLayout, QGroupBox, QSizePolicy, QScrollArea, QFrame, QVBoxLayout, QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView, QTreeWidget, QTreeWidgetItem, QTabWidget, QLineEdit, QInputDialog, QFileDialog, QToolButton, QAbstractItemView
@@ -4298,13 +4298,35 @@ class PackageDialog(QDialog, DialogUi):
         has_ea_geocode = fields.indexOf("ea_geocode") != -1
         has_geocode = fields.indexOf("geocode") != -1
 
+        # If the layer does not have 'ea_geocode' or 'geocode' column, do not filter
         if not has_ea_geocode and not has_geocode:
-            warning_msg = f"Layer '{layer.name()}' is missing both 'ea_geocode' and 'geocode' fields."
-            if missing_field_warnings is not None:
-                if warning_msg not in missing_field_warnings:
-                    missing_field_warnings.append(warning_msg)
-            else:
-                QMessageBox.warning(self, "Missing Geocode Fields", warning_msg)
+            layer.setCustomProperty("QFieldSync/action", "copy")
+            return
+
+        # If the layer does not have data/values in the geocode attribute, do nothing
+        target_field_name = "ea_geocode" if has_ea_geocode else "geocode"
+        target_field_idx = fields.indexOf(target_field_name)
+
+        has_data = False
+        try:
+            req = QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry).setSubsetOfAttributes([target_field_idx], fields)
+            for feat in layer.getFeatures(req):
+                attrs = feat.attributes()
+                if target_field_idx < len(attrs):
+                    val = attrs[target_field_idx]
+                    if val is not None and val != NULL:
+                        if hasattr(val, "isNull") and val.isNull():
+                            continue
+                        s_val = str(val).strip()
+                        if s_val and s_val.lower() not in ("null", "none", "nan"):
+                            has_data = True
+                            break
+        except Exception as e:
+            print(f"Error checking attribute data for layer {layer.name()}: {e}")
+            has_data = False
+
+        if not has_data:
+            # Layer has no features or no data/values in the attribute column -> do nothing
             return
 
         raw_geocode = str(target_geocode).split('_', 1)[0].strip() if target_geocode else ""
