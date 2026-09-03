@@ -2,6 +2,20 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.3
+<time>Sep 03, 2026</time>
+
+### ✨ New Features
+- Implemented EA Delineation and Merging module with a dual-tab UI and included unit tests ([@pacoleslaw](https://github.com/pacoleslaw))
+
+### 🐛 Bug Fixes
+- Removed unresolvable @actions/github require from workflow dispatch steps ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### 📚 Documentation
+- Added PSA-LGU boundary comparison tool documentation and configured VitePress ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+<Contributors :contributors="['pacoleslaw', 'kentemman-gmd', 'actions']" />
+
 ## 1.0.2
 <time>Sep 03, 2026</time>
 

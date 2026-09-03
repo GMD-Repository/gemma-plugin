@@ -5,6 +5,17 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-09-03
+
+### Added
+- Implemented EA Delineation and Merging module with a dual-tab UI and included unit tests ([@pacoleslaw](https://github.com/pacoleslaw))
+
+### Fixed
+- Removed unresolvable @actions/github require from workflow dispatch steps ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### Documentation
+- Added PSA-LGU boundary comparison tool documentation and configured VitePress ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
 ## [1.0.2] - 2026-09-03
 
 ### Added
