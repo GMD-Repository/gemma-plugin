@@ -609,7 +609,10 @@ class QgsVectorDataProvider:
         return True
 
     def addFeatures(self, features):
-        self._layer._features.extend(features)
+        for feat in features:
+            if getattr(feat, '_id', 0) == 0:
+                feat.setId(len(self._layer._features) + 1)
+            self._layer._features.append(feat)
         return True, features
 
     def fields(self):
@@ -659,6 +662,27 @@ class QgsVectorLayer:
     def selectByExpression(self, expr): pass
     def selectedFeatureCount(self): return 0
     def triggerRepaint(self): pass
+    def isEditable(self): return getattr(self, '_is_editable', False)
+    def startEditing(self):
+        self._is_editable = True
+        return True
+    def commitChanges(self):
+        self._is_editable = False
+        return True
+    def rollBack(self):
+        self._is_editable = False
+        return True
+    def getFeature(self, fid):
+        for feat in self._features:
+            if feat.id() == fid:
+                return feat
+        return QgsFeature(self._fields)
+    def changeAttributeValue(self, fid, field_idx, value):
+        for feat in self._features:
+            if feat.id() == fid:
+                feat.setAttribute(field_idx, value)
+                return True
+        return False
 
 
 class QgsProcessingFeedback:
