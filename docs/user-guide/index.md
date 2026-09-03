@@ -20,7 +20,7 @@ features:
   - icon:
       src: /icons/overlap.svg
     title: MBI Checker
-    details: Detect overlaps and gaps between barangay polygon boundaries with building point validation. Supports exporting styled MBI layers as GPKG.
+    details: Detect overlaps and gaps between barangay polygon boundaries with building point validation and reference disputed case exclusion.
     link: /tools/mbi-checker
   - icon:
       src: /icons/mbi_validator.svg
