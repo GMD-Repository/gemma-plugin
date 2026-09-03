@@ -78,6 +78,11 @@ features:
     details: Interactive 3-Phase dialog workflow for georeferencing, targeted geometry error scanning/repair, and metadata updating.
     link: /tools/check-and-update
   - icon:
+      src: /icons/compare_boundaries.svg
+    title: PSA - LGU Boundary Comparison
+    details: Audit PSA reference boundaries against LGU-submitted polygons using geocodes, global alignment models, and building point validation.
+    link: /tools/psa-lgu-comparison
+  - icon:
       src: /icons/packager.svg
     title: Package for QField
     details: Package your QGIS project for field data collection using QField with drag-and-drop layer management.

@@ -41,6 +41,7 @@ export default defineConfig({
               { text: 'Fix LGU CRS / Geometry', link: '/tools/fix-lgu-crs' },
               { text: 'Join Barangay Attributes', link: '/tools/join-barangay-attributes' },
               { text: 'Check and Update', link: '/tools/check-and-update' },
+              { text: 'PSA - LGU Boundary Comparison', link: '/tools/psa-lgu-comparison' },
             ]
           },
           {
@@ -92,6 +93,7 @@ export default defineConfig({
           { text: 'Fix LGU CRS / Geometry', link: '/tools/fix-lgu-crs' },
           { text: 'Join Barangay Attributes', link: '/tools/join-barangay-attributes' },
           { text: 'Check and Update', link: '/tools/check-and-update' },
+          { text: 'PSA - LGU Boundary Comparison', link: '/tools/psa-lgu-comparison' },
         ]
       },
       {
