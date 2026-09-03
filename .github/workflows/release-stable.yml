@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   release:
@@ -238,19 +239,36 @@ jobs:
       - name: Trigger GitHub Pages Deploy
         if: steps.release.outputs.released == 'true' && success()
         uses: actions/github-script@v7
+        env:
+          ACTIONS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BOT_TOKEN: ${{ steps.generate-token.outputs.token }}
+          AI_TOKEN: ${{ secrets.AI_TOKEN }}
         with:
-          github-token: ${{ secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
-            try {
-              await github.rest.actions.createWorkflowDispatch({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: 'deploy-docs.yml',
-                ref: 'main',
-              });
-              console.log('🚀 Triggered Deploy VitePress Docs workflow');
-            } catch (err) {
-              console.log('⚠️ Could not trigger deploy-docs dispatch:', err.message);
+            const githubPkg = require('@actions/github');
+            const candidates = [
+              { name: 'GITHUB_TOKEN', token: process.env.ACTIONS_TOKEN },
+              { name: 'Bot App Token', token: process.env.BOT_TOKEN },
+              { name: 'AI_TOKEN', token: process.env.AI_TOKEN }
+            ].filter(c => Boolean(c.token));
+
+            let dispatched = false;
+            for (const candidate of candidates) {
+              try {
+                console.log(`Attempting deploy-docs dispatch with ${candidate.name}...`);
+                const client = githubPkg.getOctokit(candidate.token);
+                await client.rest.actions.createWorkflowDispatch({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: 'deploy-docs.yml',
+                  ref: 'main',
+                });
+                console.log(`🚀 Successfully triggered Deploy VitePress Docs workflow using ${candidate.name}`);
+                dispatched = true;
+                break;
+              } catch (err) {
+                console.warn(`⚠️ Could not trigger deploy-docs dispatch using ${candidate.name}: ${err.message}`);
+              }
             }
 
       # ── 7. Log release record to Google Sheet (Secured) ──────────────

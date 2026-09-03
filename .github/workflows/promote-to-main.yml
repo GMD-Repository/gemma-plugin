@@ -25,6 +25,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   promote:
@@ -111,22 +112,45 @@ jobs:
       - name: Trigger stable release
         if: inputs.trigger_stable_release == true && success()
         uses: actions/github-script@v7
+        env:
+          ACTIONS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BOT_TOKEN: ${{ steps.generate-token.outputs.token }}
+          AI_TOKEN: ${{ secrets.AI_TOKEN }}
         with:
-          github-token: ${{ steps.generate-token.outputs.token || secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
-            try {
-              await github.rest.actions.createWorkflowDispatch({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: 'release-stable.yml',
-                ref: 'main',
-                inputs: {
-                  bump_type: '${{ inputs.bump_type }}',
-                  custom_version: ''
-                }
-              });
-              console.log('🚀 Triggered Release Gemma Plugin (Stable) workflow');
-            } catch (err) {
-              console.log('⚠️ Could not trigger stable release:', err.message);
-              core.setFailed('Failed to trigger stable release workflow');
+            const githubPkg = require('@actions/github');
+            const candidates = [
+              { name: 'Bot App Token', token: process.env.BOT_TOKEN },
+              { name: 'GITHUB_TOKEN', token: process.env.ACTIONS_TOKEN },
+              { name: 'AI_TOKEN', token: process.env.AI_TOKEN }
+            ].filter(c => Boolean(c.token));
+
+            let dispatched = false;
+            let lastError = null;
+
+            for (const candidate of candidates) {
+              try {
+                console.log(`Attempting workflow dispatch with ${candidate.name}...`);
+                const client = githubPkg.getOctokit(candidate.token);
+                await client.rest.actions.createWorkflowDispatch({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: 'release-stable.yml',
+                  ref: 'main',
+                  inputs: {
+                    bump_type: '${{ inputs.bump_type }}',
+                    custom_version: ''
+                  }
+                });
+                console.log(`🚀 Successfully triggered Release Gemma Plugin (Stable) workflow using ${candidate.name}`);
+                dispatched = true;
+                break;
+              } catch (err) {
+                console.warn(`⚠️ Could not trigger stable release using ${candidate.name}: ${err.message}`);
+                lastError = err;
+              }
+            }
+
+            if (!dispatched) {
+              core.setFailed(`Failed to trigger stable release workflow: ${lastError ? lastError.message : 'No valid token available'}`);
             }
