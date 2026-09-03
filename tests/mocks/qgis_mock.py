@@ -13,6 +13,19 @@ import math
 # Ensure Qt offscreen platform plugin is used in headless/CI environments
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+try:
+    import shapely
+    import shapely.ops
+    from shapely.geometry import (
+        Polygon as ShapelyPolygon,
+        MultiPolygon as ShapelyMultiPolygon,
+        Point as ShapelyPoint,
+        box as shapely_box,
+    )
+    HAS_SHAPELY = True
+except ImportError:
+    HAS_SHAPELY = False
+
 
 class DynamicMockModule(types.ModuleType):
     """Module proxy that returns MockGenericClass for any unassigned attribute."""
@@ -140,11 +153,76 @@ class QgsGeometry:
     def unaryUnion(geoms):
         if not geoms:
             return QgsGeometry("Polygon", [])
+        if HAS_SHAPELY:
+            sgeoms = [g._to_shapely() for g in geoms if g and not g.isEmpty()]
+            sgeoms = [sg for sg in sgeoms if sg is not None and not sg.is_empty]
+            if sgeoms:
+                u = shapely.ops.unary_union(sgeoms)
+                return QgsGeometry._from_shapely(u)
         polys = []
         for g in geoms:
             if hasattr(g, 'polygons') and g.polygons:
                 polys.extend(g.polygons)
         return QgsGeometry("Polygon", polys if polys else [[QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)]])
+
+    def _to_shapely(self):
+        if not HAS_SHAPELY:
+            return None
+        try:
+            # Points carry their coordinate in _point, not in polygons --
+            # without this they fell through to the bounding-box fallback
+            # below and came back as a 10x10 box, so every point/polygon
+            # predicate (contains, intersects, distance) answered nonsense.
+            if getattr(self, '_point', None) is not None:
+                return ShapelyPoint(self._point.x(), self._point.y())
+            if hasattr(self, 'polygons') and self.polygons:
+                spolys = []
+                for poly_rings in self.polygons:
+                    if not poly_rings:
+                        continue
+                    if isinstance(poly_rings[0], QgsPointXY):
+                        shell = [(p.x(), p.y()) for p in poly_rings]
+                        spolys.append(ShapelyPolygon(shell))
+                    elif isinstance(poly_rings[0], list):
+                        shell = [(p.x(), p.y()) for p in poly_rings[0]]
+                        holes = [[(p.x(), p.y()) for p in ring] for ring in poly_rings[1:]]
+                        spolys.append(ShapelyPolygon(shell, holes))
+                if len(spolys) == 1:
+                    return spolys[0]
+                elif len(spolys) > 1:
+                    return ShapelyMultiPolygon(spolys)
+            bbox = self.boundingBox()
+            if bbox:
+                return shapely_box(bbox.xMinimum(), bbox.yMinimum(), bbox.xMaximum(), bbox.yMaximum())
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _from_shapely(sg):
+        if not HAS_SHAPELY or sg is None or sg.is_empty:
+            return QgsGeometry("Polygon", [])
+        stype = sg.geom_type
+        if stype == "Polygon":
+            shell = [QgsPointXY(x, y) for x, y in sg.exterior.coords]
+            holes = [[QgsPointXY(x, y) for x, y in ring.coords] for ring in sg.interiors]
+            return QgsGeometry("Polygon", [[shell] + holes] if holes else [[shell]])
+        elif stype == "MultiPolygon":
+            mpolys = []
+            for p in sg.geoms:
+                shell = [QgsPointXY(x, y) for x, y in p.exterior.coords]
+                holes = [[QgsPointXY(x, y) for x, y in ring.coords] for ring in p.interiors]
+                mpolys.append([shell] + holes if holes else [shell])
+            return QgsGeometry("MultiPolygon", mpolys)
+        elif stype in ("LineString", "MultiLineString"):
+            return QgsGeometry("LineString")
+        elif stype == "Point":
+            return QgsGeometry.fromPointXY(QgsPointXY(sg.x, sg.y))
+        elif stype == "GeometryCollection":
+            for geom in sg.geoms:
+                if geom.geom_type in ("Polygon", "MultiPolygon"):
+                    return QgsGeometry._from_shapely(geom)
+        return QgsGeometry("Polygon", [])
 
     @staticmethod
     def fromMultiPolygonXY(multipoly):
@@ -176,18 +254,33 @@ class QgsGeometry:
     def makeValid(self): return self
     def touches(self, other): return True
     def distance(self, other):
+        if HAS_SHAPELY:
+            s1 = self._to_shapely()
+            s2 = other._to_shapely() if hasattr(other, '_to_shapely') else None
+            if s1 and s2:
+                return float(s1.distance(s2))
         b1 = self.boundingBox()
         b2 = other.boundingBox()
         dx = max(0.0, max(b1.xMinimum() - b2.xMaximum(), b2.xMinimum() - b1.xMaximum()))
         dy = max(0.0, max(b1.yMinimum() - b2.yMaximum(), b2.yMinimum() - b1.yMaximum()))
         return math.hypot(dx, dy)
     def contains(self, other):
+        if HAS_SHAPELY:
+            s1 = self._to_shapely()
+            s2 = other._to_shapely() if hasattr(other, '_to_shapely') else None
+            if s1 and s2:
+                return bool(s1.contains(s2))
         if hasattr(other, 'geom_type') and other.geom_type == "Point":
             pt = other.asPoint()
             bbox = self.boundingBox()
             return (bbox.xMinimum() <= pt.x() <= bbox.xMaximum() and bbox.yMinimum() <= pt.y() <= bbox.yMaximum())
         return True
     def intersects(self, other):
+        if HAS_SHAPELY:
+            s1 = self._to_shapely()
+            s2 = other._to_shapely() if hasattr(other, '_to_shapely') else None
+            if s1 and s2:
+                return bool(s1.intersects(s2))
         if hasattr(other, 'geom_type') and other.geom_type == "Point":
             return self.contains(other)
         b1 = self.boundingBox()
@@ -197,6 +290,12 @@ class QgsGeometry:
                         b1.yMaximum() < b2.yMinimum() or b1.yMinimum() > b2.yMaximum())
         return True
     def intersection(self, other):
+        if HAS_SHAPELY:
+            s1 = self._to_shapely()
+            s2 = other._to_shapely() if hasattr(other, '_to_shapely') else None
+            if s1 and s2:
+                res = s1.intersection(s2)
+                return QgsGeometry._from_shapely(res)
         if self.geom_type in ("Polygon", "MultiPolygon") and hasattr(other, 'geom_type') and other.geom_type in ("Polygon", "MultiPolygon"):
             p1 = self.polygons
             p2 = getattr(other, 'polygons', [])
@@ -209,11 +308,16 @@ class QgsGeometry:
             return QgsGeometry("Polygon", p1 if area1 <= area2 else p2)
         return QgsGeometry("LineString")
     def difference(self, other):
+        if HAS_SHAPELY:
+            s1 = self._to_shapely()
+            s2 = other._to_shapely() if hasattr(other, '_to_shapely') else None
+            if s1 and s2:
+                res = s1.difference(s2)
+                return QgsGeometry._from_shapely(res)
         if hasattr(self, 'polygons') and self.polygons:
             other_polys = getattr(other, 'polygons', [])
             diff_rings = [p for p in self.polygons if p not in other_polys]
             if other_polys and diff_rings == self.polygons:
-                # Mock difference: produce modified polygon with reduced area
                 diff_rings = [[QgsPointXY(p.x() + 1.0, p.y() + 1.0) for p in self.polygons[0]]]
             if diff_rings:
                 gtype = "MultiPolygon" if len(diff_rings) > 1 else "Polygon"
@@ -240,14 +344,38 @@ class QgsGeometry:
     def clone(self): return QgsGeometry(self.geom_type, self.polygons)
     def transform(self, ct): pass
     def combine(self, other):
+        if HAS_SHAPELY:
+            s1 = self._to_shapely()
+            s2 = other._to_shapely() if hasattr(other, '_to_shapely') else None
+            if s1 and s2:
+                res = s1.union(s2)
+                return QgsGeometry._from_shapely(res)
         p1 = self.polygons or []
         p2 = getattr(other, 'polygons', []) or []
         combined = p1 + p2
         gtype = "MultiPolygon" if len(combined) > 1 else "Polygon"
         return QgsGeometry(gtype, combined)
-    def buffer(self, distance, segments=3): return QgsGeometry("Polygon", self.polygons)
-    def area(self): return getattr(self, '_mock_area', 100.0)
-    def length(self): return 40.0
+    def buffer(self, distance, segments=3):
+        if HAS_SHAPELY:
+            s1 = self._to_shapely()
+            if s1:
+                res = s1.buffer(distance, resolution=segments)
+                return QgsGeometry._from_shapely(res)
+        return QgsGeometry("Polygon", self.polygons)
+    def area(self):
+        if self.geom_type in ("LineString", "Line", "MultiLineString", "Point", "MultiPoint"):
+            return 0.0
+        if HAS_SHAPELY:
+            s1 = self._to_shapely()
+            if s1:
+                return float(s1.area)
+        return getattr(self, '_mock_area', 100.0)
+    def length(self):
+        if HAS_SHAPELY:
+            s1 = self._to_shapely()
+            if s1:
+                return float(s1.length)
+        return 40.0
 
     def splitGeometry(self, split_line, preserve_input=False):
         bbox = self.boundingBox()
@@ -277,9 +405,16 @@ class QgsGeometry:
     def asPoint(self): return getattr(self, '_point', QgsPointXY(0.0, 0.0))
 
     def boundingBox(self):
-        if self.polygons and self.polygons[0]:
+        if getattr(self, '_point', None) is not None:
+            pt = self._point
+            xs = [pt.x()]
+            ys = [pt.y()]
+        elif self.polygons and self.polygons[0]:
             xs = [p.x() for p in self.polygons[0]]
             ys = [p.y() for p in self.polygons[0]]
+        else:
+            xs = ys = None
+        if xs:
             xmin, xmax = min(xs), max(xs)
             ymin, ymax = min(ys), max(ys)
             class MockBox:
@@ -374,10 +509,16 @@ class QgsFields:
 
 class QgsFeature:
     def __init__(self, fields=None):
-        self._attributes = []
-        self._geometry = None
-        self._id = 0
-        self._fields = fields
+        if isinstance(fields, QgsFeature):
+            self._attributes = list(fields._attributes)
+            self._geometry = fields._geometry
+            self._id = fields._id
+            self._fields = fields._fields
+        else:
+            self._attributes = []
+            self._geometry = None
+            self._id = 0
+            self._fields = fields
 
     def isValid(self):
         return True
@@ -387,6 +528,12 @@ class QgsFeature:
 
     def setAttributes(self, attrs):
         self._attributes = list(attrs)
+
+    def setId(self, fid):
+        self._id = fid
+
+    def id(self):
+        return self._id
 
     def attributes(self):
         return self._attributes
@@ -458,6 +605,9 @@ class QgsVectorDataProvider:
         return self._layer._fields
 
 
+_MOCK_LAYER_CACHE = {}
+
+
 class QgsVectorLayer:
     def __init__(self, path="Polygon?crs=EPSG:4326", name="MockLayer", provider="memory"):
         self._path = path
@@ -465,6 +615,17 @@ class QgsVectorLayer:
         self._provider = provider
         self._fields = QgsFields()
         self._features = []
+        raw_path = str(path).split("|")[0].replace("\\", "/")
+        if raw_path in _MOCK_LAYER_CACHE:
+            cached_fields, cached_feats = _MOCK_LAYER_CACHE[raw_path]
+            for f in cached_fields:
+                self._fields.append(QgsField(f.name(), f.type()))
+            for feat in cached_feats:
+                cf = QgsFeature(self._fields)
+                cf.setGeometry(feat.geometry())
+                cf.setAttributes(list(feat.attributes()))
+                cf.setId(feat.id())
+                self._features.append(cf)
 
     def name(self): return self._name
     def isValid(self): return True
@@ -498,11 +659,38 @@ class QgsProcessingFeedback:
 
 
 class QgsProcessingContext:
+    class LayerDetails:
+        def __init__(self, name="", project=None, output_name="", **kwargs):
+            self.name = name
+            self.project = project
+            self.output_name = output_name
+            self.outputName = output_name
+
+    def __init__(self):
+        self._layers_to_load = {}
+
     def project(self):
         return QgsProject.instance()
 
     def transformContext(self):
         return MockGenericClass()
+
+    def addLayerToLoadOnCompletion(self, layer_id, details=None):
+        if details is None:
+            details = QgsProcessingContext.LayerDetails()
+        self._layers_to_load[str(layer_id)] = details
+
+    def layersToLoadOnCompletion(self):
+        return self._layers_to_load
+
+    def setLayersToLoadOnCompletion(self, layers):
+        self._layers_to_load = dict(layers)
+
+    def willLoadLayerOnCompletion(self, layer_id):
+        return str(layer_id) in self._layers_to_load
+
+    def layerToLoadOnCompletionDetails(self, layer_id):
+        return self._layers_to_load.get(str(layer_id))
 
 
 try:
@@ -551,10 +739,13 @@ class QgsProcessingParameterBoolean(QgsProcessingParameterDefinition): pass
 class QgsSpatialIndex:
     def __init__(self, *args, **kwargs):
         self._features = {}
+        if args and hasattr(args[0], "__iter__"):
+            self.addFeatures(args[0])
 
     def addFeature(self, feature):
         if hasattr(feature, "id"):
-            self._features[feature.id()] = feature
+            fid = feature.id() if callable(feature.id) else getattr(feature, "_id", 0)
+            self._features[fid] = feature
 
     def addFeatures(self, features):
         for f in features:
@@ -564,9 +755,83 @@ class QgsSpatialIndex:
         return list(self._features.keys())
 
 
-class QgsProcessingAlgorithm:
+class QgsProject:
+    _instance = None
+
     def __init__(self):
-        self._parameters = []
+        self._layers = {}
+
+    @classmethod
+    def instance(cls):
+        if cls._instance is None:
+            cls._instance = QgsProject()
+        return cls._instance
+
+    def fileName(self):
+        return ""
+
+    def homePath(self):
+        return ""
+
+    def transformContext(self):
+        return MockGenericClass()
+
+    def mapLayersByName(self, name):
+        return [lyr for lyr in self._layers.values() if hasattr(lyr, "name") and lyr.name() == name]
+
+    def addMapLayer(self, layer):
+        if layer and hasattr(layer, "id"):
+            self._layers[layer.id()] = layer
+        return layer
+
+    def removeMapLayer(self, layer_id):
+        self._layers.pop(layer_id, None)
+
+
+class QgsVectorFileWriter:
+    NoError = 0
+    ErrCreateDataSource = 1
+    CreateOrOverwriteFile = 0
+    CreateOrOverwriteLayer = 1
+
+    class SaveVectorOptions:
+        def __init__(self):
+            self.driverName = "GPKG"
+            self.layerName = ""
+            self.fileEncoding = "UTF-8"
+            self.actionOnExistingFile = 0
+
+    @classmethod
+    def writeAsVectorFormatV3(cls, layer, file_path, ctx, options):
+        try:
+            import os
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            with open(file_path, "wb") as f:
+                f.write(b"mock_gpkg_data")
+            norm_path = str(file_path).replace("\\", "/")
+            _MOCK_LAYER_CACHE[norm_path] = (layer.fields(), list(layer.getFeatures()))
+        except Exception:
+            pass
+        return (0, "")
+
+    @classmethod
+    def writeAsVectorFormatV2(cls, layer, file_path, ctx, options):
+        try:
+            import os
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            with open(file_path, "wb") as f:
+                f.write(b"mock_gpkg_data")
+            norm_path = str(file_path).replace("\\", "/")
+            _MOCK_LAYER_CACHE[norm_path] = (layer.fields(), list(layer.getFeatures()))
+        except Exception:
+            pass
+        return (0, "")
+
+
+
+class QgsProcessingAlgorithm:
+    def __init__(self, *args, **kwargs):
+        self._parameters = {}
 
     @classmethod
     def flags(cls): return 0
@@ -575,15 +840,23 @@ class QgsProcessingAlgorithm:
     @classmethod
     def groupId(cls): return "gmd_pipeline"
 
-    def addParameter(self, param, group=None):
-        self._parameters.append(param)
-        return True
+    def addParameter(self, param, *args, **kwargs):
+        if not hasattr(self, "_parameters"):
+            self._parameters = {}
+        if hasattr(param, "name") and callable(param.name):
+            try:
+                name = param.name()
+                if isinstance(name, str):
+                    self._parameters[name] = param
+            except Exception:
+                pass
+        return param
 
-    def parameterDefinitions(self):
-        return self._parameters
+    def parameterDefinition(self, name):
+        if not hasattr(self, "_parameters"):
+            self._parameters = {}
+        return self._parameters.get(name, MockGenericClass())
 
-    def parameterAsFile(self, parameters, name, context):
-        return str(parameters.get(name, ""))
 
     def parameterAsLayerList(self, parameters, name, context):
         val = parameters.get(name, [])
@@ -615,6 +888,12 @@ class QgsProcessingAlgorithm:
     def parameterAsString(self, parameters, name, context):
         return str(parameters.get(name, ""))
 
+    def parameterAsFile(self, parameters, name, context):
+        return str(parameters.get(name, "") or "")
+
+    def parameterAsFileOutput(self, parameters, name, context):
+        return str(parameters.get(name, "") or "")
+
     def parameterAsBool(self, parameters, name, context):
         return bool(parameters.get(name, False))
 
@@ -632,6 +911,7 @@ class QgsProcessingAlgorithm:
             def addFeature(self, *args, **kwargs): pass
             def addFeatures(self, *args, **kwargs): return (True, [])
         return (MockSink(), "mock_dest_id")
+
 
 
 class QgsProject:
@@ -924,6 +1204,7 @@ def setup_qgis_mock_if_needed():
     core_mod.QgsProject = QgsProject
     core_mod.QgsApplication = QgsApplication
     core_mod.QgsWkbTypes = QgsWkbTypes
+    core_mod.QgsVectorFileWriter = QgsVectorFileWriter
 
     # PyQt attributes
     class MockSignal:
@@ -1006,3 +1287,10 @@ def setup_qgis_mock_if_needed():
             import openpyxl
         except ImportError:
             sys.modules["openpyxl"] = DynamicMockModule("openpyxl")
+
+    # 5. requests module fallback
+    if "requests" not in sys.modules:
+        try:
+            import requests
+        except ImportError:
+            sys.modules["requests"] = DynamicMockModule("requests")

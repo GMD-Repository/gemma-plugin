@@ -46,6 +46,7 @@ class GMDPipeline(object):
         self.check_update_dlg = None
         self.push_dlg = None
         self.check_and_update_action = None
+        self.comparison_panel_action = None
         self.create_ea_action = None
         self.ea_dlg = None
         self.offline_editing = None
@@ -183,6 +184,7 @@ class GMDPipeline(object):
         others_icon = QIcon(os.path.dirname(__file__) + "/icons/others.svg")
         updating_boundaries_icon = QIcon(os.path.dirname(__file__) + "/icons/updating_boundaries.svg")
         check_and_update_icon = QIcon(os.path.dirname(__file__) + "/icons/check_and_update.svg")
+        compare_boundaries_icon = QIcon(os.path.dirname(__file__) + "/icons/compare_boundaries.svg")
 
         # 1. Updating of Boundaries Submenu
         self.updating_boundaries_menu = QMenu(u'Updating of Boundaries')
@@ -192,13 +194,19 @@ class GMDPipeline(object):
         self.check_and_update_action.triggered.connect(self.show_check_and_update_dialog)
         self.updating_boundaries_menu.addAction(self.check_and_update_action)
 
+        self.comparison_panel_action = QAction(
+            compare_boundaries_icon, "PSA - LGU Comparison Review", self.iface.mainWindow()
+        )
+        self.comparison_panel_action.triggered.connect(self.show_comparison_panel)
+        self.updating_boundaries_menu.addAction(self.comparison_panel_action)
+
         # 2. EA Delineation Submenu
         self.ea_delineation_menu = QMenu(u'EA Delineation')
         self.gema_add_submenu(self.ea_delineation_menu, create_ea_icon)
 
-        self.create_ea_action = QAction(create_ea_icon, "EA Delineation and Merging", self.iface.mainWindow())
-        self.create_ea_action.triggered.connect(self.show_create_ea_dialog)
-        self.ea_delineation_menu.addAction(self.create_ea_action)
+        #self.create_ea_action = QAction(create_ea_icon, "EA Delineation and Merging", self.iface.mainWindow())
+        #self.create_ea_action.triggered.connect(self.show_create_ea_dialog)
+        #self.ea_delineation_menu.addAction(self.create_ea_action)
 
         self.package_qfield_action = QAction(packager_icon, "Package for QField", self.iface.mainWindow())
         self.package_qfield_action.triggered.connect(self.show_package_dialog)
@@ -225,11 +233,11 @@ class GMDPipeline(object):
         self.toolbar.addAction(self.check_and_update_toolbar_action)
 
         # 2. EA Delineation and Merging
-        self.create_ea_toolbar_action = QAction(
-            create_ea_icon, "EA Delineation and Merging", self.iface.mainWindow()
-        )
-        self.create_ea_toolbar_action.triggered.connect(self.show_create_ea_dialog)
-        self.toolbar.addAction(self.create_ea_toolbar_action)
+        #self.create_ea_toolbar_action = QAction(
+        #    create_ea_icon, "EA Delineation and Merging", self.iface.mainWindow()
+        #)
+        #self.create_ea_toolbar_action.triggered.connect(self.show_create_ea_dialog)
+        #self.toolbar.addAction(self.create_ea_toolbar_action)
 
         # 3. Package for QField
         self.package_qfield_toolbar_action = QAction(
@@ -243,6 +251,14 @@ class GMDPipeline(object):
 
 
     def unload(self):
+        # Every addDockWidget needs a matching removal, or a stale panel is
+        # left behind in the main window after the plugin is unloaded.
+        try:
+            from .gmd_scripts.psa_lgu_comparison_panel import close_comparison_panel
+            close_comparison_panel(self.iface)
+        except Exception:
+            pass
+
         if self.gema_menu is not None:
             self.iface.mainWindow().menuBar().removeAction(self.gema_menu.menuAction())
 
@@ -320,6 +336,20 @@ class GMDPipeline(object):
         self.check_update_dlg.raise_()
         self.check_update_dlg.activateWindow()
 
+    def show_comparison_panel(self):
+        """Reopen the PSA - LGU comparison review panel for Matched layers
+        that are already loaded, without re-running the algorithm."""
+        from .gmd_scripts.psa_lgu_comparison_panel import show_comparison_panel
+
+        if show_comparison_panel(self.iface) is None:
+            QMessageBox.information(
+                self.iface.mainWindow(),
+                "PSA - LGU Comparison Review",
+                "No comparison output layers were found in this project.\n\n"
+                "Run the 'PSA - LGU Boundary Comparison' tool from the Processing "
+                "Toolbox first -- the panel opens automatically when it finishes.",
+            )
+
     def show_create_ea_dialog(self):
         """Open the Create Enumeration Areas dialog."""
         from .references.create_enumeration_area.dialog import EALauncherDialog
@@ -333,6 +363,8 @@ class GMDPipeline(object):
 
         if self.ea_dlg is None:
             self.ea_dlg = EALauncherDialog(self.iface.mainWindow())
+        else:
+            self.ea_dlg.refresh_all()
 
         self.ea_dlg.showNormal()
         self.ea_dlg.show()

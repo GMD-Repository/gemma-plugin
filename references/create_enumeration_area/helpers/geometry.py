@@ -90,30 +90,51 @@ def get_polygons_from_geom(geom: QgsGeometry) -> List[QgsGeometry]:
     return cleaned_polys
 
 
-def allocate_gaps_to_parts(parts: List[Dict[str, Any]], parent_geom: QgsGeometry) -> List[Dict[str, Any]]:
-    """Allocate gaps/holes in the union of parts to their nearest parent part."""
+def allocate_gaps_to_parts(
+    parts: List[Dict[str, Any]],
+    parent_geom: QgsGeometry,
+    min_gap_area: float = 1.0,
+) -> Tuple[List[Dict[str, Any]], List[QgsGeometry]]:
+    """Allocate gaps/holes in the union of parts to their nearest parent part.
+
+    :param parts: Mutable list of EA dicts (each with a ``'geom'`` key).
+    :param parent_geom: The authoritative Barangay boundary polygon.
+    :param min_gap_area: Minimum planar area (map units²) for a gap to be
+        recorded in the returned ``detected_gaps`` list.  Slivers smaller than
+        this threshold are still merged into adjacent EAs but are not reported.
+    :returns: ``(updated_parts, detected_gaps)`` where ``detected_gaps`` is a
+        list of gap polygon geometries (each > *min_gap_area*) captured
+        **before** they are merged — suitable for writing to SPECIAL_EA_OUTPUT.
+    """
+    detected_gaps: List[QgsGeometry] = []
+
     if not parts or not parent_geom or parent_geom.isEmpty():
-        return parts
-    
+        return parts, detected_gaps
+
     valid_geoms = [p['geom'] for p in parts if p.get('geom') and not p['geom'].isEmpty()]
     if not valid_geoms:
-        return parts
+        return parts, detected_gaps
 
     # Compute union of parts
     parts_union = QgsGeometry.unaryUnion(valid_geoms)
     if parts_union is None or parts_union.isEmpty():
-        return parts
+        return parts, detected_gaps
 
     # Get gaps
     gaps = parent_geom.difference(parts_union).buffer(0.0, 3)
     if gaps.isEmpty():
-        return parts
-        
+        return parts, detected_gaps
+
     # Extract individual polygons from gaps
     gap_polys = get_polygons_from_geom(gaps)
     for gap_poly in gap_polys:
         if gap_poly.isEmpty():
             continue
+
+        # Record meaningful gaps before merging them away
+        if gap_poly.area() >= min_gap_area:
+            detected_gaps.append(QgsGeometry(gap_poly))
+
         # Find the part that shares the longest boundary with this gap polygon
         best_part = None
         max_boundary_len = -1.0
@@ -127,7 +148,7 @@ def allocate_gaps_to_parts(parts: List[Dict[str, Any]], parent_geom: QgsGeometry
                 if boundary_len > max_boundary_len:
                     max_boundary_len = boundary_len
                     best_part = p
-                    
+
         # Fallback: assign to the nearest part by centroid distance
         if best_part is None:
             gap_centroid = gap_poly.centroid().asPoint()
@@ -140,12 +161,13 @@ def allocate_gaps_to_parts(parts: List[Dict[str, Any]], parent_geom: QgsGeometry
                         gap_centroid.y() - p['geom'].centroid().asPoint().y()
                     )
                 )
-            
+
         if best_part is not None:
             # Combine gap polygon with the selected part
             combined = best_part['geom'].combine(gap_poly).buffer(0.0, 3)
             best_part['geom'] = combined
-    return parts
+
+    return parts, detected_gaps
 
 
 def collect_linear_features(

@@ -160,7 +160,7 @@ def force_geometric_split(ea_item, target_pop, fback, min_household=100, max_hou
         final_parts.sort(key=lambda x: x['hh_count'], reverse=True)
         final_parts[0]['is_new'] = False
 
-    final_parts = allocate_gaps_to_parts(final_parts, ea_item['geom'])
+    final_parts, _ = allocate_gaps_to_parts(final_parts, ea_item['geom'])
 
     parent_geom = ea_item['geom']
     for p in final_parts:
@@ -518,7 +518,7 @@ def split_ea_voronoi_road_hybrid(ea_item, road_lines, river_lines, target_pop, f
         parts.sort(key=lambda x: x['hh_count'], reverse=True)
         parts[0]['is_new'] = False
 
-    final_parts = allocate_gaps_to_parts(parts, parent_geom)
+    final_parts, _ = allocate_gaps_to_parts(parts, parent_geom)
 
     # Final pass: Guarantee exact building assignment with assign_buildings_to_parts
     final_bldgs_list = assign_buildings_to_parts(bldgs, [p['geom'] for p in final_parts], fback, ea_item.get('original_code', ''))
@@ -956,7 +956,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             clipped = p['geom'].intersection(parent_geom).buffer(0.0, 3)
             if not clipped.isEmpty():
                 p['geom'] = clipped
-        split_parts = allocate_gaps_to_parts(split_parts, parent_geom)
+        split_parts, _ = allocate_gaps_to_parts(split_parts, parent_geom)
         return split_parts
 
     def force_geometric_split(ea_item, target_pop, fback):
@@ -1134,7 +1134,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             final_parts.sort(key=lambda x: x['hh_count'], reverse=True)
             final_parts[0]['is_new'] = False
 
-        final_parts = allocate_gaps_to_parts(final_parts, ea_item['geom'])
+        final_parts, _ = allocate_gaps_to_parts(final_parts, ea_item['geom'])
 
         parent_geom = ea_item['geom']
         for p in final_parts:
@@ -1443,7 +1443,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             final_parts.sort(key=lambda x: x['hh_count'], reverse=True)
             final_parts[0]['is_new'] = False
 
-        final_parts = allocate_gaps_to_parts(final_parts, parent_geom)
+        final_parts, _ = allocate_gaps_to_parts(final_parts, parent_geom)
 
         # Final pass: Guarantee exact building assignment with assign_buildings_to_parts
         final_bldgs_list = assign_buildings_to_parts(bldgs, [p['geom'] for p in final_parts], fback, ea_item.get('original_code', ''))
@@ -1611,7 +1611,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                 p['geom'] = clipped
             p['split_by'] = 'point_based'
 
-        final_parts = allocate_gaps_to_parts(final_parts, parent_geom)
+        final_parts, _ = allocate_gaps_to_parts(final_parts, parent_geom)
 
         # Reject the split if any resulting part falls below the min_household threshold (Strict Threshold mode only)
         if split_strategy == 1 and any(p['hh_count'] < min_household for p in final_parts):
