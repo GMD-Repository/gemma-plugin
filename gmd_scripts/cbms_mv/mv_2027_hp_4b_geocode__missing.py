@@ -24,6 +24,7 @@ from qgis.core import (
     QgsProject,
 )
 from PyQt5.QtGui import QIcon
+import processing
 from .. import gmdhelpers
 
 
@@ -33,6 +34,9 @@ class mv_2027_hp_4b_geocode__missing(QgsProcessingAlgorithm):
     INPUT_LAYER = "INPUT_LAYER"
     OUTPUT = "OUTPUT"
     OPEN_FOR_EDITING = "OPEN_FOR_EDITING"
+
+    # Field in the geotagged layer that must never be NULL/missing.
+    GEOCODE_FIELD = "ea_geocode"
 
     def name(self) -> str:
         return "mv_2027_hp_4b_geocode__missing"
@@ -102,35 +106,30 @@ class mv_2027_hp_4b_geocode__missing(QgsProcessingAlgorithm):
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
         open_for_editing = self.parameterAsBoolean(parameters, self.OPEN_FOR_EDITING, context)
 
-        features = gmdhelpers.filter_geometry_validity(geojson_data, feedback)
-        fields = geojson_data.fields()
-
-        # Resolve geocode column name case-insensitively
-        geocode_field = "geocode"
-        for field in fields:
-            if field.name().lower() in ("geocode", "bsn_geoid", "geo_code"):
-                geocode_field = field.name()
-                break
-
-        # Helper to check for missing/null attribute values
-        def is_missing(val: Any) -> bool:
-            if val is None or val == NULL:
-                return True
-            if isinstance(val, QVariant) and val.isNull():
-                return True
-            return str(val).strip().lower() in ("", "null", "none", "nan", "na")
-
-        # Filter features where geocode is NULL / empty / missing
-        flagged_features = []
-        for f in features:
-            if feedback and feedback.isCanceled():
-                break
-            val = f.attribute(geocode_field) if geocode_field in fields.names() else NULL
-            if is_missing(val):
-                flagged_features.append(f)
+        # Filter features with NULL/missing ea_geocode
+        temp_layer = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": geojson_data,
+                "EXPRESSION": f'"{self.GEOCODE_FIELD}" IS NULL',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+            is_child_algorithm=True,
+        )["OUTPUT"]
 
         feedback.pushInfo(
-            f"Flagged {len(flagged_features)} feature(s) with missing or null '{geocode_field}' values."
+            f"Flagged {temp_layer.featureCount()} feature(s) with missing/NULL "
+            f"'{self.GEOCODE_FIELD}' values."
+        )
+
+        # Select & organize columns using select_mv
+        final_output = gmdhelpers.select_mv(
+            temp_layer,
+            [self.GEOCODE_FIELD],
+            context=context,
+            feedback=feedback,
         )
 
         # Export flagged features to output sink
@@ -139,14 +138,14 @@ class mv_2027_hp_4b_geocode__missing(QgsProcessingAlgorithm):
             parameters,
             self.OUTPUT,
             context,
-            fields,
-            geojson_data.wkbType(),
-            geojson_data.sourceCrs(),
-            flagged_features,
+            final_output.fields(),
+            final_output.wkbType(),
+            final_output.sourceCrs(),
+            final_output.getFeatures(),
             feedback,
         )
 
-        # Open output layer in edit mode if requested
+        # Optionally load output layer in edit mode
         if open_for_editing:
             main_dest_id = result.get(self.OUTPUT)
             if main_dest_id:

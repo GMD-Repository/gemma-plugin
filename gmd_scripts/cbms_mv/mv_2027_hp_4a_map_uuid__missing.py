@@ -1,6 +1,6 @@
 import os
 import json
-from typing import Any, Optional, Dict, List, Set
+from typing import Any, Optional, Dict, List
 
 from PyQt5.QtCore import QVariant
 from qgis.core import (
@@ -14,28 +14,35 @@ from qgis.core import (
     QgsProcessingContext,
     QgsProcessingException,
     QgsProcessingFeedback,
+    QgsProcessingParameterBoolean,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterFile,
     QgsVectorLayer,
     QgsGeometry,
     QgsWkbTypes,
     QgsCoordinateReferenceSystem,
+    QgsProject,
 )
 from PyQt5.QtGui import QIcon
+import processing
 from .. import gmdhelpers
 
 
-class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
+class mv_2027_hp_4b_geocode__missing(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"
     INPUT_LAYER = "INPUT_LAYER"
     OUTPUT = "OUTPUT"
+    OPEN_FOR_EDITING = "OPEN_FOR_EDITING"
 
-    def name(self):
-        return "mv_2027_hp_4a_map_uuid__missing"
+    # Field in the geotagged layer that must never be NULL/missing.
+    GEOCODE_FIELD = "ea_geocode"
 
-    def displayName(self):
-        return "mv_2027_hp_4a_map_uuid__missing"
+    def name(self) -> str:
+        return "mv_2027_hp_4b_geocode__missing"
+
+    def displayName(self) -> str:
+        return "mv_2027_hp_4b_geocode__missing"
 
     def group(self) -> str:
         return "2027 CBMS"
@@ -45,11 +52,13 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points without CBMS Form 2 datafile. \n \n"
-            "Every geotagged point (except for BSN 00000) should have a counterpart datafile with the same map_uuid.\n"
+            "List of geotagged points with NULL or missing Geocodes. \n \n"
+            "Every geotagged point should have a valid geocode in the geocode column.\n"
+            "Flagged features can optionally be opened directly in edit mode for correction.\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):
+
         self.addParameter(
             QgsProcessingParameterFile(
                 self.INPUT_DATA,
@@ -73,8 +82,16 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
-                "mv_2027_hp_4a_map_uuid__missing",
+                "mv_2027_hp_4b_geocode__missing",
                 QgsProcessing.TypeVectorAnyGeometry,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.OPEN_FOR_EDITING,
+                "Open output layer in edit mode after running",
+                defaultValue=False,
             )
         )
 
@@ -87,104 +104,36 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
 
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
+        open_for_editing = self.parameterAsBoolean(parameters, self.OPEN_FOR_EDITING, context)
 
-        source_fields = geojson_data.fields()
-        fields = QgsFields(source_fields)
-        if fields.indexOf("status") == -1:
-            fields.append(QgsField("status", QVariant.String))
+        # Filter features with NULL/missing ea_geocode
+        temp_layer = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": geojson_data,
+                "EXPRESSION": f'"{self.GEOCODE_FIELD}" IS NULL',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+            is_child_algorithm=True,
+        )["OUTPUT"]
 
-        def clean(v: Any) -> str:
-            if v is None or v == NULL or (isinstance(v, QVariant) and v.isNull()):
-                return ""
-            s = str(v).strip()
-            return "" if s.lower() in ("null", "none", "na", "n/a", "nan") else s
-
-        # Index Form 2 JSON records by 19-digit bsn_geoid:
-        # province (3) + city_mun (2) + barangay (3) + ean (6) + bsn (5)
-        form2_by_geoid: Dict[str, Set[str]] = {}
-        if json_data:
-            records = json_data if isinstance(json_data, list) else (
-                json_data.get("records") or json_data.get("features") or json_data.get("data") or [json_data]
-            )
-            for rec in records:
-                if feedback and feedback.isCanceled():
-                    break
-                p = rec.get("properties", rec) if isinstance(rec, dict) else {}
-                if not isinstance(p, dict):
-                    continue
-
-                gid = clean(p.get("bsn_geoid"))
-                if not gid:
-                    try:
-                        prov = int(p.get("province_code", 0))
-                        mun = int(p.get("city_mun_code", 0))
-                        bgy = int(p.get("barangay_code", 0))
-                        ean = int(p.get("ean", 0))
-                        bsn = int(p.get("bsn_code", p.get("bsn", 0)))
-                        gid = f"{prov:03d}{mun:02d}{bgy:03d}{ean:06d}{bsn:05d}"
-                    except (ValueError, TypeError):
-                        gid = ""
-
-                uuid = clean(p.get("map_uuid"))
-                if gid:
-                    entry = form2_by_geoid.setdefault(gid, set())
-                    if uuid:
-                        entry.add(uuid)
-
-        invalid_features = []
-
-        for f in geojson_data.getFeatures():
-            if feedback and feedback.isCanceled():
-                break
-
-            bsn = clean(f["bsn"])
-            geoid = clean(f["bsn_geoid"])
-
-            # Skip BSN 0 / 00000 points
-            if bsn in ("0", "00", "000", "0000", "00000") or geoid.endswith("00000"):
-                continue
-
-            uuid = clean(f["map_uuid"])
-            status = None
-
-            if not uuid:
-                status = "Missing/NULL Map UUID in GeoJSON"
-            elif json_data is not None:
-                if geoid in form2_by_geoid:
-                    uuids = form2_by_geoid[geoid]
-                    if not uuids:
-                        status = "Datafile exists but missing map_uuid"
-                    elif uuid not in uuids:
-                        status = "Map UUID mismatch with Form 2 Datafile"
-                else:
-                    status = "Missing Form 2 Datafile Record"
-
-            if status:
-                out_feat = QgsFeature(fields)
-                if f.geometry() is not None:
-                    out_feat.setGeometry(f.geometry())
-                out_feat.setAttributes(list(f.attributes()) + [status])
-                invalid_features.append(out_feat)
-
-        feedback.pushInfo(f"Results: {len(invalid_features)} flagged features.")
-
-        # Create in-memory temp_layer from flagged features
-        geom_type = QgsWkbTypes.displayString(geojson_data.wkbType())
-        crs_authid = geojson_data.sourceCrs().authid()
-        temp_layer = QgsVectorLayer(f"{geom_type}?crs={crs_authid}", "temp_layer", "memory")
-        temp_layer.dataProvider().addAttributes(fields)
-        temp_layer.updateFields()
-        temp_layer.dataProvider().addFeatures(invalid_features)
+        feedback.pushInfo(
+            f"Flagged {temp_layer.featureCount()} feature(s) with missing/NULL "
+            f"'{self.GEOCODE_FIELD}' values."
+        )
 
         # Select & organize columns using select_mv
         final_output = gmdhelpers.select_mv(
             temp_layer,
-            ["ref_ea_geocode"],
+            [self.GEOCODE_FIELD],
             context=context,
             feedback=feedback,
         )
 
-        return gmdhelpers.export_features_to_sink(
+        # Export flagged features to output sink
+        result = gmdhelpers.export_features_to_sink(
             self,
             parameters,
             self.OUTPUT,
@@ -195,6 +144,20 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
             final_output.getFeatures(),
             feedback,
         )
+
+        # Optionally load output layer in edit mode
+        if open_for_editing:
+            main_dest_id = result.get(self.OUTPUT)
+            if main_dest_id:
+                context.addLayerToLoadOnCompletion(
+                    main_dest_id,
+                    context.LayerDetails(
+                        "mv_2027_hp_4b_geocode__missing [editable]",
+                        QgsProject.instance(),
+                    ),
+                )
+
+        return result
 
     def createInstance(self):
         return self.__class__()
