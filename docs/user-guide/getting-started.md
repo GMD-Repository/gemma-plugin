@@ -83,7 +83,7 @@ Tools designed for LGU boundary management, 1Map data harmonization, topology au
 
 | Tool | Access | Description |
 |------|--------|-------------|
-| [MBI Checker](/tools/mbi-checker) | Processing Toolbox | Detect gaps and overlaps between barangay polygon boundaries with building point validation |
+| [MBI Checker](/tools/mbi-checker) | Processing Toolbox | Detect gaps and overlaps between barangay polygon boundaries with building point validation and reference case exclusion |
 | [MBI Validator](/tools/mbi-validator) | Processing Toolbox | Cross-check Reference MBI layers against Checker GAP/OVERLAP layers to audit status mismatches |
 | [Fill Polygon Gaps](/tools/fill-polygon-gaps) | Processing Toolbox | Automatically fill gaps between polygons and assign them to neighboring barangays |
 | [Export Preliminary Polygons](/tools/export-preliminary-polygons) | Processing Toolbox | Merge and export resolved boundary layers into consolidated GeoPackages for 1Map submission |

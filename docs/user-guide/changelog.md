@@ -2,6 +2,34 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.2
+<time>Sep 03, 2026</time>
+
+### ✨ New Features
+- Implemented EA delineation, candidates algorithm, and unified multi-tab GUI workflow ([@pacoleslaw](https://github.com/pacoleslaw)) ([#202](https://github.com/GMD-Repository/gemma-plugin/pull/202))
+- Added custom GUI dialog, merge processor, and EARF automation for EA delineation ([@pacoleslaw](https://github.com/pacoleslaw)) ([#201](https://github.com/GMD-Repository/gemma-plugin/pull/201))
+- Enabled EA Delineation and Merging tools in the menu and toolbar ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added PackageDialog for QGIS-to-QField project export with custom layer group and style management ([@nbacquiano-ui](https://github.com/nbacquiano-ui))
+
+### ⚡ Improvements & Fixes
+- Route stable release notification recipients to BCC ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#200](https://github.com/GMD-Repository/gemma-plugin/pull/200))
+- Add GitHub Actions workflows for automated testing, preview releases, and deployment management ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- Add GitHub Actions workflow for stable release deployment and email notifications ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- Automated stable release workflow with XML configuration generation and email notifications ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### 🐛 Bug Fixes
+- Suppress generation of empty 0-feature outputs and prune unused layer groups in Tab 2 ([@pacoleslaw](https://github.com/pacoleslaw)) ([#203](https://github.com/GMD-Repository/gemma-plugin/pull/203))
+- Fix cross-platform path normalization in detect_project_from_layer ([@pacoleslaw](https://github.com/pacoleslaw))
+
+### 💥 Breaking Changes
+- Delete gmd_scripts/cbms_mv/mv_2027_hp_4a_longitude__invalid.py ([@velascojasper0](https://github.com/velascojasper0))
+
+### 📚 Documentation
+- Update EARF writer docstrings and tool guide documentation ([@pacoleslaw](https://github.com/pacoleslaw))
+- Add unit tests for rigid fit and alignment models in LGU boundary comparison ([@ftating19](https://github.com/ftating19))
+
+<Contributors :contributors="['pacoleslaw', 'nbacquiano-ui', 'kentemman-gmd', 'ftating19', 'velascojasper0']" />
+
 ## 1.0.1
 <time>Sep 01, 2026</time>
 
