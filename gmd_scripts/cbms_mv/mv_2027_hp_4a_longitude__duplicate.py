@@ -36,25 +36,25 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
     BASE_LAYER = "BASE_LAYER"
     OUTPUT = "OUTPUT"
 
-    def name(self):
+    def name(self) -> str:
         return "mv_2027_hp_4a_longitude__duplicate"
 
-    def displayName(self):
+    def displayName(self) -> str:
         return "mv_2027_hp_4a_longitude__duplicate"
 
-    def group(self):
+    def group(self) -> str:
         return "2027 CBMS"
 
-    def groupId(self):
+    def groupId(self) -> str:
         return "cbms_mv"
 
-    def shortHelpString(self):
+    def shortHelpString(self) -> str:
         return (
-            "List of geotagged points with duplicate longitude. \n \n"
-            "The longitude should be unique.\n"
+            "List of geotagged points with duplicate coordinates. \n \n"
+            "The coordinates should be unique.\n"
         )
 
-    def initAlgorithm(self, config=None):
+    def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):
 
         self.addParameter(
             QgsProcessingParameterFile(
@@ -84,93 +84,123 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
             )
         )
 
-    def processAlgorithm(self, parameters, context, feedback):
+    def processAlgorithm(
+        self,
+        parameters: Dict[str, Any],
+        context: QgsProcessingContext,
+        feedback: QgsProcessingFeedback,
+    ) -> Dict[str, Any]:
 
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
 
         features = gmdhelpers.filter_geometry_validity(geojson_data, feedback)
-        fields = geojson_data.fields()
+        source_fields = geojson_data.fields()
+        fields = QgsFields(source_fields)
 
-        # Add a field holding combined (longitude, latitude) rounded to 7 decimal places as a string
-        if fields.indexFromName("coord_key") == -1:
-            fields.append(QgsField("coord_key", QVariant.String))
+        # Ensure 'dupli_coor' field exists for grouping
+        if fields.indexOf("dupli_coor") == -1:
+            fields.append(QgsField("dupli_coor", QVariant.String))
+
+        dupli_coor_idx = fields.indexOf("dupli_coor")
 
         # Resolve field names case-insensitively
         def resolve_field_name(field_list, target_name):
+            target_lower = target_name.lower()
             for fld in field_list:
-                if fld.name().lower() == target_name.lower():
+                if fld.name().lower() == target_lower:
                     return fld.name()
             return None
 
-        long_field = resolve_field_name(fields, "longitude")
-        lat_field = resolve_field_name(fields, "latitude")
+        long_field = resolve_field_name(source_fields, "longitude")
+        lat_field = resolve_field_name(source_fields, "latitude")
+
+        long_idx = fields.indexOf(long_field) if long_field else -1
+        lat_idx = fields.indexOf(lat_field) if lat_field else -1
 
         valid_features = []
         for f in features:
-            f.setFields(fields, False)
-            f.resizeAttributes(fields.count())
+            if feedback and feedback.isCanceled():
+                break
 
-            lon_value = f.attribute(long_field) if long_field else None
-            lat_value = f.attribute(lat_field) if lat_field else None
+            lon_val = f.attribute(long_field) if long_field else None
+            lat_val = f.attribute(lat_field) if lat_field else None
 
-            if lon_value is None or lon_value == NULL or lat_value is None or lat_value == NULL:
-                feedback.pushWarning(
-                    "Feature id " + str(f.id()) + " has null longitude or latitude, skipping."
-                )
+            lon_float, lat_float = None, None
+
+            # 1. Try parsing attribute coordinates
+            if lon_val is not None and lon_val != NULL and lat_val is not None and lat_val != NULL:
+                try:
+                    lon_float = round(float(lon_val), 7)
+                    lat_float = round(float(lat_val), 7)
+                except (ValueError, TypeError):
+                    pass
+
+            # 2. Fallback to point geometry if attribute coordinates are missing or invalid
+            if lon_float is None or lat_float is None:
+                geom = f.geometry()
+                if geom and not geom.isEmpty():
+                    pt = geom.asPoint()
+                    if not pt.isEmpty():
+                        lon_float = round(pt.x(), 7)
+                        lat_float = round(pt.y(), 7)
+
+            if lon_float is None or lat_float is None:
+                if feedback:
+                    feedback.pushWarning(
+                        f"Feature id {f.id()} has null or invalid longitude/latitude, skipping."
+                    )
                 continue
 
-            try:
-                lon_str = "{:.7f}".format(float(lon_value))
-                lat_str = "{:.7f}".format(float(lat_value))
-                f["coord_key"] = f"{lon_str}_{lat_str}"
-            except (TypeError, ValueError) as e:
-                feedback.pushWarning(
-                    "Feature id " + str(f.id()) + " has invalid coordinates: " + str(e)
-                )
-                continue
+            # dupli_coor = paste0(round(longitude, 7), round(latitude, 7))
+            dupli_coor = f"{lon_float:.7f}{lat_float:.7f}"
 
-            valid_features.append(f)
+            out_feat = QgsFeature(fields)
+            out_feat.setGeometry(f.geometry())
+            attrs = list(f.attributes())
+            while len(attrs) < fields.count():
+                attrs.append(NULL)
 
-        features = valid_features
+            attrs[dupli_coor_idx] = dupli_coor
+            if long_idx != -1:
+                attrs[long_idx] = lon_float
+            if lat_idx != -1:
+                attrs[lat_idx] = lat_float
 
-        features, fields = gmdhelpers.add_count(features, fields, "coord_key")
+            out_feat.setAttributes(attrs)
+            valid_features.append(out_feat)
 
+        # 3. add_count(dupli_coor) -> attaches 'n'
+        features, fields = gmdhelpers.add_count(valid_features, fields, "dupli_coor")
+
+        # 4. filter(n > 1)
         features = [
             f for f in features
             if f["n"] is not None and f["n"] != NULL and f["n"] > 1
         ]
 
-        features = gmdhelpers.arrange(features, "coord_key")
+        # 5. arrange(geom / dupli_coor)
+        features = gmdhelpers.arrange(features, "dupli_coor")
 
-        # 5. Create temporary memory layer for matched features
+        # 6. Create temporary memory layer to apply select_mv
+        crs = geojson_data.sourceCrs()
+        if not crs.isValid():
+            crs = QgsCoordinateReferenceSystem("EPSG:4326")
         wkb_type_str = QgsWkbTypes.displayString(geojson_data.wkbType())
         temp_layer = QgsVectorLayer(
             f"{wkb_type_str}?crs={crs.authid()}",
-            "matched_layer",
+            "temp_duplicates",
             "memory",
         )
         dp = temp_layer.dataProvider()
-        dp.addAttributes(out_fields)
+        dp.addAttributes(fields)
         temp_layer.updateFields()
-        dp.addFeatures(matched_features)
+        dp.addFeatures(features)
 
-
-        extracted_joined = processing.run(
-            "native:extractbyexpression",
-            {
-                "INPUT": temp_layer,
-                "EXPRESSION": 'to_int("distance_m") > 50',
-                "OUTPUT": "memory:",
-            },
-            context=context,
-            feedback=feedback,
-        )["OUTPUT"]
-
-        # 6. Select & organize columns using select_mv
+        # 7. select_mv(longitude, latitude) & select(-dupli_coor)
         final_output = gmdhelpers.select_mv(
-            extracted_joined,
-            ["ref_map_uuid", "ref_bsn_geoid", "distance_m"],
+            temp_layer,
+            ["longitude", "latitude", "n"],
             context=context,
             feedback=feedback,
         )
