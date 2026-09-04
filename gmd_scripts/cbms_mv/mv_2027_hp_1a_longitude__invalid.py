@@ -1,5 +1,6 @@
 import os
 import json
+import processing
 from typing import Any, Optional, Dict, List
 
 from PyQt5.QtCore import QVariant
@@ -20,6 +21,9 @@ from qgis.core import (
     QgsGeometry,
     QgsWkbTypes,
     QgsCoordinateReferenceSystem,
+    QgsProviderRegistry,
+    QgsDistanceArea,
+    QgsPointXY,
 )
 from PyQt5.QtGui import QIcon
 from .. import gmdhelpers
@@ -29,6 +33,7 @@ class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"
     INPUT_LAYER = "INPUT_LAYER"
+    BASE_LAYER = "BASE_LAYER"
     OUTPUT = "OUTPUT"
 
     def name(self):
@@ -86,11 +91,6 @@ class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
 
         features = gmdhelpers.filter_geometry_validity(geojson_data, feedback)
         source_fields = geojson_data.fields()
-        fields = QgsFields(source_fields)
-
-        for fname in ("map_uuid_df", "longitude_df", "latitude_df"):
-            if fields.indexFromName(fname) == -1:
-                fields.append(QgsField(fname, QVariant.String))
 
         def is_null(val):
             if val is None or val == NULL:
@@ -102,7 +102,6 @@ class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
                 return True
             return False
 
-        # Resolve field names case-insensitively
         def resolve_field_name(field_list, target_names):
             for candidate in target_names:
                 for fld in field_list:
@@ -110,11 +109,22 @@ class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
                         return fld.name()
             return None
 
+        def round_coord(val):
+            if is_null(val):
+                return None
+            try:
+                return round(float(val), 7)
+            except (TypeError, ValueError):
+                return None
+
+        def clean_str(val):
+            return "" if is_null(val) else str(val).strip()
+
         lon_field = resolve_field_name(source_fields, ["longitude"])
         lat_field = resolve_field_name(source_fields, ["latitude"])
         uuid_field = resolve_field_name(source_fields, ["map_uuid"])
 
-        # Extract records list from JSON data (CBMS Form 2 datafile)
+        # 1. Extract records from the JSON datafile
         records = []
         if isinstance(json_data, list):
             records = json_data
@@ -128,104 +138,89 @@ class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
             else:
                 records = [json_data]
 
-        # Build a lookup of datafile (cover page) records by rounded coordinates,
-        # keeping the first match per coordinate pair (mirrors dplyr's multiple = "first").
-        df_lookup: Dict[tuple, Dict[str, Any]] = {}
-        for rec in records:
-            rec_dict = rec if isinstance(rec, dict) else {}
-            rec_props = rec_dict.get("properties", rec_dict) if "properties" in rec_dict else rec_dict
-
-            case_id_val = None
-            x_val = None
-            y_val = None
-            map_uuid_df_val = None
-
-            for k, v in rec_props.items():
-                k_lower = k.lower()
-                if k_lower == "case_id":
-                    case_id_val = v
-                elif k_lower == "x_current":
-                    x_val = v
-                elif k_lower == "y_current":
-                    y_val = v
-                elif k_lower == "map_uuid":
-                    map_uuid_df_val = v
-
-            if is_null(case_id_val):
-                continue
-            if is_null(x_val) or is_null(y_val):
-                continue
-
-            try:
-                key = (round(float(x_val), 7), round(float(y_val), 7))
-            except (TypeError, ValueError):
-                continue
-
-            # Keep first match (SetDefault logic matches R multiple='first')
-            df_lookup.setdefault(key, rec_props)
-
-        valid_features = []
+        # 2. GEO lookup by rounded coordinates (multiple = 'first')
+        geo_lookup: Dict[tuple, QgsFeature] = {}
         for f in features:
-            f.setFields(fields, False)
-            f.resizeAttributes(fields.count())
+            lon = round_coord(f.attribute(lon_field) if lon_field else None)
+            lat = round_coord(f.attribute(lat_field) if lat_field else None)
+            if lon is None or lat is None:
+                continue
+            key = (lon, lat)
+            if key not in geo_lookup:
+                geo_lookup[key] = f
 
-            lon_value = f.attribute(lon_field) if lon_field else None
-            lat_value = f.attribute(lat_field) if lat_field else None
+        out_fields = QgsFields()
+        out_fields.append(QgsField("map_uuid_df", QVariant.String))
+        out_fields.append(QgsField("longitude_df", QVariant.Double))
+        out_fields.append(QgsField("latitude_df", QVariant.Double))
+        out_fields.append(QgsField("map_uuid", QVariant.String))
+        out_fields.append(QgsField("longitude", QVariant.Double))
+        out_fields.append(QgsField("latitude", QVariant.Double))
 
-            if is_null(lon_value) or is_null(lat_value):
-                feedback.pushWarning(
-                    "Feature id " + str(f.id()) + " has a null longitude/latitude value, skipping."
-                )
+        # 3. Left-join datafile records onto geo_lookup; keep only mismatches
+        matched_features = []
+        for rec in records:
+            rec_props = rec.get("properties", rec) if isinstance(rec, dict) else {}
+            props = {str(k).lower(): v for k, v in rec_props.items()}
+
+            if is_null(props.get("case_id")):
                 continue
 
-            try:
-                lon_key = round(float(lon_value), 7)
-                lat_key = round(float(lat_value), 7)
-            except (TypeError, ValueError) as e:
-                feedback.pushWarning(
-                    "Feature id " + str(f.id()) + " has invalid coordinates: " + str(e)
-                )
+            lon, lat = round_coord(props.get("x_current")), round_coord(props.get("y_current"))
+            if lon is None or lat is None:
                 continue
 
-            rec = df_lookup.get((lon_key, lat_key))
-            if rec is None:
+            geo_feature = geo_lookup.get((lon, lat))
+            if geo_feature is None:
                 continue
 
-            map_uuid_geo = f.attribute(uuid_field) if uuid_field else None
-            
-            # Find map_uuid in JSON record properties case-insensitively
-            map_uuid_df = None
-            for k, v in rec.items():
-                if k.lower() == "map_uuid":
-                    map_uuid_df = v
-                    break
-
-            if is_null(map_uuid_geo) or is_null(map_uuid_df):
+            map_uuid_df = clean_str(props.get("map_uuid"))
+            map_uuid_geo = clean_str(geo_feature.attribute(uuid_field) if uuid_field else None)
+            if map_uuid_geo == map_uuid_df:
                 continue
 
-            uuid_geo_str = str(map_uuid_geo).strip()
-            uuid_df_str = str(map_uuid_df).strip()
+            new_f = QgsFeature(out_fields)
+            new_f.setGeometry(geo_feature.geometry())
+            new_f["map_uuid_df"] = map_uuid_df
+            new_f["longitude_df"] = lon
+            new_f["latitude_df"] = lat
+            new_f["map_uuid"] = map_uuid_geo
+            new_f["longitude"] = lon
+            new_f["latitude"] = lat
+            matched_features.append(new_f)
 
-            if uuid_geo_str == uuid_df_str:
-                continue
+        matched_features = gmdhelpers.arrange(matched_features, "longitude")
 
-            f["map_uuid_df"] = uuid_df_str
-            f["longitude_df"] = "{:.7f}".format(lon_key)
-            f["latitude_df"] = "{:.7f}".format(lat_key)
+        # 4. Build temporary memory layer for matched features
+        crs = geojson_data.sourceCrs()
+        wkb_type_str = QgsWkbTypes.displayString(geojson_data.wkbType())
+        temp_layer = QgsVectorLayer(
+            f"{wkb_type_str}?crs={crs.authid()}",
+            "matched_layer",
+            "memory",
+        )
+        dp = temp_layer.dataProvider()
+        dp.addAttributes(out_fields)
+        temp_layer.updateFields()
+        dp.addFeatures(matched_features)
 
-            valid_features.append(f)
-
-        features = gmdhelpers.arrange(valid_features, lon_field if lon_field else "longitude")
+        # 5. Select & organize columns using select_mv
+        final_output = gmdhelpers.select_mv(
+            temp_layer,
+            ["map_uuid_df", "longitude_df", "latitude_df", "map_uuid", "longitude", "latitude"],
+            context=context,
+            feedback=feedback,
+        )
 
         return gmdhelpers.export_features_to_sink(
             self,
             parameters,
             self.OUTPUT,
             context,
-            fields,
-            geojson_data.wkbType(),
-            geojson_data.sourceCrs(),
-            features,
+            final_output.fields(),
+            final_output.wkbType(),
+            final_output.sourceCrs(),
+            final_output.getFeatures(),
             feedback,
         )
 
