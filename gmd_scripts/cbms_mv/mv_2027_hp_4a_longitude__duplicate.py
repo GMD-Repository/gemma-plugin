@@ -1,5 +1,6 @@
 import os
 import json
+import processing
 from typing import Any, Optional, Dict, List
 
 from PyQt5.QtCore import QVariant
@@ -20,6 +21,9 @@ from qgis.core import (
     QgsGeometry,
     QgsWkbTypes,
     QgsCoordinateReferenceSystem,
+    QgsProviderRegistry,
+    QgsDistanceArea,
+    QgsPointXY,
 )
 from PyQt5.QtGui import QIcon
 from .. import gmdhelpers
@@ -29,6 +33,7 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"
     INPUT_LAYER = "INPUT_LAYER"
+    BASE_LAYER = "BASE_LAYER"
     OUTPUT = "OUTPUT"
 
     def name(self):
@@ -138,15 +143,47 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
 
         features = gmdhelpers.arrange(features, "coord_key")
 
+        # 5. Create temporary memory layer for matched features
+        wkb_type_str = QgsWkbTypes.displayString(geojson_data.wkbType())
+        temp_layer = QgsVectorLayer(
+            f"{wkb_type_str}?crs={crs.authid()}",
+            "matched_layer",
+            "memory",
+        )
+        dp = temp_layer.dataProvider()
+        dp.addAttributes(out_fields)
+        temp_layer.updateFields()
+        dp.addFeatures(matched_features)
+
+
+        extracted_joined = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": temp_layer,
+                "EXPRESSION": 'to_int("distance_m") > 50',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+
+        # 6. Select & organize columns using select_mv
+        final_output = gmdhelpers.select_mv(
+            extracted_joined,
+            ["ref_map_uuid", "ref_bsn_geoid", "distance_m"],
+            context=context,
+            feedback=feedback,
+        )
+
         return gmdhelpers.export_features_to_sink(
             self,
             parameters,
             self.OUTPUT,
             context,
-            fields,
-            geojson_data.wkbType(),
-            geojson_data.sourceCrs(),
-            features,
+            final_output.fields(),
+            final_output.wkbType(),
+            final_output.sourceCrs(),
+            final_output.getFeatures(),
             feedback,
         )
 
