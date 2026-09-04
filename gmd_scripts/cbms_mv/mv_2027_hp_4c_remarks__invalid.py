@@ -1,5 +1,6 @@
 import os
 import json
+import processing
 from typing import Any, Optional, Dict, List
 
 from PyQt5.QtCore import QVariant
@@ -14,50 +15,48 @@ from qgis.core import (
     QgsProcessingContext,
     QgsProcessingException,
     QgsProcessingFeedback,
-    QgsProcessingParameterBoolean,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterFile,
     QgsVectorLayer,
     QgsGeometry,
     QgsWkbTypes,
     QgsCoordinateReferenceSystem,
-    QgsProject,
+    QgsProviderRegistry,
+    QgsDistanceArea,
+    QgsPointXY,
 )
-
 from PyQt5.QtGui import QIcon
 from .. import gmdhelpers
+
 
 
 class mv_2027_hp_4c_remarks__invalid(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"
     INPUT_LAYER = "INPUT_LAYER"
+    BASE_LAYER = "BASE_LAYER"
     OUTPUT = "OUTPUT"
-    OUTPUT_ERRORS = "OUTPUT_ERRORS"
-    OPEN_FOR_EDITING = "OPEN_FOR_EDITING"
 
-    def name(self):
+    def name(self) -> str:
         return "mv_2027_hp_4c_remarks__invalid"
 
-    def displayName(self):
+    def displayName(self) -> str:
         return "mv_2027_hp_4c_remarks__invalid"
 
-    def group(self):
+    def group(self) -> str:
         return "2027 CBMS"
 
-    def groupId(self):
+    def groupId(self) -> str:
         return "cbms_mv"
 
-    def shortHelpString(self):
+    def shortHelpString(self) -> str:
         return (
             "List of geotagged points with deletion or review remarks. \n \n"
-            "Features with remarks value are flagged for review.\n"
-            "A separate table lists each unique remarks value \n"
-            "and how many features share it, for cross-validation.\n"
+            "Features with remarks value are flagged for review and/or deletion.\n"
         )
 
-    def initAlgorithm(self, config=None):
-
+    def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):
+        
         self.addParameter(
             QgsProcessingParameterFile(
                 self.INPUT_DATA,
@@ -79,6 +78,16 @@ class mv_2027_hp_4c_remarks__invalid(QgsProcessingAlgorithm):
         )
 
         self.addParameter(
+            QgsProcessingParameterFile(
+                self.BASE_LAYER,
+                "BASE_LAYER (.gpkg file)",
+                behavior=QgsProcessingParameterFile.File,
+                extension="gpkg",
+                optional=False,
+            )
+        )
+
+        self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
                 "mv_2027_hp_4c_remarks__invalid",
@@ -86,126 +95,70 @@ class mv_2027_hp_4c_remarks__invalid(QgsProcessingAlgorithm):
             )
         )
 
-        self.addParameter(
-            QgsProcessingParameterFeatureSink(
-                self.OUTPUT_ERRORS,
-                "Error Summary (remarks count)",
-                QgsProcessing.TypeVector,
-            )
-        )
-
-        self.addParameter(
-            QgsProcessingParameterBoolean(
-                self.OPEN_FOR_EDITING,
-                "Open output layer in edit mode after running",
-                defaultValue=False,
-            )
-        )
-
-    def processAlgorithm(self, parameters, context, feedback):
+    def processAlgorithm(
+        self,
+        parameters: Dict[str, Any],
+        context: QgsProcessingContext,
+        feedback: QgsProcessingFeedback,
+    ) -> Dict[str, Any]:
 
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
 
-        open_for_editing = self.parameterAsBoolean(parameters, self.OPEN_FOR_EDITING, context)
-
         features = gmdhelpers.filter_geometry_validity(geojson_data, feedback)
         fields = geojson_data.fields()
 
-        # Keep only features that have a non-null, non-empty remarks value.
-        # QGIS returns NULL / QVariant() for missing attributes, not Python None.
-        valid_features = []
-        for f in features:
-            remarks_value = f["remarks"]
+        # Helper to check if a remark is valid/non-empty (flagged for review/deletion)
+        def is_valid_remark(val: Any) -> bool:
+            if val is None or val == NULL:
+                return False
+            if isinstance(val, QVariant) and val.isNull():
+                return False
+            val_str = str(val).strip()
+            return val_str != "" and val_str.lower() not in ("null", "none", "nan", "na", "n/a")
 
-            # Skip features with null or empty remarks
-            if remarks_value is None or remarks_value == NULL:
-                continue
-            if str(remarks_value).strip() == "":
-                continue
-
-            valid_features.append(f)
-
-        features = valid_features
-
-        # Add per-remarks count column for cross-validation
-        features, fields = gmdhelpers.add_count(features, fields, "remarks")
-
-        # Defensive filter: skip any feature where n came back null
-        features = [
+        flagged_features = [
             f for f in features
-            if f["n"] is not None and f["n"] != NULL
+            if is_valid_remark(f["remarks"])
         ]
 
-        features = gmdhelpers.arrange(features, "remarks")
+        # Add per-remarks count column and sort by remarks
+        if flagged_features:
+            flagged_features, fields = gmdhelpers.add_count(flagged_features, fields, "remarks")
+            flagged_features = gmdhelpers.arrange(flagged_features, "remarks")
 
-        # --- Main flagged-features output ---
-        result = gmdhelpers.export_features_to_sink(
+        feedback.pushInfo(
+            f"Results: Flagged {len(flagged_features)} feature(s) with deletion or review remarks."
+        )
+
+        # Build a temporary layer from flagged features to select and organize columns
+        temp_layer = QgsVectorLayer(
+            f"Point?crs={geojson_data.sourceCrs().authid()}", "temp", "memory"
+        )
+        temp_layer_dp = temp_layer.dataProvider()
+        temp_layer_dp.addAttributes(fields.toList())
+        temp_layer.updateFields()
+        temp_layer_dp.addFeatures(flagged_features)
+
+        # Select & organize columns using select_mv (standard CBMS fields + remarks + count)
+        final_output = gmdhelpers.select_mv(
+            temp_layer,
+            ["remarks", "n"],
+            context=context,
+            feedback=feedback,
+        )
+
+        return gmdhelpers.export_features_to_sink(
             self,
             parameters,
             self.OUTPUT,
             context,
-            fields,
-            geojson_data.wkbType(),
-            geojson_data.sourceCrs(),
-            features,
+            final_output.fields(),
+            final_output.wkbType(),
+            final_output.sourceCrs(),
+            final_output.getFeatures(),
             feedback,
         )
 
-        # --- Error summary table: one row per unique remarks value + count ---
-        error_fields = QgsFields()
-        error_fields.append(QgsField("remarks", QVariant.String))
-        error_fields.append(QgsField("n", QVariant.Int))
-
-        # Aggregate unique remarks values and their counts
-        seen = {}
-        for f in features:
-            rval = str(f["remarks"])
-            seen[rval] = f["n"]
-
-        (error_sink, error_dest_id) = self.parameterAsSink(
-            parameters,
-            self.OUTPUT_ERRORS,
-            context,
-            error_fields,
-            QgsWkbTypes.NoGeometry,
-            QgsCoordinateReferenceSystem("EPSG:4326"),
-        )
-        if error_sink is None:
-            raise QgsProcessingException(self.invalidSinkError(parameters, self.OUTPUT_ERRORS))
-
-        for rval, count in sorted(seen.items()):
-            if feedback and feedback.isCanceled():
-                break
-            err_feat = QgsFeature(error_fields)
-            err_feat.setAttributes([rval, count])
-            error_sink.addFeature(err_feat, QgsFeatureSink.FastInsert)
-
-        feedback.pushInfo(
-            f"Flagged {len(features)} feature(s) across {len(seen)} unique remarks value(s)."
-        )
-
-        result[self.OUTPUT_ERRORS] = error_dest_id
-
-        # --- Open output layer in edit mode if requested ---
-        if open_for_editing:
-            main_dest_id = result.get(self.OUTPUT)
-            if main_dest_id:
-                context.addLayerToLoadOnCompletion(
-                    main_dest_id,
-                    context.LayerDetails(
-                        "mv_2027_hp_4c_remarks__invalid [editable]",
-                        QgsProject.instance(),
-                    ),
-                )
-
-        return result
-
     def createInstance(self):
         return self.__class__()
-
-
-
-
-
-
