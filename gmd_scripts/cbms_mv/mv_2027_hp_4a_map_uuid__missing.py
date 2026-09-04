@@ -191,7 +191,7 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
         temp_layer.updateFields()
         temp_layer_dp.addFeatures(invalid_features)
 
-        # Select & organize columns using select_mv
+        # 6. Select & organize columns using select_mv
         final_output = gmdhelpers.select_mv(
             temp_layer,
             ["status"],
