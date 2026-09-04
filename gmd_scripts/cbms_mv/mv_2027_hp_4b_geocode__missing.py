@@ -1,15 +1,4 @@
-# ***************************************************************************
-# *                                                                         *
-# *   This program is free software; you can redistribute it and/or modify  *
-# *   it under the terms of the GNU General Public License as published by  *
-# *   the Free Software Foundation; either version 2 of the License, or     *
-# *   (at your option) any later version.                                   *
-# *                                                                         *
-# ***************************************************************************
-
-import os
-import json
-from typing import Any, Optional, Dict, List
+from typing import Any, Optional, Dict
 
 from PyQt5.QtCore import QVariant
 from qgis.core import (
@@ -23,14 +12,12 @@ from qgis.core import (
     QgsProcessingContext,
     QgsProcessingException,
     QgsProcessingFeedback,
-    QgsProcessingParameterBoolean,
     QgsProcessingParameterFeatureSink,
     QgsProcessingParameterFile,
     QgsVectorLayer,
     QgsGeometry,
     QgsWkbTypes,
     QgsCoordinateReferenceSystem,
-    QgsProject,
 )
 from PyQt5.QtGui import QIcon
 from .. import gmdhelpers
@@ -40,8 +27,8 @@ class mv_2027_hp_4b_geocode__missing(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"
     INPUT_LAYER = "INPUT_LAYER"
+    BASE_LAYER = "BASE_LAYER"
     OUTPUT = "OUTPUT"
-    OPEN_FOR_EDITING = "OPEN_FOR_EDITING"
 
     def name(self) -> str:
         return "mv_2027_hp_4b_geocode__missing"
@@ -57,9 +44,8 @@ class mv_2027_hp_4b_geocode__missing(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points with NULL or missing Geocodes. \n \n"
+            "List of geotagged points with NULL Geocodes. \n \n"
             "Every geotagged point should have a valid geocode in the geocode column.\n"
-            "Flagged features can optionally be opened directly in edit mode for correction.\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):
@@ -92,14 +78,6 @@ class mv_2027_hp_4b_geocode__missing(QgsProcessingAlgorithm):
             )
         )
 
-        self.addParameter(
-            QgsProcessingParameterBoolean(
-                self.OPEN_FOR_EDITING,
-                "Open output layer in edit mode after running",
-                defaultValue=False,
-            )
-        )
-
     def processAlgorithm(
         self,
         parameters: Dict[str, Any],
@@ -109,15 +87,14 @@ class mv_2027_hp_4b_geocode__missing(QgsProcessingAlgorithm):
 
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
-        open_for_editing = self.parameterAsBoolean(parameters, self.OPEN_FOR_EDITING, context)
 
         features = gmdhelpers.filter_geometry_validity(geojson_data, feedback)
         fields = geojson_data.fields()
 
         # Resolve geocode column name case-insensitively
-        geocode_field = "geocode"
+        geocode_field = "ea_geocode"
         for field in fields:
-            if field.name().lower() in ("geocode", "bsn_geoid", "geo_code"):
+            if field.name().lower() in ("ea_geocode", "geocode", "bsn_geoid", "geo_code"):
                 geocode_field = field.name()
                 break
 
@@ -142,32 +119,34 @@ class mv_2027_hp_4b_geocode__missing(QgsProcessingAlgorithm):
             f"Flagged {len(flagged_features)} feature(s) with missing or null '{geocode_field}' values."
         )
 
-        # Export flagged features to output sink
-        result = gmdhelpers.export_features_to_sink(
+        # Build a temporary layer from flagged_features so select_mv can operate on it
+        temp_layer = QgsVectorLayer(
+            f"Point?crs={geojson_data.sourceCrs().authid()}", "temp", "memory"
+        )
+        temp_layer_dp = temp_layer.dataProvider()
+        temp_layer_dp.addAttributes(fields.toList())
+        temp_layer.updateFields()
+        temp_layer_dp.addFeatures(flagged_features)
+
+        # Select & organize columns using select_mv
+        final_output = gmdhelpers.select_mv(
+            temp_layer,
+            [],
+            context=context,
+            feedback=feedback,
+        )
+
+        return gmdhelpers.export_features_to_sink(
             self,
             parameters,
             self.OUTPUT,
             context,
-            fields,
-            geojson_data.wkbType(),
-            geojson_data.sourceCrs(),
-            flagged_features,
+            final_output.fields(),
+            final_output.wkbType(),
+            final_output.sourceCrs(),
+            final_output.getFeatures(),
             feedback,
         )
-
-        # Open output layer in edit mode if requested
-        if open_for_editing:
-            main_dest_id = result.get(self.OUTPUT)
-            if main_dest_id:
-                context.addLayerToLoadOnCompletion(
-                    main_dest_id,
-                    context.LayerDetails(
-                        "mv_2027_hp_4b_geocode__missing [editable]",
-                        QgsProject.instance(),
-                    ),
-                )
-
-        return result
 
     def createInstance(self):
         return self.__class__()
