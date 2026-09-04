@@ -163,10 +163,9 @@ class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
             rec_props = rec.get("properties", rec) if isinstance(rec, dict) else {}
             props = {str(k).lower(): v for k, v in rec_props.items()}
 
-            if is_null(props.get("case_id")):
-                continue
-
-            lon, lat = round_coord(props.get("x_current")), round_coord(props.get("y_current"))
+            lon = round_coord(props.get("longitude"))
+            lat = round_coord(props.get("latitude"))
+            
             if lon is None or lat is None:
                 continue
 
@@ -176,6 +175,7 @@ class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
 
             map_uuid_df = clean_str(props.get("map_uuid"))
             map_uuid_geo = clean_str(geo_feature.attribute(uuid_field) if uuid_field else None)
+            
             if map_uuid_geo == map_uuid_df:
                 continue
 
