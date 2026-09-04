@@ -34,7 +34,6 @@ class mv_2027_hp_4c_remarks__invalid(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"
     INPUT_LAYER = "INPUT_LAYER"
-    BASE_LAYER = "BASE_LAYER"
     OUTPUT = "OUTPUT"
 
     def name(self) -> str:
@@ -73,16 +72,6 @@ class mv_2027_hp_4c_remarks__invalid(QgsProcessingAlgorithm):
                 "INPUT_LAYER (.geojson file)",
                 behavior=QgsProcessingParameterFile.File,
                 extension="geojson",
-                optional=False,
-            )
-        )
-
-        self.addParameter(
-            QgsProcessingParameterFile(
-                self.BASE_LAYER,
-                "BASE_LAYER (.gpkg file)",
-                behavior=QgsProcessingParameterFile.File,
-                extension="gpkg",
                 optional=False,
             )
         )
