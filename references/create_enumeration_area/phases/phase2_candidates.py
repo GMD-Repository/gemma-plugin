@@ -193,6 +193,8 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         if f.name() in ("hhcount", "bldgcount"):
             continue
         special_ea_export_fields.append(f)
+    if special_ea_export_fields.indexOf("special_type") == -1:
+        special_ea_export_fields.append(QgsField("special_type", QVariant.String))
 
     special_ea_sink = None
     special_ea_dest_id = None
@@ -913,14 +915,10 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                 out_feat.setAttribute(eadel_indi_idx, "for_delineation" if is_cand else "ea_reference")
 
             fid_idx = delin_cand_fields.indexOf("fid")
+            delin_cand_fid = delin_candidate_feat_count + 1
             if fid_idx != -1:
-                orig_fid = feat.attribute(fid_idx) if feat.fields().indexOf("fid") != -1 else None
-                if orig_fid is None or orig_fid == NULL or str(orig_fid).strip() in ('', 'NULL', 'None'):
-                    orig_fid = feat.id()
-                try:
-                    out_feat.setAttribute(fid_idx, int(orig_fid))
-                except (ValueError, TypeError):
-                    out_feat.setAttribute(fid_idx, orig_fid)
+                out_feat.setAttribute(fid_idx, delin_cand_fid)
+            out_feat.setId(delin_cand_fid)
 
             if delin_candidate_sink.addFeature(out_feat):
                 delin_candidate_feat_count += 1
@@ -1162,14 +1160,10 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                     out_feat.setAttribute(merge_indi_idx, indi_val)
 
                 fid_idx = merge_cand_fields_filtered.indexOf("fid")
+                merge_cand_fid = merge_candidate_feat_count + 1
                 if fid_idx != -1:
-                    orig_fid = feat.attribute(fid_idx) if feat.fields().indexOf("fid") != -1 else None
-                    if orig_fid is None or orig_fid == NULL or str(orig_fid).strip() in ('', 'NULL', 'None'):
-                        orig_fid = feat.id()
-                    try:
-                        out_feat.setAttribute(fid_idx, int(orig_fid))
-                    except (ValueError, TypeError):
-                        out_feat.setAttribute(fid_idx, orig_fid)
+                    out_feat.setAttribute(fid_idx, merge_cand_fid)
+                out_feat.setId(merge_cand_fid)
 
                 if merge_candidate_sink.addFeature(out_feat):
                     merge_candidate_feat_count += 1
@@ -1315,9 +1309,20 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                     b_feat.setAttributes(b['attributes'])
                     attrs = b_feat.attributes()
                     needed = bldg_out_fields.count() - len(attrs)
+                    bldg_fid = extracted_bldg_feat_count + 1
+                    fid_idx_bldg = bldg_out_fields.indexOf("fid")
+                    if fid_idx_bldg != -1 and fid_idx_bldg < len(attrs):
+                        attrs[fid_idx_bldg] = bldg_fid
+
                     if needed > 0:
                         attrs.extend([None] * needed)
                         b_feat.setAttributes(attrs)
+                    elif fid_idx_bldg != -1:
+                        b_feat.setAttributes(attrs)
+
+                    b_feat.setId(bldg_fid)
+                    if fid_idx_bldg != -1:
+                        b_feat.setAttribute(fid_idx_bldg, bldg_fid)
 
                     b_feat["parent_ean"] = str(parent_ean_val)
 
@@ -1337,7 +1342,14 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             feedback.pushInfo(f"Successfully wrote {bldg_written_preview} building features to output in preview mode.")
 
         feedback.pushInfo("PREVIEW ONLY check is active — exiting early after creating candidate layers.")
-        return {"preview_exit": True, "outputs": outputs}
+        preview_outputs = {}
+        if delin_candidate_feat_count > 0 and delin_candidate_dest_id is not None:
+            preview_outputs[alg.DELINEATION_CANDIDATE_OUTPUT] = delin_candidate_dest_id
+        if merge_candidate_feat_count > 0 and merge_candidate_dest_id is not None:
+            preview_outputs[alg.MERGE_CANDIDATE_OUTPUT] = merge_candidate_dest_id
+        if extracted_bldg_feat_count > 0 and extracted_buildings_dest_id is not None:
+            preview_outputs[alg.EXTRACTED_BUILDINGS_OUTPUT] = extracted_buildings_dest_id
+        return {"preview_exit": True, "outputs": preview_outputs}
 
     return {
         "preview_exit": False,
@@ -1353,6 +1365,12 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         "extracted_buildings_sink": extracted_buildings_sink,
         "delin_candidate_sink": delin_candidate_sink,
         "merge_candidate_sink": merge_candidate_sink,
+        "delineated_dest_id": delineated_dest_id,
+        "merged_dest_id": merged_dest_id,
+        "special_ea_dest_id": special_ea_dest_id,
+        "extracted_buildings_dest_id": extracted_buildings_dest_id,
+        "delin_candidate_dest_id": delin_candidate_dest_id,
+        "merge_candidate_dest_id": merge_candidate_dest_id,
         "delineated_feat_count": delineated_feat_count,
         "merged_feat_count": merged_feat_count,
         "delin_candidate_feat_count": delin_candidate_feat_count,

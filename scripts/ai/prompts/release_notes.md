@@ -28,7 +28,7 @@ Respond with a **JSON object only** — no markdown, no code fences, no preamble
 - Write for GIS technicians — keep it clear but use GIS terms (layer, CRS, shapefile, QField).
 - NEVER return empty for ALL arrays. If changes seem internal, reframe as user-facing improvements.
 - Do NOT include emojis or version numbers.
-- ALWAYS preserve and include human author/contributor attribution markdown links (e.g. ([@username](https://github.com/username))) AND PR/issue links or numbers (e.g. ([#91](https://github.com/owner/repo/pull/91)) or (#91)) at the end of summarized items, EXCEPT for bot accounts (e.g. github-actions[bot] or any user containing [bot]).
+- ALWAYS preserve and include human author/contributor attribution markdown links (e.g. ([@username](https://github.com/username))) AND PR/issue links or numbers (e.g. ([#91](https://github.com/owner/repo/pull/91)) or (#91)) at the end of summarized items, EXCEPT for bot accounts (e.g. github-actions[bot] or any user containing [bot]). NEVER output duplicate author tags or unlinked compound tags like (@username #123).
 - Put each item in the correct category.
 
 ## Good Examples

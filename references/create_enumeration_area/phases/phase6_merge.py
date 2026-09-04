@@ -162,6 +162,7 @@ def process_barangay_merge(
                         'is_new': False,
                         'split_by': ea.get('split_by', 'none'),
                         'from_merge': True,
+                        'ea_type': 'MERGED',
                         'parent_barangay': bar_code
                     }
 
@@ -249,6 +250,7 @@ def process_barangay_merge(
                         'is_new': False,
                         'split_by': ea.get('split_by', 'none'),
                         'from_merge': True,
+                        'ea_type': 'MERGED',
                         'parent_barangay': bar_code
                     }
 

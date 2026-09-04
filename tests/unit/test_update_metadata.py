@@ -29,6 +29,56 @@ class TestUpdateMetadata(unittest.TestCase):
         self.assertEqual(self.mod.normalize_barangay_name("Brgy. Poblacion I"), "poblacion1")
         self.assertEqual(self.mod.normalize_barangay_name("Sto. Tomas"), "santotomas")
 
+<<<<<<< HEAD
+=======
+    def test_psgc_field_mapping_includes_counts(self):
+        """Test that _get_psgc_field_mapping accurately detects hhcount and bldgcount columns."""
+        alg = self.mod.UpdateLguPsgcMetadataAlgorithm()
+        from tests.mocks.qgis_mock import QgsFields, QgsField, MockQVariant
+        try:
+            from PyQt5.QtCore import QVariant
+        except Exception:
+            QVariant = MockQVariant
+
+        fields = QgsFields()
+        fields.append(QgsField("map_uuid", getattr(QVariant, "String", 1)))
+        fields.append(QgsField("geocode", getattr(QVariant, "String", 1)))
+        fields.append(QgsField("region", getattr(QVariant, "String", 1)))
+        fields.append(QgsField("province", getattr(QVariant, "String", 1)))
+        fields.append(QgsField("city_mun", getattr(QVariant, "String", 1)))
+        fields.append(QgsField("barangay", getattr(QVariant, "String", 1)))
+        fields.append(QgsField("hhcount", getattr(QVariant, "Int", 2)))
+        fields.append(QgsField("bldgcount", getattr(QVariant, "Int", 2)))
+
+        mapping = alg._get_psgc_field_mapping(fields)
+        self.assertIn("hhcount", mapping)
+        self.assertEqual(mapping["hhcount"], "hhcount")
+        self.assertIn("bldgcount", mapping)
+        self.assertEqual(mapping["bldgcount"], "bldgcount")
+
+    def test_psgc_field_mapping_alias_variations(self):
+        """Test that field aliases such as hh_count and total_bldgcount map properly."""
+        alg = self.mod.UpdateLguPsgcMetadataAlgorithm()
+        from tests.mocks.qgis_mock import QgsFields, QgsField, MockQVariant
+        try:
+            from PyQt5.QtCore import QVariant
+        except Exception:
+            QVariant = MockQVariant
+
+        fields = QgsFields()
+        fields.append(QgsField("geocode", getattr(QVariant, "String", 1)))
+        fields.append(QgsField("region", getattr(QVariant, "String", 1)))
+        fields.append(QgsField("province", getattr(QVariant, "String", 1)))
+        fields.append(QgsField("city_mun", getattr(QVariant, "String", 1)))
+        fields.append(QgsField("barangay", getattr(QVariant, "String", 1)))
+        fields.append(QgsField("hh_count", getattr(QVariant, "Int", 2)))
+        fields.append(QgsField("total_bldgcount", getattr(QVariant, "Int", 2)))
+
+        mapping = alg._get_psgc_field_mapping(fields)
+        self.assertEqual(mapping.get("hhcount"), "hh_count")
+        self.assertEqual(mapping.get("bldgcount"), "total_bldgcount")
+
+>>>>>>> cbms_main
 
 if __name__ == "__main__":
     unittest.main()

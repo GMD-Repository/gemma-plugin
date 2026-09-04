@@ -14,6 +14,7 @@ console interface.
 """
 
 import os
+import re
 from qgis.core import (
     Qgis, QgsMessageLog,
     QgsApplication, QgsProject, QgsVectorLayer, QgsCoordinateTransform, QgsSpatialIndex,
@@ -21,9 +22,9 @@ from qgis.core import (
     QgsCoordinateReferenceSystem, QgsWkbTypes, NULL, QgsMapLayerProxyModel
 )
 try:
-    from qgis.gui import QgsMapLayerComboBox, QgsProjectionSelectionWidget, QgsCollapsibleGroupBox
+    from qgis.gui import QgsMapLayerComboBox, QgsProjectionSelectionWidget, QgsCollapsibleGroupBox, QgsFileWidget
 except ImportError:
-    from qgis.gui import QgsMapLayerComboBox, QgsProjectionSelectionWidget
+    from qgis.gui import QgsMapLayerComboBox, QgsProjectionSelectionWidget, QgsFileWidget
     QgsCollapsibleGroupBox = QGroupBox
 from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
@@ -36,6 +37,29 @@ from qgis.PyQt.QtWidgets import (
 from qgis.PyQt.QtGui import QFont, QPixmap, QColor, QIcon, QTextCursor
 from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication, QThread, QObject, pyqtSignal, QVariant, QTimer
 
+# Module-level regex for Tab 3 input validation — compiled once, reused on every
+# combo-box change event instead of being re-compiled inside the hot-path method.
+_EA_MERGE_8DIGIT_RE = re.compile(r"^\d{8}(_|$)")
+
+# Tab 3 processor helpers — imported once at module load so that
+# _ea_merge_validate_inputs (called on every combo-box change) does not
+# re-execute a relative import on each invocation.
+try:
+    from .ea_merge_processor import (
+        _field_index_ci as _emg_field_index_ci,
+        _first_nonempty_value as _emg_first_nonempty_value,
+        _unique_values as _emg_unique_values,
+        _GEOCODE_FIELDS as _EMG_GEOCODE_FIELDS,
+        _CITYMUN_FIELDS as _EMG_CITYMUN_FIELDS,
+    )
+except Exception:
+    # Fallback stubs in case the module is loaded before the package is fully
+    # initialized (e.g. during plugin reload).
+    _emg_field_index_ci = None
+    _emg_first_nonempty_value = None
+    _emg_unique_values = None
+    _EMG_GEOCODE_FIELDS = ()
+    _EMG_CITYMUN_FIELDS = ()
 
 
 class ThreadSafeFeedbackHelper(QObject):
@@ -57,6 +81,42 @@ class ThreadSafeFeedbackHelper(QObject):
     def _on_set_val(self, val):
         self.progress_bar.setValue(val)
 
+
+class _EAMergeWorker(QObject):
+    """Runs EAMergeProcessor.run() in a background QThread.
+
+    All signals are emitted from the worker thread. Because cross-thread
+    signal-slot connections default to Qt.QueuedConnection, the connected
+    slots (which update Qt widgets) are automatically marshalled back and
+    executed on the main GUI thread — so no manual locking is required.
+    """
+    feedback_signal = pyqtSignal(str)
+    progress_signal = pyqtSignal(int)
+    finished_signal = pyqtSignal(object)  # payload: EAMergeResult
+
+    def __init__(self):
+        super().__init__()
+        self._processor = None
+
+    def set_processor(self, processor):
+        """Attach the processor after signals are wired up."""
+        self._processor = processor
+
+    def run(self):
+        """Entry point called by QThread.started signal."""
+        try:
+            result = self._processor.run()
+        except Exception as exc:
+            import traceback
+            from .ea_merge_processor import EAMergeResult, EAMergeSummary
+            result = EAMergeResult(
+                success=False,
+                error_message=str(exc),
+                summary=EAMergeSummary(overall_status="ERROR"),
+            )
+            result.log_lines.append(f"[ERROR] {exc}")
+            result.log_lines.append(traceback.format_exc())
+        self.finished_signal.emit(result)
 
 class CustomProcessingFeedback(QgsProcessingFeedback):
     """Subclass of QgsProcessingFeedback to route progress and log updates to custom UI elements."""
@@ -164,9 +224,6 @@ class EALauncherDialog(QDialog):
         self.all_delineation_candidates = []
         self.all_merge_candidates = []
 
-        # Guard: auto-detect runs once when the dialog is first shown, not during construction
-        self._initial_detect_done = False
-
         # Detect QGIS theme (light or dark) based on application palette brightness
         palette = self.palette()
         bg_color = palette.color(palette.Window)
@@ -181,22 +238,22 @@ class EALauncherDialog(QDialog):
     # ── Lifecycle Overrides ──────────────────────────────────────────────────
 
     def showEvent(self, event):
-        """Auto-detect project layers exactly once when the dialog is first shown.
+        """Refreshes all inputs, processes, and results every time the dialog is shown.
 
-        Using showEvent (rather than __init__) ensures detection fires when the
-        dialog is actually visible — i.e. the moment the user opens the tool —
-        and not during invisible construction or in response to subsequent
-        project layer additions.
-
-        Runs Tab 1 (EA Preprocessing), Tab 2 (Create Enumeration Areas), and
-        Tab 3 (Enumeration Area Merge) auto-detection on first display.
+        Ensures that whenever the user opens or re-opens the plugin dialog, all
+        inputs (layers auto-detected from the active project, default parameters),
+        process states (progress bars, cancel/run button states, status banners),
+        and results information (results tables, KPI cards, candidate lists,
+        summaries, and logs) across all three tabs are completely refreshed.
         """
         super().showEvent(event)
-        if not self._initial_detect_done:
-            self._initial_detect_done = True
-            self._pre_ea_auto_detect_layers()
-            self.auto_detect_layers()
-            self._ea_merge_auto_detect_ea_layer()
+        self.refresh_all()
+
+    def refresh_all(self):
+        """Refresh and reset all inputs, processes, and results information across all 3 tabs."""
+        self._pre_ea_refresh()
+        self._create_ea_refresh()
+        self._ea_merge_refresh()
 
     # ── UI Construction ─────────────────────────────────────────────────────
 
@@ -399,6 +456,14 @@ class EALauncherDialog(QDialog):
         self.pre_ea_ea_status_lbl.setWordWrap(True)
         inputs_layout.addWidget(self.pre_ea_ea_status_lbl)
 
+        # Designated Output Folder
+        inputs_layout.addWidget(QLabel("Designated Output Folder*"))
+        self.pre_ea_output_folder_widget = QgsFileWidget()
+        self.pre_ea_output_folder_widget.setStorageMode(QgsFileWidget.GetDirectory)
+        self.pre_ea_output_folder_widget.setDialogTitle("Designate Output Folder for EA Preprocessing")
+        inputs_layout.addWidget(self.pre_ea_output_folder_widget)
+        self.pre_ea_output_folder_widget.fileChanged.connect(self._pre_ea_validate_inputs)
+
         # Connect validation
         self.pre_ea_bgy_combo.currentIndexChanged.connect(self._pre_ea_validate_inputs)
         self.pre_ea_ea_combo.currentIndexChanged.connect(self._pre_ea_validate_inputs)
@@ -431,6 +496,13 @@ class EALauncherDialog(QDialog):
         )
         options_layout.addWidget(self.pre_ea_clip_chk)
 
+        self.pre_ea_resolve_overlaps_chk = QCheckBox("Resolve EA Overlaps")
+        self.pre_ea_resolve_overlaps_chk.setChecked(True)
+        self.pre_ea_resolve_overlaps_chk.setToolTip(
+            "Detect and eliminate overlapping polygon regions between adjacent EAs within each Barangay."
+        )
+        options_layout.addWidget(self.pre_ea_resolve_overlaps_chk)
+
         self.pre_ea_detect_gaps_chk = QCheckBox("Detect Uncovered Barangay Areas")
         self.pre_ea_detect_gaps_chk.setChecked(True)
         self.pre_ea_detect_gaps_chk.setToolTip(
@@ -458,8 +530,9 @@ class EALauncherDialog(QDialog):
         right_layout.setContentsMargins(2, 2, 2, 2)
         right_layout.setSpacing(8)
 
-        right_tabs = QTabWidget()
-        right_tabs.setObjectName("preEaRightTabs")
+        self.pre_ea_right_tabs = QTabWidget()
+        self.pre_ea_right_tabs.setObjectName("preEaRightTabs")
+        right_tabs = self.pre_ea_right_tabs
 
         # ── Results Tab ─────────────────────────────────────────────────
         results_tab = QWidget()
@@ -622,8 +695,60 @@ class EALauncherDialog(QDialog):
         self.main_tabs.addTab(tab_widget, "EA Preprocessing")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Tab 1 — EA Preprocessing Slots
+    # Tab 1 — EA Preprocessing Slots & Lifecycle
     # ─────────────────────────────────────────────────────────────────────────
+
+    def _pre_ea_refresh(self):
+        """Reset and refresh Tab 1 (EA Preprocessing) inputs, processes, and results."""
+        # 1. Reset inputs & options to default
+        if hasattr(self, 'pre_ea_bgy_combo'):
+            self.pre_ea_bgy_combo.setLayer(None)
+        if hasattr(self, 'pre_ea_ea_combo'):
+            self.pre_ea_ea_combo.setLayer(None)
+        if hasattr(self, 'pre_ea_output_folder_widget'):
+            self.pre_ea_output_folder_widget.setFilePath("")
+        if hasattr(self, 'pre_ea_gap_tol_spin'):
+            self.pre_ea_gap_tol_spin.setValue(1.0)
+        if hasattr(self, 'pre_ea_clip_chk'):
+            self.pre_ea_clip_chk.setChecked(True)
+        if hasattr(self, 'pre_ea_resolve_overlaps_chk'):
+            self.pre_ea_resolve_overlaps_chk.setChecked(True)
+        if hasattr(self, 'pre_ea_detect_gaps_chk'):
+            self.pre_ea_detect_gaps_chk.setChecked(True)
+        if hasattr(self, 'pre_ea_assign_gaps_chk'):
+            self.pre_ea_assign_gaps_chk.setChecked(True)
+
+        # 2. Re-detect project layers
+        self._pre_ea_auto_detect_layers()
+
+        # 3. Reset process states
+        if hasattr(self, 'pre_ea_progress_bar'):
+            self.pre_ea_progress_bar.setValue(0)
+        if hasattr(self, 'pre_ea_cancel_btn'):
+            self.pre_ea_cancel_btn.setEnabled(False)
+        if hasattr(self, 'pre_ea_status_banner'):
+            self.pre_ea_status_banner.setText("Ready.")
+
+        # 4. Reset results & summary info
+        if hasattr(self, 'pre_ea_results_table'):
+            self.pre_ea_results_table.setRowCount(0)
+        for attr in [
+            '_pre_ea_sum_bgy_val', '_pre_ea_sum_ea_val', '_pre_ea_sum_corr_val',
+            '_pre_ea_sum_clip_val', '_pre_ea_sum_gaps_det_val', '_pre_ea_sum_gaps_asgn_val',
+            '_pre_ea_sum_unres_val', '_pre_ea_sum_outside_val', '_pre_ea_sum_uncov_val',
+            '_pre_ea_sum_output_val'
+        ]:
+            val_lbl = getattr(self, attr, None)
+            if val_lbl:
+                val_lbl.setText("-")
+        if hasattr(self, '_pre_ea_sum_status_lbl'):
+            self._pre_ea_sum_status_lbl.setText("Status: -")
+
+        # 5. Clear console logs & set active sub-tab
+        if hasattr(self, 'pre_ea_log_console'):
+            self.pre_ea_log_console.clear()
+        if hasattr(self, 'pre_ea_right_tabs'):
+            self.pre_ea_right_tabs.setCurrentIndex(0)
 
     def _pre_ea_auto_detect_layers(self):
         """Auto-detect Barangay (*_bgy) and EA (*_ea, *_ea2024) layers from the QGIS project."""
@@ -683,7 +808,7 @@ class EALauncherDialog(QDialog):
             self._ea_merge_auto_detect_ea_layer()
 
     def _pre_ea_validate_inputs(self):
-        """Validate selected layers and update status labels."""
+        """Validate selected layers and designated output folder."""
         bgy_layer = self.pre_ea_bgy_combo.currentLayer()
         ea_layer = self.pre_ea_ea_combo.currentLayer()
 
@@ -706,7 +831,8 @@ class EALauncherDialog(QDialog):
                 f"Active: {ea_layer.featureCount()} EA polygons ({ea_layer.crs().authid()})."
             )
 
-        can_run = bool(bgy_layer)
+        has_output = bool(self.pre_ea_output_folder_widget.filePath().strip()) if hasattr(self, 'pre_ea_output_folder_widget') else False
+        can_run = bool(bgy_layer) and has_output
         self.pre_ea_run_btn.setEnabled(can_run)
 
     def _pre_ea_cancel(self):
@@ -749,38 +875,35 @@ class EALauncherDialog(QDialog):
         from .pre_ea_processor import PreEAProcessor
         return PreEAProcessor.short_help_string()
 
-    def _pre_ea_append_log(self, html: str) -> None:
-        """Append an HTML-formatted line to the Pre-EA log console."""
-        self.pre_ea_log_console.append(html)
+    def _pre_ea_append_log(self, html_msg: str):
+        """Thread-safe append of HTML message to the Pre-EA log console."""
+        self.pre_ea_log_console.append(html_msg)
         self.pre_ea_log_console.ensureCursorVisible()
-        QCoreApplication.processEvents()
 
-    def _pre_ea_format_log(self, msg: str) -> str:
-        """Format a plain log message string as styled HTML."""
-        msg_lower = msg.lower()
-        if msg.startswith("[ERROR]"):
-            return f"<span style='color:#cf222e; font-weight:bold;'>{msg}</span>"
-        if msg.startswith("[WARNING]"):
-            return f"<span style='color:#d17a00; font-weight:bold;'>{msg}</span>"
-        if msg.startswith("[INFO]") and ("complete" in msg_lower or "pass" in msg_lower or "success" in msg_lower):
-            return f"<span style='color:#1a7f37; font-weight:bold;'>{msg}</span>"
-        return f"<span style='color:#0969da;'>{msg}</span>"
+    def _pre_ea_format_log(self, text: str) -> str:
+        """Format plain text log messages with HTML colors based on prefixes."""
+        if "[ERROR]" in text:
+            return f"<span style='color: #cf222e;'>{text}</span>"
+        elif "[WARNING]" in text:
+            return f"<span style='color: #d17a00;'>{text}</span>"
+        elif "[SUCCESS]" in text or "[PASS]" in text:
+            return f"<span style='color: #1a7f37; font-weight: bold;'>{text}</span>"
+        elif "[INFO]" in text or "[PHASE" in text:
+            return f"<span style='color: #0969da;'>{text}</span>"
+        elif "[DEBUG]" in text:
+            return f"<span style='color: #8c959f;'>{text}</span>"
+        return text
 
     def _pre_ea_run(self):
-        """Validate inputs and launch the Pre-EA Processing workflow."""
-        from qgis.core import QgsApplication, QgsProject
-        from .pre_ea_processor import PreEAProcessor
-
+        """Execute the EA Preprocessing workflow."""
         bgy_layer = self.pre_ea_bgy_combo.currentLayer()
         ea_layer = self.pre_ea_ea_combo.currentLayer()
 
         if not bgy_layer:
-            self._pre_ea_append_log(
-                "<span style='color:#cf222e; font-weight:bold;'>[ERROR] Barangay Layer is required.</span>"
-            )
+            QMessageBox.warning(self, "Missing Input", "Please select a Barangay Layer.")
             return
 
-        # UI state — running
+        # Prepare UI for processing
         self.pre_ea_run_btn.setEnabled(False)
         self.pre_ea_cancel_btn.setEnabled(True)
         self.pre_ea_progress_bar.setValue(0)
@@ -795,6 +918,7 @@ class EALauncherDialog(QDialog):
 
         gap_tolerance = self.pre_ea_gap_tol_spin.value()
         clip_to_bgy = self.pre_ea_clip_chk.isChecked()
+        resolve_overlaps = self.pre_ea_resolve_overlaps_chk.isChecked()
         detect_gaps = self.pre_ea_detect_gaps_chk.isChecked()
         assign_gaps = self.pre_ea_assign_gaps_chk.isChecked()
 
@@ -811,18 +935,32 @@ class EALauncherDialog(QDialog):
             self.pre_ea_progress_bar.setValue(pct)
             QCoreApplication.processEvents()
 
-        # Run synchronously on the main thread (processor is fast for typical
-        # datasets; for very large data a QgsTask wrapper can be added later).
-        from .pre_ea_processor import PreEAProcessor
 
+        # Determine designated output folder
+        out_folder = self.pre_ea_output_folder_widget.filePath().strip() if hasattr(self, 'pre_ea_output_folder_widget') else ""
+        if not out_folder:
+            QMessageBox.warning(self, "Missing Output Folder", "Please designate an output folder before running.")
+            self.pre_ea_run_btn.setEnabled(False)
+            return
+
+        from .helpers.pre_ea_detector import resolve_target_output_folder
+        out_folder = resolve_target_output_folder(out_folder, bool(ea_layer))
+
+        self._pre_ea_append_log(
+            f"<span style='color: #0969da; font-weight: bold;'>[INFO]</span> Designated Output Folder: {out_folder}"
+        )
+
+        from .pre_ea_processor import PreEAProcessor
         processor = PreEAProcessor()
         result = processor.run(
             barangay_layer=bgy_layer,
             ea_layer=ea_layer,
             gap_tolerance=gap_tolerance,
             clip_to_bgy=clip_to_bgy,
+            resolve_overlaps=resolve_overlaps,
             detect_gaps=detect_gaps,
             assign_gaps=assign_gaps,
+            output_folder=out_folder,
             feedback_callback=feedback_callback,
             progress_callback=progress_callback,
             is_cancelled_fn=is_cancelled_fn,
@@ -869,6 +1007,7 @@ class EALauncherDialog(QDialog):
         action_colors = {
             "No Change": ("#f6f8fa", "#333"),
             "Clipped": ("#fff8c5", "#7d4e00"),
+            "Overlap Resolved": ("#e6ffec", "#1a7f37"),
             "Gap Assigned": ("#dafbe1", "#1a7f37"),
             "Geometry Fixed": ("#ddf4ff", "#0969da"),
             "Unresolved": ("#ffebe9", "#cf222e"),
@@ -878,6 +1017,7 @@ class EALauncherDialog(QDialog):
             action_colors = {
                 "No Change": ("#2d333b", "#adbac7"),
                 "Clipped": ("#3d3300", "#e3b341"),
+                "Overlap Resolved": ("#133a1e", "#3fb950"),
                 "Gap Assigned": ("#1e3f28", "#2ecc71"),
                 "Geometry Fixed": ("#0e2235", "#79c0ff"),
                 "Unresolved": ("#3d1f1f", "#ff6b6b"),
@@ -923,6 +1063,12 @@ class EALauncherDialog(QDialog):
             )
 
         self.pre_ea_progress_bar.setValue(100)
+
+        # Update layer combo with the newly generated permanent layer
+        if result.output_layer and result.output_layer.isValid():
+            self.pre_ea_ea_combo.blockSignals(True)
+            self.pre_ea_ea_combo.setLayer(result.output_layer)
+            self.pre_ea_ea_combo.blockSignals(False)
 
         # Switch to Summary tab
         right_tabs_widget = table.parent().parent().parent()
@@ -1056,10 +1202,10 @@ class EALauncherDialog(QDialog):
         scroll_layout.addWidget(inputs_group)
 
         # 2. Parameters Section (Collapsible QGroupBox)
-        params_group = QgsCollapsibleGroupBox("Delineation Thresholds Settings")
-        if hasattr(params_group, "setCollapsed"):
-            params_group.setCollapsed(True)
-        params_layout = QVBoxLayout(params_group)
+        self.params_group = QgsCollapsibleGroupBox("Delineation Thresholds Settings")
+        if hasattr(self.params_group, "setCollapsed"):
+            self.params_group.setCollapsed(True)
+        params_layout = QVBoxLayout(self.params_group)
         params_layout.setSpacing(8)
 
         # Enable Household Count Thresholds checkbox
@@ -1127,7 +1273,7 @@ class EALauncherDialog(QDialog):
         self.crs_widget.setCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
         params_layout.addWidget(self.crs_widget)
 
-        scroll_layout.addWidget(params_group)
+        scroll_layout.addWidget(self.params_group)
 
         # 3. Outputs Section (QGroupBox)
         outputs_group = QGroupBox("Output Layers")
@@ -1626,6 +1772,87 @@ class EALauncherDialog(QDialog):
                 "Update Failed",
                 "Failed to save hhcount updates to the EA layer. Check layer edit permissions."
             )
+
+    def _create_ea_refresh(self):
+        """Reset and refresh Tab 2 (Create Enumeration Areas) inputs, processes, and results."""
+        # 1. Reset layer combos
+        for combo in [
+            getattr(self, 'bar_combo', None),
+            getattr(self, 'bldg_combo', None),
+            getattr(self, 'prev_ea_combo', None),
+            getattr(self, 'road_combo', None),
+            getattr(self, 'river_combo', None),
+            getattr(self, 'gap_combo', None),
+            getattr(self, 'overlap_combo', None),
+        ]:
+            if combo:
+                self._safe_set_layer(combo, None)
+
+        # 2. Reset parameters to default
+        if hasattr(self, 'enable_thresholds_chk'):
+            self.enable_thresholds_chk.setChecked(False)
+        if hasattr(self, 'min_hh_spin'):
+            self.min_hh_spin.setValue(100)
+        if hasattr(self, 'max_hh_spin'):
+            self.max_hh_spin.setValue(300)
+        if hasattr(self, 'tolerance_spin'):
+            self.tolerance_spin.setValue(15.0)
+        if hasattr(self, 'compact_chk'):
+            self.compact_chk.setChecked(True)
+        if hasattr(self, 'allow_candidate_merge_chk'):
+            self.allow_candidate_merge_chk.setChecked(True)
+        if hasattr(self, 'sliver_combo'):
+            self.sliver_combo.setCurrentIndex(0)
+        if hasattr(self, 'crs_widget'):
+            self.crs_widget.setCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
+        if hasattr(self, 'params_group') and hasattr(self.params_group, 'setCollapsed'):
+            self.params_group.setCollapsed(True)
+
+        # 3. Reset output line edits and search filter
+        for edit in [
+            getattr(self, 'delineated_edit', None),
+            getattr(self, 'merged_edit', None),
+            getattr(self, 'special_ea_edit', None),
+            getattr(self, 'delin_cand_edit', None),
+            getattr(self, 'merge_cand_edit', None),
+            getattr(self, 'extracted_bldg_edit', None),
+            getattr(self, 'search_edit', None),
+        ]:
+            if edit:
+                edit.clear()
+
+        # 4. Auto-detect layers from project
+        self.auto_detect_layers()
+
+        # 5. Reset process states
+        if hasattr(self, 'progress_bar'):
+            self.progress_bar.setValue(0)
+        if hasattr(self, 'cancel_btn'):
+            self.cancel_btn.setEnabled(False)
+        if hasattr(self, 'run_btn'):
+            self.run_btn.setEnabled(True)
+        if hasattr(self, 'status_banner'):
+            self.status_banner.setText("Ready to run algorithm.")
+
+        # 6. Reset candidates, preview tables, KPI cards, logs
+        self.all_delineation_candidates.clear()
+        self.all_merge_candidates.clear()
+        if hasattr(self, 'kpi_delin_val'):
+            self.kpi_delin_val.setText("0")
+        if hasattr(self, 'kpi_merge_val'):
+            self.kpi_merge_val.setText("0")
+        if hasattr(self, 'delineation_table'):
+            self.delineation_table.setRowCount(0)
+        if hasattr(self, 'merge_table'):
+            self.merge_table.setRowCount(0)
+        if hasattr(self, 'log_console'):
+            self.log_console.clear()
+        if hasattr(self, 'tab_widget'):
+            self.tab_widget.setCurrentIndex(0)
+
+        # 7. Auto-generate candidate preview if previous EA layer is detected
+        if hasattr(self, 'prev_ea_combo') and self._safe_get_layer(self.prev_ea_combo):
+            self.generate_preview()
 
     def auto_detect_layers(self):
         """Scan all loaded layers in QGIS project and automatically match inputs by name keywords.
@@ -2178,6 +2405,11 @@ class EALauncherDialog(QDialog):
                                 layer = layer_ref
                             
                             if layer:
+                                if layer.featureCount() == 0:
+                                    # If there are no values in the output layer, do not generate/keep it
+                                    QgsProject.instance().removeMapLayer(layer.id())
+                                    continue
+
                                 layer.setName(target_name)
                                 apply_qml_to_layer(layer, qml_filename)
                                 lnode = root.findLayer(layer.id())
@@ -2189,18 +2421,31 @@ class EALauncherDialog(QDialog):
 
                 # Group any generated splitting line layers (ending with _eadel_update) into Splitting Lines
                 has_splitting_lines = False
-                for layer_id, proj_layer in QgsProject.instance().mapLayers().items():
+                for layer_id, proj_layer in list(QgsProject.instance().mapLayers().items()):
                     if proj_layer.name().endswith("_eadel_update"):
-                        has_splitting_lines = True
-                        lnode = root.findLayer(layer_id)
-                        if lnode and lnode.parent() != splitting_lines_group:
-                            clone = lnode.clone()
-                            splitting_lines_group.addChildNode(clone)
-                            lnode.parent().removeChildNode(lnode)
+                        if proj_layer.featureCount() == 0:
+                            QgsProject.instance().removeMapLayer(layer_id)
+                        else:
+                            has_splitting_lines = True
+                            lnode = root.findLayer(layer_id)
+                            if lnode and lnode.parent() != splitting_lines_group:
+                                clone = lnode.clone()
+                                splitting_lines_group.addChildNode(clone)
+                                lnode.parent().removeChildNode(lnode)
 
-                # Clean up empty Splitting Lines group if no splitting lines were generated
-                if not has_splitting_lines and len(splitting_lines_group.children()) == 0:
-                    main_group.removeChildNode(splitting_lines_group)
+                # Clean up empty sub-groups if no layers were added to them
+                for g_name, g_node in [
+                    ("Reference Layers", reference_group),
+                    ("Splitting Lines", splitting_lines_group),
+                    ("EAs", eas_group),
+                    ("Candidates", candidates_group),
+                ]:
+                    if g_node and len(g_node.children()) == 0:
+                        main_group.removeChildNode(g_node)
+
+                # Clean up main group if it contains no child nodes
+                if len(main_group.children()) == 0:
+                    root.removeChildNode(main_group)
 
                 self.progress_bar.setValue(100)
                 self.log_console.append("<span style='color:#1a7f37; font-weight:bold;'>[COMPLETE] Pipeline execution complete! Results loaded to map.</span>")
@@ -2325,6 +2570,14 @@ class EALauncherDialog(QDialog):
         self.ea_merge_ea_status_lbl.setWordWrap(True)
         ea_layout.addWidget(self.ea_merge_ea_status_lbl)
 
+        # Designated Output Folder
+        ea_layout.addWidget(QLabel("Designated Output Folder*"))
+        self.ea_merge_output_folder_widget = QgsFileWidget()
+        self.ea_merge_output_folder_widget.setStorageMode(QgsFileWidget.GetDirectory)
+        self.ea_merge_output_folder_widget.setDialogTitle("Designate Output Folder for Enumeration Area Merge")
+        ea_layout.addWidget(self.ea_merge_output_folder_widget)
+        self.ea_merge_output_folder_widget.fileChanged.connect(self._ea_merge_validate_inputs)
+
         scroll_layout.addWidget(ea_group)
 
         # ── 2. Replacement Polygon Layers (Multi Input) ───────────────────
@@ -2432,8 +2685,9 @@ class EALauncherDialog(QDialog):
         right_layout.setContentsMargins(2, 2, 2, 2)
         right_layout.setSpacing(8)
 
-        right_tabs = QTabWidget()
-        right_tabs.setObjectName("eaMergeRightTabs")
+        self.ea_merge_right_tabs = QTabWidget()
+        self.ea_merge_right_tabs.setObjectName("eaMergeRightTabs")
+        right_tabs = self.ea_merge_right_tabs
 
         # ── Summary Tab ─────────────────────────────────────────────────
         summary_tab = QWidget()
@@ -2605,6 +2859,54 @@ class EALauncherDialog(QDialog):
         from .ea_merge_processor import EAMergeProcessor
         return EAMergeProcessor.short_help_string()
 
+    def _ea_merge_refresh(self):
+        """Reset and refresh Tab 3 (Enumeration Area Merge) inputs, processes, and results."""
+        # 1. Reset Previous EA Layer selection & output folder
+        if hasattr(self, 'ea_merge_ea_combo'):
+            self._safe_set_layer(self.ea_merge_ea_combo, None)
+        if hasattr(self, 'ea_merge_output_folder_widget'):
+            self.ea_merge_output_folder_widget.setFilePath("")
+
+        # 2. Reset replacement layers list
+        self._ea_merge_replacement_layers = []
+        if hasattr(self, 'ea_merge_layers_list'):
+            self.ea_merge_layers_list.clear()
+
+        # 3. Auto-detect EA layer from project
+        self._ea_merge_auto_detect_ea_layer()
+
+        # 4. Reset process states
+        if hasattr(self, 'ea_merge_progress_bar'):
+            self.ea_merge_progress_bar.setValue(0)
+        if hasattr(self, 'ea_merge_cancel_btn'):
+            self.ea_merge_cancel_btn.setEnabled(False)
+        if hasattr(self, 'ea_merge_run_btn'):
+            self.ea_merge_run_btn.setEnabled(True)
+        if hasattr(self, 'ea_merge_status_banner'):
+            self.ea_merge_status_banner.setText("Ready.")
+
+        # 5. Reset output preview & summary info
+        for attr in ['ea_merge_out_geocode_lbl', 'ea_merge_out_layer_lbl', 'ea_merge_out_excel_lbl']:
+            lbl = getattr(self, attr, None)
+            if lbl:
+                lbl.setText("-")
+        for attr in [
+            '_ea_merge_sum_geocode_val', '_ea_merge_sum_ea_input_val', '_ea_merge_sum_repl_layers_val',
+            '_ea_merge_sum_repl_feats_val', '_ea_merge_sum_mod_eas_val', '_ea_merge_sum_final_eas_val',
+            '_ea_merge_sum_output_val', '_ea_merge_sum_excel_val'
+        ]:
+            val_lbl = getattr(self, attr, None)
+            if val_lbl:
+                val_lbl.setText("-")
+        if hasattr(self, '_ea_merge_sum_status_lbl'):
+            self._ea_merge_sum_status_lbl.setText("Status: READY")
+
+        # 6. Clear logs & set active sub-tab
+        if hasattr(self, 'ea_merge_log_console'):
+            self.ea_merge_log_console.clear()
+        if hasattr(self, 'ea_merge_right_tabs'):
+            self.ea_merge_right_tabs.setCurrentIndex(0)
+
     def _ea_merge_auto_detect_ea_layer(self):
         """Auto-detect Previous EA layer from the QGIS project for Tab 3."""
         import re
@@ -2637,19 +2939,13 @@ class EALauncherDialog(QDialog):
 
         self._safe_set_layer(self.ea_merge_ea_combo, ea_match)
 
-        # Also auto-detect 8-digit replacement layers if none are selected yet
-        if not self._ea_merge_replacement_layers:
-            auto_repl = []
-            for layer in layers:
-                if not isinstance(layer, QgsVectorLayer):
-                    continue
-                if layer.geometryType() not in (2, QgsWkbTypes.PolygonGeometry):
-                    continue
-                if pat_8.match(layer.name()):
-                    auto_repl.append(layer)
-            if auto_repl:
-                self._ea_merge_replacement_layers = auto_repl
-                self._ea_merge_update_replacement_list()
+        if ea_match and hasattr(self, 'ea_merge_output_folder_widget'):
+            current_out = self.ea_merge_output_folder_widget.filePath().strip()
+            if not current_out:
+                src = getattr(ea_match, 'source', lambda: '')() if hasattr(ea_match, 'source') else ''
+                clean_src = src.split("|")[0].strip() if src else ""
+                if clean_src and os.path.exists(clean_src):
+                    self.ea_merge_output_folder_widget.setFilePath(os.path.dirname(clean_src))
 
         self._ea_merge_validate_inputs()
 
@@ -2671,7 +2967,8 @@ class EALauncherDialog(QDialog):
         """Refresh the QListWidget showing the selected replacement layers."""
         self.ea_merge_layers_list.clear()
         import re
-        pat = re.compile(r"^\d{8}$")
+        # Accept names starting with 8 digits (with optional _suffix)
+        pat = re.compile(r"^\d{8}(_|$)")
         for layer in self._ea_merge_replacement_layers:
             if not layer:
                 continue
@@ -2687,8 +2984,9 @@ class EALauncherDialog(QDialog):
 
     def _ea_merge_validate_inputs(self):
         """Validate EA Input Layer and Replacement Polygon Layers and update UI indicators."""
-        import re
-        pat = re.compile(r"^\d{8}$")
+        # Use the module-level compiled regex and imported helpers — avoids
+        # per-call re.compile() and repeated relative imports on every event.
+        pat = _EA_MERGE_8DIGIT_RE
 
         ea_layer = self.ea_merge_ea_combo.currentLayer()
         repl_layers = self._ea_merge_replacement_layers
@@ -2704,20 +3002,34 @@ class EALauncherDialog(QDialog):
             self.ea_merge_ea_status_lbl.setText(f"Active: {fc} EA polygons ({crs_str}).")
 
             # Extract 5-digit geocode
-            from .ea_merge_processor import _field_index_ci, _first_nonempty_value, _GEOCODE_FIELDS, _CITYMUN_FIELDS, _unique_values
-            geo_idx = _field_index_ci(ea_layer, _GEOCODE_FIELDS)
-            raw_geo = _first_nonempty_value(ea_layer, geo_idx)
-            if raw_geo:
-                digits = re.sub(r"\D", "", raw_geo)
-                if len(digits) >= 5:
-                    geo_code = digits[:5]
+            if _emg_field_index_ci is not None:
+                geo_idx = _emg_field_index_ci(ea_layer, _EMG_GEOCODE_FIELDS)
+                raw_geo = _emg_first_nonempty_value(ea_layer, geo_idx)
+                if raw_geo:
+                    digits = re.sub(r"\D", "", raw_geo)
+                    if len(digits) >= 5:
+                        geo_code = digits[:5]
 
-            # Extract CityMun
-            citymun_idx = _field_index_ci(ea_layer, _CITYMUN_FIELDS)
-            if citymun_idx != -1:
-                vals = _unique_values(ea_layer, citymun_idx)
-                if len(vals) == 1:
-                    citymun = vals[0]
+                # Extract CityMun
+                citymun_idx = _emg_field_index_ci(ea_layer, _EMG_CITYMUN_FIELDS)
+                if citymun_idx != -1:
+                    vals = _emg_unique_values(ea_layer, citymun_idx)
+                    if len(vals) == 1:
+                        citymun = vals[0]
+            else:
+                # Fallback: lazy import if module-level import failed
+                from .ea_merge_processor import _field_index_ci, _first_nonempty_value, _GEOCODE_FIELDS, _CITYMUN_FIELDS, _unique_values
+                geo_idx = _field_index_ci(ea_layer, _GEOCODE_FIELDS)
+                raw_geo = _first_nonempty_value(ea_layer, geo_idx)
+                if raw_geo:
+                    digits = re.sub(r"\D", "", raw_geo)
+                    if len(digits) >= 5:
+                        geo_code = digits[:5]
+                citymun_idx = _field_index_ci(ea_layer, _CITYMUN_FIELDS)
+                if citymun_idx != -1:
+                    vals = _unique_values(ea_layer, citymun_idx)
+                    if len(vals) == 1:
+                        citymun = vals[0]
 
         # 2. Replacement Layers validation
         all_poly = True
@@ -2764,7 +3076,8 @@ class EALauncherDialog(QDialog):
             self.ea_merge_out_excel_lbl.setText("-")
 
         # Enable/Disable Run button
-        can_run = bool(ea_layer and has_repl and all_poly and all_8digits and geo_code)
+        has_output = bool(self.ea_merge_output_folder_widget.filePath().strip()) if hasattr(self, 'ea_merge_output_folder_widget') else False
+        can_run = bool(ea_layer and has_repl and all_poly and all_8digits and geo_code and has_output)
         self.ea_merge_run_btn.setEnabled(can_run)
 
     def _ea_merge_cancel(self):
@@ -2799,7 +3112,7 @@ class EALauncherDialog(QDialog):
         return f"<span style='color:#0969da;'>{msg}</span>"
 
     def _ea_merge_run(self):
-        """Validate inputs and launch the Enumeration Area Merge processor."""
+        """Validate inputs and launch the Enumeration Area Merge processor in a background thread."""
         ea_layer = self.ea_merge_ea_combo.currentLayer()
         repl_layers = self._ea_merge_replacement_layers
 
@@ -2808,6 +3121,10 @@ class EALauncherDialog(QDialog):
             return
         if not repl_layers:
             self._ea_merge_append_log("<span style='color:#cf222e; font-weight:bold;'>[ERROR] At least one Replacement Polygon Layer is required.</span>")
+            return
+
+        # Guard: don't start a second run if one is already in flight
+        if getattr(self, '_ea_merge_thread', None) and self._ea_merge_thread.isRunning():
             return
 
         # UI state — running
@@ -2827,24 +3144,83 @@ class EALauncherDialog(QDialog):
         def is_cancelled_fn():
             return self._ea_merge_cancelled
 
-        def feedback_callback(msg):
-            self._ea_merge_append_log(self._ea_merge_format_log(msg))
+        # Determine designated output folder
+        out_folder = self.ea_merge_output_folder_widget.filePath().strip() if hasattr(self, 'ea_merge_output_folder_widget') else ""
+        if not out_folder:
+            QMessageBox.warning(self, "Missing Output Folder", "Please designate an output folder before running.")
+            self.ea_merge_run_btn.setEnabled(False)
+            return
 
-        def progress_callback(pct):
-            self.ea_merge_progress_bar.setValue(pct)
-            QCoreApplication.processEvents()
+        self._ea_merge_append_log(
+            f"<span style='color: #0969da; font-weight: bold;'>[INFO]</span> Designated Output Folder: {out_folder}"
+        )
 
+        # --- Create worker and thread ---
         from .ea_merge_processor import EAMergeProcessor
+
+        self._ea_merge_worker = _EAMergeWorker()
 
         processor = EAMergeProcessor(
             ea_layer=ea_layer,
             replacement_layers=repl_layers,
-            feedback_callback=feedback_callback,
-            progress_callback=progress_callback,
+            output_dir=out_folder,
+            # Callbacks emit Qt signals — safe to call from the worker thread
+            # because cross-thread signals are queued to the main event loop.
+            feedback_callback=self._ea_merge_worker.feedback_signal.emit,
+            progress_callback=self._ea_merge_worker.progress_signal.emit,
             is_cancelled_fn=is_cancelled_fn,
+            # addMapLayer must be called on the main thread; _ea_merge_on_thread_finished
+            # handles it after the worker signals finished.
+            skip_add_to_project=True,
         )
+        self._ea_merge_worker.set_processor(processor)
 
-        result = processor.run()
+        self._ea_merge_thread = QThread()
+        self._ea_merge_worker.moveToThread(self._ea_merge_thread)
+
+        # Wire up signals
+        self._ea_merge_thread.started.connect(self._ea_merge_worker.run)
+        self._ea_merge_worker.feedback_signal.connect(
+            lambda msg: self._ea_merge_append_log(self._ea_merge_format_log(msg))
+        )
+        self._ea_merge_worker.progress_signal.connect(self.ea_merge_progress_bar.setValue)
+        self._ea_merge_worker.finished_signal.connect(self._ea_merge_on_thread_finished)
+        # Clean up thread and worker objects when the thread exits
+        self._ea_merge_thread.finished.connect(self._ea_merge_thread.deleteLater)
+        self._ea_merge_worker.finished_signal.connect(self._ea_merge_thread.quit)
+
+        self._ea_merge_thread.start()
+
+    def _ea_merge_on_thread_finished(self, result):
+        """Slot called on the main thread when the worker emits finished_signal.
+
+        Adds the output layer to the QGIS project (must be done on the main
+        thread) then delegates to the existing UI update handler.
+        """
+        # Add the output layer to the project here, on the main thread
+        if result.success and result.output_layer is not None:
+            try:
+                proj = QgsProject.instance()
+                if proj:
+                    for old_lyr in list(proj.mapLayersByName(result.summary.output_layer_name)):
+                        proj.removeMapLayer(old_lyr.id())
+                    proj.addMapLayer(result.output_layer)
+                    from .helpers.style import apply_qml_to_layer
+                    apply_qml_to_layer(result.output_layer, "ea_output.qml")
+                self._ea_merge_append_log(
+                    self._ea_merge_format_log(
+                        f"[INFO] Permanent GeoPackage layer (.gpkg) added to QGIS canvas: {result.summary.output_layer_name}"
+                    )
+                )
+            except Exception as exc:
+                self._ea_merge_append_log(
+                    f"<span style='color:#d17a00; font-weight:bold;'>[WARNING] Could not add layer to project: {exc}</span>"
+                )
+
+        # Release references so the worker/thread can be garbage collected
+        self._ea_merge_worker = None
+
+        # Delegate to the existing UI update handler
         self._ea_merge_on_finished(result)
 
     def _ea_merge_on_finished(self, result):
@@ -2903,7 +3279,8 @@ class MultiLayerSelectDialog(QDialog):
         layout.setSpacing(8)
 
         info_lbl = QLabel(
-            "Select one or more polygon layers with 8-digit numeric names\n"
+            "Select one or more polygon layers whose names begin with an 8-digit code\n"
+            "(e.g. 01728011, 01728011_delineated_ea2026, 01728001_merged_ea2026)\n"
             "to use as replacement geometries:"
         )
         info_lbl.setWordWrap(True)
@@ -2932,12 +3309,17 @@ class MultiLayerSelectDialog(QDialog):
         layout.addWidget(button_box)
 
     def _populate_layers(self):
+        import re
+        # Only show polygon layers whose name starts with 8 digits (optionally followed by _suffix)
+        pat_8_prefix = re.compile(r"^\d{8}(_|$)")
         selected_ids = {lyr.id() for lyr in self.selected_layers if lyr}
         all_layers = list(QgsProject.instance().mapLayers().values())
         for layer in all_layers:
             if not isinstance(layer, QgsVectorLayer):
                 continue
             if layer.geometryType() != QgsWkbTypes.PolygonGeometry:
+                continue
+            if not pat_8_prefix.match(layer.name()):
                 continue
             item = QListWidgetItem(self.list_widget)
             item.setText(f"{layer.name()} ({layer.featureCount()} features)")
