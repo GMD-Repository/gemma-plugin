@@ -324,12 +324,14 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
 
         fields = prev_ea_layer.fields()
         
-        # Resolve household field index case-insensitively
+        # Resolve household field index case-insensitively with hh_count taking priority
         hh_idx = -1
-        for i in range(fields.count()):
-            name_lower = fields.at(i).name().lower()
-            if name_lower in ["new_hhcount", "hhcount", "hh_count", "household", "household_count"]:
-                hh_idx = i
+        for candidate in ["hh_count", "new_hhcount", "hhcount", "household", "household_count", "pop", "population"]:
+            for i in range(fields.count()):
+                if fields.at(i).name().lower() == candidate:
+                    hh_idx = i
+                    break
+            if hh_idx != -1:
                 break
                 
         # Resolve EA ID field index case-insensitively
