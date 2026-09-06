@@ -9,6 +9,7 @@
 
 import os
 import json
+import processing
 from typing import Any, Optional, Dict, List
 
 from PyQt5.QtCore import QVariant
@@ -110,20 +111,52 @@ class mv_2027_hp_4a_map_uuid__duplicate(QgsProcessingAlgorithm):
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
 
-        features = gmdhelpers.filter_geometry_validity(geojson_data, feedback)
-        features, fields = gmdhelpers.add_count(features, geojson_data.fields(), "map_uuid")
-        features = [f for f in features if f["n"] > 1]
-        features = gmdhelpers.arrange(features, "map_uuid")
+        # 1. Add new column 'n' counting occurrences of map_uuid using native:refactorfields
+        fields_mapping = []
+        for fld in geojson_data.fields():
+            fields_mapping.append({
+                "expression": f'"{fld.name()}"',
+                "length": fld.length(),
+                "name": fld.name(),
+                "precision": fld.precision(),
+                "type": fld.type(),
+            })
 
-        temp_layer = gmdhelpers.create_temporary_layer(
-            features,
-            fields=fields,
-            source_layer=geojson_data,
-        )
+        fields_mapping.append({
+            "expression": 'count(1, group_by:="map_uuid")',
+            "length": 0,
+            "name": "n",
+            "precision": 0,
+            "type": 2,  # Integer
+        })
+
+        counted_layer = processing.run(
+            "native:refactorfields",
+            {
+                "INPUT": geojson_data,
+                "FIELDS_MAPPING": fields_mapping,
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+
+        # 2. Extract rows with more than 1 occurrence
+        filter_expr = '"map_uuid" IS NOT NULL AND trim("map_uuid") != \'\' AND "n" > 1'
+        extracted_layer = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": counted_layer,
+                "EXPRESSION": filter_expr,
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
 
         final_output = gmdhelpers.select_mv(
-            temp_layer,
-            ["n"],
+            extracted_layer,
+            ["n", "longitude", "latitude"],
             context=context,
             feedback=feedback,
         )
@@ -139,7 +172,6 @@ class mv_2027_hp_4a_map_uuid__duplicate(QgsProcessingAlgorithm):
             final_output.getFeatures(),
             feedback,
         )
-
 
     def createInstance(self):
         return self.__class__()

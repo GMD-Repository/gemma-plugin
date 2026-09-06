@@ -97,7 +97,7 @@ def arrange(features, col_name, ascending=True):
 
 
 def export_features_to_sink(alg, parameters, param_name, context, fields, wkb_type, crs, features, feedback=None):
-    """Exports features to a QgsProcessingParameterFeatureSink."""
+    """Exports features to a QgsProcessingParameterFeatureSink and logs feature count to feedback."""
     (sink, dest_id) = alg.parameterAsSink(
         parameters,
         param_name,
@@ -111,10 +111,15 @@ def export_features_to_sink(alg, parameters, param_name, context, fields, wkb_ty
 
     feature_list = features.getFeatures() if hasattr(features, "getFeatures") else features
 
+    count = 0
     for f in feature_list:
         if feedback and feedback.isCanceled():
             break
         sink.addFeature(f, QgsFeatureSink.FastInsert)
+        count += 1
+
+    if feedback:
+        feedback.pushInfo(f"Result: {count} feature(s) written to output sink '{param_name}'.")
 
     return {param_name: dest_id}
 
@@ -141,128 +146,83 @@ def load_cbms_geojson(alg, parameters, param_name, context):
     return source
 
 
-def load_cbms_json(alg, parameters, param_name, context, feedback=None, as_table=True):
-    """
-    Loads a CBMS Form 2 JSON data file from algorithm parameters.
-    When as_table=True (default), converts the JSON records into an in-memory
-    geometry-less QgsVectorLayer table, directly usable in processing algorithms
-    (e.g., native:joinattributestable). When as_table=False, returns raw parsed JSON.
-    """
+def load_cbms_json(alg, parameters, param_name, context, feedback=None):
+    """Loads a JSON file from algorithm parameters and returns it as a non-spatial QgsVectorLayer table."""
     json_path = alg.parameterAsFile(parameters, param_name, context)
     if not json_path or not os.path.exists(json_path):
+        if feedback:
+            feedback.pushInfo(f"Warning: JSON file path not found: '{json_path}'")
         return None
 
-    raw_data = None
     try:
         with open(json_path, "r", encoding="utf-8") as f:
-            raw_data = json.load(f)
+            data = json.load(f)
         if feedback:
             feedback.pushInfo(f"Loaded JSON input data from: '{json_path}'")
     except Exception as e:
         if feedback:
-            feedback.pushInfo(f"Warning: Failed to parse INPUT_DATA JSON: {e}")
+            feedback.pushInfo(f"Warning: Failed to parse JSON file: {e}")
         return None
-
-    if not as_table:
-        return raw_data
 
     # Extract records list
     records = []
-    if isinstance(raw_data, list):
-        records = raw_data
-    elif isinstance(raw_data, dict):
-        for key in ["cover_page", "records", "features", "data"]:
-            if key in raw_data and isinstance(raw_data[key], list):
-                records = raw_data[key]
+    if isinstance(data, list):
+        records = data
+    elif isinstance(data, dict):
+        for key in ["records", "features", "data", "cover_page"]:
+            if key in data and isinstance(data[key], list):
+                records = data[key]
                 break
         if not records:
-            records = [raw_data]
+            records = [data]
 
-    # Create geometry-less memory table
     table_layer = QgsVectorLayer("none", "cbms_json_table", "memory")
     dp = table_layer.dataProvider()
 
-    # Discover and build fields
     fields = QgsFields()
     field_names = []
 
-    def add_fld(fname, ftype=QVariant.String):
-        if fname not in field_names:
-            fields.append(QgsField(fname, ftype))
-            field_names.append(fname)
+    # Inspect records to dynamically create fields
+    for rec in records:
+        if isinstance(rec, dict):
+            props = rec.get("properties", rec) if isinstance(rec.get("properties"), dict) else rec
+        else:
+            props = {"value": rec}
 
-    # Core CBMS join & coordinate fields
-    add_fld("map_uuid", QVariant.String)
-    add_fld("longitude_df", QVariant.Double)
-    add_fld("latitude_df", QVariant.Double)
-
-    # Inspect records for other available fields
-    for rec in records[:100]:
-        props = rec.get("properties", rec) if isinstance(rec, dict) else {}
-        for k, v in props.items():
-            k_name = str(k).strip()
-            if k_name.lower() in ("map_uuid", "longitude_df", "latitude_df"):
-                continue
-            if k_name not in field_names:
-                if isinstance(v, bool):
-                    ftype = QVariant.Bool
-                elif isinstance(v, int):
-                    ftype = QVariant.Int
-                elif isinstance(v, float):
-                    ftype = QVariant.Double
-                else:
-                    ftype = QVariant.String
-                add_fld(k_name, ftype)
+        if isinstance(props, dict):
+            for k, v in props.items():
+                k_name = str(k).strip()
+                if k_name and k_name not in field_names:
+                    if isinstance(v, bool):
+                        ftype = QVariant.Bool
+                    elif isinstance(v, int):
+                        ftype = QVariant.Int
+                    elif isinstance(v, float):
+                        ftype = QVariant.Double
+                    else:
+                        ftype = QVariant.String
+                    fields.append(QgsField(k_name, ftype))
+                    field_names.append(k_name)
 
     dp.addAttributes(fields)
     table_layer.updateFields()
 
-    # Populate features
     features = []
     for rec in records:
-        props = rec.get("properties", rec) if isinstance(rec, dict) else {}
-
-        # Resolve map_uuid
-        uuid_val = None
-        for k, v in props.items():
-            if k.lower() == "map_uuid" and v is not None and v != NULL:
-                uuid_val = str(v).strip()
-                break
-
-        # Resolve longitude_df (from x_current, longitude, or longitude_df)
-        lon_df = None
-        for k, v in props.items():
-            if k.lower() in ("x_current", "longitude", "long", "longitude_df") and v is not None and v != NULL:
-                try:
-                    lon_df = round(float(v), 7)
-                    break
-                except (ValueError, TypeError):
-                    pass
-
-        # Resolve latitude_df (from y_current, latitude, or latitude_df)
-        lat_df = None
-        for k, v in props.items():
-            if k.lower() in ("y_current", "latitude", "lat", "latitude_df") and v is not None and v != NULL:
-                try:
-                    lat_df = round(float(v), 7)
-                    break
-                except (ValueError, TypeError):
-                    pass
+        if isinstance(rec, dict):
+            props = rec.get("properties", rec) if isinstance(rec.get("properties"), dict) else rec
+        else:
+            props = {"value": rec}
 
         feat = QgsFeature(fields)
-        if uuid_val:
-            feat.setAttribute("map_uuid", uuid_val)
-        if lon_df is not None:
-            feat.setAttribute("longitude_df", lon_df)
-        if lat_df is not None:
-            feat.setAttribute("latitude_df", lat_df)
 
-        for fn in field_names:
-            if fn in ("map_uuid", "longitude_df", "latitude_df"):
-                continue
-            if fn in props:
-                val = props[fn]
-                feat.setAttribute(fn, val if val is not None else NULL)
+        if isinstance(props, dict):
+            for fn in field_names:
+                if fn in props:
+                    val = props[fn]
+                    feat.setAttribute(fn, val if val is not None else NULL)
+                else:
+                    feat.setAttribute(fn, NULL)
 
         features.append(feat)
 
