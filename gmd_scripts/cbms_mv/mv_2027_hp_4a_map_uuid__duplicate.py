@@ -39,6 +39,7 @@ class mv_2027_hp_4a_map_uuid__duplicate(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"
     INPUT_LAYER = "INPUT_LAYER"
+    BASE_LAYER = "BASE_LAYER"
     OUTPUT = "OUTPUT"
 
     def name(self) -> str:
@@ -82,6 +83,16 @@ class mv_2027_hp_4a_map_uuid__duplicate(QgsProcessingAlgorithm):
         )
 
         self.addParameter(
+            QgsProcessingParameterFile(
+                self.BASE_LAYER,
+                "BASE_LAYER (.gpkg file)",
+                behavior=QgsProcessingParameterFile.File,
+                extension="gpkg",
+                optional=True,
+            )
+        )
+
+        self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
                 "mv_2027_hp_4a_map_uuid__duplicate",
@@ -104,15 +115,28 @@ class mv_2027_hp_4a_map_uuid__duplicate(QgsProcessingAlgorithm):
         features = [f for f in features if f["n"] > 1]
         features = gmdhelpers.arrange(features, "map_uuid")
 
+        temp_layer = gmdhelpers.create_temporary_layer(
+            features,
+            fields=fields,
+            source_layer=geojson_data,
+        )
+
+        final_output = gmdhelpers.select_mv(
+            temp_layer,
+            ["n"],
+            context=context,
+            feedback=feedback,
+        )
+
         return gmdhelpers.export_features_to_sink(
             self,
             parameters,
             self.OUTPUT,
             context,
-            fields,
-            geojson_data.wkbType(),
-            geojson_data.sourceCrs(),
-            features,
+            final_output.fields(),
+            final_output.wkbType(),
+            final_output.sourceCrs(),
+            final_output.getFeatures(),
             feedback,
         )
 

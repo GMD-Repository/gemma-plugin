@@ -161,16 +161,11 @@ class mv_2027_hp_4a_ea_geocode__invalid(QgsProcessingAlgorithm):
         if not crs.isValid():
             crs = QgsCoordinateReferenceSystem("EPSG:4326")
 
-        wkb_type_str = QgsWkbTypes.displayString(geojson_data.wkbType())
-        temp_layer = QgsVectorLayer(
-            f"{wkb_type_str}?crs={crs.authid()}",
-            "invalid_ea_layer",
-            "memory",
+        temp_layer = gmdhelpers.create_temporary_layer(
+            invalid_features,
+            fields=out_fields,
+            source_layer=geojson_data,
         )
-        dp = temp_layer.dataProvider()
-        dp.addAttributes(out_fields)
-        temp_layer.updateFields()
-        dp.addFeatures(invalid_features)
 
         # 5. Select & organize columns using select_mv
         final_output = gmdhelpers.select_mv(

@@ -178,16 +178,11 @@ class mv_2027_hp_4a_geom__invalid(QgsProcessingAlgorithm):
                 matched_features.append(out_feat)
 
         # 5. Create temporary memory layer for matched features
-        wkb_type_str = QgsWkbTypes.displayString(geojson_data.wkbType())
-        temp_layer = QgsVectorLayer(
-            f"{wkb_type_str}?crs={crs.authid()}",
-            "matched_layer",
-            "memory",
+        temp_layer = gmdhelpers.create_temporary_layer(
+            matched_features,
+            fields=out_fields,
+            source_layer=geojson_data,
         )
-        dp = temp_layer.dataProvider()
-        dp.addAttributes(out_fields)
-        temp_layer.updateFields()
-        dp.addFeatures(matched_features)
 
 
         extracted_joined = processing.run(

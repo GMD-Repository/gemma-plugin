@@ -45,6 +45,8 @@ class GMDPipeline(object):
         self.geometry_legacy_dlg = None
         self.check_update_dlg = None
         self.push_dlg = None
+        self.cbmsmv_dlg = None
+        self.cbmsmv_action = None
         self.check_and_update_action = None
         self.comparison_panel_action = None
         self.create_ea_action = None
@@ -182,55 +184,66 @@ class GMDPipeline(object):
         create_ea_icon = QIcon(os.path.dirname(__file__) + "/icons/create_ea.svg")
         geom_toolkit_icon = QIcon(os.path.dirname(__file__) + "/icons/repair_geom.svg")
         others_icon = QIcon(os.path.dirname(__file__) + "/icons/others.svg")
+        cbmsmv_icon = QIcon(os.path.dirname(__file__) + "/icons/others.svg")
         updating_boundaries_icon = QIcon(os.path.dirname(__file__) + "/icons/updating_boundaries.svg")
         check_and_update_icon = QIcon(os.path.dirname(__file__) + "/icons/check_and_update.svg")
         compare_boundaries_icon = QIcon(os.path.dirname(__file__) + "/icons/compare_boundaries.svg")
 
         # 1. Updating of Boundaries Submenu
-        self.updating_boundaries_menu = QMenu(u'Updating of Boundaries')
-        self.gema_add_submenu(self.updating_boundaries_menu, updating_boundaries_icon)
+        #self.updating_boundaries_menu = QMenu(u'Updating of Boundaries')
+        #self.gema_add_submenu(self.updating_boundaries_menu, updating_boundaries_icon)
 
-        self.check_and_update_action = QAction(check_and_update_icon, "Check and Update", self.iface.mainWindow())
-        self.check_and_update_action.triggered.connect(self.show_check_and_update_dialog)
-        self.updating_boundaries_menu.addAction(self.check_and_update_action)
+        #self.check_and_update_action = QAction(check_and_update_icon, "Check and Update", self.iface.mainWindow())
+        #self.check_and_update_action.triggered.connect(self.show_check_and_update_dialog)
+        #self.updating_boundaries_menu.addAction(self.check_and_update_action)
 
-        self.comparison_panel_action = QAction(
-            compare_boundaries_icon, "PSA - LGU Comparison Review", self.iface.mainWindow()
-        )
-        self.comparison_panel_action.triggered.connect(self.show_comparison_panel)
-        self.updating_boundaries_menu.addAction(self.comparison_panel_action)
+        #self.comparison_panel_action = QAction(
+        #    compare_boundaries_icon, "PSA - LGU Comparison Review", self.iface.mainWindow()
+        #)
+        #self.comparison_panel_action.triggered.connect(self.show_comparison_panel)
+        #self.updating_boundaries_menu.addAction(self.comparison_panel_action)
 
         # 2. EA Delineation Submenu
-        self.ea_delineation_menu = QMenu(u'EA Delineation')
-        self.gema_add_submenu(self.ea_delineation_menu, create_ea_icon)
+        #self.ea_delineation_menu = QMenu(u'EA Delineation')
+        #self.gema_add_submenu(self.ea_delineation_menu, create_ea_icon)
 
         #self.create_ea_action = QAction(create_ea_icon, "EA Delineation and Merging", self.iface.mainWindow())
         #self.create_ea_action.triggered.connect(self.show_create_ea_dialog)
         #self.ea_delineation_menu.addAction(self.create_ea_action)
 
-        self.package_qfield_action = QAction(packager_icon, "Package for QField", self.iface.mainWindow())
-        self.package_qfield_action.triggered.connect(self.show_package_dialog)
-        self.package_qfield_action.setShortcut("Ctrl+Alt+Q")
-        self.ea_delineation_menu.addAction(self.package_qfield_action)
+        #self.package_qfield_action = QAction(packager_icon, "Package for QField", self.iface.mainWindow())
+        #self.package_qfield_action.triggered.connect(self.show_package_dialog)
+        #self.package_qfield_action.setShortcut("Ctrl+Alt+Q")
+        #self.ea_delineation_menu.addAction(self.package_qfield_action)
 
         # 3. Others Submenu
-        self.others_menu = QMenu(u'Others')
-        self.gema_add_submenu(self.others_menu, others_icon)
+        #self.others_menu = QMenu(u'Others')
+        #self.gema_add_submenu(self.others_menu, others_icon)
 
-        self.geometry_legacy_action = QAction(geom_toolkit_icon, "Geometry Check & Repair (Legacy)", self.iface.mainWindow())
-        self.geometry_legacy_action.triggered.connect(self.show_geometry_legacy)
-        self.others_menu.addAction(self.geometry_legacy_action)
+        #self.geometry_legacy_action = QAction(geom_toolkit_icon, "Geometry Check & Repair (Legacy)", self.iface.mainWindow())
+        #self.geometry_legacy_action.triggered.connect(self.show_geometry_legacy)
+        #self.others_menu.addAction(self.geometry_legacy_action)
 
         # Gemma Toolbar (Ordered Chronologically: Check and Update -> Create EAs -> Package for QField)
-        self.toolbar = self.iface.addToolBar("Gemma Toolbar")
-        self.toolbar.setObjectName("Gemma Toolbar")
+        #self.toolbar = self.iface.addToolBar("Gemma Toolbar")
+        #self.toolbar.setObjectName("Gemma Toolbar")
+
+        # 4. 2027 CBMS Form 2 Map Validation Submenu
+        self.cbmsmv_menu = QMenu(u'2027 CBMS Map Validation')
+        self.gema_add_submenu(self.cbmsmv_menu, cbmsmv_icon)
+
+        self.cbmsmv_action = QAction(cbmsmv_icon, "2027 CBMS MV", self.iface.mainWindow())
+        self.cbmsmv_action.triggered.connect(self.show_cbmsmv_dialog)
+        self.cbmsmv_action.setShortcut("Ctrl+Alt+D")
+        self.cbmsmv_menu.addAction(self.cbmsmv_action)
+        
 
         # 1. Check and Update
-        self.check_and_update_toolbar_action = QAction(
-            check_and_update_icon, "Check and Update", self.iface.mainWindow()
-        )
-        self.check_and_update_toolbar_action.triggered.connect(self.show_check_and_update_dialog)
-        self.toolbar.addAction(self.check_and_update_toolbar_action)
+        #self.check_and_update_toolbar_action = QAction(
+        #    check_and_update_icon, "Check and Update", self.iface.mainWindow()
+        #)
+        #self.check_and_update_toolbar_action.triggered.connect(self.show_check_and_update_dialog)
+        #self.toolbar.addAction(self.check_and_update_toolbar_action)
 
         # 2. EA Delineation and Merging
         #self.create_ea_toolbar_action = QAction(
@@ -240,11 +253,20 @@ class GMDPipeline(object):
         #self.toolbar.addAction(self.create_ea_toolbar_action)
 
         # 3. Package for QField
-        self.package_qfield_toolbar_action = QAction(
-            packager_icon, "Package for QField", self.iface.mainWindow()
-        )
-        self.package_qfield_toolbar_action.triggered.connect(self.show_package_dialog)
-        self.toolbar.addAction(self.package_qfield_toolbar_action)
+        #self.package_qfield_toolbar_action = QAction(
+        #    packager_icon, "Package for QField", self.iface.mainWindow()
+        #)
+        #self.package_qfield_toolbar_action.triggered.connect(self.show_package_dialog)
+        #self.toolbar.addAction(self.package_qfield_toolbar_action)
+
+
+        # 4. 2027 CBMS Form 2 Map Validation
+        #self.package_qfield_toolbar_action = QAction(
+        #    cbmsmv_icon, "2027 CBMS MV", self.iface.mainWindow()
+        #)
+        #self.package_qfield_toolbar_action.triggered.connect(self.show_package_dialog)
+        #self.toolbar.addAction(self.package_qfield_toolbar_action)
+
 
         # Initialize offline editing for QField packaging
         self.offline_editing = QgsOfflineEditing()
@@ -323,6 +345,26 @@ class GMDPipeline(object):
             self.offline_editing, 
             self.push_dialog_finished
         )
+
+    def show_cbmsmv_dialog(self):
+        """Open the 2027 CBMS Map Validation dialog."""
+        from .gmd_scripts.cbmsmv import show_cbmsmv_dialog
+
+        self.cbmsmv_dlg = show_cbmsmv_dialog(
+                    self.iface,
+                    self.offline_editing,
+                    self.cbmsmv_dialog_finished
+                )
+
+
+    def cbmsmv_dialog_finished(self):
+        """Cleanup when the CBMS MV dialog is closed."""
+        try:
+            if hasattr(self, 'cbmsmv_dlg') and self.cbmsmv_dlg:
+                self.cbmsmv_dlg.setEnabled(False)
+        except Exception:
+            pass
+        self.cbmsmv_dlg = None
 
     def show_check_and_update_dialog(self):
         """Open the Check and Update boundary management dialog."""
