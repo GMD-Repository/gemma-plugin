@@ -348,7 +348,7 @@ class GMDPipeline(object):
 
     def show_cbmsmv_dialog(self):
         """Open the 2027 CBMS Map Validation dialog."""
-        from .gmd_scripts.cbmsmv import show_cbmsmv_dialog
+        from .gmd_scripts.cbms_mv import show_cbmsmv_dialog
 
         self.cbmsmv_dlg = show_cbmsmv_dialog(
                     self.iface,
