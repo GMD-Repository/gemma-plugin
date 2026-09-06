@@ -233,6 +233,23 @@ class QgsGeometry:
     def fromMultiPolylineXY(multipoly):
         return QgsGeometry("MultiLineString")
 
+    @staticmethod
+    def fromMultiPointXY(multipoint):
+        return QgsGeometry("MultiPoint")
+
+    @staticmethod
+    def fromRect(rect):
+        if hasattr(rect, 'xMinimum'):
+            xmin, ymin, xmax, ymax = rect.xMinimum(), rect.yMinimum(), rect.xMaximum(), rect.yMaximum()
+            return QgsGeometry.fromPolygonXY([[
+                QgsPointXY(xmin, ymin),
+                QgsPointXY(xmax, ymin),
+                QgsPointXY(xmax, ymax),
+                QgsPointXY(xmin, ymax),
+                QgsPointXY(xmin, ymin),
+            ]])
+        return QgsGeometry("Polygon", [])
+
     def type(self):
         if self.geom_type == "Point": return 0
         elif self.geom_type in ("LineString", "Line", "MultiLineString"): return 1
@@ -615,6 +632,11 @@ class QgsVectorDataProvider:
             self._layer._features.append(feat)
         return True, features
 
+    def deleteFeatures(self, fids):
+        fids_set = set(fids)
+        self._layer._features = [f for f in self._layer._features if f.id() not in fids_set]
+        return True
+
     def fields(self):
         return self._layer._fields
 
@@ -642,12 +664,15 @@ class QgsVectorLayer:
                 self._features.append(cf)
 
     def name(self): return self._name
+    def setName(self, name): self._name = name
     def isValid(self): return True
     def featureCount(self): return len(self._features)
     def fields(self): return self._fields
     def setFields(self, fields): self._fields = fields
     def setFeatures(self, features): self._features = features
     def dataProvider(self): return QgsVectorDataProvider(self)
+    def addFeatures(self, features): return self.dataProvider().addFeatures(features)
+    def deleteFeatures(self, fids): return self.dataProvider().deleteFeatures(fids)
     def updateFields(self): pass
     def updateExtents(self): pass
     def extent(self): return MockGenericClass()
@@ -934,6 +959,12 @@ class QgsProject:
             cls._instance = QgsProject()
         return cls._instance
 
+    def homePath(self):
+        return ""
+
+    def fileName(self):
+        return ""
+
     def addMapLayer(self, layer, addToLegend=True):
         if layer:
             lid = layer.id() if hasattr(layer, "id") else str(id(layer))
@@ -977,6 +1008,7 @@ class QgsApplication:
     def processingRegistry():
         class MockRegistry:
             def addProvider(self, provider): pass
+            def algorithmById(self, id): return None
         return MockRegistry()
 
 
@@ -1035,8 +1067,23 @@ class MockQCoreApplication:
     def translate(context, sourceText, disambiguation=None, n=-1):
         return sourceText
 
+    @staticmethod
+    def processEvents(*args, **kwargs):
+        pass
 
-class MockQThread: pass
+    @staticmethod
+    def instance(*args, **kwargs):
+        return MockGenericClass()
+
+
+class MockQThread:
+    @staticmethod
+    def idealThreadCount():
+        return 4
+
+    @staticmethod
+    def currentThread():
+        return 1
 class MockQObject:
     def __init__(self, parent=None): pass
 

@@ -896,6 +896,7 @@ def run_phase_8(
         return default
 
     final_geom_by_candidate = {}
+    written_delineation_candidate_ids = set()
 
     for i, ea in enumerate(eas):
         if (multi_feedback and multi_feedback.isCanceled()) or (feedback and feedback.isCanceled()):
@@ -1320,10 +1321,9 @@ def run_phase_8(
                     else:
                         feedback.reportError(f"Failed to add Special EA {i} to special EA sink.")
 
-            # 2. Add to Delineated EAs sink (specifically for features created from EA delineation / proposed delineation)
-            is_delin_result = ea.get('has_proposed_split', False) or ea.get('from_split', False) or (ea.get('original_id') in delineation_candidate_ids and not ea.get('is_special_ea', False))
-            if is_delin_result:
-                if ea.get('from_split', False) and ea.get('hh_count', 0) < min_household:
+            # 2. Add to Delineated EAs sink (only extract whole candidate EAs above the max household threshold or valid split parts)
+            if ea.get('from_split', False) and not ea.get('is_special_ea', False):
+                if ea.get('hh_count', 0) < min_household:
                     feedback.pushWarning(
                         f"[Output Sink] Skipping EA {ea.get('original_code')} from delineated output: "
                         f"hh_count ({ea.get('hh_count', 0)}) is below minimum threshold ({min_household})."
@@ -1341,6 +1341,55 @@ def run_phase_8(
                             delineated_feat_count += 1
                         else:
                             feedback.reportError(f"Failed to add EA {i} to delineated sink.")
+            elif not ea.get('from_split', False) and not ea.get('is_special_ea', False):
+                _orig_cand_id = ea.get('original_id')
+                if _orig_cand_id in delineation_candidate_ids:
+                    if _orig_cand_id not in written_delineation_candidate_ids:
+                        written_delineation_candidate_ids.add(_orig_cand_id)
+                        parent_feat = full_ea_by_id.get(_orig_cand_id)
+                        cand_geom = None
+                        if parent_feat and parent_feat.hasGeometry() and not parent_feat.geometry().isEmpty():
+                            cand_geom = QgsGeometry(parent_feat.geometry())
+                        elif ea.get('geom'):
+                            cand_geom = QgsGeometry(ea['geom'])
+
+                        if cand_geom and not cand_geom.isEmpty():
+                            _orig_hh_val = ea.get('original_hhcount', ea.get('hh_count', 0.0))
+                            if _orig_hh_val >= max_household:
+                                if delineated_sink is not None:
+                                    if barangay_to_target:
+                                        cand_geom.transform(barangay_to_target)
+                                    cand_geom = cand_geom.makeValid()
+                                    cand_geom.convertToMultiType()
+
+                                    cand_exp_feat = make_export_feature(out_feat, export_fields)
+                                    cand_exp_feat.setGeometry(cand_geom)
+
+                                    delin_fid = delineated_feat_count + 1
+                                    fid_idx_delin = export_fields.indexOf("fid")
+                                    if fid_idx_delin != -1:
+                                        cand_exp_feat.setAttribute(fid_idx_delin, delin_fid)
+                                    cand_exp_feat.setId(delin_fid)
+
+                                    for fname in ("hhcount", "hh_count"):
+                                        f_idx = export_fields.indexOf(fname)
+                                        if f_idx != -1:
+                                            cand_exp_feat.setAttribute(f_idx, int(round(_orig_hh_val)))
+                                    for fname in ("bldgcount", "bldg_count"):
+                                        f_idx = export_fields.indexOf(fname)
+                                        if f_idx != -1:
+                                            cand_exp_feat.setAttribute(f_idx, get_field_val(parent_feat, ["bldgcount", "bldg_count"], 0))
+
+                                    ind_idx = export_fields.indexOf("indicator")
+                                    if ind_idx == -1:
+                                        ind_idx = export_fields.indexOf("eadel_indi")
+                                    if ind_idx != -1:
+                                        cand_exp_feat.setAttribute(ind_idx, "for_delineation")
+
+                                    if delineated_sink.addFeature(cand_exp_feat, QgsFeatureSink.Flag.FastInsert):
+                                        delineated_feat_count += 1
+                                    else:
+                                        feedback.reportError(f"Failed to add candidate EA {_orig_cand_id} to delineated sink.")
 
             # 3. Add to Merged EAs sink if feature was generated from EA merging
             if ea.get('from_merge', False) and not ea.get('is_special_ea', False):

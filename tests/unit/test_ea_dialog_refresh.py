@@ -197,7 +197,7 @@ class TestEADialogRefresh(unittest.TestCase):
 
     @patch("references.create_enumeration_area.dialog.QMessageBox")
     def test_fill_missing_hh_count_rejects_missing_household_in_bldg_layer(self, mock_msgbox):
-        """Verify that fill_missing_hh_count rejects building layers lacking hhcount/hh_count."""
+        """Verify that fill_missing_hh_count rejects building layers lacking est_hhcount/est_hh."""
         from references.create_enumeration_area.dialog import EALauncherDialog
         from qgis.core import QgsVectorLayer, QgsField
         from qgis.PyQt.QtCore import QVariant
@@ -228,11 +228,11 @@ class TestEADialogRefresh(unittest.TestCase):
 
         mock_msgbox.critical.assert_called_once()
         args = mock_msgbox.critical.call_args[0]
-        self.assertIn("Building point layer does not contain 'hhcount'", args[2])
+        self.assertIn("Building point layer does not contain 'est_hhcount'", args[2])
 
     @patch("references.create_enumeration_area.dialog.QMessageBox")
     def test_fill_missing_hh_count_populates_from_bldg_hhcount(self, mock_msgbox):
-        """Verify that fill_missing_hh_count computes and updates hh_count and bldg_count in EA from building 'hhcount'."""
+        """Verify that fill_missing_hh_count computes and updates hh_count and bldg_count in EA from building 'est_hhcount'."""
         from references.create_enumeration_area.dialog import EALauncherDialog
         from qgis.core import QgsVectorLayer, QgsField, QgsFeature, QgsGeometry, QgsPointXY
         from qgis.PyQt.QtCore import QVariant
@@ -259,15 +259,15 @@ class TestEADialogRefresh(unittest.TestCase):
         ea_layer.dataProvider().addFeatures([ea_feat])
 
         bldg_layer = QgsVectorLayer("Point?crs=epsg:4326", "Test_Bldg", "memory")
-        bldg_layer.dataProvider().addAttributes([QgsField("hhcount", QVariant.Double)])
+        bldg_layer.dataProvider().addAttributes([QgsField("est_hhcount", QVariant.Double)])
         bldg_layer.updateFields()
 
         pt1 = QgsFeature(bldg_layer.fields())
-        pt1.setAttribute("hhcount", 3.0)
+        pt1.setAttribute("est_hhcount", 3.0)
         pt1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(2, 2)))
 
         pt2 = QgsFeature(bldg_layer.fields())
-        pt2.setAttribute("hhcount", 5.0)
+        pt2.setAttribute("est_hhcount", 5.0)
         pt2.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(4, 4)))
 
         bldg_layer.dataProvider().addFeatures([pt1, pt2])
@@ -334,21 +334,21 @@ class TestEADialogRefresh(unittest.TestCase):
         ea_layer.dataProvider().addFeatures([sub_ea1, sub_ea2])
 
         bldg_layer = QgsVectorLayer("Point?crs=epsg:4326", "Test_Bldg", "memory")
-        bldg_layer.dataProvider().addAttributes([QgsField("hhcount", QVariant.Double)])
+        bldg_layer.dataProvider().addAttributes([QgsField("est_hhcount", QVariant.Double)])
         bldg_layer.updateFields()
 
         # 204 HH inside Sub-EA 1 (2 building points)
         pt1 = QgsFeature(bldg_layer.fields())
-        pt1.setAttribute("hhcount", 104.0)
+        pt1.setAttribute("est_hhcount", 104.0)
         pt1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(2, 5)))
 
         pt2 = QgsFeature(bldg_layer.fields())
-        pt2.setAttribute("hhcount", 100.0)
+        pt2.setAttribute("est_hhcount", 100.0)
         pt2.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(3, 5)))
 
         # 106 HH inside Sub-EA 2 (1 building point)
         pt3 = QgsFeature(bldg_layer.fields())
-        pt3.setAttribute("hhcount", 106.0)
+        pt3.setAttribute("est_hhcount", 106.0)
         pt3.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(7, 5)))
 
         bldg_layer.dataProvider().addFeatures([pt1, pt2, pt3])
@@ -414,11 +414,11 @@ class TestEADialogRefresh(unittest.TestCase):
         ea_layer.dataProvider().addFeatures([ea_feat])
 
         bldg_layer = QgsVectorLayer("Point?crs=epsg:4326", "Test_Bldg", "memory")
-        bldg_layer.dataProvider().addAttributes([QgsField("hhcount", QVariant.Double)])
+        bldg_layer.dataProvider().addAttributes([QgsField("est_hhcount", QVariant.Double)])
         bldg_layer.updateFields()
 
         pt1 = QgsFeature(bldg_layer.fields())
-        pt1.setAttribute("hhcount", 15.0)
+        pt1.setAttribute("est_hhcount", 15.0)
         pt1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(2, 2)))
 
         bldg_layer.dataProvider().addFeatures([pt1])
@@ -468,19 +468,19 @@ class TestEADialogRefresh(unittest.TestCase):
         ea_layer.dataProvider().addFeatures([ea_feat])
 
         bldg_layer = QgsVectorLayer("Point?crs=epsg:4326", "Test_Bldg", "memory")
-        bldg_layer.dataProvider().addAttributes([QgsField("hhcount", QVariant.Double)])
+        bldg_layer.dataProvider().addAttributes([QgsField("est_hhcount", QVariant.Double)])
         bldg_layer.updateFields()
 
         pt1 = QgsFeature(bldg_layer.fields())
-        pt1.setAttribute("hhcount", None) # Null -> fallback to 1.0
+        pt1.setAttribute("est_hhcount", None) # Null -> fallback to 1.0
         pt1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(2, 2)))
 
         pt2 = QgsFeature(bldg_layer.fields())
-        pt2.setAttribute("hhcount", 0.0) # 0.0 -> fallback to 1.0
+        pt2.setAttribute("est_hhcount", 0.0) # 0.0 -> fallback to 1.0
         pt2.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(3, 3)))
 
         pt3 = QgsFeature(bldg_layer.fields())
-        pt3.setAttribute("hhcount", 4.0) # 4.0 -> keeps 4.0
+        pt3.setAttribute("est_hhcount", 4.0) # 4.0 -> keeps 4.0
         pt3.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(4, 4)))
 
         bldg_layer.dataProvider().addFeatures([pt1, pt2, pt3])
@@ -556,22 +556,22 @@ class TestEADialogRefresh(unittest.TestCase):
         ea_layer.dataProvider().addFeatures([sub_ea1, sub_ea2])
 
         bldg_layer = QgsVectorLayer("Point?crs=epsg:4326", "Test_Bldg", "memory")
-        bldg_layer.dataProvider().addAttributes([QgsField("hhcount", QVariant.Double)])
+        bldg_layer.dataProvider().addAttributes([QgsField("est_hhcount", QVariant.Double)])
         bldg_layer.updateFields()
 
-        # 109 building points in Sub-EA 1 with total hhcount = 67.0
+        # 109 building points in Sub-EA 1 with total est_hhcount = 67.0
         bldgs = []
         # 67 points with 1.0, 42 points with 0.0 (fallback to 1.0 in delineation, or suppose 67.0 total)
         for i in range(67):
             pt = QgsFeature(bldg_layer.fields())
-            pt.setAttribute("hhcount", 1.0)
+            pt.setAttribute("est_hhcount", 1.0)
             pt.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(2, 2)))
             bldgs.append(pt)
 
         # 96 points with 1.0 in Sub-EA 2
         for i in range(96):
             pt = QgsFeature(bldg_layer.fields())
-            pt.setAttribute("hhcount", 1.0)
+            pt.setAttribute("est_hhcount", 1.0)
             pt.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(7, 7)))
             bldgs.append(pt)
 
@@ -600,6 +600,201 @@ class TestEADialogRefresh(unittest.TestCase):
         self.assertEqual(hh2, 188.0)
         # Total strictly equals parent hhcount 320.0
         self.assertEqual(hh1 + hh2, 320.0)
+
+    def test_create_ea_subtabs_structure_and_separation(self):
+        """Verify that Tab 2 has two dedicated sub-tabs with separated preview and log widgets."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+
+        mock_dlg = MagicMock()
+        mock_dlg.algo = MagicMock()
+        mock_dlg.algo.shortHelpString.return_value = "Help"
+        mock_dlg.main_tabs = MagicMock()
+
+        # Call real _build_create_ea_tab
+        EALauncherDialog._build_create_ea_tab(mock_dlg)
+
+        self.assertIsNotNone(mock_dlg.create_ea_sub_tabs)
+        self.assertIsNotNone(mock_dlg.proposed_delineation_tab)
+        self.assertIsNotNone(mock_dlg.proposed_merging_tab)
+        self.assertIsNotNone(mock_dlg.delineation_table)
+        self.assertIsNotNone(mock_dlg.merge_table)
+        self.assertIsNotNone(mock_dlg.log_console)
+        self.assertIsNotNone(mock_dlg.merge_log_console)
+        self.assertIsNotNone(mock_dlg.delin_right_tabs)
+        self.assertIsNotNone(mock_dlg.merge_right_tabs)
+
+    def test_two_way_sync_helpers(self):
+        """Verify two-way sync helper methods prevent infinite recursive loops using guards."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.validate_layer_inputs = MagicMock()
+        mock_dlg.filter_previews = MagicMock()
+
+        # Test combo sync
+        target_combo = MagicMock()
+        mock_layer = MagicMock()
+        EALauncherDialog._sync_combo(mock_dlg, target_combo, mock_layer)
+        mock_dlg.validate_layer_inputs.assert_called_once()
+
+        # Test output folder sync
+        target_folder_widget = MagicMock()
+        EALauncherDialog._sync_output_folder(mock_dlg, target_folder_widget, "C:/test_folder")
+        target_folder_widget.setFilePath.assert_called_once_with("C:/test_folder")
+
+        # Test search text sync
+        target_search = MagicMock()
+        EALauncherDialog._sync_search_text(mock_dlg, target_search, "EA 001")
+        target_search.setText.assert_called_once_with("EA 001")
+        mock_dlg.filter_previews.assert_called_once()
+
+    def test_run_delineation_merging_delegation(self):
+        """Verify that run_delineation and run_merging correctly invoke run_pipeline with explicit modes."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.run_pipeline = MagicMock()
+
+        EALauncherDialog.run_delineation(mock_dlg)
+        mock_dlg.run_pipeline.assert_called_once_with(mode="delineation")
+
+        mock_dlg.run_pipeline.reset_mock()
+        EALauncherDialog.run_merging(mock_dlg)
+        mock_dlg.run_pipeline.assert_called_once_with(mode="merging")
+
+    @patch("references.create_enumeration_area.dialog.QgsProject")
+    @patch("references.create_enumeration_area.dialog.CustomProcessingFeedback")
+    @patch("qgis.processing.runAndLoadResults")
+    def test_run_pipeline_output_filtering_delineation_mode(self, mock_run, mock_feedback_cls, mock_project_cls):
+        """Verify that running in delineation mode retains only delineation outputs and splitting lines."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+        from qgis.core import QgsVectorLayer, QgsField
+        from qgis.PyQt.QtCore import QVariant
+        import tempfile
+
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.bar_combo = MagicMock()
+        mock_dlg.bldg_combo = MagicMock()
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.road_combo = MagicMock()
+        mock_dlg.river_combo = MagicMock()
+        mock_dlg.tolerance_spin = MagicMock(value=lambda: 5.0)
+        mock_dlg.enable_thresholds_chk = MagicMock(isChecked=lambda: True)
+        mock_dlg.min_hh_spin = MagicMock(value=lambda: 100)
+        mock_dlg.max_hh_spin = MagicMock(value=lambda: 300)
+        mock_dlg.compact_chk = MagicMock(isChecked=lambda: True)
+        mock_dlg.allow_candidate_merge_chk = MagicMock(isChecked=lambda: False)
+        mock_dlg.sliver_combo = MagicMock(currentIndex=lambda: 1)
+        mock_dlg.crs_widget = MagicMock(crs=lambda: None)
+        mock_dlg.log_console = MagicMock()
+        mock_dlg.progress_bar = MagicMock()
+        mock_dlg.run_btn = MagicMock()
+        mock_dlg.cancel_btn = MagicMock()
+        mock_dlg.status_banner = MagicMock()
+        mock_dlg.ALGORITHM_ID = "gmd:create_ea"
+        mock_dlg.algo = MagicMock()
+        mock_dlg._extract_5digit_geocode.return_value = "12345"
+        mock_dlg._export_layer_to_gpkg.return_value = False
+
+        tmp_dir = tempfile.mkdtemp()
+        mock_dlg.output_folder_widget = MagicMock(filePath=lambda: tmp_dir)
+
+        delin_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "12345_delineated_ea2026", "memory")
+        delin_layer.dataProvider().addAttributes([QgsField("split_by", QVariant.String), QgsField("remarks", QVariant.String)])
+        delin_layer.updateFields()
+
+        merge_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "12345_merged_ea2026", "memory")
+
+        mock_dlg._safe_get_layer.return_value = delin_layer
+        mock_run.return_value = {
+            'DELINEATED_OUTPUT': delin_layer,
+            'MERGED_OUTPUT': merge_layer,
+        }
+
+        mock_proj = MagicMock()
+        mock_root = MagicMock()
+        mock_group = MagicMock()
+        mock_root.findGroup.return_value = mock_group
+        mock_group.findGroup.return_value = mock_group
+        mock_root.findLayer.return_value = None
+        mock_proj.layerTreeRoot.return_value = mock_root
+        mock_proj.mapLayers.return_value = {}
+        mock_project_cls.instance.return_value = mock_proj
+        mock_feedback_inst = mock_feedback_cls.return_value
+        mock_feedback_inst.isCanceled.return_value = False
+
+        EALauncherDialog.run_pipeline(mock_dlg, mode="delineation")
+
+        # In delineation mode, merge_layer should be discarded/removed from project
+        mock_proj.removeMapLayer.assert_any_call(merge_layer.id())
+
+    @patch("references.create_enumeration_area.dialog.QgsProject")
+    @patch("references.create_enumeration_area.dialog.CustomProcessingFeedback")
+    @patch("qgis.processing.runAndLoadResults")
+    def test_run_pipeline_output_filtering_merging_mode(self, mock_run, mock_feedback_cls, mock_project_cls):
+        """Verify that running in merging mode retains only merging outputs and removes splitting lines & delineation layers."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+        from qgis.core import QgsVectorLayer, QgsField
+        from qgis.PyQt.QtCore import QVariant
+        import tempfile
+
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.bar_combo = MagicMock()
+        mock_dlg.bldg_combo = MagicMock()
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.road_combo = MagicMock()
+        mock_dlg.river_combo = MagicMock()
+        mock_dlg.tolerance_spin = MagicMock(value=lambda: 5.0)
+        mock_dlg.enable_thresholds_chk = MagicMock(isChecked=lambda: True)
+        mock_dlg.min_hh_spin = MagicMock(value=lambda: 100)
+        mock_dlg.max_hh_spin = MagicMock(value=lambda: 300)
+        mock_dlg.compact_chk = MagicMock(isChecked=lambda: True)
+        mock_dlg.allow_candidate_merge_chk = MagicMock(isChecked=lambda: True)
+        mock_dlg.sliver_combo = MagicMock(currentIndex=lambda: 1)
+        mock_dlg.crs_widget = MagicMock(crs=lambda: None)
+        mock_dlg.merge_log_console = MagicMock()
+        mock_dlg.merge_progress_bar = MagicMock()
+        mock_dlg.merge_run_btn = MagicMock()
+        mock_dlg.merge_cancel_btn = MagicMock()
+        mock_dlg.merge_status_banner = MagicMock()
+        mock_dlg.ALGORITHM_ID = "gmd:create_ea"
+        mock_dlg.algo = MagicMock()
+        mock_dlg._extract_5digit_geocode.return_value = "12345"
+        mock_dlg._export_layer_to_gpkg.return_value = False
+
+        tmp_dir = tempfile.mkdtemp()
+        mock_dlg.output_folder_widget = MagicMock(filePath=lambda: tmp_dir)
+
+        delin_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "12345_delineated_ea2026", "memory")
+        merge_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "12345_merged_ea2026", "memory")
+        split_line_layer = QgsVectorLayer("LineString?crs=epsg:4326", "12345_eadel_update", "memory")
+
+        mock_dlg._safe_get_layer.return_value = merge_layer
+        mock_run.return_value = {
+            'DELINEATED_OUTPUT': delin_layer,
+            'MERGED_OUTPUT': merge_layer,
+        }
+
+        mock_proj = MagicMock()
+        mock_root = MagicMock()
+        mock_group = MagicMock()
+        mock_root.findGroup.return_value = mock_group
+        mock_group.findGroup.return_value = mock_group
+        mock_root.findLayer.return_value = None
+        mock_proj.layerTreeRoot.return_value = mock_root
+        mock_proj.mapLayers.return_value = {
+            "split_line_id": split_line_layer,
+        }
+        mock_project_cls.instance.return_value = mock_proj
+        mock_feedback_inst = mock_feedback_cls.return_value
+        mock_feedback_inst.isCanceled.return_value = False
+
+        EALauncherDialog.run_pipeline(mock_dlg, mode="merging")
+
+        # In merging mode, delin_layer should be discarded/removed
+        mock_proj.removeMapLayer.assert_any_call(delin_layer.id())
+        # In merging mode, any splitting line layer should also be removed
+        mock_proj.removeMapLayer.assert_any_call("split_line_id")
 
 
 if __name__ == "__main__":

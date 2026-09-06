@@ -16,9 +16,10 @@ console interface.
 import os
 import re
 import math
+from typing import Optional, List, Dict, Any
 from qgis.core import (
     Qgis, QgsMessageLog,
-    QgsApplication, QgsProject, QgsVectorLayer, QgsCoordinateTransform, QgsSpatialIndex,
+    QgsApplication, QgsProject, QgsVectorLayer, QgsMapLayer, QgsCoordinateTransform, QgsSpatialIndex,
     QgsFeature, QgsField, QgsGeometry, QgsProcessingContext, QgsProcessingFeedback,
     QgsCoordinateReferenceSystem, QgsWkbTypes, NULL, QgsMapLayerProxyModel
 )
@@ -68,19 +69,31 @@ class ThreadSafeFeedbackHelper(QObject):
     append_html = pyqtSignal(str)
     set_val = pyqtSignal(int)
 
-    def __init__(self, log_widget, progress_bar):
+    def __init__(self, log_widget, progress_bar, extra_log_widgets=None, extra_progress_bars=None):
         super().__init__()
-        self.log_widget = log_widget
-        self.progress_bar = progress_bar
+        self.log_widgets = [log_widget] if log_widget else []
+        if extra_log_widgets:
+            self.log_widgets.extend([w for w in extra_log_widgets if w and w not in self.log_widgets])
+        self.progress_bars = [progress_bar] if progress_bar else []
+        if extra_progress_bars:
+            self.progress_bars.extend([p for p in extra_progress_bars if p and p not in self.progress_bars])
         self.append_html.connect(self._on_append_html)
         self.set_val.connect(self._on_set_val)
 
     def _on_append_html(self, html):
-        self.log_widget.append(html)
-        self.log_widget.ensureCursorVisible()
+        for w in self.log_widgets:
+            try:
+                w.append(html)
+                w.ensureCursorVisible()
+            except Exception:
+                pass
 
     def _on_set_val(self, val):
-        self.progress_bar.setValue(val)
+        for p in self.progress_bars:
+            try:
+                p.setValue(val)
+            except Exception:
+                pass
 
 
 class _EAMergeWorker(QObject):
@@ -122,7 +135,7 @@ class _EAMergeWorker(QObject):
 class CustomProcessingFeedback(QgsProcessingFeedback):
     """Subclass of QgsProcessingFeedback to route progress and log updates to custom UI elements."""
     
-    def __init__(self, progress_bar, log_widget, run_button, cancel_button):
+    def __init__(self, progress_bar, log_widget, run_button, cancel_button, extra_log_widgets=None, extra_progress_bars=None, extra_cancel_buttons=None):
         super().__init__()
         self.progress_bar = progress_bar
         self.log_widget = log_widget
@@ -131,10 +144,14 @@ class CustomProcessingFeedback(QgsProcessingFeedback):
         self.is_cancelled = False
         
         # Helper to marshal GUI thread updates safely from worker threads
-        self.helper = ThreadSafeFeedbackHelper(log_widget, progress_bar)
+        self.helper = ThreadSafeFeedbackHelper(log_widget, progress_bar, extra_log_widgets, extra_progress_bars)
         
         if self.cancel_button:
             self.cancel_button.clicked.connect(self.cancel)
+        if extra_cancel_buttons:
+            for cb in extra_cancel_buttons:
+                if cb:
+                    cb.clicked.connect(self.cancel)
 
     def setProgress(self, progress):
         self.helper.set_val.emit(int(progress))
@@ -1081,22 +1098,77 @@ class EALauncherDialog(QDialog):
     # ─────────────────────────────────────────────────────────────────────────
 
     def _build_create_ea_tab(self):
-        """Build the Create Enumeration Areas tab (Tab 2) and add it to main_tabs."""
+        """Build the Create Enumeration Areas tab (Tab 2) with 2 dedicated sub-tabs:
+        1. Proposed Delineation
+        2. Proposed Merging
+        """
         tab_widget = QWidget()
         tab_root_layout = QVBoxLayout(tab_widget)
         tab_root_layout.setContentsMargins(6, 6, 6, 6)
         tab_root_layout.setSpacing(6)
-        self._build_create_ea_content(tab_root_layout)
+
+        self.create_ea_sub_tabs = QTabWidget()
+        self.create_ea_sub_tabs.setObjectName("createEaSubTabs")
+        self.create_ea_sub_tabs.tabBar().setElideMode(Qt.ElideNone)
+        self.create_ea_sub_tabs.setStyleSheet("""
+            QTabWidget#createEaSubTabs > QTabBar::tab {
+                font-weight: bold;
+                font-size: 11px;
+                min-width: 160px;
+                padding: 8px 20px;
+                margin-right: 2px;
+                background-color: #EAEDED;
+                color: #2C3E50;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }
+            QTabWidget#createEaSubTabs > QTabBar::tab:selected {
+                background-color: #FFFFFF;
+                color: #2980B9;
+                border-bottom: 3px solid #3498DB;
+            }
+            QTabWidget#createEaSubTabs > QTabBar::tab:hover:!selected {
+                background-color: #D5D8DC;
+            }
+        """)
+
+        # ── Sub-tab 1: Proposed Delineation ───────────────────────────
+        self.proposed_delineation_tab = QWidget()
+        delin_layout = QVBoxLayout(self.proposed_delineation_tab)
+        delin_layout.setContentsMargins(0, 0, 0, 0)
+        delin_layout.setSpacing(6)
+        self._build_proposed_delineation_content(delin_layout)
+        self.create_ea_sub_tabs.addTab(self.proposed_delineation_tab, "Proposed Delineation")
+
+        # ── Sub-tab 2: Proposed Merging ───────────────────────────────
+        self.proposed_merging_tab = QWidget()
+        merge_layout = QVBoxLayout(self.proposed_merging_tab)
+        merge_layout.setContentsMargins(0, 0, 0, 0)
+        merge_layout.setSpacing(6)
+        self._build_proposed_merging_content(merge_layout)
+        self.create_ea_sub_tabs.addTab(self.proposed_merging_tab, "Proposed Merging")
+
+        self.create_ea_sub_tabs.currentChanged.connect(self._on_create_ea_subtab_changed)
+
+        # Wire two-way synchronization between sub-tab controls
+        self._setup_tab2_sync_connections()
+
+        tab_root_layout.addWidget(self.create_ea_sub_tabs)
         self.main_tabs.addTab(tab_widget, "Create Enumeration Areas")
 
     def _build_create_ea_content(self, root):
+        """Backward-compatibility wrapper for legacy callers."""
+        self._build_proposed_delineation_content(root)
+
+    def _build_proposed_delineation_content(self, root):
+        """Build Proposed Delineation content (Sub-tab 1)."""
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(6)
 
-        # ── Main Pane Splitter ────────────────────────────────────────────
+        # ── Main Splitter: left (inputs+options) / right (preview+logs) / help ───
         main_splitter = QSplitter(Qt.Horizontal)
         main_splitter.setObjectName("mainSplitter")
-        
+
         # Left Panel (Parameters Scroll Area)
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
@@ -1185,8 +1257,6 @@ class EALauncherDialog(QDialog):
         self.river_status_lbl.setWordWrap(True)
         inputs_layout.addWidget(self.river_status_lbl)
 
-
-
         # Designated Output Folder
         inputs_layout.addWidget(QLabel("Designated Output Folder*"))
         self.output_folder_widget = QgsFileWidget()
@@ -1210,14 +1280,6 @@ class EALauncherDialog(QDialog):
         self.enable_thresholds_chk.toggled.connect(self._toggle_thresholds)
         params_layout.addWidget(self.enable_thresholds_chk)
 
-        # Min Household
-        self.min_hh_label = QLabel("Minimum Household count per EA")
-        params_layout.addWidget(self.min_hh_label)
-        self.min_hh_spin = QSpinBox()
-        self.min_hh_spin.setRange(1, 99999)
-        self.min_hh_spin.setValue(99)
-        params_layout.addWidget(self.min_hh_spin)
-
         # Max Household
         self.max_hh_label = QLabel("Maximum Household count per EA")
         params_layout.addWidget(self.max_hh_label)
@@ -1225,6 +1287,14 @@ class EALauncherDialog(QDialog):
         self.max_hh_spin.setRange(1, 99999)
         self.max_hh_spin.setValue(300)
         params_layout.addWidget(self.max_hh_spin)
+
+        # Min Household
+        self.min_hh_label = QLabel("Minimum Household count per EA")
+        params_layout.addWidget(self.min_hh_label)
+        self.min_hh_spin = QSpinBox()
+        self.min_hh_spin.setRange(1, 99999)
+        self.min_hh_spin.setValue(99)
+        params_layout.addWidget(self.min_hh_spin)
 
         # Snapping Tolerance
         self.tolerance_label = QLabel("Snapping Tolerance (meters) for road/river alignment")
@@ -1242,7 +1312,7 @@ class EALauncherDialog(QDialog):
         self.compact_chk.setChecked(True)
         params_layout.addWidget(self.compact_chk)
 
-        # Allow Candidate Merging
+        # Allow Candidate Merging (kept for pipeline parameters)
         self.allow_candidate_merge_chk = QCheckBox("Allow Merging Between Under-Threshold Candidate EAs")
         self.allow_candidate_merge_chk.setToolTip("When checked, under-threshold candidate EAs (< 100 HH) can merge with neighboring candidate EAs when no normal reference EA exists in the barangay.")
         self.allow_candidate_merge_chk.setChecked(True)
@@ -1282,22 +1352,15 @@ class EALauncherDialog(QDialog):
         perm_title.setWordWrap(True)
         outputs_layout.addWidget(perm_title)
 
-        self.out_delineated_lbl = QLabel("• Delineated EAs: <i>-</i>")
-        self.out_delineated_lbl.setWordWrap(True)
-        self.out_delineated_lbl.setFont(QFont("Segoe UI", 9))
-        outputs_layout.addWidget(self.out_delineated_lbl)
-
-        self.out_merged_lbl = QLabel("• Merged EAs: <i>-</i>")
-        self.out_merged_lbl.setWordWrap(True)
-        self.out_merged_lbl.setFont(QFont("Segoe UI", 9))
-        outputs_layout.addWidget(self.out_merged_lbl)
-
-
-
         self.out_splitting_lines_lbl = QLabel("• Proposed Splitting Lines: <i>-</i>")
         self.out_splitting_lines_lbl.setWordWrap(True)
         self.out_splitting_lines_lbl.setFont(QFont("Segoe UI", 9))
         outputs_layout.addWidget(self.out_splitting_lines_lbl)
+
+        self.out_delineated_lbl = QLabel("• Delineated EAs: <i>-</i>")
+        self.out_delineated_lbl.setWordWrap(True)
+        self.out_delineated_lbl.setFont(QFont("Segoe UI", 9))
+        outputs_layout.addWidget(self.out_delineated_lbl)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
@@ -1314,11 +1377,6 @@ class EALauncherDialog(QDialog):
         self.out_delin_cand_lbl.setFont(QFont("Segoe UI", 9))
         outputs_layout.addWidget(self.out_delin_cand_lbl)
 
-        self.out_merge_cand_lbl = QLabel("• Merge Candidates: <span style='color:#7F8C8D;'>[Scratch]</span>")
-        self.out_merge_cand_lbl.setWordWrap(True)
-        self.out_merge_cand_lbl.setFont(QFont("Segoe UI", 9))
-        outputs_layout.addWidget(self.out_merge_cand_lbl)
-
         self.out_extracted_bldg_lbl = QLabel("• Extracted Buildings: <span style='color:#7F8C8D;'>[Scratch]</span>")
         self.out_extracted_bldg_lbl.setWordWrap(True)
         self.out_extracted_bldg_lbl.setFont(QFont("Segoe UI", 9))
@@ -1327,38 +1385,35 @@ class EALauncherDialog(QDialog):
         scroll_layout.addWidget(outputs_group)
         scroll.setWidget(scroll_content)
         left_layout.addWidget(scroll)
-        
+
         left_widget.setMinimumWidth(390)
         main_splitter.addWidget(left_widget)
 
-        # Right Panel (Tabs for Live Preview and Execution Logs)
+        # Right Panel (Separated Tabs for Live Delineation Preview and Delineation Execution Logs)
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(2, 2, 2, 2)
         right_layout.setSpacing(6)
 
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setObjectName("rightTabs")
-        self.tab_widget.tabBar().setElideMode(Qt.ElideNone)
-        self.tab_widget.tabBar().setUsesScrollButtons(True)
+        self.delin_right_tabs = QTabWidget()
+        self.delin_right_tabs.setObjectName("delinRightTabs")
+        self.delin_right_tabs.tabBar().setElideMode(Qt.ElideNone)
+        self.delin_right_tabs.tabBar().setUsesScrollButtons(True)
 
-        # ── Live Preview Tab ──────────────────────────────────────────────
+        # Alias for backward compatibility
+        self.tab_widget = self.delin_right_tabs
+        self.preview_sub_tabs = self.delin_right_tabs
+
+        # ── 1. Live Delineation Candidates Preview Tab ─────────────────────────────
         preview_tab = QWidget()
         preview_tab_layout = QVBoxLayout(preview_tab)
         preview_tab_layout.setContentsMargins(8, 8, 8, 8)
         preview_tab_layout.setSpacing(8)
 
-        # Dashboard KPI Cards
+        # Dashboard KPI Card
         self.kpi_layout = QHBoxLayout()
-        
-        # 1. Delineation Card
         self.kpi_delin_card = self._create_kpi_card("For Delineation", "0", "delin")
         self.kpi_layout.addWidget(self.kpi_delin_card)
-        
-        # 2. Merge Card
-        self.kpi_merge_card = self._create_kpi_card("For Merging", "0", "merge")
-        self.kpi_layout.addWidget(self.kpi_merge_card)
-        
         preview_tab_layout.addLayout(self.kpi_layout)
 
         # Search Bar Filter
@@ -1367,31 +1422,19 @@ class EALauncherDialog(QDialog):
         self.search_edit.textChanged.connect(self.filter_previews)
         preview_tab_layout.addWidget(self.search_edit)
 
-        # Sub Tabs for candidates tables
-        self.preview_sub_tabs = QTabWidget()
-        self.preview_sub_tabs.setObjectName("previewSubTabs")
-        self.preview_sub_tabs.tabBar().setElideMode(Qt.ElideNone)
-        self.preview_sub_tabs.tabBar().setUsesScrollButtons(True)
-
-        # Table 1: Delineation Table
+        # Delineation Candidates Table
         self.delineation_table = self._create_preview_table()
-        self.preview_sub_tabs.addTab(self.delineation_table, "Delineation Candidates")
+        preview_tab_layout.addWidget(self.delineation_table)
 
-        # Table 2: Merge Table
-        self.merge_table = self._create_preview_table()
-        self.preview_sub_tabs.addTab(self.merge_table, "Merge Candidates")
-
-        preview_tab_layout.addWidget(self.preview_sub_tabs)
-        
         # Refresh preview button
         self.refresh_btn = QPushButton("Refresh Live Candidates Preview")
         self.refresh_btn.setFixedHeight(30)
         self.refresh_btn.clicked.connect(self.generate_preview)
         preview_tab_layout.addWidget(self.refresh_btn)
 
-        self.tab_widget.addTab(preview_tab, "Live Candidates Preview")
+        self.delin_right_tabs.addTab(preview_tab, "Live Delineation Preview")
 
-        # ── Execution Logs Tab ────────────────────────────────────────────
+        # ── 2. Delineation Execution Logs Tab ─────────────────────────────────────
         logs_tab = QWidget()
         logs_layout = QVBoxLayout(logs_tab)
         logs_layout.setContentsMargins(8, 8, 8, 8)
@@ -1399,19 +1442,19 @@ class EALauncherDialog(QDialog):
 
         # Console controls layout
         console_controls = QHBoxLayout()
-        console_controls.addWidget(QLabel("Execution Logs:"))
+        console_controls.addWidget(QLabel("Delineation Execution Logs:"))
         console_controls.addStretch()
-        
+
         self.copy_logs_btn = QPushButton("Copy Logs")
         self.copy_logs_btn.setToolTip("Copy entire log console history to clipboard.")
         self.copy_logs_btn.clicked.connect(self.copy_logs_to_clipboard)
         console_controls.addWidget(self.copy_logs_btn)
-        
+
         self.clear_logs_btn = QPushButton("Clear Console")
         self.clear_logs_btn.setToolTip("Clear all text from the console.")
         self.clear_logs_btn.clicked.connect(self.log_console_clear)
         console_controls.addWidget(self.clear_logs_btn)
-        
+
         logs_layout.addLayout(console_controls)
 
         self.log_console = QTextEdit()
@@ -1419,10 +1462,9 @@ class EALauncherDialog(QDialog):
         self.log_console.setReadOnly(True)
         logs_layout.addWidget(self.log_console)
 
-        self.tab_widget.addTab(logs_tab, "Processing Progress && Logs")
+        self.delin_right_tabs.addTab(logs_tab, "Processing Progress && Logs")
 
-        right_layout.addWidget(self.tab_widget)
-        
+        right_layout.addWidget(self.delin_right_tabs)
         right_widget.setMinimumWidth(480)
         main_splitter.addWidget(right_widget)
 
@@ -1439,10 +1481,9 @@ class EALauncherDialog(QDialog):
 
         self.help_panel.setMinimumWidth(260)
         main_splitter.addWidget(self.help_panel)
-        
+
         # Set proportional initial widths for the panels
         main_splitter.setSizes([390, 500, 260])
-
         root.addWidget(main_splitter, 1)
 
         # ── Bottom Bar (Progress, Run, Cancel & Status Banner) ───────────
@@ -1451,7 +1492,7 @@ class EALauncherDialog(QDialog):
         bottom_main_layout.setContentsMargins(10, 4, 10, 6)
         bottom_main_layout.setSpacing(6)
 
-        # Status Summary Banner above progress bar (Native QLabel without hardcoded stylesheet)
+        # Status Summary Banner above progress bar
         self.status_banner = QLabel("Ready to run algorithm.")
         self.status_banner.setWordWrap(True)
         self.status_banner.setFont(QFont("Segoe UI", 9, QFont.Bold))
@@ -1476,14 +1517,499 @@ class EALauncherDialog(QDialog):
         self.cancel_btn.setEnabled(False)
         bottom_controls_layout.addWidget(self.cancel_btn)
 
-        self.run_btn = QPushButton("Run")
-        self.run_btn.setMinimumWidth(120)
+        self.run_btn = QPushButton("Extract Delineation Candidate")
+        self.run_btn.setMinimumWidth(180)
         self.run_btn.setFixedHeight(26)
-        self.run_btn.clicked.connect(self.run_pipeline)
+        self.run_btn.clicked.connect(self.run_delineation)
         bottom_controls_layout.addWidget(self.run_btn)
+
+        self.split_ea_btn = QPushButton("Run Delineation")
+        self.split_ea_btn.setMinimumWidth(160)
+        self.split_ea_btn.setFixedHeight(26)
+        self.split_ea_btn.setToolTip("Open pop-up panel to run delineation splitting on EA polygons using proposed eadel_update cut lines.")
+        self.split_ea_btn.clicked.connect(self._open_split_ea_dialog)
+        bottom_controls_layout.addWidget(self.split_ea_btn)
 
         bottom_main_layout.addLayout(bottom_controls_layout)
         root.addWidget(bottom_bar)
+
+    def _build_proposed_merging_content(self, root):
+        """Build Proposed Merging content (Sub-tab 2) with separated Preview & Logs."""
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(6)
+
+        # ── Main Splitter: left (inputs+options) / right (preview+logs) / help ───
+        merge_splitter = QSplitter(Qt.Horizontal)
+        merge_splitter.setObjectName("mergeSplitter")
+
+        # Left Panel (Parameters Scroll Area)
+        merge_left_widget = QWidget()
+        merge_left_layout = QVBoxLayout(merge_left_widget)
+        merge_left_layout.setContentsMargins(2, 2, 2, 2)
+        merge_left_layout.setSpacing(6)
+
+        merge_scroll = QScrollArea()
+        merge_scroll.setWidgetResizable(True)
+        merge_scroll.setFrameShape(QFrame.NoFrame)
+        merge_scroll_content = QWidget()
+        merge_scroll_layout = QVBoxLayout(merge_scroll_content)
+        merge_scroll_layout.setContentsMargins(0, 0, 5, 0)
+        merge_scroll_layout.setSpacing(10)
+
+        # 1. Inputs Section (QGroupBox)
+        merge_inputs_group = QGroupBox("Input Layers")
+        merge_inputs_layout = QVBoxLayout(merge_inputs_group)
+        merge_inputs_layout.setContentsMargins(8, 8, 8, 8)
+        merge_inputs_layout.setSpacing(8)
+
+        # Row 1: Dedicated Auto Arrange action button
+        self.merge_auto_arrange_btn = QPushButton("Auto Arrange")
+        self.merge_auto_arrange_btn.setToolTip("Auto-arrange project layer ordering, apply QML styles, and auto-detect matching layers.")
+        self.merge_auto_arrange_btn.clicked.connect(self.auto_arrange_and_detect_layers)
+        merge_inputs_layout.addWidget(self.merge_auto_arrange_btn)
+
+        # Row 2: Sub-row for Auto-detect Layers and Fill missing hhcount
+        merge_inputs_btn_layout = QHBoxLayout()
+        self.merge_detect_btn = QPushButton("Auto-detect Layers")
+        self.merge_detect_btn.setToolTip("Scan current QGIS project layers and auto-select matching layers.")
+        self.merge_detect_btn.clicked.connect(self.auto_detect_layers)
+        merge_inputs_btn_layout.addWidget(self.merge_detect_btn)
+
+        self.merge_fill_missing_btn = QPushButton("Fill missing hh_count")
+        self.merge_fill_missing_btn.setToolTip("Compute and populate missing EA hh_count values from building points within each EA polygon.")
+        self.merge_fill_missing_btn.clicked.connect(self.fill_missing_hh_count)
+        merge_inputs_btn_layout.addWidget(self.merge_fill_missing_btn)
+        merge_inputs_layout.addLayout(merge_inputs_btn_layout)
+
+        # Barangay Layer
+        merge_inputs_layout.addWidget(QLabel("Barangay Layer (Polygon)*"))
+        self.merge_bar_combo = QgsMapLayerComboBox(self)
+        self.merge_bar_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
+        merge_inputs_layout.addWidget(self.merge_bar_combo)
+        self.merge_bar_status_lbl = QLabel("No layer selected.")
+        self.merge_bar_status_lbl.setWordWrap(True)
+        merge_inputs_layout.addWidget(self.merge_bar_status_lbl)
+
+        # Building Points
+        merge_inputs_layout.addWidget(QLabel("Building Point Layer (Point)*"))
+        self.merge_bldg_combo = QgsMapLayerComboBox(self)
+        self.merge_bldg_combo.setFilters(QgsMapLayerProxyModel.PointLayer)
+        merge_inputs_layout.addWidget(self.merge_bldg_combo)
+        self.merge_bldg_status_lbl = QLabel("No layer selected.")
+        self.merge_bldg_status_lbl.setWordWrap(True)
+        merge_inputs_layout.addWidget(self.merge_bldg_status_lbl)
+
+        # Previous EAs
+        merge_inputs_layout.addWidget(QLabel("Previous EA Layer (Polygon)*"))
+        self.merge_prev_ea_combo = QgsMapLayerComboBox(self)
+        self.merge_prev_ea_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
+        merge_inputs_layout.addWidget(self.merge_prev_ea_combo)
+        self.merge_prev_ea_status_lbl = QLabel("No layer selected.")
+        self.merge_prev_ea_status_lbl.setWordWrap(True)
+        merge_inputs_layout.addWidget(self.merge_prev_ea_status_lbl)
+
+        # Designated Output Folder
+        merge_inputs_layout.addWidget(QLabel("Designated Output Folder*"))
+        self.merge_output_folder_widget = QgsFileWidget()
+        self.merge_output_folder_widget.setStorageMode(QgsFileWidget.GetDirectory)
+        self.merge_output_folder_widget.setDialogTitle("Designate Output Folder for EA Delineation and Merging")
+        merge_inputs_layout.addWidget(self.merge_output_folder_widget)
+        self.merge_output_folder_widget.fileChanged.connect(self.validate_layer_inputs)
+
+        merge_scroll_layout.addWidget(merge_inputs_group)
+
+        # 2. Merging Parameters Section (Collapsible QGroupBox)
+        self.merge_params_group = QgsCollapsibleGroupBox("Merging Thresholds Settings")
+        if hasattr(self.merge_params_group, "setCollapsed"):
+            self.merge_params_group.setCollapsed(True)
+        merge_params_layout = QVBoxLayout(self.merge_params_group)
+        merge_params_layout.setSpacing(8)
+
+        # Enable Household Count Thresholds checkbox
+        self.merge_enable_thresholds_chk = QCheckBox("Enable Custom Thresholds")
+        self.merge_enable_thresholds_chk.setChecked(False)
+        self.merge_enable_thresholds_chk.toggled.connect(self._toggle_merge_thresholds)
+        merge_params_layout.addWidget(self.merge_enable_thresholds_chk)
+
+        # Min Household
+        self.merge_min_hh_label = QLabel("Minimum Household count per EA")
+        merge_params_layout.addWidget(self.merge_min_hh_label)
+        self.merge_min_hh_spin = QSpinBox()
+        self.merge_min_hh_spin.setRange(1, 99999)
+        self.merge_min_hh_spin.setValue(99)
+        merge_params_layout.addWidget(self.merge_min_hh_spin)
+
+        # Allow Candidate Merging
+        self.merge_allow_candidate_merge_chk = QCheckBox("Allow Merging Between Under-Threshold Candidate EAs")
+        self.merge_allow_candidate_merge_chk.setToolTip("When checked, under-threshold candidate EAs (< 100 HH) can merge with neighboring candidate EAs when no normal reference EA exists in the barangay.")
+        self.merge_allow_candidate_merge_chk.setChecked(True)
+        self.merge_allow_candidate_merge_chk.toggled.connect(lambda chk: self.allow_candidate_merge_chk.setChecked(chk) if hasattr(self, 'allow_candidate_merge_chk') else None)
+        merge_params_layout.addWidget(self.merge_allow_candidate_merge_chk)
+
+        # Apply initial disabled state to merging threshold
+        self._toggle_merge_thresholds(False)
+
+        # Sliver Polygon enum
+        merge_params_layout.addWidget(QLabel("Sliver Polygon Area Threshold"))
+        self.merge_sliver_combo = QComboBox()
+        self.merge_sliver_combo.addItems([
+            "Auto-detect (Script Chosen / Dynamic)",
+            "Automatic (Conservative - 1e-11 deg / 1e-4 m²)",
+            "Automatic (Standard - 1e-9 deg / 1e-2 m²)",
+            "Automatic (Moderate - 1e-7 deg / 1 m²)",
+            "Automatic (Aggressive - 1e-5 deg / 100 m²)",
+            "Automatic (Ultra-Conservative - 1e-13 deg / 1e-6 m²)",
+            "Automatic (Super Aggressive - 1e-4 deg / 1,000 m²)",
+            "Automatic (Extremely Aggressive - 1e-3 deg / 10,000 m²)"
+        ])
+        merge_params_layout.addWidget(self.merge_sliver_combo)
+
+        # Target CRS
+        merge_params_layout.addWidget(QLabel("Target CRS"))
+        self.merge_crs_widget = QgsProjectionSelectionWidget()
+        self.merge_crs_widget.setCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
+        merge_params_layout.addWidget(self.merge_crs_widget)
+
+        merge_scroll_layout.addWidget(self.merge_params_group)
+
+        # 3. Outputs Section (QGroupBox)
+        merge_outputs_group = QGroupBox("Output Preview")
+        merge_outputs_layout = QVBoxLayout(merge_outputs_group)
+        merge_outputs_layout.setContentsMargins(10, 8, 10, 8)
+        merge_outputs_layout.setSpacing(6)
+
+        # Permanent outputs
+        merge_perm_title = QLabel("<b>Permanent Output Layers (.gpkg):</b>")
+        merge_perm_title.setWordWrap(True)
+        merge_outputs_layout.addWidget(merge_perm_title)
+
+        self.out_merged_lbl = QLabel("• Merged EAs: <i>-</i>")
+        self.out_merged_lbl.setWordWrap(True)
+        self.out_merged_lbl.setFont(QFont("Segoe UI", 9))
+        merge_outputs_layout.addWidget(self.out_merged_lbl)
+
+        merge_sep = QFrame()
+        merge_sep.setFrameShape(QFrame.HLine)
+        merge_sep.setFrameShadow(QFrame.Sunken)
+        merge_outputs_layout.addWidget(merge_sep)
+
+        # Temporary scratch outputs
+        merge_temp_title = QLabel("<b>Temporary Scratch Layers:</b>")
+        merge_temp_title.setWordWrap(True)
+        merge_outputs_layout.addWidget(merge_temp_title)
+
+        self.out_merge_cand_lbl = QLabel("• Merge Candidates: <span style='color:#7F8C8D;'>[Scratch]</span>")
+        self.out_merge_cand_lbl.setWordWrap(True)
+        self.out_merge_cand_lbl.setFont(QFont("Segoe UI", 9))
+        merge_outputs_layout.addWidget(self.out_merge_cand_lbl)
+
+        self.merge_out_extracted_bldg_lbl = QLabel("• Extracted Buildings: <span style='color:#7F8C8D;'>[Scratch]</span>")
+        self.merge_out_extracted_bldg_lbl.setWordWrap(True)
+        self.merge_out_extracted_bldg_lbl.setFont(QFont("Segoe UI", 9))
+        merge_outputs_layout.addWidget(self.merge_out_extracted_bldg_lbl)
+
+        merge_scroll_layout.addWidget(merge_outputs_group)
+        merge_scroll.setWidget(merge_scroll_content)
+        merge_left_layout.addWidget(merge_scroll)
+
+        merge_left_widget.setMinimumWidth(390)
+        merge_splitter.addWidget(merge_left_widget)
+
+        # Right Panel (Separated Tabs for Live Merge Preview and Merge Execution Logs)
+        merge_right_widget = QWidget()
+        merge_right_layout = QVBoxLayout(merge_right_widget)
+        merge_right_layout.setContentsMargins(2, 2, 2, 2)
+        merge_right_layout.setSpacing(6)
+
+        self.merge_right_tabs = QTabWidget()
+        self.merge_right_tabs.setObjectName("mergeRightTabs")
+        self.merge_right_tabs.tabBar().setElideMode(Qt.ElideNone)
+        self.merge_right_tabs.tabBar().setUsesScrollButtons(True)
+
+        # ── 1. Live Merge Candidates Preview Tab ─────────────────────────────────
+        merge_preview_tab = QWidget()
+        merge_preview_tab_layout = QVBoxLayout(merge_preview_tab)
+        merge_preview_tab_layout.setContentsMargins(8, 8, 8, 8)
+        merge_preview_tab_layout.setSpacing(8)
+
+        # Dashboard KPI Card
+        merge_kpi_layout = QHBoxLayout()
+        self.kpi_merge_card = self._create_kpi_card("For Merging", "0", "merge")
+        merge_kpi_layout.addWidget(self.kpi_merge_card)
+        merge_preview_tab_layout.addLayout(merge_kpi_layout)
+
+        # Search Bar Filter
+        self.merge_search_edit = QLineEdit()
+        self.merge_search_edit.setPlaceholderText("Filter previews by Barangay name, Geocode or EA name...")
+        self.merge_search_edit.textChanged.connect(self.filter_previews)
+        merge_preview_tab_layout.addWidget(self.merge_search_edit)
+
+        # Merge Candidates Table
+        self.merge_table = self._create_preview_table()
+        merge_preview_tab_layout.addWidget(self.merge_table)
+
+        # Refresh preview button
+        self.merge_refresh_btn = QPushButton("Refresh Live Candidates Preview")
+        self.merge_refresh_btn.setFixedHeight(30)
+        self.merge_refresh_btn.clicked.connect(self.generate_preview)
+        merge_preview_tab_layout.addWidget(self.merge_refresh_btn)
+
+        self.merge_right_tabs.addTab(merge_preview_tab, "Live Merge Preview")
+
+        # ── 2. Merging Execution Logs Tab ─────────────────────────────────────────
+        merge_logs_tab = QWidget()
+        merge_logs_layout = QVBoxLayout(merge_logs_tab)
+        merge_logs_layout.setContentsMargins(8, 8, 8, 8)
+        merge_logs_layout.setSpacing(8)
+
+        # Console controls layout
+        merge_console_controls = QHBoxLayout()
+        merge_console_controls.addWidget(QLabel("Merging Execution Logs:"))
+        merge_console_controls.addStretch()
+
+        self.merge_copy_logs_btn = QPushButton("Copy Logs")
+        self.merge_copy_logs_btn.setToolTip("Copy entire log console history to clipboard.")
+        self.merge_copy_logs_btn.clicked.connect(self._copy_merge_logs_to_clipboard)
+        merge_console_controls.addWidget(self.merge_copy_logs_btn)
+
+        self.merge_clear_logs_btn = QPushButton("Clear Console")
+        self.merge_clear_logs_btn.setToolTip("Clear all text from the console.")
+        self.merge_clear_logs_btn.clicked.connect(self._merge_log_console_clear)
+        merge_console_controls.addWidget(self.merge_clear_logs_btn)
+
+        merge_logs_layout.addLayout(merge_console_controls)
+
+        self.merge_log_console = QTextEdit()
+        self.merge_log_console.setObjectName("mergeLogConsole")
+        self.merge_log_console.setReadOnly(True)
+        merge_logs_layout.addWidget(self.merge_log_console)
+
+        self.merge_right_tabs.addTab(merge_logs_tab, "Processing Progress && Logs")
+
+        merge_right_layout.addWidget(self.merge_right_tabs)
+        merge_right_widget.setMinimumWidth(480)
+        merge_splitter.addWidget(merge_right_widget)
+
+        # ── Help / Description Panel ──────────────────────────────────────
+        self.merge_help_panel = QWidget()
+        merge_help_layout = QVBoxLayout(self.merge_help_panel)
+        merge_help_layout.setContentsMargins(2, 2, 2, 2)
+        merge_help_layout.setSpacing(0)
+
+        self.merge_help_text = QTextBrowser()
+        self.merge_help_text.setOpenExternalLinks(True)
+        self.merge_help_text.setHtml(self.algo.shortHelpString())
+        merge_help_layout.addWidget(self.merge_help_text)
+
+        self.merge_help_panel.setMinimumWidth(260)
+        merge_splitter.addWidget(self.merge_help_panel)
+
+        # Set proportional initial widths for the panels
+        merge_splitter.setSizes([390, 500, 260])
+        root.addWidget(merge_splitter, 1)
+
+        # ── Bottom Bar (Progress, Run, Cancel & Status Banner) ───────────
+        merge_bottom_bar = QWidget()
+        merge_bottom_main_layout = QVBoxLayout(merge_bottom_bar)
+        merge_bottom_main_layout.setContentsMargins(10, 4, 10, 6)
+        merge_bottom_main_layout.setSpacing(6)
+
+        # Status Summary Banner above progress bar
+        self.merge_status_banner = QLabel("Ready to run algorithm.")
+        self.merge_status_banner.setWordWrap(True)
+        self.merge_status_banner.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        merge_bottom_main_layout.addWidget(self.merge_status_banner)
+
+        # Controls row (Progress bar, Cancel btn, Run btn)
+        merge_bottom_controls_layout = QHBoxLayout()
+        merge_bottom_controls_layout.setContentsMargins(0, 0, 0, 0)
+        merge_bottom_controls_layout.setSpacing(8)
+
+        # Progress bar
+        self.merge_progress_bar = QProgressBar()
+        self.merge_progress_bar.setRange(0, 100)
+        self.merge_progress_bar.setValue(0)
+        self.merge_progress_bar.setFixedHeight(26)
+        merge_bottom_controls_layout.addWidget(self.merge_progress_bar)
+
+        # Actions
+        self.merge_cancel_btn = QPushButton("Cancel")
+        self.merge_cancel_btn.setMinimumWidth(80)
+        self.merge_cancel_btn.setFixedHeight(26)
+        self.merge_cancel_btn.setEnabled(False)
+        merge_bottom_controls_layout.addWidget(self.merge_cancel_btn)
+
+        self.merge_run_btn = QPushButton("Extract Merge Candidate")
+        self.merge_run_btn.setMinimumWidth(180)
+        self.merge_run_btn.setFixedHeight(26)
+        self.merge_run_btn.clicked.connect(self.run_merging)
+        merge_bottom_controls_layout.addWidget(self.merge_run_btn)
+
+        merge_bottom_main_layout.addLayout(merge_bottom_controls_layout)
+        root.addWidget(merge_bottom_bar)
+
+    def _setup_tab2_sync_connections(self):
+        """Connect two-way synchronization signals between Proposed Delineation and Proposed Merging sub-tabs."""
+        if hasattr(self, 'bar_combo') and hasattr(self, 'merge_bar_combo'):
+            self.bar_combo.layerChanged.connect(lambda lyr: self._sync_combo(self.merge_bar_combo, lyr))
+            self.merge_bar_combo.layerChanged.connect(lambda lyr: self._sync_combo(self.bar_combo, lyr))
+
+        if hasattr(self, 'bldg_combo') and hasattr(self, 'merge_bldg_combo'):
+            self.bldg_combo.layerChanged.connect(lambda lyr: self._sync_combo(self.merge_bldg_combo, lyr))
+            self.merge_bldg_combo.layerChanged.connect(lambda lyr: self._sync_combo(self.bldg_combo, lyr))
+
+        if hasattr(self, 'prev_ea_combo') and hasattr(self, 'merge_prev_ea_combo'):
+            self.prev_ea_combo.layerChanged.connect(lambda lyr: self._sync_combo(self.merge_prev_ea_combo, lyr))
+            self.merge_prev_ea_combo.layerChanged.connect(lambda lyr: self._sync_combo(self.prev_ea_combo, lyr))
+
+        if hasattr(self, 'output_folder_widget') and hasattr(self, 'merge_output_folder_widget'):
+            self.output_folder_widget.fileChanged.connect(lambda p: self._sync_output_folder(self.merge_output_folder_widget, p))
+            self.merge_output_folder_widget.fileChanged.connect(lambda p: self._sync_output_folder(self.output_folder_widget, p))
+
+        if hasattr(self, 'search_edit') and hasattr(self, 'merge_search_edit'):
+            self.search_edit.textChanged.connect(lambda txt: self._sync_search_text(self.merge_search_edit, txt))
+            self.merge_search_edit.textChanged.connect(lambda txt: self._sync_search_text(self.search_edit, txt))
+
+        if hasattr(self, 'min_hh_spin') and hasattr(self, 'merge_min_hh_spin'):
+            self.min_hh_spin.valueChanged.connect(self._sync_min_hh)
+            self.merge_min_hh_spin.valueChanged.connect(self._sync_merge_min_hh)
+
+        if hasattr(self, 'enable_thresholds_chk') and hasattr(self, 'merge_enable_thresholds_chk'):
+            self.enable_thresholds_chk.toggled.connect(self._sync_enable_thresholds)
+            self.merge_enable_thresholds_chk.toggled.connect(self._sync_merge_enable_thresholds)
+
+        if hasattr(self, 'sliver_combo') and hasattr(self, 'merge_sliver_combo'):
+            self.sliver_combo.currentIndexChanged.connect(lambda idx: self._sync_combo_index(self.merge_sliver_combo, idx))
+            self.merge_sliver_combo.currentIndexChanged.connect(lambda idx: self._sync_combo_index(self.sliver_combo, idx))
+
+        if hasattr(self, 'crs_widget') and hasattr(self, 'merge_crs_widget'):
+            self.crs_widget.crsChanged.connect(lambda crs: self._sync_crs(self.merge_crs_widget, crs))
+            self.merge_crs_widget.crsChanged.connect(lambda crs: self._sync_crs(self.crs_widget, crs))
+
+    def _sync_combo(self, target_combo, layer):
+        if target_combo and not getattr(self, '_syncing_combo', False):
+            self._syncing_combo = True
+            try:
+                target_combo.blockSignals(True)
+                self._safe_set_layer(target_combo, layer)
+                target_combo.blockSignals(False)
+            finally:
+                self._syncing_combo = False
+            self.validate_layer_inputs()
+
+    def _sync_output_folder(self, target_widget, path):
+        if target_widget and not getattr(self, '_syncing_folder', False):
+            self._syncing_folder = True
+            try:
+                target_widget.blockSignals(True)
+                target_widget.setFilePath(path)
+                target_widget.blockSignals(False)
+            finally:
+                self._syncing_folder = False
+            self.validate_layer_inputs()
+
+    def _sync_search_text(self, target_edit, text):
+        if target_edit and not getattr(self, '_syncing_search', False):
+            self._syncing_search = True
+            try:
+                target_edit.blockSignals(True)
+                target_edit.setText(text)
+                target_edit.blockSignals(False)
+            finally:
+                self._syncing_search = False
+            self.filter_previews()
+
+    def _sync_min_hh(self, val):
+        if hasattr(self, 'merge_min_hh_spin') and not getattr(self, '_syncing_min_hh', False):
+            self._syncing_min_hh = True
+            try:
+                self.merge_min_hh_spin.blockSignals(True)
+                self.merge_min_hh_spin.setValue(val)
+                self.merge_min_hh_spin.blockSignals(False)
+            finally:
+                self._syncing_min_hh = False
+
+    def _sync_merge_min_hh(self, val):
+        if hasattr(self, 'min_hh_spin') and not getattr(self, '_syncing_min_hh', False):
+            self._syncing_min_hh = True
+            try:
+                self.min_hh_spin.blockSignals(True)
+                self.min_hh_spin.setValue(val)
+                self.min_hh_spin.blockSignals(False)
+            finally:
+                self._syncing_min_hh = False
+
+    def _sync_enable_thresholds(self, checked):
+        if hasattr(self, 'merge_enable_thresholds_chk') and not getattr(self, '_syncing_thresholds', False):
+            self._syncing_thresholds = True
+            try:
+                self.merge_enable_thresholds_chk.blockSignals(True)
+                self.merge_enable_thresholds_chk.setChecked(checked)
+                self.merge_enable_thresholds_chk.blockSignals(False)
+                self._toggle_merge_thresholds(checked)
+            finally:
+                self._syncing_thresholds = False
+
+    def _sync_merge_enable_thresholds(self, checked):
+        if hasattr(self, 'enable_thresholds_chk') and not getattr(self, '_syncing_thresholds', False):
+            self._syncing_thresholds = True
+            try:
+                self.enable_thresholds_chk.blockSignals(True)
+                self.enable_thresholds_chk.setChecked(checked)
+                self.enable_thresholds_chk.blockSignals(False)
+                self._toggle_thresholds(checked)
+            finally:
+                self._syncing_thresholds = False
+
+    def _sync_combo_index(self, target_combo, idx):
+        if target_combo and not getattr(self, '_syncing_sliver', False):
+            self._syncing_sliver = True
+            try:
+                target_combo.blockSignals(True)
+                target_combo.setCurrentIndex(idx)
+                target_combo.blockSignals(False)
+            finally:
+                self._syncing_sliver = False
+
+    def _sync_crs(self, target_widget, crs):
+        if target_widget and not getattr(self, '_syncing_crs', False):
+            self._syncing_crs = True
+            try:
+                target_widget.blockSignals(True)
+                target_widget.setCrs(crs)
+                target_widget.blockSignals(False)
+            finally:
+                self._syncing_crs = False
+
+    def _on_create_ea_subtab_changed(self, index):
+        """Update toggle help button when switching between Proposed Delineation and Proposed Merging."""
+        show_icon = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "icons", "show_description.svg"))
+        hide_icon = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "icons", "hide_description.svg"))
+        is_vis = False
+        if index == 0 and hasattr(self, 'help_panel'):
+            is_vis = self.help_panel.isVisible()
+        elif index == 1 and hasattr(self, 'merge_help_panel'):
+            is_vis = self.merge_help_panel.isVisible()
+
+        if hasattr(self, 'toggle_desc_btn'):
+            if is_vis:
+                self.toggle_desc_btn.setIcon(QIcon(hide_icon))
+                self.toggle_desc_btn.setToolTip("Hide Description Panel")
+            else:
+                self.toggle_desc_btn.setIcon(QIcon(show_icon))
+                self.toggle_desc_btn.setToolTip("Show Description Panel")
+
+    def _merge_log_console_clear(self):
+        if hasattr(self, 'merge_log_console'):
+            self.merge_log_console.clear()
+
+    def _copy_merge_logs_to_clipboard(self):
+        if hasattr(self, 'merge_log_console'):
+            clipboard = QCoreApplication.instance().clipboard()
+            clipboard.setText(self.merge_log_console.toPlainText())
+            if hasattr(self, 'merge_copy_logs_btn'):
+                self.merge_copy_logs_btn.setText("Copied!")
+                QTimer.singleShot(1500, lambda: self.merge_copy_logs_btn.setText("Copy Logs"))
 
     def _safe_set_layer(self, combo, layer):
         if combo is None or layer is None:
@@ -1507,17 +2033,32 @@ class EALauncherDialog(QDialog):
         return None
 
     def _toggle_thresholds(self, checked: bool):
-        self.min_hh_label.setEnabled(checked)
-        self.min_hh_spin.setEnabled(checked)
-        self.max_hh_label.setEnabled(checked)
-        self.max_hh_spin.setEnabled(checked)
-        self.tolerance_label.setEnabled(checked)
-        self.tolerance_spin.setEnabled(checked)
+        if hasattr(self, 'min_hh_label'):
+            self.min_hh_label.setEnabled(checked)
+        if hasattr(self, 'min_hh_spin'):
+            self.min_hh_spin.setEnabled(checked)
+        if hasattr(self, 'max_hh_label'):
+            self.max_hh_label.setEnabled(checked)
+        if hasattr(self, 'max_hh_spin'):
+            self.max_hh_spin.setEnabled(checked)
+        if hasattr(self, 'tolerance_label'):
+            self.tolerance_label.setEnabled(checked)
+        if hasattr(self, 'tolerance_spin'):
+            self.tolerance_spin.setEnabled(checked)
+
+    def _toggle_merge_thresholds(self, checked: bool):
+        if hasattr(self, 'merge_min_hh_label'):
+            self.merge_min_hh_label.setEnabled(checked)
+        if hasattr(self, 'merge_min_hh_spin'):
+            self.merge_min_hh_spin.setEnabled(checked)
 
     def toggle_help(self):
-        """Toggle the visibility of the description help panel."""
-        is_visible = not self.help_panel.isVisible()
-        self.help_panel.setVisible(is_visible)
+        """Toggle the visibility of the description help panel across Tab 2 sub-tabs."""
+        is_visible = not self.help_panel.isVisible() if hasattr(self, 'help_panel') else False
+        if hasattr(self, 'help_panel'):
+            self.help_panel.setVisible(is_visible)
+        if hasattr(self, 'merge_help_panel'):
+            self.merge_help_panel.setVisible(is_visible)
 
         show_icon = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "icons", "show_description.svg"))
         hide_icon = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "icons", "hide_description.svg"))
@@ -1619,6 +2160,9 @@ class EALauncherDialog(QDialog):
             getattr(self, 'prev_ea_combo', None),
             getattr(self, 'road_combo', None),
             getattr(self, 'river_combo', None),
+            getattr(self, 'merge_bar_combo', None),
+            getattr(self, 'merge_bldg_combo', None),
+            getattr(self, 'merge_prev_ea_combo', None),
         ):
             if combo is not None:
                 try:
@@ -1626,7 +2170,11 @@ class EALauncherDialog(QDialog):
                 except (RuntimeError, TypeError):
                     pass
 
-        for spin in (getattr(self, 'min_hh_spin', None), getattr(self, 'max_hh_spin', None)):
+        for spin in (
+            getattr(self, 'min_hh_spin', None),
+            getattr(self, 'max_hh_spin', None),
+            getattr(self, 'merge_min_hh_spin', None),
+        ):
             if spin is not None:
                 try:
                     spin.valueChanged.connect(self.trigger_auto_refresh)
@@ -1635,10 +2183,14 @@ class EALauncherDialog(QDialog):
 
     def trigger_auto_refresh(self, *args, **kwargs):
         """Called when parameters are modified. Warns the user that the preview is out of sync."""
-        self.kpi_delin_val.setText("...")
-        self.kpi_merge_val.setText("...")
-        self.delineation_table.setRowCount(0)
-        self.merge_table.setRowCount(0)
+        if hasattr(self, 'kpi_delin_val'):
+            self.kpi_delin_val.setText("...")
+        if hasattr(self, 'kpi_merge_val'):
+            self.kpi_merge_val.setText("...")
+        if hasattr(self, 'delineation_table'):
+            self.delineation_table.setRowCount(0)
+        if hasattr(self, 'merge_table'):
+            self.merge_table.setRowCount(0)
 
     def _get_ea_name(self, feat, ean_str, fields):
         ea_fields = ["ea_name", "ea_no", "eano", "ea_number", "eaname"]
@@ -1717,14 +2269,14 @@ class EALauncherDialog(QDialog):
         building_fields = bldg_layer.fields()
         bldg_hh_idx = -1
         for i in range(building_fields.count()):
-            if building_fields.at(i).name().lower() in ["hhcount", "hh_count", "household", "household_count"]:
+            if building_fields.at(i).name().lower() in ["est_hhcount", "est_hh_count", "est_hh"]:
                 bldg_hh_idx = i
                 break
         if bldg_hh_idx == -1:
             QMessageBox.critical(
                 self,
                 "Field Not Found",
-                "Building point layer does not contain 'hhcount' (or 'hh_count') field."
+                "Building point layer does not contain 'est_hhcount' (or 'est_hh') field."
             )
             return
 
@@ -1900,6 +2452,9 @@ class EALauncherDialog(QDialog):
             getattr(self, 'prev_ea_combo', None),
             getattr(self, 'road_combo', None),
             getattr(self, 'river_combo', None),
+            getattr(self, 'merge_bar_combo', None),
+            getattr(self, 'merge_bldg_combo', None),
+            getattr(self, 'merge_prev_ea_combo', None),
         ]:
             if combo:
                 self._safe_set_layer(combo, None)
@@ -1907,8 +2462,12 @@ class EALauncherDialog(QDialog):
         # 2. Reset parameters to default
         if hasattr(self, 'enable_thresholds_chk'):
             self.enable_thresholds_chk.setChecked(False)
+        if hasattr(self, 'merge_enable_thresholds_chk'):
+            self.merge_enable_thresholds_chk.setChecked(False)
         if hasattr(self, 'min_hh_spin'):
             self.min_hh_spin.setValue(99)
+        if hasattr(self, 'merge_min_hh_spin'):
+            self.merge_min_hh_spin.setValue(99)
         if hasattr(self, 'max_hh_spin'):
             self.max_hh_spin.setValue(300)
         if hasattr(self, 'tolerance_spin'):
@@ -1917,16 +2476,26 @@ class EALauncherDialog(QDialog):
             self.compact_chk.setChecked(True)
         if hasattr(self, 'allow_candidate_merge_chk'):
             self.allow_candidate_merge_chk.setChecked(True)
+        if hasattr(self, 'merge_allow_candidate_merge_chk'):
+            self.merge_allow_candidate_merge_chk.setChecked(True)
         if hasattr(self, 'sliver_combo'):
             self.sliver_combo.setCurrentIndex(0)
+        if hasattr(self, 'merge_sliver_combo'):
+            self.merge_sliver_combo.setCurrentIndex(0)
         if hasattr(self, 'crs_widget'):
             self.crs_widget.setCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
+        if hasattr(self, 'merge_crs_widget'):
+            self.merge_crs_widget.setCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
         if hasattr(self, 'params_group') and hasattr(self.params_group, 'setCollapsed'):
             self.params_group.setCollapsed(True)
+        if hasattr(self, 'merge_params_group') and hasattr(self.merge_params_group, 'setCollapsed'):
+            self.merge_params_group.setCollapsed(True)
 
         # 3. Reset output folder, preview labels, line edits and search filter
         if hasattr(self, 'output_folder_widget'):
             self.output_folder_widget.setFilePath("")
+        if hasattr(self, 'merge_output_folder_widget'):
+            self.merge_output_folder_widget.setFilePath("")
         if hasattr(self, 'out_delineated_lbl'):
             self.out_delineated_lbl.setText("• Delineated EAs: <i>-</i>")
         if hasattr(self, 'out_merged_lbl'):
@@ -1940,6 +2509,7 @@ class EALauncherDialog(QDialog):
             getattr(self, 'merge_cand_edit', None),
             getattr(self, 'extracted_bldg_edit', None),
             getattr(self, 'search_edit', None),
+            getattr(self, 'merge_search_edit', None),
         ]:
             if edit:
                 edit.clear()
@@ -1950,12 +2520,20 @@ class EALauncherDialog(QDialog):
         # 5. Reset process states
         if hasattr(self, 'progress_bar'):
             self.progress_bar.setValue(0)
+        if hasattr(self, 'merge_progress_bar'):
+            self.merge_progress_bar.setValue(0)
         if hasattr(self, 'cancel_btn'):
             self.cancel_btn.setEnabled(False)
+        if hasattr(self, 'merge_cancel_btn'):
+            self.merge_cancel_btn.setEnabled(False)
         if hasattr(self, 'run_btn'):
             self.run_btn.setEnabled(True)
+        if hasattr(self, 'merge_run_btn'):
+            self.merge_run_btn.setEnabled(True)
         if hasattr(self, 'status_banner'):
             self.status_banner.setText("Ready to run algorithm.")
+        if hasattr(self, 'merge_status_banner'):
+            self.merge_status_banner.setText("Ready to run algorithm.")
 
         # 6. Reset candidates, preview tables, KPI cards, logs
         self.all_delineation_candidates.clear()
@@ -1970,8 +2548,14 @@ class EALauncherDialog(QDialog):
             self.merge_table.setRowCount(0)
         if hasattr(self, 'log_console'):
             self.log_console.clear()
+        if hasattr(self, 'merge_log_console'):
+            self.merge_log_console.clear()
         if hasattr(self, 'tab_widget'):
             self.tab_widget.setCurrentIndex(0)
+        if hasattr(self, 'merge_right_tabs'):
+            self.merge_right_tabs.setCurrentIndex(0)
+        if hasattr(self, 'create_ea_sub_tabs'):
+            self.create_ea_sub_tabs.setCurrentIndex(0)
 
         # 7. Auto-generate candidate preview if previous EA layer is detected
         if hasattr(self, 'prev_ea_combo') and self._safe_get_layer(self.prev_ea_combo):
@@ -2028,10 +2612,13 @@ class EALauncherDialog(QDialog):
         # Apply detected layers using the correct QgsMapLayerComboBox API
         if candidates["bar"]:
             self._safe_set_layer(self.bar_combo, candidates["bar"])
+            self._safe_set_layer(getattr(self, 'merge_bar_combo', None), candidates["bar"])
         if candidates["bldg"]:
             self._safe_set_layer(self.bldg_combo, candidates["bldg"])
+            self._safe_set_layer(getattr(self, 'merge_bldg_combo', None), candidates["bldg"])
         if candidates["prev_ea"]:
             self._safe_set_layer(self.prev_ea_combo, candidates["prev_ea"])
+            self._safe_set_layer(getattr(self, 'merge_prev_ea_combo', None), candidates["prev_ea"])
         if candidates["road"]:
             self._safe_set_layer(self.road_combo, candidates["road"])
         if candidates["river"]:
@@ -2047,6 +2634,8 @@ class EALauncherDialog(QDialog):
                     clean_src = src.split("|")[0].strip() if src else ""
                     if clean_src and os.path.exists(clean_src):
                         self.output_folder_widget.setFilePath(os.path.dirname(clean_src))
+                        if hasattr(self, 'merge_output_folder_widget'):
+                            self.merge_output_folder_widget.setFilePath(os.path.dirname(clean_src))
 
         self.validate_layer_inputs()
 
@@ -2063,6 +2652,11 @@ class EALauncherDialog(QDialog):
                     f"<span style='color: #0969da; font-weight: bold;'>[INFO]</span> "
                     f"Auto Arrange completed: {res['total']} layers processed ({res['styled']} styled, {res['reordered']} reordered)."
                 )
+            if hasattr(self, 'merge_log_console'):
+                self.merge_log_console.append(
+                    f"<span style='color: #0969da; font-weight: bold;'>[INFO]</span> "
+                    f"Auto Arrange completed: {res['total']} layers processed ({res['styled']} styled, {res['reordered']} reordered)."
+                )
         except Exception as e:
             QgsMessageLog.logMessage(f"Auto Arrange error: {e}", "GEMMA", Qgis.Warning)
             self._pre_ea_auto_detect_layers()
@@ -2074,40 +2668,54 @@ class EALauncherDialog(QDialog):
         # 1. Barangay Layer
         bar_layer = self._safe_get_layer(self.bar_combo)
         if not bar_layer:
-            self.bar_status_lbl.setText("Barangay Layer is required.")
+            bar_text = "Barangay Layer is required."
         else:
-            self.bar_status_lbl.setText(f"Active: {bar_layer.featureCount()} polygons loaded ({bar_layer.crs().authid()}).")
+            bar_text = f"Active: {bar_layer.featureCount()} polygons loaded ({bar_layer.crs().authid()})."
+        self.bar_status_lbl.setText(bar_text)
+        if hasattr(self, 'merge_bar_status_lbl'):
+            self.merge_bar_status_lbl.setText(bar_text)
 
         # 2. Building Layer
         bldg_layer = self._safe_get_layer(self.bldg_combo)
         if not bldg_layer:
-            self.bldg_status_lbl.setText("Building Point Layer is required.")
+            bldg_text = "Building Point Layer is required."
         else:
             fields = [f.name().lower() for f in bldg_layer.fields()]
             hh_found = any(f in fields for f in ["hhcount", "hh_count", "household", "household_count"])
             hh_msg = " (found hhcount)" if hh_found else " (no hhcount field)"
-            self.bldg_status_lbl.setText(f"Active: {bldg_layer.featureCount()} points loaded{hh_msg}.")
+            bldg_text = f"Active: {bldg_layer.featureCount()} points loaded{hh_msg}."
+        self.bldg_status_lbl.setText(bldg_text)
+        if hasattr(self, 'merge_bldg_status_lbl'):
+            self.merge_bldg_status_lbl.setText(bldg_text)
 
         # 3. Previous EA Layer
         prev_ea_layer = self._safe_get_layer(self.prev_ea_combo)
         hh_found = False
         ean_found = False
         if not prev_ea_layer:
-            self.prev_ea_status_lbl.setText("Previous EA Layer is required.")
+            prev_ea_text = "Previous EA Layer is required."
         else:
             fields = [f.name().lower() for f in prev_ea_layer.fields()]
             hh_found = "hh_count" in fields
             ean_found = any(f in fields for f in ["ean", "ea_number", "ea_code", "id", "geocode"])
 
             if not hh_found:
-                self.prev_ea_status_lbl.setText("Error: Missing 'hh_count' field.")
+                prev_ea_text = "Error: Missing 'hh_count' field."
             elif not ean_found:
-                self.prev_ea_status_lbl.setText("Error: Missing 'ean' or 'ea_number' geocode field.")
+                prev_ea_text = "Error: Missing 'ean' or 'ea_number' geocode field."
             else:
-                self.prev_ea_status_lbl.setText(f"Active: {prev_ea_layer.featureCount()} EAs loaded successfully.")
+                prev_ea_text = f"Active: {prev_ea_layer.featureCount()} EAs loaded successfully."
+        self.prev_ea_status_lbl.setText(prev_ea_text)
+        if hasattr(self, 'merge_prev_ea_status_lbl'):
+            self.merge_prev_ea_status_lbl.setText(prev_ea_text)
 
         # Enable fill-missing button only when required layers are present
-        self.fill_missing_btn.setEnabled(bool(prev_ea_layer and bldg_layer and hh_found))
+        fill_enabled = bool(prev_ea_layer and bldg_layer and hh_found)
+        self.fill_missing_btn.setEnabled(fill_enabled)
+        if hasattr(self, 'merge_fill_missing_btn'):
+            self.merge_fill_missing_btn.setEnabled(fill_enabled)
+
+        # 4. Road Layer (Optional)
         road_layer = self._safe_get_layer(self.road_combo)
         if not road_layer:
             self.road_status_lbl.setText("Optional: Road boundary snapping will be skipped.")
@@ -2121,8 +2729,6 @@ class EALauncherDialog(QDialog):
         else:
             self.river_status_lbl.setText(f"Active: {river_layer.featureCount()} line features loaded.")
 
-
-            
         # Update output layer placeholders and preview labels using 5-digit geocode prefix
         geo5 = self._extract_5digit_geocode()
         if geo5:
@@ -2167,6 +2773,8 @@ class EALauncherDialog(QDialog):
         can_run = bool(bar_layer and bldg_layer and prev_ea_layer and hh_found and ean_found and has_output)
         if hasattr(self, 'run_btn'):
             self.run_btn.setEnabled(can_run)
+        if hasattr(self, 'merge_run_btn'):
+            self.merge_run_btn.setEnabled(can_run)
 
         self.trigger_auto_refresh()
 
@@ -2186,9 +2794,18 @@ class EALauncherDialog(QDialog):
         # Visual feedback during preview calculation
         self.kpi_delin_val.setText("Scanning...")
         self.kpi_merge_val.setText("Scanning...")
-        self.run_btn.setEnabled(False)
-        self.refresh_btn.setEnabled(False)
-        self.detect_btn.setEnabled(False)
+        if hasattr(self, 'run_btn'):
+            self.run_btn.setEnabled(False)
+        if hasattr(self, 'merge_run_btn'):
+            self.merge_run_btn.setEnabled(False)
+        if hasattr(self, 'refresh_btn'):
+            self.refresh_btn.setEnabled(False)
+        if hasattr(self, 'merge_refresh_btn'):
+            self.merge_refresh_btn.setEnabled(False)
+        if hasattr(self, 'detect_btn'):
+            self.detect_btn.setEnabled(False)
+        if hasattr(self, 'merge_detect_btn'):
+            self.merge_detect_btn.setEnabled(False)
         QCoreApplication.processEvents()
 
         self.all_delineation_candidates.clear()
@@ -2238,9 +2855,18 @@ class EALauncherDialog(QDialog):
         if hh_idx == -1 or ean_idx == -1:
             self.kpi_delin_val.setText("0")
             self.kpi_merge_val.setText("0")
-            self.run_btn.setEnabled(True)
-            self.refresh_btn.setEnabled(True)
-            self.detect_btn.setEnabled(True)
+            if hasattr(self, 'run_btn'):
+                self.run_btn.setEnabled(True)
+            if hasattr(self, 'merge_run_btn'):
+                self.merge_run_btn.setEnabled(True)
+            if hasattr(self, 'refresh_btn'):
+                self.refresh_btn.setEnabled(True)
+            if hasattr(self, 'merge_refresh_btn'):
+                self.merge_refresh_btn.setEnabled(True)
+            if hasattr(self, 'detect_btn'):
+                self.detect_btn.setEnabled(True)
+            if hasattr(self, 'merge_detect_btn'):
+                self.merge_detect_btn.setEnabled(True)
             return
 
         total_hh = 0.0
@@ -2284,7 +2910,8 @@ class EALauncherDialog(QDialog):
             if not is_delin and eadel_indi_idx != -1:
                 val = feat.attribute(eadel_indi_idx)
                 if val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"):
-                    is_delin = True
+                    if hh >= max_hh:
+                        is_delin = True
 
             is_merge = False
             if not is_delin and merge_indi_idx != -1:
@@ -2311,13 +2938,26 @@ class EALauncherDialog(QDialog):
         # Re-enable controls
         has_out = bool(self.output_folder_widget.filePath().strip()) if hasattr(self, 'output_folder_widget') else False
         can_run = bool(prev_ea_layer and has_out)
-        self.run_btn.setEnabled(can_run)
-        self.refresh_btn.setEnabled(True)
-        self.detect_btn.setEnabled(True)
+        if hasattr(self, 'run_btn'):
+            self.run_btn.setEnabled(can_run)
+        if hasattr(self, 'merge_run_btn'):
+            self.merge_run_btn.setEnabled(can_run)
+        if hasattr(self, 'refresh_btn'):
+            self.refresh_btn.setEnabled(True)
+        if hasattr(self, 'merge_refresh_btn'):
+            self.merge_refresh_btn.setEnabled(True)
+        if hasattr(self, 'detect_btn'):
+            self.detect_btn.setEnabled(True)
+        if hasattr(self, 'merge_detect_btn'):
+            self.merge_detect_btn.setEnabled(True)
 
     def filter_previews(self):
         """Filter table rows dynamically based on user search box input."""
-        query = self.search_edit.text().strip().lower()
+        query = ""
+        if hasattr(self, 'search_edit') and self.search_edit.text().strip():
+            query = self.search_edit.text().strip().lower()
+        elif hasattr(self, 'merge_search_edit') and self.merge_search_edit.text().strip():
+            query = self.merge_search_edit.text().strip().lower()
         
         filtered_delin = []
         for row in self.all_delineation_candidates:
@@ -2383,10 +3023,6 @@ class EALauncherDialog(QDialog):
         self.copy_logs_btn.setText("Copied!")
         QTimer.singleShot(1500, lambda: self.copy_logs_btn.setText("Copy Logs"))
 
-
-
-
-
     # ── Pipeline Execution ──────────────────────────────────────────────────
 
     @staticmethod
@@ -2448,8 +3084,26 @@ class EALauncherDialog(QDialog):
 
         return os.path.exists(file_path) and os.path.getsize(file_path) > 0
 
-    def run_pipeline(self):
-        """Execute processing algorithm directly using custom feedback."""
+    def run_delineation(self):
+        """Execute pipeline for Proposed Delineation."""
+        self.run_pipeline(mode="delineation")
+
+    def run_merging(self):
+        """Execute pipeline for Proposed Merging."""
+        self.run_pipeline(mode="merging")
+
+    def run_pipeline(self, mode: Optional[str] = None):
+        """Execute processing algorithm directly using custom feedback, filtering outputs by mode."""
+        if mode is None:
+            if hasattr(self, 'create_ea_sub_tabs'):
+                idx = self.create_ea_sub_tabs.currentIndex()
+                mode = "merging" if idx == 1 else "delineation"
+            else:
+                mode = "all"
+
+        if mode not in ("delineation", "merging", "all"):
+            mode = "all"
+
         bar_layer = self._safe_get_layer(self.bar_combo)
         bldg_layer = self._safe_get_layer(self.bldg_combo)
         prev_ea_layer = self._safe_get_layer(self.prev_ea_combo)
@@ -2457,11 +3111,19 @@ class EALauncherDialog(QDialog):
         river_layer = self._safe_get_layer(self.river_combo)
 
         if not bar_layer or not bldg_layer or not prev_ea_layer:
-            self.log_console.append(
+            err_html = (
                 "<span style='color:#cf222e; font-weight:bold;'>"
                 "[ERROR] Please select all required inputs (Barangay, Building, Previous EA layers).</span>"
             )
-            self.tab_widget.setCurrentIndex(1)
+            if mode in ("delineation", "all"):
+                self.log_console.append(err_html)
+                if hasattr(self, 'tab_widget'):
+                    self.tab_widget.setCurrentIndex(1)
+            if mode in ("merging", "all"):
+                if hasattr(self, 'merge_log_console'):
+                    self.merge_log_console.append(err_html)
+                if hasattr(self, 'merge_right_tabs'):
+                    self.merge_right_tabs.setCurrentIndex(1)
             return
 
         out_folder = self.output_folder_widget.filePath().strip() if hasattr(self, 'output_folder_widget') else ""
@@ -2469,6 +3131,8 @@ class EALauncherDialog(QDialog):
             QMessageBox.warning(self, "Missing Output Folder", "Please designate an output folder before running.")
             if hasattr(self, 'run_btn'):
                 self.run_btn.setEnabled(False)
+            if hasattr(self, 'merge_run_btn'):
+                self.merge_run_btn.setEnabled(False)
             return
 
         os.makedirs(out_folder, exist_ok=True)
@@ -2505,20 +3169,68 @@ class EALauncherDialog(QDialog):
             'EXTRACTED_BUILDINGS_OUTPUT': 'TEMPORARY_OUTPUT',
         }
 
-        # Clear UI state
-        self.log_console.clear()
-        self.progress_bar.setValue(0)
-        self.run_btn.setEnabled(False)
-        self.cancel_btn.setEnabled(True)
-        self.tab_widget.setCurrentIndex(1)
-        self.status_banner.setText("⏳ Processing algorithm... Please wait.")
+        # Clear UI state and set banners according to mode
+        if mode in ("delineation", "all"):
+            self.log_console.clear()
+            self.progress_bar.setValue(0)
+            self.run_btn.setEnabled(False)
+            self.cancel_btn.setEnabled(True)
+            if hasattr(self, 'tab_widget'):
+                self.tab_widget.setCurrentIndex(1)
+            self.status_banner.setText("Processing delineation algorithm... Please wait.")
+            start_msg = "<span style='color:#1a7f37; font-weight:bold;'>[START] Starting EA Delineation...</span>"
+            folder_msg = f"<span style='color:#0969da; font-weight:bold;'>[INFO] Designated Output Folder: {out_folder}</span>"
+            self.log_console.append(start_msg)
+            self.log_console.append(folder_msg)
 
-        self.log_console.append("<span style='color:#1a7f37; font-weight:bold;'>[START] Starting EA Delineation and Merging...</span>")
-        self.log_console.append(f"<span style='color:#0969da; font-weight:bold;'>[INFO] Designated Output Folder: {out_folder}</span>")
+        if mode in ("merging", "all"):
+            if hasattr(self, 'merge_log_console'):
+                self.merge_log_console.clear()
+            if hasattr(self, 'merge_progress_bar'):
+                self.merge_progress_bar.setValue(0)
+            if hasattr(self, 'merge_run_btn'):
+                self.merge_run_btn.setEnabled(False)
+            if hasattr(self, 'merge_cancel_btn'):
+                self.merge_cancel_btn.setEnabled(True)
+            if hasattr(self, 'merge_right_tabs'):
+                self.merge_right_tabs.setCurrentIndex(1)
+            if hasattr(self, 'merge_status_banner'):
+                self.merge_status_banner.setText("Processing merging algorithm... Please wait.")
+            start_msg = "<span style='color:#1a7f37; font-weight:bold;'>[START] Starting EA Merging...</span>"
+            folder_msg = f"<span style='color:#0969da; font-weight:bold;'>[INFO] Designated Output Folder: {out_folder}</span>"
+            if hasattr(self, 'merge_log_console'):
+                self.merge_log_console.append(start_msg)
+                self.merge_log_console.append(folder_msg)
+
         QCoreApplication.processEvents()
 
-        # Instantiate feedback
-        self.feedback = CustomProcessingFeedback(self.progress_bar, self.log_console, self.run_btn, self.cancel_btn)
+        # Instantiate feedback with appropriate widgets based on active mode
+        if mode == "merging" and hasattr(self, 'merge_log_console') and self.merge_log_console:
+            primary_prog = self.merge_progress_bar
+            primary_log = self.merge_log_console
+            primary_run = self.merge_run_btn
+            primary_cancel = self.merge_cancel_btn
+            extra_logs = None
+            extra_progs = None
+            extra_cancels = None
+        else:
+            primary_prog = self.progress_bar
+            primary_log = self.log_console
+            primary_run = self.run_btn
+            primary_cancel = self.cancel_btn
+            extra_logs = [self.merge_log_console] if mode == "all" and hasattr(self, 'merge_log_console') and self.merge_log_console else None
+            extra_progs = [self.merge_progress_bar] if mode == "all" and hasattr(self, 'merge_progress_bar') and self.merge_progress_bar else None
+            extra_cancels = [self.merge_cancel_btn] if mode == "all" and hasattr(self, 'merge_cancel_btn') and self.merge_cancel_btn else None
+
+        self.feedback = CustomProcessingFeedback(
+            primary_prog,
+            primary_log,
+            primary_run,
+            primary_cancel,
+            extra_log_widgets=extra_logs,
+            extra_progress_bars=extra_progs,
+            extra_cancel_buttons=extra_cancels,
+        )
         self.feedback.progressChanged.connect(lambda val: self.feedback.helper.set_val.emit(int(val)))
         context = QgsProcessingContext()
 
@@ -2537,11 +3249,13 @@ class EALauncherDialog(QDialog):
             )
             
             if self.feedback.isCanceled():
-                self.log_console.append("<span style='color:#d17a00; font-weight:bold;'>[CANCEL] Pipeline execution cancelled by user.</span>")
+                cancel_msg = "<span style='color:#d17a00; font-weight:bold;'>[CANCEL] Pipeline execution cancelled by user.</span>"
+                if mode in ("delineation", "all"):
+                    self.log_console.append(cancel_msg)
+                if mode in ("merging", "all") and hasattr(self, 'merge_log_console'):
+                    self.merge_log_console.append(cancel_msg)
             else:
                 # Rename and organize loaded layers into structured QGIS Layer Sub-Groups
-                from qgis.core import QgsProject, QgsMapLayer
-
                 root = QgsProject.instance().layerTreeRoot()
                 main_group_name = f"{geo5}_EA_Outputs"
                 main_group = root.findGroup(main_group_name)
@@ -2593,26 +3307,45 @@ class EALauncherDialog(QDialog):
                             elif g_name == "Candidates":
                                 candidates_group = cloned
 
-                # Output layers in exact top-to-bottom order for each group
-                # tuple: (out_key, target_name, target_group, qml_filename, is_permanent, file_path)
-                output_mapping_ordered = [
-                    ('EXTRACTED_BUILDINGS_OUTPUT', f"{geo5}_extracted_bldgpts", reference_group, "1. Base Layer Building Points.qml", False, None),
-                    ('DELINEATED_OUTPUT', f"{geo5}_delineated_ea2026", eas_group, "ea_output.qml", True, delineated_file),
-                    ('MERGED_OUTPUT', f"{geo5}_merged_ea2026", eas_group, "ea_output.qml", True, merged_file),
-                    ('DELINEATION_CANDIDATE_OUTPUT', f"{geo5}_delineation_candidates", candidates_group, "delineation_candidates.qml", False, None),
-                    ('MERGE_CANDIDATE_OUTPUT', f"{geo5}_merge_candidates", candidates_group, "merge_candidates.qml", False, None),
+                # Output layers in exact top-to-bottom order for each group with allowed execution modes
+                # tuple: (out_key, target_name, target_group, qml_filename, is_permanent, file_path, allowed_modes)
+                output_mapping_all = [
+                    ('EXTRACTED_BUILDINGS_OUTPUT', f"{geo5}_extracted_bldgpts", reference_group, "1. Base Layer Building Points.qml", False, None, ["delineation", "merging", "all"]),
+                    ('DELINEATED_OUTPUT', f"{geo5}_delineated_ea2026", eas_group, "ea_output.qml", True, delineated_file, ["delineation", "all"]),
+                    ('MERGED_OUTPUT', f"{geo5}_merged_ea2026", eas_group, "ea_output.qml", True, merged_file, ["merging", "all"]),
+                    ('DELINEATION_CANDIDATE_OUTPUT', f"{geo5}_delineation_candidates", candidates_group, "delineation_candidates.qml", False, None, ["delineation", "all"]),
+                    ('MERGE_CANDIDATE_OUTPUT', f"{geo5}_merge_candidates", candidates_group, "merge_candidates.qml", False, None, ["merging", "all"]),
                 ]
 
                 from .helpers.style import apply_qml_to_layer
 
+                def _log_msg(msg: str):
+                    if mode in ("delineation", "all"):
+                        self.log_console.append(msg)
+                    if mode in ("merging", "all") and hasattr(self, 'merge_log_console'):
+                        self.merge_log_console.append(msg)
+
                 if isinstance(results, dict):
-                    for out_key, target_name, target_group, qml_filename, is_perm, f_path in output_mapping_ordered:
+                    for out_key, target_name, target_group, qml_filename, is_perm, f_path, allowed_modes in output_mapping_all:
+                        if mode not in allowed_modes:
+                            # Discard unwanted temporary layer if produced by processing
+                            if out_key in results:
+                                layer_ref = results[out_key]
+                                layer = None
+                                if isinstance(layer_ref, str):
+                                    layer = QgsProject.instance().mapLayer(layer_ref)
+                                elif hasattr(layer_ref, 'id') or isinstance(layer_ref, QgsMapLayer):
+                                    layer = layer_ref
+                                if layer:
+                                    QgsProject.instance().removeMapLayer(layer.id())
+                            continue
+
                         if out_key in results:
                             layer_ref = results[out_key]
                             layer = None
                             if isinstance(layer_ref, str):
                                 layer = QgsProject.instance().mapLayer(layer_ref)
-                            elif isinstance(layer_ref, QgsMapLayer):
+                            elif hasattr(layer_ref, 'id') or isinstance(layer_ref, QgsMapLayer):
                                 layer = layer_ref
                             
                             if layer:
@@ -2624,9 +3357,8 @@ class EALauncherDialog(QDialog):
                                             os.remove(f_path)
                                         except Exception:
                                             pass
-                                    self.log_console.append(
-                                        f"<span style='color:#7F8C8D;'>[INFO] Output layer '{target_name}' has 0 features; skipping layer generation.</span>"
-                                    )
+                                    skip_msg = f"<span style='color:#7F8C8D;'>[INFO] Output layer '{target_name}' has 0 features; skipping layer generation.</span>"
+                                    _log_msg(skip_msg)
                                     continue
 
                                 if is_perm and f_path:
@@ -2641,10 +3373,11 @@ class EALauncherDialog(QDialog):
                                             QgsProject.instance().addMapLayer(perm_layer, False)
                                             apply_qml_to_layer(perm_layer, qml_filename)
                                             target_group.addLayer(perm_layer)
-                                            self.log_console.append(
+                                            save_msg = (
                                                 f"<span style='color:#0969da; font-weight:bold;'>[INFO]</span> "
                                                 f"Permanent GeoPackage layer (.gpkg) saved: {target_name} ({f_path})"
                                             )
+                                            _log_msg(save_msg)
                                             continue
 
                                 layer.setName(target_name)
@@ -2657,9 +3390,8 @@ class EALauncherDialog(QDialog):
                                         lnode.parent().removeChildNode(lnode)
                         else:
                             # Not in results dictionary (0 features produced)
-                            self.log_console.append(
-                                f"<span style='color:#7F8C8D;'>[INFO] Output layer '{target_name}' has 0 features; skipping layer generation.</span>"
-                            )
+                            skip_msg = f"<span style='color:#7F8C8D;'>[INFO] Output layer '{target_name}' has 0 features; skipping layer generation.</span>"
+                            _log_msg(skip_msg)
                             # Remove any dangling layer with target_name if loaded with 0 features
                             for lyr_id, lyr_obj in list(QgsProject.instance().mapLayers().items()):
                                 if lyr_obj.name() == target_name and lyr_obj.featureCount() == 0:
@@ -2669,6 +3401,11 @@ class EALauncherDialog(QDialog):
                 has_splitting_lines = False
                 for layer_id, proj_layer in list(QgsProject.instance().mapLayers().items()):
                     if proj_layer.name().endswith("_eadel_update"):
+                        if mode not in ("delineation", "all"):
+                            # If running merging, remove any temporary splitting line layers
+                            QgsProject.instance().removeMapLayer(layer_id)
+                            continue
+
                         target_line_name = proj_layer.name()
                         line_gpkg_path = os.path.normpath(os.path.join(out_folder, f"{target_line_name}.gpkg")).replace("\\", "/")
                         if proj_layer.featureCount() == 0:
@@ -2679,9 +3416,8 @@ class EALauncherDialog(QDialog):
                                     os.remove(line_gpkg_path)
                                 except Exception:
                                     pass
-                            self.log_console.append(
-                                f"<span style='color:#7F8C8D;'>[INFO] Splitting lines layer '{target_line_name}' has 0 features; skipping layer generation.</span>"
-                            )
+                            skip_msg = f"<span style='color:#7F8C8D;'>[INFO] Splitting lines layer '{target_line_name}' has 0 features; skipping layer generation.</span>"
+                            _log_msg(skip_msg)
                         else:
                             has_splitting_lines = True
                             # Convert in-memory splitting line layer to permanent GeoPackage on disk ONLY when it has features
@@ -2695,10 +3431,11 @@ class EALauncherDialog(QDialog):
                                         QgsProject.instance().addMapLayer(perm_line_layer, False)
                                         apply_qml_to_layer(perm_line_layer, "eadel_update_lines.qml")
                                         splitting_lines_group.addLayer(perm_line_layer)
-                                        self.log_console.append(
+                                        save_msg = (
                                             f"<span style='color:#0969da; font-weight:bold;'>[INFO]</span> "
                                             f"Permanent GeoPackage layer (.gpkg) saved: {target_line_name} ({line_gpkg_path})"
                                         )
+                                        _log_msg(save_msg)
                                         continue
 
                             lnode = root.findLayer(layer_id)
@@ -2721,13 +3458,11 @@ class EALauncherDialog(QDialog):
                 if len(main_group.children()) == 0:
                     root.removeChildNode(main_group)
 
-                self.progress_bar.setValue(100)
-                self.log_console.append("<span style='color:#1a7f37; font-weight:bold;'>[COMPLETE] Pipeline execution complete! Results loaded to map.</span>")
-
-                # Update Status Banner above progress bar with clear result explanation
+                # Completion and Status Banner reporting per active mode
                 delin_cnt = 0
                 merged_cnt = 0
                 merge_cand_cnt = 0
+                forced_cnt = 0
                 if isinstance(results, dict):
                     d_ref = results.get('DELINEATED_OUTPUT')
                     m_ref = results.get('MERGED_OUTPUT')
@@ -2736,11 +3471,10 @@ class EALauncherDialog(QDialog):
                     if isinstance(d_ref, str):
                         d_l = QgsProject.instance().mapLayer(d_ref)
                         delin_cnt = d_l.featureCount() if d_l else 0
-                    elif isinstance(d_ref, QgsMapLayer):
+                    elif hasattr(d_ref, 'featureCount') or isinstance(d_ref, QgsMapLayer):
                         d_l = d_ref
                         delin_cnt = d_l.featureCount()
 
-                    forced_cnt = 0
                     if d_l:
                         sb_idx = d_l.fields().indexOf("split_by")
                         rem_idx = d_l.fields().indexOf("remarks")
@@ -2753,39 +3487,93 @@ class EALauncherDialog(QDialog):
                     if isinstance(m_ref, str):
                         m_l = QgsProject.instance().mapLayer(m_ref)
                         merged_cnt = m_l.featureCount() if m_l else 0
-                    elif isinstance(m_ref, QgsMapLayer):
+                    elif hasattr(m_ref, 'featureCount') or isinstance(m_ref, QgsMapLayer):
                         merged_cnt = m_ref.featureCount()
 
                     if isinstance(mc_ref, str):
                         mc_l = QgsProject.instance().mapLayer(mc_ref)
                         merge_cand_cnt = mc_l.featureCount() if mc_l else 0
-                    elif isinstance(mc_ref, QgsMapLayer):
+                    elif hasattr(mc_ref, 'featureCount') or isinstance(mc_ref, QgsMapLayer):
                         merge_cand_cnt = mc_ref.featureCount()
 
-                if delin_cnt == 0 and merged_cnt == 0:
-                    if merge_cand_cnt > 0:
-                        if self.allow_candidate_merge_chk.isChecked():
-                            banner_text = f"Notice: 0 Delineated | 0 Merged EAs — {merge_cand_cnt} merge candidate features identified."
-                        else:
-                            banner_text = f"Notice: 0 Delineated | 0 Merged EAs — {merge_cand_cnt} candidate EAs identified (candidate-to-candidate merging is disabled)."
-                    else:
-                        banner_text = "Notice: 0 Delineated | 0 Merged EAs — All starting EAs are within optimal threshold range (100–300 HH)."
-                else:
-                    split_detail = f" ({forced_cnt} via forced straight cut)" if forced_cnt > 0 else ""
-                    banner_text = f"Success: Created {delin_cnt} Delineated EA(s){split_detail} and {merged_cnt} Merged EA(s)."
+                split_detail = f" ({forced_cnt} via forced straight cut)" if forced_cnt > 0 else ""
 
-                self.status_banner.setText(banner_text)
+                if mode == "delineation":
+                    self.progress_bar.setValue(100)
+                    self.log_console.append("<span style='color:#1a7f37; font-weight:bold;'>[COMPLETE] Delineation pipeline execution complete! Results loaded to map.</span>")
+                    if delin_cnt == 0:
+                        banner_text = "Notice: 0 Delineated EAs — All starting EAs are within optimal threshold range (100–300 HH) or no splits required."
+                    else:
+                        banner_text = f"Success: Created {delin_cnt} Delineated EA(s){split_detail}."
+                    self.status_banner.setText(banner_text)
+
+                elif mode == "merging":
+                    if hasattr(self, 'merge_progress_bar'):
+                        self.merge_progress_bar.setValue(100)
+                    if hasattr(self, 'merge_log_console'):
+                        self.merge_log_console.append("<span style='color:#1a7f37; font-weight:bold;'>[COMPLETE] Merging pipeline execution complete! Results loaded to map.</span>")
+                    if merged_cnt == 0:
+                        if merge_cand_cnt > 0:
+                            if self.allow_candidate_merge_chk.isChecked():
+                                banner_text = f"Notice: 0 Merged EAs — {merge_cand_cnt} merge candidate features identified."
+                            else:
+                                banner_text = f"Notice: 0 Merged EAs — {merge_cand_cnt} candidate EAs identified (candidate-to-candidate merging is disabled)."
+                        else:
+                            banner_text = "Notice: 0 Merged EAs — All starting EAs are within optimal threshold range (100–300 HH)."
+                    else:
+                        banner_text = f"Success: Created {merged_cnt} Merged EA(s)."
+                    if hasattr(self, 'merge_status_banner'):
+                        self.merge_status_banner.setText(banner_text)
+
+                else:  # mode == "all"
+                    self.progress_bar.setValue(100)
+                    if hasattr(self, 'merge_progress_bar'):
+                        self.merge_progress_bar.setValue(100)
+                    done_msg = "<span style='color:#1a7f37; font-weight:bold;'>[COMPLETE] Pipeline execution complete! Results loaded to map.</span>"
+                    self.log_console.append(done_msg)
+                    if hasattr(self, 'merge_log_console'):
+                        self.merge_log_console.append(done_msg)
+
+                    if delin_cnt == 0 and merged_cnt == 0:
+                        if merge_cand_cnt > 0:
+                            if self.allow_candidate_merge_chk.isChecked():
+                                banner_text = f"Notice: 0 Delineated | 0 Merged EAs — {merge_cand_cnt} merge candidate features identified."
+                            else:
+                                banner_text = f"Notice: 0 Delineated | 0 Merged EAs — {merge_cand_cnt} candidate EAs identified (candidate-to-candidate merging is disabled)."
+                        else:
+                            banner_text = "Notice: 0 Delineated | 0 Merged EAs — All starting EAs are within optimal threshold range (100–300 HH)."
+                    else:
+                        banner_text = f"Success: Created {delin_cnt} Delineated EA(s){split_detail} and {merged_cnt} Merged EA(s)."
+
+                    self.status_banner.setText(banner_text)
+                    if hasattr(self, 'merge_status_banner'):
+                        self.merge_status_banner.setText(banner_text)
 
         except Exception as e:
             import traceback
             tb_str = traceback.format_exc()
-            self.log_console.append(f"<span style='color:#cf222e; font-weight:bold;'>[FATAL] Error executing pipeline: {str(e)}</span>")
-            self.log_console.append(f"<pre style='color:#cf222e; font-size:11px; font-family:Consolas, monospace;'>{tb_str}</pre>")
-            self.status_banner.setText(f"Error: Pipeline execution failed — {str(e)}")
+            err_log = (
+                f"<span style='color:#cf222e; font-weight:bold;'>[FATAL] Error executing pipeline: {str(e)}</span>"
+                f"<pre style='color:#cf222e; font-size:11px; font-family:Consolas, monospace;'>{tb_str}</pre>"
+            )
+            if mode in ("delineation", "all"):
+                self.log_console.append(err_log)
+                self.status_banner.setText(f"Error: Pipeline execution failed — {str(e)}")
+            if mode in ("merging", "all"):
+                if hasattr(self, 'merge_log_console'):
+                    self.merge_log_console.append(err_log)
+                if hasattr(self, 'merge_status_banner'):
+                    self.merge_status_banner.setText(f"Error: Pipeline execution failed — {str(e)}")
         
         finally:
-            self.run_btn.setEnabled(True)
-            self.cancel_btn.setEnabled(False)
+            if hasattr(self, 'run_btn'):
+                self.run_btn.setEnabled(True)
+            if hasattr(self, 'merge_run_btn'):
+                self.merge_run_btn.setEnabled(True)
+            if hasattr(self, 'cancel_btn'):
+                self.cancel_btn.setEnabled(False)
+            if hasattr(self, 'merge_cancel_btn'):
+                self.merge_cancel_btn.setEnabled(False)
             self.feedback = None
 
 
@@ -3537,6 +4325,48 @@ class EALauncherDialog(QDialog):
         right_tabs = self.ea_merge_log_console.parent().parent()
         if hasattr(right_tabs, "setCurrentIndex"):
             right_tabs.setCurrentIndex(0)  # Summary tab
+
+    def _open_split_ea_dialog(self):
+        """Open the Split EA Polygons modal dialog."""
+        from .split_dialog import SplitEADialog
+
+        out_dir = ""
+        if hasattr(self, "output_folder_widget") and self.output_folder_widget:
+            try:
+                out_dir = self.output_folder_widget.filePath().strip()
+            except Exception:
+                out_dir = ""
+
+        geo5 = ""
+        if hasattr(self, "_extract_5digit_geocode"):
+            try:
+                geo5 = self._extract_5digit_geocode() or ""
+            except Exception:
+                geo5 = ""
+
+        bldg_layer = None
+        if hasattr(self, "bldg_combo") and self.bldg_combo:
+            try:
+                bldg_layer = self.bldg_combo.currentLayer()
+            except Exception:
+                bldg_layer = None
+
+        min_hh = 99
+        if hasattr(self, "min_hh_spin") and self.min_hh_spin:
+            try:
+                min_hh = self.min_hh_spin.value()
+            except Exception:
+                min_hh = 99
+
+        dlg = SplitEADialog(
+            self,
+            default_output_dir=out_dir,
+            default_geocode=geo5,
+            default_bldg_layer=bldg_layer,
+            default_min_hh=min_hh,
+        )
+        dlg.setWindowFlags(Qt.Dialog)
+        dlg.exec_()
 
 
 class MultiLayerSelectDialog(QDialog):

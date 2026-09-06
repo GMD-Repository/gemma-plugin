@@ -188,6 +188,9 @@ _OUTPUT_FIELD_SPECS = (
     ("remarks", QVariant.String),
 )
 
+_GEOCODE_FIELDS = _FIELD_CANDIDATE_MAP["geocode"]
+_CITYMUN_FIELDS = _FIELD_CANDIDATE_MAP["city_mun"]
+
 
 def _ea_type_from_layer_name(layer_name: str) -> str:
     """Derive EA type from layer name suffix (e.g. 01728011_delineated_ea2026 -> DELINEATED)."""
@@ -604,7 +607,7 @@ class EAMergeProcessor:
             else:
                 # Default: same directory as the QGIS project file
                 project_home = QgsProject.instance().homePath()
-                if project_home:
+                if project_home and isinstance(project_home, str) and os.path.exists(project_home):
                     excel_path = get_unique_filepath(project_home, excel_base, ".xlsx")
                 else:
                     excel_path = get_unique_filepath(os.path.expanduser("~"), excel_base, ".xlsx")

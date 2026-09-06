@@ -44,9 +44,9 @@ def is_delineation_candidate(ea_item, max_household, eadel_indi_col_idx=-1, full
     if eadel_indi_col_idx != -1 and full_ea_by_id and orig_id in full_ea_by_id:
         val = full_ea_by_id[orig_id].attribute(eadel_indi_col_idx)
         is_explicit = (val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"))
-    if is_explicit:
+    if is_explicit and ea_item.get('hh_count', 0) >= max_household:
         return True
-    return ea_item['hh_count'] >= max_household
+    return ea_item.get('hh_count', 0) >= max_household
 
 
 def is_merge_candidate(ea_item, min_household, merge_candidate_ids=None):
