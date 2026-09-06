@@ -1,5 +1,6 @@
 import os
 import json
+import processing
 from typing import Any, Optional, Dict, List
 
 from PyQt5.QtCore import QVariant
@@ -30,6 +31,7 @@ class mv_2027_hp_1a_map_uuid__missing(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"
     INPUT_LAYER = "INPUT_LAYER"
+    BASE_LAYER = "BASE_LAYER"
     OUTPUT = "OUTPUT"
 
     def name(self) -> str:
@@ -73,6 +75,16 @@ class mv_2027_hp_1a_map_uuid__missing(QgsProcessingAlgorithm):
         )
 
         self.addParameter(
+            QgsProcessingParameterFile(
+                self.BASE_LAYER,
+                "BASE_LAYER (.gpkg file)",
+                behavior=QgsProcessingParameterFile.File,
+                extension="gpkg",
+                optional=False,
+            )
+        )
+
+        self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
                 "mv_2027_hp_1a_map_uuid__missing",
@@ -90,99 +102,39 @@ class mv_2027_hp_1a_map_uuid__missing(QgsProcessingAlgorithm):
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
 
-        source_fields = geojson_data.fields()
-        fields = QgsFields(source_fields)
+        joined_layer = processing.run(
+            "native:joinattributestable",
+            {
+                "INPUT": json_data,
+                "FIELD": "map_uuid",
+                "INPUT_2": geojson_data,
+                "FIELD_2": "map_uuid",
+                "FIELDS_TO_COPY": [],
+                "METHOD": 1,                      # multiple = "first"
+                "DISCARD_NONMATCHING": False,      # LEFT JOIN (keep non-matching json records so sf_map_uuid is NULL)
+                "PREFIX": "sf_",
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
 
-        def ensure_field(flds, name, ftype=QVariant.String):
-            if flds.indexOf(name) == -1:
-                flds.append(QgsField(name, ftype))
+        filtered_layer = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": joined_layer,
+                "EXPRESSION": '"sf_map_uuid" IS NULL',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
 
-        ensure_field(fields, "map_uuid", QVariant.String)
-        ensure_field(fields, "status", QVariant.String)
-
-        # Helper to find field name case-insensitively from list of candidates
-        def resolve_field_name(field_list, candidate_names):
-            for candidate in candidate_names:
-                for fld in field_list:
-                    if fld.name().lower() == candidate.lower():
-                        return fld.name()
-            return None
-
-        def is_null(val):
-            if val is None or val == NULL:
-                return True
-            if isinstance(val, QVariant) and val.isNull():
-                return True
-            return False
-
-        # Collect all valid Map UUIDs present in the geotagged point features (GeoJSON)
-        geotagged_ids = set()
-        uuid_field = resolve_field_name(source_fields, ["map_uuid"])
-
-        for f in geojson_data.getFeatures():
-            if feedback and feedback.isCanceled():
-                break
-            if uuid_field:
-                val = f.attribute(uuid_field)
-                if not is_null(val):
-                    geotagged_ids.add(str(val).strip())
-
-        # Extract records list from JSON data (CBMS Form 2 datafile)
-        records = []
-        if isinstance(json_data, list):
-            records = json_data
-        elif isinstance(json_data, dict):
-            if "records" in json_data and isinstance(json_data["records"], list):
-                records = json_data["records"]
-            elif "features" in json_data and isinstance(json_data["features"], list):
-                records = json_data["features"]
-            elif "data" in json_data and isinstance(json_data["data"], list):
-                records = json_data["data"]
-            else:
-                records = [json_data]
-
-        invalid_features = []
-
-        # Check each record in the Form 2 datafile for a counterpart in geotagged points
-        for rec in records:
-            if feedback and feedback.isCanceled():
-                break
-
-            rec_dict = rec if isinstance(rec, dict) else {}
-            if "properties" in rec_dict and isinstance(rec_dict["properties"], dict):
-                rec_props = rec_dict["properties"]
-            else:
-                rec_props = rec_dict
-
-            # Look up map_uuid in record properties
-            rec_id = None
-            for k, v in rec_props.items():
-                if k.lower() == "map_uuid" and not is_null(v):
-                    rec_id = str(v).strip()
-                    break
-
-            # If Form 2 record has no matching geotagged point (or no map_uuid), flag it
-            if not rec_id or rec_id not in geotagged_ids:
-                out_feat = QgsFeature(fields)
-
-                for fld in fields:
-                    fld_name = fld.name()
-                    val = None
-                    for k, v in rec_props.items():
-                        if k.lower() == fld_name.lower():
-                            val = v
-                            break
-                    if val is not None:
-                        out_feat.setAttribute(fld_name, val)
-
-                if rec_id:
-                    out_feat.setAttribute("map_uuid", rec_id)
-                out_feat.setAttribute("status", "Missing Geotagged Point")
-
-                invalid_features.append(out_feat)
-
-        feedback.pushInfo(
-            f"Results: {len(invalid_features)} Form 2 datafile records without counterpart geotagged points."
+        final_output = gmdhelpers.select_mv(
+            filtered_layer,
+            ["sf_map_uuid", "sf_longitude", "sf_latitude", "x_current", "y_current"],
+            context=context,
+            feedback=feedback,
         )
 
         return gmdhelpers.export_features_to_sink(
@@ -190,10 +142,10 @@ class mv_2027_hp_1a_map_uuid__missing(QgsProcessingAlgorithm):
             parameters,
             self.OUTPUT,
             context,
-            fields,
-            geojson_data.wkbType(),
-            geojson_data.sourceCrs(),
-            invalid_features,
+            final_output.fields(),
+            final_output.wkbType(),
+            final_output.sourceCrs(),
+            final_output.getFeatures(),
             feedback,
         )
 

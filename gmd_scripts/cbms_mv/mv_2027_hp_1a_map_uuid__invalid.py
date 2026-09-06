@@ -102,36 +102,28 @@ class mv_2027_hp_1a_map_uuid__invalid(QgsProcessingAlgorithm):
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
 
-        # ---------------------------------------------------------------------
-        # 2. dplyr::inner_join(..., by = "map_uuid", multiple = "first")
-        #    Tool: native:joinattributestable
-        # ---------------------------------------------------------------------
         joined_layer = processing.run(
             "native:joinattributestable",
             {
-                "INPUT": geojson_data,
+                "INPUT": json_data,
                 "FIELD": "map_uuid",
-                "INPUT_2": json_data,
+                "INPUT_2": geojson_data,
                 "FIELD_2": "map_uuid",
-                "FIELDS_TO_COPY": ["longitude_df", "latitude_df"],
+                "FIELDS_TO_COPY": [],
                 "METHOD": 1,                      # multiple = "first"
                 "DISCARD_NONMATCHING": True,       # INNER JOIN
-                "PREFIX": "",
+                "PREFIX": "sf_",
                 "OUTPUT": "memory:",
             },
             context=context,
             feedback=feedback,
         )["OUTPUT"]
 
-        # ---------------------------------------------------------------------
-        # 3. dplyr::filter(longitude != longitude_df | latitude != latitude_df | is.na(...))
-        #    Tool: native:extractbyexpression
-        # ---------------------------------------------------------------------
         filter_expr = (
-            '"longitude" IS NULL OR "latitude" IS NULL OR '
-            '"longitude_df" IS NULL OR "latitude_df" IS NULL OR '
-            'round(to_real("longitude"), 7) != round(to_real("longitude_df"), 7) OR '
-            'round(to_real("latitude"), 7) != round(to_real("latitude_df"), 7)'
+            '"sf_longitude" IS NULL OR "sf_latitude" IS NULL OR '
+            '"x_current" IS NULL OR "y_current" IS NULL OR '
+            'round(to_real("sf_longitude"), 7) != round(to_real("x_current"), 7) OR '
+            'round(to_real("sf_latitude"), 7) != round(to_real("y_current"), 7)'
         )
 
         filtered_layer = processing.run(
@@ -145,12 +137,9 @@ class mv_2027_hp_1a_map_uuid__invalid(QgsProcessingAlgorithm):
             feedback=feedback,
         )["OUTPUT"]
 
-        # ---------------------------------------------------------------------
-        # 4. select_mv(longitude, latitude, longitude_df, latitude_df)
-        # ---------------------------------------------------------------------
         final_output = gmdhelpers.select_mv(
             filtered_layer,
-            ["longitude", "latitude", "longitude_df", "latitude_df"],
+            ["sf_map_uuid","sf_longitude", "sf_latitude", "x_current", "y_current"],
             context=context,
             feedback=feedback,
         )

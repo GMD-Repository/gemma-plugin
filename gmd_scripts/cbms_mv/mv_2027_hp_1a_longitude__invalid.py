@@ -77,6 +77,16 @@ class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
         )
 
         self.addParameter(
+            QgsProcessingParameterFile(
+                self.BASE_LAYER,
+                "BASE_LAYER (.gpkg file)",
+                behavior=QgsProcessingParameterFile.File,
+                extension="gpkg",
+                optional=False,
+            )
+        )
+
+        self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
                 "mv_2027_hp_1a_longitude__invalid",
@@ -89,125 +99,70 @@ class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
 
-        features = gmdhelpers.filter_geometry_validity(geojson_data, feedback)
-        source_fields = geojson_data.fields()
+        # 1. Add rounded coordinate join key (coord_key) to geojson_data using QGIS Field Calculator
+        geojson_with_key = processing.run(
+            "native:fieldcalculator",
+            {
+                "INPUT": geojson_data,
+                "FIELD_NAME": "coord_key",
+                "FIELD_TYPE": 2,  # String
+                "FIELD_LENGTH": 100,
+                "FORMULA": 'to_string(round($x, 7)) + \'_\' + to_string(round($y, 7))',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
 
-        def is_null(val):
-            if val is None or val == NULL:
-                return True
-            if isinstance(val, QVariant) and val.isNull():
-                return True
-            val_str = str(val).strip()
-            if not val_str or val_str.lower() in ("null", "nan", "na"):
-                return True
-            return False
+        # 2. Add rounded coordinate join key (coord_key) to json_data table using QGIS Field Calculator (x_current, y_current)
+        json_with_key = processing.run(
+            "native:fieldcalculator",
+            {
+                "INPUT": json_data,
+                "FIELD_NAME": "coord_key",
+                "FIELD_TYPE": 2,  # String
+                "FIELD_LENGTH": 100,
+                "FORMULA": 'to_string(round(to_real("x_current"), 7)) + \'_\' + to_string(round(to_real("y_current"), 7))',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
 
-        def resolve_field_name(field_list, target_names):
-            for candidate in target_names:
-                for fld in field_list:
-                    if fld.name().lower() == candidate.lower():
-                        return fld.name()
-            return None
+        # 3. Join feature attributes using QGIS native Join Attributes Table on coord_key
+        joined_layer = processing.run(
+            "native:joinattributestable",
+            {
+                "INPUT": json_with_key,
+                "FIELD": "coord_key",
+                "INPUT_2": geojson_with_key,
+                "FIELD_2": "coord_key",
+                "FIELDS_TO_COPY": [],
+                "METHOD": 1,
+                "DISCARD_NONMATCHING": False,
+                "PREFIX": "sf_",
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
 
-        def round_coord(val):
-            if is_null(val):
-                return None
-            try:
-                return round(float(val), 7)
-            except (TypeError, ValueError):
-                return None
+        # 4. Extract mismatched features where geotagged map_uuid != reference JSON map_uuid
+        mismatched_layer = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": joined_layer,
+                "EXPRESSION": '"map_uuid" != "sf_map_uuid"',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
 
-        def clean_str(val):
-            return "" if is_null(val) else str(val).strip()
-
-        lon_field = resolve_field_name(source_fields, ["longitude"])
-        lat_field = resolve_field_name(source_fields, ["latitude"])
-        uuid_field = resolve_field_name(source_fields, ["map_uuid"])
-
-        # 1. Extract records from the JSON datafile
-        records = []
-        if isinstance(json_data, list):
-            records = json_data
-        elif isinstance(json_data, dict):
-            if "records" in json_data and isinstance(json_data["records"], list):
-                records = json_data["records"]
-            elif "features" in json_data and isinstance(json_data["features"], list):
-                records = json_data["features"]
-            elif "data" in json_data and isinstance(json_data["data"], list):
-                records = json_data["data"]
-            else:
-                records = [json_data]
-
-        # 2. GEO lookup by rounded coordinates (multiple = 'first')
-        geo_lookup: Dict[tuple, QgsFeature] = {}
-        for f in features:
-            lon = round_coord(f.attribute(lon_field) if lon_field else None)
-            lat = round_coord(f.attribute(lat_field) if lat_field else None)
-            if lon is None or lat is None:
-                continue
-            key = (lon, lat)
-            if key not in geo_lookup:
-                geo_lookup[key] = f
-
-        out_fields = QgsFields()
-        out_fields.append(QgsField("map_uuid_df", QVariant.String))
-        out_fields.append(QgsField("longitude_df", QVariant.Double))
-        out_fields.append(QgsField("latitude_df", QVariant.Double))
-        out_fields.append(QgsField("map_uuid", QVariant.String))
-        out_fields.append(QgsField("longitude", QVariant.Double))
-        out_fields.append(QgsField("latitude", QVariant.Double))
-
-        # 3. Left-join datafile records onto geo_lookup; keep only mismatches
-        matched_features = []
-        for rec in records:
-            rec_props = rec.get("properties", rec) if isinstance(rec, dict) else {}
-            props = {str(k).lower(): v for k, v in rec_props.items()}
-
-            lon = round_coord(props.get("longitude"))
-            lat = round_coord(props.get("latitude"))
-            
-            if lon is None or lat is None:
-                continue
-
-            geo_feature = geo_lookup.get((lon, lat))
-            if geo_feature is None:
-                continue
-
-            map_uuid_df = clean_str(props.get("map_uuid"))
-            map_uuid_geo = clean_str(geo_feature.attribute(uuid_field) if uuid_field else None)
-            
-            if map_uuid_geo == map_uuid_df:
-                continue
-
-            new_f = QgsFeature(out_fields)
-            new_f.setGeometry(geo_feature.geometry())
-            new_f["map_uuid_df"] = map_uuid_df
-            new_f["longitude_df"] = lon
-            new_f["latitude_df"] = lat
-            new_f["map_uuid"] = map_uuid_geo
-            new_f["longitude"] = lon
-            new_f["latitude"] = lat
-            matched_features.append(new_f)
-
-        matched_features = gmdhelpers.arrange(matched_features, "longitude")
-
-        # 4. Build temporary memory layer for matched features
-        crs = geojson_data.sourceCrs()
-        wkb_type_str = QgsWkbTypes.displayString(geojson_data.wkbType())
-        temp_layer = QgsVectorLayer(
-            f"{wkb_type_str}?crs={crs.authid()}",
-            "matched_layer",
-            "memory",
-        )
-        dp = temp_layer.dataProvider()
-        dp.addAttributes(out_fields)
-        temp_layer.updateFields()
-        dp.addFeatures(matched_features)
-
-        # 5. Select & organize columns using select_mv
+        # 5. Select & organize output columns using select_mv
         final_output = gmdhelpers.select_mv(
-            temp_layer,
-            ["map_uuid_df", "longitude_df", "latitude_df", "map_uuid", "longitude", "latitude"],
+            mismatched_layer,
+            ["x_current", "y_current", "sf_map_uuid", "sf_longitude", "sf_latitude"],
             context=context,
             feedback=feedback,
         )
