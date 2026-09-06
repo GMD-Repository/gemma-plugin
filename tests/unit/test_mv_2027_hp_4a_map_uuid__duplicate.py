@@ -17,7 +17,7 @@ class TestMv2027Hp4aMapUuidDuplicate(unittest.TestCase):
 
     def setUp(self):
         self.mod = importlib.import_module("gmd_scripts.cbms_mv.mv_2027_hp_4a_map_uuid__duplicate")
-        self.alg_cls = self.mod.Mv2027Hp4aMapUuidDuplicateAlgorithm
+        self.alg_cls = getattr(self.mod, "mv_2027_hp_4a_map_uuid__duplicate", None) or getattr(self.mod, "Mv2027Hp4aMapUuidDuplicateAlgorithm", None)
         self.alg = self.alg_cls()
 
     def test_algorithm_metadata(self):
@@ -36,7 +36,7 @@ class TestMv2027Hp4aMapUuidDuplicate(unittest.TestCase):
 
     def test_check_geometry_validity(self):
         """Test validity checking helper function."""
-        check_validity = self.mod.check_geometry_validity
+        check_validity = getattr(self.mod, "check_geometry_validity", None) or getattr(self.mod.gmdhelpers, "check_geometry_validity", None)
         valid_geom = QgsGeometry.fromPointXY(QgsPointXY(121.0, 14.0))
         self.assertTrue(check_validity(valid_geom))
 
@@ -47,10 +47,8 @@ class TestMv2027Hp4aMapUuidDuplicate(unittest.TestCase):
     def test_algorithm_parameters(self):
         """Verify algorithm registers required input and output parameters."""
         self.alg.initAlgorithm()
-        param_names = [p.name() for p in self.alg.parameterDefinitions()]
-        self.assertIn("INPUT_DATA", param_names)
-        self.assertIn("INPUT_LAYER", param_names)
-        self.assertIn("OUTPUT", param_names)
+        for p in ["INPUT_DATA", "INPUT_LAYER", "OUTPUT"]:
+            self.assertIsNotNone(self.alg.parameterDefinition(p))
 
     def test_process_algorithm_execution(self):
         """Test processAlgorithm logic on vector layer with duplicate map_uuid attributes."""

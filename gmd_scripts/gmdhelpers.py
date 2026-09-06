@@ -19,6 +19,7 @@ from qgis.core import (
     QgsFeatureSink,
     QgsGeometry,
     QgsVectorLayer,
+    QgsWkbTypes,
     QgsProcessingAlgorithm,
     QgsProcessingContext,
     QgsProcessingFeedback,
@@ -140,22 +141,133 @@ def load_cbms_geojson(alg, parameters, param_name, context):
     return source
 
 
-def load_cbms_json(alg, parameters, param_name, context, feedback=None):
-    """Loads and parses a CBMS JSON data file from algorithm parameters."""
-    json_data = None
+def load_cbms_json(alg, parameters, param_name, context, feedback=None, as_table=True):
+    """
+    Loads a CBMS Form 2 JSON data file from algorithm parameters.
+    When as_table=True (default), converts the JSON records into an in-memory
+    geometry-less QgsVectorLayer table, directly usable in processing algorithms
+    (e.g., native:joinattributestable). When as_table=False, returns raw parsed JSON.
+    """
     json_path = alg.parameterAsFile(parameters, param_name, context)
+    if not json_path or not os.path.exists(json_path):
+        return None
 
-    if json_path and os.path.exists(json_path):
-        try:
-            with open(json_path, "r", encoding="utf-8") as f:
-                json_data = json.load(f)
-            if feedback:
-                feedback.pushInfo(f"Loaded JSON input data from: '{json_path}'")
-        except Exception as e:
-            if feedback:
-                feedback.pushInfo(f"Warning: Failed to parse INPUT_DATA JSON: {e}")
+    raw_data = None
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            raw_data = json.load(f)
+        if feedback:
+            feedback.pushInfo(f"Loaded JSON input data from: '{json_path}'")
+    except Exception as e:
+        if feedback:
+            feedback.pushInfo(f"Warning: Failed to parse INPUT_DATA JSON: {e}")
+        return None
 
-    return json_data
+    if not as_table:
+        return raw_data
+
+    # Extract records list
+    records = []
+    if isinstance(raw_data, list):
+        records = raw_data
+    elif isinstance(raw_data, dict):
+        for key in ["cover_page", "records", "features", "data"]:
+            if key in raw_data and isinstance(raw_data[key], list):
+                records = raw_data[key]
+                break
+        if not records:
+            records = [raw_data]
+
+    # Create geometry-less memory table
+    table_layer = QgsVectorLayer("none", "cbms_json_table", "memory")
+    dp = table_layer.dataProvider()
+
+    # Discover and build fields
+    fields = QgsFields()
+    field_names = []
+
+    def add_fld(fname, ftype=QVariant.String):
+        if fname not in field_names:
+            fields.append(QgsField(fname, ftype))
+            field_names.append(fname)
+
+    # Core CBMS join & coordinate fields
+    add_fld("map_uuid", QVariant.String)
+    add_fld("longitude_df", QVariant.Double)
+    add_fld("latitude_df", QVariant.Double)
+
+    # Inspect records for other available fields
+    for rec in records[:100]:
+        props = rec.get("properties", rec) if isinstance(rec, dict) else {}
+        for k, v in props.items():
+            k_name = str(k).strip()
+            if k_name.lower() in ("map_uuid", "longitude_df", "latitude_df"):
+                continue
+            if k_name not in field_names:
+                if isinstance(v, bool):
+                    ftype = QVariant.Bool
+                elif isinstance(v, int):
+                    ftype = QVariant.Int
+                elif isinstance(v, float):
+                    ftype = QVariant.Double
+                else:
+                    ftype = QVariant.String
+                add_fld(k_name, ftype)
+
+    dp.addAttributes(fields)
+    table_layer.updateFields()
+
+    # Populate features
+    features = []
+    for rec in records:
+        props = rec.get("properties", rec) if isinstance(rec, dict) else {}
+
+        # Resolve map_uuid
+        uuid_val = None
+        for k, v in props.items():
+            if k.lower() == "map_uuid" and v is not None and v != NULL:
+                uuid_val = str(v).strip()
+                break
+
+        # Resolve longitude_df (from x_current, longitude, or longitude_df)
+        lon_df = None
+        for k, v in props.items():
+            if k.lower() in ("x_current", "longitude", "long", "longitude_df") and v is not None and v != NULL:
+                try:
+                    lon_df = round(float(v), 7)
+                    break
+                except (ValueError, TypeError):
+                    pass
+
+        # Resolve latitude_df (from y_current, latitude, or latitude_df)
+        lat_df = None
+        for k, v in props.items():
+            if k.lower() in ("y_current", "latitude", "lat", "latitude_df") and v is not None and v != NULL:
+                try:
+                    lat_df = round(float(v), 7)
+                    break
+                except (ValueError, TypeError):
+                    pass
+
+        feat = QgsFeature(fields)
+        if uuid_val:
+            feat.setAttribute("map_uuid", uuid_val)
+        if lon_df is not None:
+            feat.setAttribute("longitude_df", lon_df)
+        if lat_df is not None:
+            feat.setAttribute("latitude_df", lat_df)
+
+        for fn in field_names:
+            if fn in ("map_uuid", "longitude_df", "latitude_df"):
+                continue
+            if fn in props:
+                val = props[fn]
+                feat.setAttribute(fn, val if val is not None else NULL)
+
+        features.append(feat)
+
+    dp.addFeatures(features)
+    return table_layer
 
 
 def load_base_layer(alg, parameters, param_name, context, suffix="_bldg_point"):
@@ -237,6 +349,91 @@ def set_status_bar(self, status_bar):
     status_bar.setValue(0)
     status_bar.setFormat("Ready")
     self.status_bar = status_bar
+
+
+def create_temporary_layer(
+    features,
+    fields=None,
+    source_layer=None,
+    wkb_type=None,
+    crs=None,
+    layer_name="temp_layer",
+):
+    """
+    Creates an in-memory QgsVectorLayer from a list or iterable of QgsFeature.
+
+    Can automatically infer geometry type, CRS, and fields from:
+    1. An optional source_layer (e.g. geojson_data, GPKG layer)
+    2. Explicit fields, wkb_type, or crs parameters
+    3. The first feature in features if available
+    4. Safe defaults (Point geometry, EPSG:4326)
+
+    Usage examples:
+        temp_layer = create_temporary_layer(invalid_features)
+        temp_layer = create_temporary_layer(invalid_features, fields, geojson_data)
+        temp_layer = create_temporary_layer(invalid_features, source_layer=geojson_data)
+        temp_layer = create_temporary_layer(invalid_features, fields=fields)
+    """
+    if isinstance(features, QgsVectorLayer):
+        return features
+
+    # Handle flexible positional arguments:
+    # e.g., create_temporary_layer(features, geojson_data)
+    if fields is not None and hasattr(fields, "sourceCrs") and source_layer is None:
+        source_layer = fields
+        fields = None
+
+    feat_list = list(features) if features is not None else []
+
+    # Infer metadata from source_layer if provided
+    if source_layer is not None:
+        if wkb_type is None and hasattr(source_layer, "wkbType"):
+            wkb_type = source_layer.wkbType()
+        if crs is None and hasattr(source_layer, "sourceCrs"):
+            crs = source_layer.sourceCrs()
+        if fields is None and hasattr(source_layer, "fields"):
+            fields = source_layer.fields()
+
+    # Infer fields from first feature if still None
+    if fields is None and feat_list:
+        first_feat = feat_list[0]
+        if hasattr(first_feat, "fields") and first_feat.fields() is not None:
+            fields = first_feat.fields()
+
+    # Infer geometry type from first feature if still None
+    if wkb_type is None and feat_list:
+        first_feat = feat_list[0]
+        if hasattr(first_feat, "hasGeometry") and first_feat.hasGeometry() and first_feat.geometry():
+            wkb_type = first_feat.geometry().wkbType()
+
+    # Fallback geometry type to Point
+    if wkb_type is None:
+        wkb_type = QgsWkbTypes.Point
+
+    # Resolve geometry string
+    if isinstance(wkb_type, str):
+        geom_type_str = wkb_type
+    else:
+        geom_type_str = QgsWkbTypes.displayString(wkb_type)
+
+    # Resolve CRS string
+    if crs is not None:
+        crs_str = crs.authid() if hasattr(crs, "authid") else str(crs)
+    else:
+        crs_str = "EPSG:4326"
+
+    uri = f"{geom_type_str}?crs={crs_str}"
+    temp_layer = QgsVectorLayer(uri, layer_name, "memory")
+    dp = temp_layer.dataProvider()
+
+    if fields is not None:
+        dp.addAttributes(fields)
+        temp_layer.updateFields()
+
+    if feat_list:
+        dp.addFeatures(feat_list)
+
+    return temp_layer
 
 
 REF_SELECT_MV_COLS  = [

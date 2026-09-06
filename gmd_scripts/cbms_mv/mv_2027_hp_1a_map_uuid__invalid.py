@@ -1,5 +1,6 @@
 import os
 import json
+import processing
 from typing import Any, Optional, Dict, List
 
 from PyQt5.QtCore import QVariant
@@ -30,6 +31,7 @@ class mv_2027_hp_1a_map_uuid__invalid(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"
     INPUT_LAYER = "INPUT_LAYER"
+    BASE_LAYER = "BASE_LAYER"
     OUTPUT = "OUTPUT"
 
     def name(self) -> str:
@@ -73,6 +75,16 @@ class mv_2027_hp_1a_map_uuid__invalid(QgsProcessingAlgorithm):
         )
 
         self.addParameter(
+            QgsProcessingParameterFile(
+                self.BASE_LAYER,
+                "BASE_LAYER (.gpkg file)",
+                behavior=QgsProcessingParameterFile.File,
+                extension="gpkg",
+                optional=False,
+            )
+        )
+
+        self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
                 "mv_2027_hp_1a_map_uuid__invalid",
@@ -90,153 +102,57 @@ class mv_2027_hp_1a_map_uuid__invalid(QgsProcessingAlgorithm):
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
 
-        # Build output fields
-        source_fields = geojson_data.fields()
-        fields = QgsFields(source_fields)
+        # ---------------------------------------------------------------------
+        # 2. dplyr::inner_join(..., by = "map_uuid", multiple = "first")
+        #    Tool: native:joinattributestable
+        # ---------------------------------------------------------------------
+        joined_layer = processing.run(
+            "native:joinattributestable",
+            {
+                "INPUT": geojson_data,
+                "FIELD": "map_uuid",
+                "INPUT_2": json_data,
+                "FIELD_2": "map_uuid",
+                "FIELDS_TO_COPY": ["longitude_df", "latitude_df"],
+                "METHOD": 1,                      # multiple = "first"
+                "DISCARD_NONMATCHING": True,       # INNER JOIN
+                "PREFIX": "",
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
 
-        def ensure_field(flds, name, ftype=QVariant.Double):
-            if flds.indexOf(name) == -1:
-                flds.append(QgsField(name, ftype))
+        # ---------------------------------------------------------------------
+        # 3. dplyr::filter(longitude != longitude_df | latitude != latitude_df | is.na(...))
+        #    Tool: native:extractbyexpression
+        # ---------------------------------------------------------------------
+        filter_expr = (
+            '"longitude" IS NULL OR "latitude" IS NULL OR '
+            '"longitude_df" IS NULL OR "latitude_df" IS NULL OR '
+            'round(to_real("longitude"), 7) != round(to_real("longitude_df"), 7) OR '
+            'round(to_real("latitude"), 7) != round(to_real("latitude_df"), 7)'
+        )
 
-        ensure_field(fields, "json_longitude", QVariant.Double)
-        ensure_field(fields, "json_latitude", QVariant.Double)
-        ensure_field(fields, "geom_longitude", QVariant.Double)
-        ensure_field(fields, "geom_latitude", QVariant.Double)
-        ensure_field(fields, "distance_m", QVariant.Double)
+        filtered_layer = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": joined_layer,
+                "EXPRESSION": filter_expr,
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
 
-        # Helper to find field name case-insensitively
-        def resolve_field_name(field_list, candidate_names):
-            for candidate in candidate_names:
-                for fld in field_list:
-                    if fld.name().lower() == candidate.lower():
-                        return fld.name()
-            return None
-
-        def is_null(val):
-            if val is None or val == NULL:
-                return True
-            if isinstance(val, QVariant) and val.isNull():
-                return True
-            return False
-
-        uuid_field = resolve_field_name(source_fields, ["map_uuid"])
-
-        # Extract records list from JSON data (Form 2 datafile)
-        records = []
-        if isinstance(json_data, list):
-            records = json_data
-        elif isinstance(json_data, dict):
-            if "records" in json_data and isinstance(json_data["records"], list):
-                records = json_data["records"]
-            elif "features" in json_data and isinstance(json_data["features"], list):
-                records = json_data["features"]
-            elif "data" in json_data and isinstance(json_data["data"], list):
-                records = json_data["data"]
-            else:
-                records = [json_data]
-
-        # Build lookup table of map_uuid -> (longitude, latitude) from JSON datafile
-        json_coords_by_uuid = {}
-
-        for rec in records:
-            if feedback and feedback.isCanceled():
-                break
-
-            rec_dict = rec if isinstance(rec, dict) else {}
-            if "properties" in rec_dict and isinstance(rec_dict["properties"], dict):
-                rec_props = rec_dict["properties"]
-            else:
-                rec_props = rec_dict
-
-            # Find map_uuid in record properties
-            rec_id = None
-            for k, v in rec_props.items():
-                if k.lower() == "map_uuid" and not is_null(v):
-                    rec_id = str(v).strip()
-                    break
-
-            # Find longitude & latitude in record properties (strictly longitude and latitude)
-            json_long = None
-            json_lat = None
-
-            for k, v in rec_props.items():
-                if k.lower() == "longitude" and not is_null(v):
-                    try:
-                        json_long = round(float(v), 7)
-                    except (ValueError, TypeError):
-                        pass
-                    break
-
-            for k, v in rec_props.items():
-                if k.lower() == "latitude" and not is_null(v):
-                    try:
-                        json_lat = round(float(v), 7)
-                    except (ValueError, TypeError):
-                        pass
-                    break
-
-            if rec_id and json_long is not None and json_lat is not None:
-                json_coords_by_uuid[rec_id] = (json_long, json_lat)
-
-        invalid_features = []
-
-        # Iterate over geotagged points and check for coordinate mismatches with Form 2 datafile
-        for f in geojson_data.getFeatures():
-            if feedback and feedback.isCanceled():
-                break
-
-            geom = f.geometry()
-            if geom is None or geom.isEmpty():
-                continue
-
-            point_geom = geom.asPoint()
-            if point_geom.isEmpty():
-                continue
-
-            feat_uuid = f.attribute(uuid_field) if uuid_field else None
-            if is_null(feat_uuid):
-                continue
-
-            uuid_str = str(feat_uuid).strip()
-            if uuid_str not in json_coords_by_uuid:
-                continue
-
-            json_long, json_lat = json_coords_by_uuid[uuid_str]
-            geom_long = round(point_geom.x(), 7)
-            geom_lat = round(point_geom.y(), 7)
-
-            # Calculate Haversine distance between datafile coords and geometry coords
-            import math
-            R = 6371000  # Earth radius in meters
-            lat1 = math.radians(geom_lat)
-            lat2 = math.radians(json_lat)
-            dlat = math.radians(json_lat - geom_lat)
-            dlon = math.radians(json_long - geom_long)
-            a = (math.sin(dlat / 2) ** 2 +
-                 math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2)
-            a = max(0.0, min(1.0, a))
-            c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-            distance_m = round(R * c, 4)
-
-            # Flag if coordinates mismatch (distance > 5m or coordinates not identical)
-            if distance_m > 5.0 or json_long != geom_long or json_lat != geom_lat:
-                out_feat = QgsFeature(fields)
-                out_feat.setGeometry(geom)
-
-                # Copy existing attributes
-                for i in range(source_fields.count()):
-                    out_feat.setAttribute(source_fields.at(i).name(), f.attribute(i))
-
-                out_feat.setAttribute("json_longitude", json_long)
-                out_feat.setAttribute("json_latitude", json_lat)
-                out_feat.setAttribute("geom_longitude", geom_long)
-                out_feat.setAttribute("geom_latitude", geom_lat)
-                out_feat.setAttribute("distance_m", distance_m)
-
-                invalid_features.append(out_feat)
-
-        feedback.pushInfo(
-            f"Results: {len(invalid_features)} features with matching map_uuid but mismatched coordinates."
+        # ---------------------------------------------------------------------
+        # 4. select_mv(longitude, latitude, longitude_df, latitude_df)
+        # ---------------------------------------------------------------------
+        final_output = gmdhelpers.select_mv(
+            filtered_layer,
+            ["longitude", "latitude", "longitude_df", "latitude_df"],
+            context=context,
+            feedback=feedback,
         )
 
         return gmdhelpers.export_features_to_sink(
@@ -244,13 +160,12 @@ class mv_2027_hp_1a_map_uuid__invalid(QgsProcessingAlgorithm):
             parameters,
             self.OUTPUT,
             context,
-            fields,
-            geojson_data.wkbType(),
-            geojson_data.sourceCrs(),
-            invalid_features,
+            final_output.fields(),
+            final_output.wkbType(),
+            final_output.sourceCrs(),
+            final_output.getFeatures(),
             feedback,
         )
-
 
     def createInstance(self):
         return self.__class__()
