@@ -7,7 +7,7 @@ geotagged building points, and reference base layers against
 established PSA validation rules and spatial constraints.
 
 All components, configurations, and reference implementations for
-this tool are self-contained within references/cbmsmv.
+this tool are self-contained within references/cbms_mv.
 Algorithms are dynamically discovered from gmd_scripts/cbms_mv.
 """
 
@@ -30,6 +30,7 @@ from qgis.core import (
     QgsProcessingContext,
     QgsProcessingFeedback,
     QgsProcessingUtils,
+    QgsProviderRegistry,
 )
 from qgis.gui import QgsFileWidget
 from qgis.PyQt.QtCore import Qt, QTimer, pyqtSignal, QSize
@@ -71,6 +72,18 @@ except ImportError:
 SETTINGS_KEY_FORM2 = "gemma/cbmsmv/form2_json_path"
 SETTINGS_KEY_POINTS = "gemma/cbmsmv/points_geojson_path"
 SETTINGS_KEY_BASE = "gemma/cbmsmv/base_gpkg_path"
+SETTINGS_KEY_LOAD_INPUTS = "gemma/cbmsmv/load_inputs_in_layers"
+
+try:
+    from ...gmd_scripts.gmdhelpers import load_cbms_json_to_layer
+except (ImportError, ValueError):
+    try:
+        from gmd_scripts.gmdhelpers import load_cbms_json_to_layer
+    except (ImportError, ValueError):
+        _plugin_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        if _plugin_root not in sys.path:
+            sys.path.insert(0, _plugin_root)
+        from gmd_scripts.gmdhelpers import load_cbms_json_to_layer
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +212,9 @@ class CbmsmvDialog(QDialog):
         self._rule_checkboxes: Dict[str, QTableWidgetItem] = {}
         self._is_validating = False
 
+        self.context = QgsProcessingContext()
+        self.context.setProject(self.project)
+
         self._setup_dialog_icon()
         self._init_ui()
         self._apply_styling()
@@ -326,8 +342,13 @@ class CbmsmvDialog(QDialog):
         self.file_form2.setStorageMode(QgsFileWidget.GetFile)
         self.file_form2.fileChanged.connect(self._on_inputs_changed)
 
+        self.lbl_status_form2 = QLabel("")
+        self.lbl_status_form2.setFixedWidth(24)
+        self.lbl_status_form2.setAlignment(Qt.AlignCenter)
+
         grid_sources.addWidget(lbl_form2, 0, 0)
         grid_sources.addWidget(self.file_form2, 0, 1)
+        grid_sources.addWidget(self.lbl_status_form2, 0, 2)
 
         # 2. Geotagged Building Points (.geojson)
         lbl_points = QLabel("Geotagged Building Points (.geojson):")
@@ -338,8 +359,13 @@ class CbmsmvDialog(QDialog):
         self.file_points.setStorageMode(QgsFileWidget.GetFile)
         self.file_points.fileChanged.connect(self._on_inputs_changed)
 
+        self.lbl_status_points = QLabel("")
+        self.lbl_status_points.setFixedWidth(24)
+        self.lbl_status_points.setAlignment(Qt.AlignCenter)
+
         grid_sources.addWidget(lbl_points, 1, 0)
         grid_sources.addWidget(self.file_points, 1, 1)
+        grid_sources.addWidget(self.lbl_status_points, 1, 2)
 
         # 3. Base Layers (.gpkg)
         lbl_base = QLabel("Base Layers (.gpkg):")
@@ -350,22 +376,29 @@ class CbmsmvDialog(QDialog):
         self.file_base.setStorageMode(QgsFileWidget.GetFile)
         self.file_base.fileChanged.connect(self._on_inputs_changed)
 
+        self.lbl_status_base = QLabel("")
+        self.lbl_status_base.setFixedWidth(24)
+        self.lbl_status_base.setAlignment(Qt.AlignCenter)
+
         grid_sources.addWidget(lbl_base, 2, 0)
         grid_sources.addWidget(self.file_base, 2, 1)
+        grid_sources.addWidget(self.lbl_status_base, 2, 2)
 
-        # Input status note
-        self.lbl_input_status = QLabel(
-            "ℹ️ Provide the Form 2 JSON file, Geotagged Building Points GeoJSON, and optional Base Layers GPKG."
+        # Single option for loading primary input data sources into QGIS Layers Panel
+        self.chk_load_inputs_canvas = QCheckBox("Load primary input data sources into QGIS Layers Panel")
+        self.chk_load_inputs_canvas.setToolTip(
+            "If checked, automatically loads Form 2 JSON (via load_cbms_json_to_layer), Geotagged Building Points, "
+            "and all sublayers in Base Layers GPKG into QGIS Layers Panel during validation."
         )
-        self.lbl_input_status.setStyleSheet("color: #555; font-style: italic; font-size: 11px;")
-        grid_sources.addWidget(self.lbl_input_status, 3, 0, 1, 2)
+        self.chk_load_inputs_canvas.stateChanged.connect(self._on_inputs_changed)
+        grid_sources.addWidget(self.chk_load_inputs_canvas, 3, 0, 1, 3)
 
         container_layout.addWidget(grp_sources)
 
         # -------------------------------------------------------------------
         # Group 2: Validation Output & Workspace Settings
         # -------------------------------------------------------------------
-        grp_output = QGroupBox("Validation & Output Settings")
+        grp_output = QGroupBox("Validation && Output Settings")
         grp_output.setObjectName("sectionGroup")
         vbox_output = QVBoxLayout(grp_output)
         vbox_output.setContentsMargins(14, 16, 14, 14)
@@ -414,8 +447,8 @@ class CbmsmvDialog(QDialog):
         self.chk_group_layers.setChecked(True)
         vbox_output.addWidget(self.chk_group_layers)
 
-        self.chk_summary_report = QCheckBox("Generate validation audit report (JSON & Summary CSV)")
-        self.chk_summary_report.setChecked(True)
+        self.chk_summary_report = QCheckBox("Generate validation audit report (JSON && Summary CSV)")
+        self.chk_summary_report.setChecked(False)
         vbox_output.addWidget(self.chk_summary_report)
 
         container_layout.addWidget(grp_output)
@@ -431,37 +464,67 @@ class CbmsmvDialog(QDialog):
         self.gpkg_widget.setVisible(checked)
 
     def _on_inputs_changed(self):
-        """Update status label and persist settings when input filepaths change."""
+        """Update file existence indicators (✓ / ❌) beside input boxes and persist settings."""
         form2 = self.file_form2.filePath().strip()
         points = self.file_points.filePath().strip()
         base = self.file_base.filePath().strip()
 
-        # Persist paths
+        # Check if '2027 CBMS Primary Inputs' group already exists in QGIS layer tree
+        proj = self.project if hasattr(self, "project") and self.project else QgsProject.instance()
+        if proj and proj.layerTreeRoot() and proj.layerTreeRoot().findGroup("2027 CBMS Primary Inputs"):
+            if hasattr(self, "chk_load_inputs_canvas"):
+                self.chk_load_inputs_canvas.setChecked(False)
+
+        # Persist paths and load options
         self.settings.setValue(SETTINGS_KEY_FORM2, form2)
         self.settings.setValue(SETTINGS_KEY_POINTS, points)
         self.settings.setValue(SETTINGS_KEY_BASE, base)
+        if hasattr(self, "chk_load_inputs_canvas"):
+            self.settings.setValue(SETTINGS_KEY_LOAD_INPUTS, self.chk_load_inputs_canvas.isChecked())
 
-        # Check existence
-        parts = []
-        if form2:
-            parts.append(f"Form 2: {'✓ Exists' if os.path.exists(form2) else '⚠️ Not Found'}")
-        if points:
-            parts.append(f"Points: {'✓ Exists' if os.path.exists(points) else '⚠️ Not Found'}")
-        if base:
-            parts.append(f"Base GPKG: {'✓ Exists' if os.path.exists(base) else '⚠️ Not Found'}")
+        # Update indicator status icons beside input boxes
+        if hasattr(self, "lbl_status_form2"):
+            if form2:
+                if os.path.exists(form2):
+                    self.lbl_status_form2.setText("<span style='color: #27AE60; font-weight: bold; font-size: 14px;'>✓</span>")
+                    self.lbl_status_form2.setToolTip("Form 2 JSON file exists")
+                else:
+                    self.lbl_status_form2.setText("<span style='color: #E74C3C; font-weight: bold; font-size: 14px;'>❌</span>")
+                    self.lbl_status_form2.setToolTip("Form 2 JSON file not found")
+            else:
+                self.lbl_status_form2.setText("<span style='color: #E74C3C; font-weight: bold; font-size: 14px;'>❌</span>")
+                self.lbl_status_form2.setToolTip("Form 2 JSON file required")
 
-        if parts:
-            self.lbl_input_status.setText(" | ".join(parts))
-        else:
-            self.lbl_input_status.setText(
-                "ℹ️ Provide the Form 2 JSON file, Geotagged Building Points GeoJSON, and optional Base Layers GPKG."
-            )
+        if hasattr(self, "lbl_status_points"):
+            if points:
+                if os.path.exists(points):
+                    self.lbl_status_points.setText("<span style='color: #27AE60; font-weight: bold; font-size: 14px;'>✓</span>")
+                    self.lbl_status_points.setToolTip("Geotagged Building Points file exists")
+                else:
+                    self.lbl_status_points.setText("<span style='color: #E74C3C; font-weight: bold; font-size: 14px;'>❌</span>")
+                    self.lbl_status_points.setToolTip("Geotagged Building Points file not found")
+            else:
+                self.lbl_status_points.setText("<span style='color: #E74C3C; font-weight: bold; font-size: 14px;'>❌</span>")
+                self.lbl_status_points.setToolTip("Geotagged Building Points file required")
+
+        if hasattr(self, "lbl_status_base"):
+            if base:
+                if os.path.exists(base):
+                    self.lbl_status_base.setText("<span style='color: #27AE60; font-weight: bold; font-size: 14px;'>✓</span>")
+                    self.lbl_status_base.setToolTip("Base Layers GeoPackage exists")
+                else:
+                    self.lbl_status_base.setText("<span style='color: #E74C3C; font-weight: bold; font-size: 14px;'>❌</span>")
+                    self.lbl_status_base.setToolTip("Base Layers GeoPackage not found")
+            else:
+                self.lbl_status_base.setText("")
+                self.lbl_status_base.setToolTip("Base Layers GeoPackage is optional")
 
     def _load_saved_settings(self):
-        """Load previously saved filepaths from QSettings if available."""
+        """Load previously saved filepaths and load options from QSettings if available."""
         saved_form2 = self.settings.value(SETTINGS_KEY_FORM2, "", type=str)
         saved_points = self.settings.value(SETTINGS_KEY_POINTS, "", type=str)
         saved_base = self.settings.value(SETTINGS_KEY_BASE, "", type=str)
+        saved_load_inputs = self.settings.value(SETTINGS_KEY_LOAD_INPUTS, False, type=bool)
 
         if saved_form2:
             self.file_form2.setFilePath(saved_form2)
@@ -469,6 +532,9 @@ class CbmsmvDialog(QDialog):
             self.file_points.setFilePath(saved_points)
         if saved_base:
             self.file_base.setFilePath(saved_base)
+
+        if hasattr(self, "chk_load_inputs_canvas"):
+            self.chk_load_inputs_canvas.setChecked(bool(saved_load_inputs))
 
         self._on_inputs_changed()
 
@@ -795,6 +861,8 @@ class CbmsmvDialog(QDialog):
 
         self.btn_run = QPushButton("  ▶  Run Validation  ")
         self.btn_run.setObjectName("btnRun")
+        self.btn_run.setShortcut("Ctrl+Return")
+        self.btn_run.setToolTip("Run Map Validation (Ctrl+Enter)")
         self.btn_run.clicked.connect(self.run_validation)
 
         self.btn_reset = QPushButton("Reset Form")
@@ -1065,6 +1133,116 @@ class CbmsmvDialog(QDialog):
 
         return alg
 
+    def _get_or_create_layer_group(self, group_name: str):
+        """Find or create a top-level group in the QGIS Layer Tree."""
+        proj = self.project if self.project else QgsProject.instance()
+        root = proj.layerTreeRoot()
+        grp = root.findGroup(group_name)
+        if not grp:
+            grp = root.insertGroup(0, group_name)
+        return grp
+
+    def _discover_gpkg_sublayer_uris_and_names(self, gpkg_path: str) -> List[tuple]:
+        """Discover all vector sublayer names and URIs inside a GeoPackage file."""
+        sublayer_items = []
+
+        # Strategy 1: QgsProviderRegistry OGR provider metadata
+        try:
+            md = QgsProviderRegistry.instance().providerMetadata("ogr")
+            if md:
+                subs = md.sublayers(gpkg_path)
+                for sub in subs:
+                    uri = sub.uri() if hasattr(sub, "uri") else f"{gpkg_path}|layername={sub.name()}"
+                    name = sub.name() if hasattr(sub, "name") else os.path.basename(gpkg_path)
+                    sublayer_items.append((uri, name))
+        except Exception:
+            pass
+
+        # Strategy 2: SQLite gpkg_contents table query fallback
+        if not sublayer_items:
+            try:
+                import sqlite3
+                conn = sqlite3.connect(gpkg_path)
+                cursor = conn.cursor()
+                cursor.execute("SELECT table_name FROM gpkg_contents WHERE data_type IN ('features', 'attributes')")
+                rows = cursor.fetchall()
+                conn.close()
+                for r in rows:
+                    tname = r[0]
+                    sub_uri = f"{gpkg_path}|layername={tname}"
+                    sublayer_items.append((sub_uri, tname))
+            except Exception:
+                pass
+
+        # Strategy 3: Single layer fallback if no sublayers discovered
+        if not sublayer_items:
+            sublayer_items.append((gpkg_path, os.path.basename(gpkg_path)))
+
+        return sublayer_items
+
+    def _load_primary_input_sources_if_requested(self, form2_path: str, points_path: str, base_path: str):
+        """Load checked primary input data sources into their own QGIS Layer Group."""
+        if not hasattr(self, "chk_load_inputs_canvas") or not self.chk_load_inputs_canvas.isChecked():
+            return
+
+        proj = self.project if self.project else QgsProject.instance()
+        group_name = "2027 CBMS Primary Inputs"
+        inputs_group = self._get_or_create_layer_group(group_name)
+
+        # 1. Form 2 Data File (.json) using load_cbms_json_to_layer from gmdhelpers
+        if form2_path and os.path.exists(form2_path):
+            try:
+                self._log_info(f"Loading Form 2 JSON into QGIS Layers via load_cbms_json_to_layer: {os.path.basename(form2_path)}")
+                layer_name = f"Form 2 ({os.path.basename(form2_path)})"
+                table_layer = load_cbms_json_to_layer(form2_path, layer_name=layer_name, add_to_project=False)
+                if table_layer and table_layer.isValid():
+                    proj.addMapLayer(table_layer, False)
+                    inputs_group.addLayer(table_layer)
+                    self._log_success(f"Form 2 JSON table layer '{layer_name}' loaded into group '{group_name}'.")
+                else:
+                    self._log_error(f"Form 2 JSON table layer is invalid: {form2_path}")
+            except Exception as e:
+                self._log_error(f"Failed to load Form 2 JSON into QGIS Layers: {e}")
+
+        # 2. Geotagged Building Points (.geojson)
+        if points_path and os.path.exists(points_path):
+            try:
+                self._log_info(f"Loading Geotagged Building Points into QGIS Layers: {os.path.basename(points_path)}")
+                layer_name = f"Building Points ({os.path.basename(points_path)})"
+                pt_layer = QgsVectorLayer(points_path, layer_name, "ogr")
+                if pt_layer.isValid():
+                    proj.addMapLayer(pt_layer, False)
+                    inputs_group.addLayer(pt_layer)
+                    self._log_success(f"Building Points layer '{layer_name}' loaded into group '{group_name}'.")
+                else:
+                    self._log_error(f"Geotagged Building Points layer is invalid: {points_path}")
+            except Exception as e:
+                self._log_error(f"Failed to load Geotagged Building Points into QGIS Layers: {e}")
+
+        # 3. Base Layers (.gpkg) - Loads ALL sublayers in the GPKG file into group
+        if base_path and os.path.exists(base_path):
+            try:
+                self._log_info(f"Loading all Base Layers GPKG sublayers into group '{group_name}': {os.path.basename(base_path)}")
+                sublayer_items = self._discover_gpkg_sublayer_uris_and_names(base_path)
+                loaded_count = 0
+
+                for sub_uri, sub_name in sublayer_items:
+                    blayer = QgsVectorLayer(sub_uri, sub_name, "ogr")
+                    if blayer.isValid():
+                        proj.addMapLayer(blayer, False)
+                        inputs_group.addLayer(blayer)
+                        loaded_count += 1
+
+                if loaded_count > 0:
+                    self._log_success(f"Successfully loaded {loaded_count} Base Layer(s) into group '{group_name}'.")
+                else:
+                    self._log_error(f"Could not load any valid sublayers from Base Layers GPKG: {base_path}")
+            except Exception as e:
+                self._log_error(f"Failed to load Base Layers into QGIS Layers Panel: {e}")
+
+        # Uncheck canvas loading checkbox after loading inputs to prevent duplicate loading
+        self.chk_load_inputs_canvas.setChecked(False)
+
     # -----------------------------------------------------------------------
     # Execution Logic: Iterating Selected Algorithms
     # -----------------------------------------------------------------------
@@ -1179,9 +1357,12 @@ class CbmsmvDialog(QDialog):
         self._log_info(f"Queued Validation Algorithms: {len(selected_rules)}")
 
         # 5. Execution context and feedback
-        context = QgsProcessingContext()
-        context.setProject(self.project)
+        self.context = QgsProcessingContext()
+        self.context.setProject(self.project or QgsProject.instance())
         feedback = ProcessingFeedbackBridge(self._log_info, self._log_warning, self._log_error)
+
+        # Load primary input data sources into QGIS Layers Panel if requested by user
+        self._load_primary_input_sources_if_requested(form2_path, points_path, base_path)
 
         total_rules = len(selected_rules)
         total_flagged_issues = 0
@@ -1247,7 +1428,7 @@ class CbmsmvDialog(QDialog):
 
             # Execute the algorithm
             try:
-                result = processing.run(alg_target, params, context=context, feedback=feedback)
+                result = processing.run(alg_target, params, context=self.context, feedback=feedback)
             except Exception as exc:
                 self._log_error(f"Execution error running '{val_id}': {exc}")
                 execution_summary.append({
@@ -1267,9 +1448,13 @@ class CbmsmvDialog(QDialog):
                 if isinstance(out_dest, QgsVectorLayer):
                     out_layer = out_dest
                 elif isinstance(out_dest, str):
-                    out_layer = QgsProcessingUtils.mapLayerFromString(out_dest, context)
-                    if not out_layer and self.project:
-                        out_layer = self.project.mapLayer(out_dest)
+                    proj = self.project if self.project else QgsProject.instance()
+                    out_layer = QgsProcessingUtils.mapLayerFromString(out_dest, self.context)
+                    if not out_layer and proj:
+                        out_layer = proj.mapLayer(out_dest)
+                    if not out_layer and gpkg_export_path and os.path.exists(gpkg_export_path):
+                        gpkg_layer_uri = f"{gpkg_export_path}|layername={val_id}"
+                        out_layer = QgsVectorLayer(gpkg_layer_uri, val_id, "ogr")
                     if not out_layer and os.path.exists(out_dest):
                         out_layer = QgsVectorLayer(out_dest, val_id, "ogr")
 
@@ -1283,45 +1468,57 @@ class CbmsmvDialog(QDialog):
 
                     # Add layer to QGIS canvas
                     if self.chk_load_canvas.isChecked():
-                        if context and hasattr(context, "takeResultLayer"):
+                        if hasattr(self.context, "takeResultLayer"):
                             try:
-                                context.takeResultLayer(out_layer.id())
+                                take_lyr = self.context.takeResultLayer(out_dest if isinstance(out_dest, str) else out_layer.id())
+                                if take_lyr and take_lyr.isValid():
+                                    out_layer = take_lyr
                             except Exception:
                                 pass
+
                         out_layer.setName(f"{val_id} ({flagged_count})")
+                        proj = self.project if self.project else QgsProject.instance()
+
                         if self.chk_group_layers.isChecked():
-                            root = self.project.layerTreeRoot()
-                            grp = root.findGroup("2027 CBMS MV Results")
-                            if not grp:
-                                grp = root.insertGroup(0, "2027 CBMS MV Results")
-                            self.project.addMapLayer(out_layer, False)
+                            grp = self._get_or_create_layer_group("2027 CBMS MV Results")
+                            proj.addMapLayer(out_layer, False)
                             grp.addLayer(out_layer)
                         else:
-                            self.project.addMapLayer(out_layer)
+                            proj.addMapLayer(out_layer)
                 else:
                     self._log_success(f"'{val_id}' completed: 0 issues flagged (Clean).")
 
             # Check auxiliary output (e.g. remarks error summary)
             aux_dest = result.get("OUTPUT_ERRORS")
             if aux_dest:
-                aux_layer = QgsProcessingUtils.mapLayerFromString(aux_dest, context)
+                aux_layer = None
+                if isinstance(aux_dest, QgsVectorLayer):
+                    aux_layer = aux_dest
+                elif isinstance(aux_dest, str):
+                    proj = self.project if self.project else QgsProject.instance()
+                    aux_layer = QgsProcessingUtils.mapLayerFromString(aux_dest, self.context)
+                    if not aux_layer and proj:
+                        aux_layer = proj.mapLayer(aux_dest)
+
                 if aux_layer and aux_layer.isValid() and aux_layer.featureCount() > 0:
                     if self.chk_load_canvas.isChecked():
-                        if context and hasattr(context, "takeResultLayer"):
+                        if hasattr(self.context, "takeResultLayer"):
                             try:
-                                context.takeResultLayer(aux_layer.id())
+                                take_aux = self.context.takeResultLayer(aux_dest if isinstance(aux_dest, str) else aux_layer.id())
+                                if take_aux and take_aux.isValid():
+                                    aux_layer = take_aux
                             except Exception:
                                 pass
+
                         aux_layer.setName(f"{val_id}_summary ({aux_layer.featureCount()})")
+                        proj = self.project if self.project else QgsProject.instance()
+
                         if self.chk_group_layers.isChecked():
-                            grp = self.project.layerTreeRoot().findGroup("2027 CBMS MV Results")
-                            if grp:
-                                self.project.addMapLayer(aux_layer, False)
-                                grp.addLayer(aux_layer)
-                            else:
-                                self.project.addMapLayer(aux_layer)
+                            grp = self._get_or_create_layer_group("2027 CBMS MV Results")
+                            proj.addMapLayer(aux_layer, False)
+                            grp.addLayer(aux_layer)
                         else:
-                            self.project.addMapLayer(aux_layer)
+                            proj.addMapLayer(aux_layer)
 
             # Record summary entry
             execution_summary.append({
@@ -1365,23 +1562,3 @@ class CbmsmvDialog(QDialog):
                 self._log_warning(f"Could not write audit report file: {r_exc}")
 
         self.lbl_footer_status.setText(f"Validation complete • {total_flagged_issues:,} issue(s) flagged")
-
-        # Completion summary popup
-        flagged_rules = [s for s in execution_summary if s["features_flagged"] > 0]
-        summary_msg = (
-            f"2027 CBMS Form 2 Map Validation Finished!\n\n"
-            f"• Algorithms Executed: {len(execution_summary)}\n"
-            f"• Checks Flagged: {len(flagged_rules)}\n"
-            f"• Total Features Flagged: {total_flagged_issues:,}\n"
-            f"• Result Layers Loaded: {total_output_layers}\n\n"
-        )
-        if flagged_rules:
-            summary_msg += "Top Flagged Checks:\n"
-            for fr in flagged_rules[:5]:
-                summary_msg += f"  - [{fr['id']}]: {fr['features_flagged']} features\n"
-            if len(flagged_rules) > 5:
-                summary_msg += f"  ... and {len(flagged_rules) - 5} more.\n"
-        else:
-            summary_msg += "All executed validation checks passed cleanly!"
-
-        QMessageBox.information(self, "Validation Complete", summary_msg)

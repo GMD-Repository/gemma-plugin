@@ -20,6 +20,7 @@ from qgis.core import (
     QgsGeometry,
     QgsVectorLayer,
     QgsWkbTypes,
+    QgsProject,
     QgsProcessingAlgorithm,
     QgsProcessingContext,
     QgsProcessingFeedback,
@@ -477,3 +478,58 @@ def select_mv(layer, *extra_fields, context=None, feedback=None, base_fields=Non
         context=context,
         feedback=feedback,
     )["OUTPUT"]
+
+
+def load_cbms_json_to_layer(json_input: Any, layer_name: str = "cbms_json_table", add_to_project: bool = True) -> QgsVectorLayer:
+    """
+    Parses a CBMS JSON file (or dictionary/list data) and creates an in-memory
+    vector table layer with dynamically discovered string attribute fields.
+
+    :param json_input: Path to JSON file, or parsed dict/list object.
+    :param layer_name: Name of the generated QGIS layer.
+    :param add_to_project: If True, adds the layer directly to QgsProject layer tree.
+    :return: QgsVectorLayer (memory layer with table attributes).
+    """
+    if isinstance(json_input, str):
+        if not os.path.exists(json_input):
+            raise FileNotFoundError(f"JSON file not found: {json_input}")
+        with open(json_input, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    else:
+        data = json_input
+
+    records = data if isinstance(data, list) else (data.get("records", [data]) if isinstance(data, dict) else [])
+
+    table_layer = QgsVectorLayer("none", layer_name, "memory")
+    dp = table_layer.dataProvider()
+
+    fields = QgsFields()
+    field_names = []
+    for rec in records:
+        props = rec.get("properties", rec) if isinstance(rec, dict) else {}
+        if isinstance(props, dict):
+            for k, v in props.items():
+                k_str = str(k).strip()
+                if k_str and k_str not in field_names:
+                    fields.append(QgsField(k_str, QVariant.String))
+                    field_names.append(k_str)
+
+    dp.addAttributes(fields)
+    table_layer.updateFields()
+
+    features = []
+    for rec in records:
+        props = rec.get("properties", rec) if isinstance(rec, dict) else {}
+        feat = QgsFeature(fields)
+        for fn in field_names:
+            val = props.get(fn, NULL) if isinstance(props, dict) else NULL
+            feat.setAttribute(fn, val if val is not None else NULL)
+        features.append(feat)
+
+    dp.addFeatures(features)
+
+    if add_to_project:
+        QgsProject.instance().addMapLayer(table_layer)
+
+    return table_layer
+
