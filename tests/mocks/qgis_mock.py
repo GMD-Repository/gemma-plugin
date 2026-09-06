@@ -639,10 +639,13 @@ class QgsVectorLayer:
                 cf.setGeometry(feat.geometry())
                 cf.setAttributes(list(feat.attributes()))
                 cf.setId(feat.id())
-                self._features.append(cf)
+        self._custom_properties = {}
+        self._subset_string = ""
 
     def name(self): return self._name
     def isValid(self): return True
+    def isEditable(self): return False
+    def rollBack(self): return True
     def featureCount(self): return len(self._features)
     def fields(self): return self._fields
     def setFields(self, fields): self._fields = fields
@@ -658,7 +661,12 @@ class QgsVectorLayer:
     def wkbType(self): return 3  # Polygon
     def geometryType(self): return 2  # PolygonGeometry
     def id(self): return f"layer_{self._name}"
-    def setSubsetString(self, string): return True
+    def setSubsetString(self, string):
+        self._subset_string = string
+        return True
+    def subsetString(self): return self._subset_string
+    def setCustomProperty(self, key, value): self._custom_properties[key] = value
+    def customProperty(self, key, default_val=None): return self._custom_properties.get(key, default_val)
     def selectByExpression(self, expr): pass
     def selectedFeatureCount(self): return 0
     def triggerRepaint(self): pass
