@@ -29,6 +29,8 @@ class TestUpdateMetadata(unittest.TestCase):
         self.assertEqual(self.mod.normalize_barangay_name("Brgy. Poblacion I"), "poblacion1")
         self.assertEqual(self.mod.normalize_barangay_name("Sto. Tomas"), "santotomas")
 
+<<<<<<< HEAD
+=======
     def test_psgc_field_mapping_includes_counts(self):
         """Test that _get_psgc_field_mapping accurately detects hhcount and bldgcount columns."""
         alg = self.mod.UpdateLguPsgcMetadataAlgorithm()
@@ -76,6 +78,7 @@ class TestUpdateMetadata(unittest.TestCase):
         self.assertEqual(mapping.get("hhcount"), "hh_count")
         self.assertEqual(mapping.get("bldgcount"), "total_bldgcount")
 
+>>>>>>> cbms_main
 
 if __name__ == "__main__":
     unittest.main()

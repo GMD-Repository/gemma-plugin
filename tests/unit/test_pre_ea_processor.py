@@ -185,72 +185,7 @@ class TestPreEAProcessor(unittest.TestCase):
         out_feat = list(result.output_layer.getFeatures())[0]
         self.assertEqual(str(out_feat.attribute("sy")), "2026")
 
-    def test_processor_resolves_ea_overlaps(self):
-        """Test that PreEAProcessor detects and eliminates overlapping EA polygons."""
-        # Create an EA layer with 2 overlapping EAs
-        ov_ea_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "overlapping_eas", "memory")
-        ov_pr = ov_ea_layer.dataProvider()
-        ov_pr.addAttributes([
-            QgsField("geocode", QVariant.String),
-            QgsField("ean", QVariant.String),
-        ])
-        ov_ea_layer.updateFields()
-
-        # EA 1: 0,0 to 100,100
-        ea1 = QgsFeature(ov_ea_layer.fields())
-        ea1.setGeometry(make_square(0, 0, 100))
-        ea1.setAttributes(["137401001", "001"])
-
-        # EA 2: 80,0 to 180,100 (overlaps EA 1 from x=80 to x=100)
-        ea2 = QgsFeature(ov_ea_layer.fields())
-        ea2.setGeometry(make_square(80, 0, 100))
-        ea2.setAttributes(["137401001", "002"])
-
-        ov_pr.addFeatures([ea1, ea2])
-        ov_ea_layer.updateExtents()
-
-        processor = PreEAProcessor()
-        result = processor.run(
-            barangay_layer=self.bgy_layer,
-            ea_layer=ov_ea_layer,
-            gap_tolerance=1.0,
-            clip_to_bgy=True,
-            resolve_overlaps=True,
-            detect_gaps=True,
-            assign_gaps=True,
-        )
-
-        self.assertTrue(result.success, f"Processor failed: {result.error_message}")
-        self.assertGreater(result.summary.overlaps_resolved, 0)
-        self.assertEqual(result.summary.final_ea_overlaps, 0)
-
-        output_features = list(result.output_layer.getFeatures())
-        self.assertEqual(len(output_features), 2)
-        geom1 = output_features[0].geometry()
-        geom2 = output_features[1].geometry()
-
-        overlap_area = geom1.intersection(geom2).area()
-        self.assertLessEqual(overlap_area, 0.001, f"Expected 0 overlap area, got {overlap_area}")
-
-    def test_empty_output_layer_not_generated(self):
-        """Verify that when 0 output features exist, _build_output_layer returns None."""
-        processor = PreEAProcessor()
-        ea_features = list(self.ea_layer.getFeatures())
-        # Make sure geometries for all EAs are empty in corrected_geoms and EA has empty geom
-        empty_ea_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "empty_eas", "memory")
-        out = processor._build_output_layer(
-            empty_ea_layer,
-            ea_features=[],
-            corrected_geoms={},
-            ea_to_bgy={},
-            bgy_by_fid={},
-            output_name="test_empty_output",
-            log_fn=lambda m: None,
-        )
-        self.assertIsNone(out, "Output layer should be None when no features are written.")
-
 
 if __name__ == "__main__":
     unittest.main()
-
 

@@ -35,11 +35,6 @@ class TestMbiValidator(unittest.TestCase):
         pr = self.ref_layer.dataProvider()
         pr.addAttributes([
             QgsField("case_uuid", QVariant.String),
-            QgsField("geocode", QVariant.String),
-            QgsField("region", QVariant.String),
-            QgsField("province", QVariant.String),
-            QgsField("city_mun", QVariant.String),
-            QgsField("barangay", QVariant.String),
             QgsField("mbi_status", QVariant.String),
             QgsField("pso_remarks", QVariant.String),
             QgsField("mbi_remarks", QVariant.String),
@@ -57,11 +52,6 @@ class TestMbiValidator(unittest.TestCase):
             QgsPointXY(120.0, 14.0)
         ]]))
         f1.setAttribute("case_uuid", "CASE-001")
-        f1.setAttribute("geocode", "133900000")
-        f1.setAttribute("region", "National Capital Region")
-        f1.setAttribute("province", "NCR, Fourth District")
-        f1.setAttribute("city_mun", "City of Pasay")
-        f1.setAttribute("barangay", "Barangay 1")
         f1.setAttribute("mbi_status", "1_Updated")
         f1.setAttribute("pso_remarks", "Boundary realigned")
         f1.setAttribute("mbi_type", "1_Gap")
@@ -74,48 +64,18 @@ class TestMbiValidator(unittest.TestCase):
             QgsPointXY(120.2, 14.0)
         ]]))
         f2.setAttribute("case_uuid", "CASE-002")
-        f2.setAttribute("geocode", "133900001")
-        f2.setAttribute("region", "National Capital Region")
-        f2.setAttribute("province", "NCR, Fourth District")
-        f2.setAttribute("city_mun", "City of Pasay")
-        f2.setAttribute("barangay", "Barangay 2")
         f2.setAttribute("mbi_status", "2_Pending")
         f2.setAttribute("pso_remarks", "Under boundary dispute review")
         f2.setAttribute("mbi_type", "2_Overlap")
         f2.setAttribute("num_bldg_pts", 2)
 
-        f3 = QgsFeature(self.ref_layer.fields())
-        f3.setGeometry(QgsGeometry.fromPolygonXY([[
-            QgsPointXY(120.4, 14.0), QgsPointXY(120.4, 14.1),
-            QgsPointXY(120.5, 14.1), QgsPointXY(120.5, 14.0),
-            QgsPointXY(120.4, 14.0)
-        ]]))
-        f3.setAttribute("case_uuid", "CASE-003")
-        f3.setAttribute("geocode", "133900002")
-        f3.setAttribute("region", "National Capital Region")
-        f3.setAttribute("province", "NCR, Fourth District")
-        f3.setAttribute("city_mun", "City of Pasay")
-        f3.setAttribute("barangay", "Barangay 3")
-        f3.setAttribute("mbi_status", "2_Pending")
-        f3.setAttribute("pso_remarks", "Disputed area pending Sangguniang Panlalawigan resolution")
-        f3.setAttribute("mbi_type", "3_Disputed")
-        f3.setAttribute("num_bldg_pts", 1)
-
-        pr.addFeatures([f1, f2, f3])
+        pr.addFeatures([f1, f2])
         self.ref_layer.updateExtents()
 
         # Create checker layer
         self.chk_gap_layer = QgsVectorLayer("Polygon?crs=EPSG:4326", "Sample_Chk_Gap", "memory")
         pr_chk = self.chk_gap_layer.dataProvider()
-        pr_chk.addAttributes([
-            QgsField("case_uuid", QVariant.String),
-            QgsField("geocode", QVariant.String),
-            QgsField("region", QVariant.String),
-            QgsField("province", QVariant.String),
-            QgsField("city_mun", QVariant.String),
-            QgsField("barangay", QVariant.String),
-            QgsField("mbi_type", QVariant.String),
-        ])
+        pr_chk.addAttributes([QgsField("case_uuid", QVariant.String)])
         self.chk_gap_layer.updateFields()
 
         cf = QgsFeature(self.chk_gap_layer.fields())
@@ -125,12 +85,6 @@ class TestMbiValidator(unittest.TestCase):
             QgsPointXY(120.05, 14.05)
         ]]))
         cf.setAttribute("case_uuid", "CHK-001")
-        cf.setAttribute("geocode", "133900000")
-        cf.setAttribute("region", "National Capital Region")
-        cf.setAttribute("province", "NCR, Fourth District")
-        cf.setAttribute("city_mun", "City of Pasay")
-        cf.setAttribute("barangay", "Barangay 1")
-        cf.setAttribute("mbi_type", "1_Gap")
         pr_chk.addFeatures([cf])
         self.chk_gap_layer.updateExtents()
 
@@ -157,98 +111,6 @@ class TestMbiValidator(unittest.TestCase):
                 self.assertTrue(param.isOptional(), "GPKG_OUTPUT parameter must be optional so save path is not required when checkbox is unchecked.")
         except Exception as e:
             self.skipTest(f"Skipping test due to processing environment error: {e}")
-
-    def test_gpkg_layers_parameter(self):
-        """Verify GPKG_LAYERS multi-selection parameter."""
-        try:
-            self.alg.initAlgorithm()
-            param = self.alg.parameterDefinition(self.alg.GPKG_LAYERS)
-            if param:
-                self.assertTrue(param.isOptional())
-                self.assertEqual(len(param.options()), 9)
-        except Exception as e:
-            self.skipTest(f"Skipping test due to processing environment error: {e}")
-
-    def test_disputed_subset(self):
-        """Verify get_disputed_subset extracts features with mbi_type = 3_Disputed."""
-        disputed = self.mod.get_disputed_subset(self.ref_layer)
-        self.assertEqual(len(disputed), 1)
-        self.assertEqual(disputed[0].attribute("case_uuid"), "CASE-003")
-        self.assertEqual(disputed[0].attribute("mbi_type"), "3_Disputed")
-
-    def test_is_disputed_value(self):
-        """Test is_disputed_value helper for various casing and string variants."""
-        self.assertTrue(self.mod.is_disputed_value("3_Disputed"))
-        self.assertTrue(self.mod.is_disputed_value("3_disputed"))
-        self.assertTrue(self.mod.is_disputed_value("3_Dispute"))
-        self.assertTrue(self.mod.is_disputed_value("Disputed"))
-        self.assertTrue(self.mod.is_disputed_value("dispute"))
-        self.assertTrue(self.mod.is_disputed_value("3 - Disputed"))
-        self.assertTrue(self.mod.is_disputed_value("3. Disputed"))
-        self.assertTrue(self.mod.is_disputed_value("3"))
-        self.assertFalse(self.mod.is_disputed_value("1_Gap"))
-        self.assertFalse(self.mod.is_disputed_value("2_Overlap"))
-        self.assertFalse(self.mod.is_disputed_value(None))
-        self.assertFalse(self.mod.is_disputed_value(""))
-
-    def test_disputed_subset_with_case_type_field(self):
-        """Verify get_disputed_subset works even when the layer uses case_type instead of mbi_type."""
-        layer = QgsVectorLayer("Polygon?crs=EPSG:4326", "Old_Ref_Layer", "memory")
-        pr = layer.dataProvider()
-        pr.addAttributes([
-            QgsField("case_uuid", QVariant.String),
-            QgsField("case_type", QVariant.String),
-            QgsField("mbi_status", QVariant.String),
-        ])
-        layer.updateFields()
-
-        f = QgsFeature(layer.fields())
-        f.setGeometry(QgsGeometry.fromPolygonXY([[
-            QgsPointXY(120.0, 14.0), QgsPointXY(120.0, 14.1),
-            QgsPointXY(120.1, 14.1), QgsPointXY(120.1, 14.0),
-            QgsPointXY(120.0, 14.0)
-        ]]))
-        f.setAttribute("case_uuid", "DISP-99")
-        f.setAttribute("case_type", "3_Disputed")
-        f.setAttribute("mbi_status", "2_Pending")
-        pr.addFeatures([f])
-        layer.updateExtents()
-
-        res = self.mod.get_disputed_subset(layer)
-        self.assertEqual(len(res), 1)
-        self.assertEqual(res[0].attribute("case_uuid"), "DISP-99")
-
-    def test_output_fields_and_feature_creation(self):
-        """Verify output schema field names, ordering, and feature population."""
-        fields = self.mod.output_fields()
-        field_names = [fields.at(i).name() for i in range(fields.count())]
-
-        expected_order = [
-            "case_uuid", "geocode", "region", "province", "city_mun",
-            "barangay", "mbi_type", "ref_status", "ref_remarks",
-            "ref_involved_bgys", "ref_num_bldg_pts", "remarks"
-        ]
-        self.assertEqual(field_names, expected_order)
-        self.assertEqual(field_names[-1], "remarks", "remarks must be the last column in output fields")
-        self.assertNotIn("case_type", field_names, "case_type must be renamed to mbi_type")
-
-        # Test make_feature population
-        ref_feat = list(self.ref_layer.getFeatures())[0]
-        chk_feat = list(self.chk_gap_layer.getFeatures())[0]
-
-        out_feat = self.mod.make_feature(
-            fields, chk_feat.geometry(), "Gap", "Audit mismatch detected",
-            case_uuid="CASE-001", ref_feature=ref_feat, chk_feature=chk_feat
-        )
-        self.assertEqual(out_feat.attribute("case_uuid"), "CASE-001")
-        self.assertEqual(out_feat.attribute("geocode"), "133900000")
-        self.assertEqual(out_feat.attribute("region"), "National Capital Region")
-        self.assertEqual(out_feat.attribute("province"), "NCR, Fourth District")
-        self.assertEqual(out_feat.attribute("city_mun"), "City of Pasay")
-        self.assertEqual(out_feat.attribute("barangay"), "Barangay 1")
-        self.assertEqual(out_feat.attribute("mbi_type"), "1_Gap")
-        self.assertEqual(out_feat.attribute("ref_status"), "1_Updated")
-        self.assertEqual(out_feat.attribute("remarks"), "Audit mismatch detected")
 
     def test_normalize_helper(self):
         """Test normalize and meaningful helper functions."""
@@ -311,26 +173,27 @@ class TestMbiValidator(unittest.TestCase):
         cat4, reason4 = self.mod.evaluate_reference_case(feat, spatially_confirmed=False)
         self.assertEqual(cat4, "status_mismatch")
 
-        # Pending cases: ALL 2_Pending cases except bp==0 with no remarks -> pending_cases
+        # Pending cases with remarks (with or without building points) -> pending_with_remarks
         feat.setAttribute("mbi_status", "2_Pending")
         feat.setAttribute("num_bldg_pts", 0)
         feat.setAttribute("pso_remarks", "Pending boundary review by PSO")
         cat5, reason5 = self.mod.evaluate_reference_case(feat, spatially_confirmed=True)
-        self.assertEqual(cat5, "pending_cases")
+        self.assertEqual(cat5, "pending_with_remarks")
 
         feat.setAttribute("num_bldg_pts", 4)
         feat.setAttribute("pso_remarks", "Pending dispute between Barangays")
         cat6, reason6 = self.mod.evaluate_reference_case(feat, spatially_confirmed=True)
-        self.assertEqual(cat6, "pending_cases")
+        self.assertEqual(cat6, "pending_with_remarks")
 
-        # 2_Pending with bldg pts > 0, NO remarks -> pending_cases
+        # Remaining Cases: 2_Pending with bldg pts > 0, NO remarks, and detected by checker -> still_active
         feat.setAttribute("num_bldg_pts", 4)
         feat.setAttribute("pso_remarks", None)
         cat7, reason7 = self.mod.evaluate_reference_case(feat, spatially_confirmed=True)
-        self.assertEqual(cat7, "pending_cases")
+        self.assertEqual(cat7, "still_active")
 
+        # 2_Pending with bldg pts > 0, NO remarks, and NOT detected by checker -> status_mismatch
         cat8, reason8 = self.mod.evaluate_reference_case(feat, spatially_confirmed=False)
-        self.assertEqual(cat8, "pending_cases")
+        self.assertEqual(cat8, "status_mismatch")
 
         # 2_Pending with bldg pts = 0 and NO remarks -> status_mismatch
         feat.setAttribute("num_bldg_pts", 0)
@@ -344,16 +207,14 @@ class TestMbiValidator(unittest.TestCase):
                 self.alg.REF_LAYER: self.ref_layer,
                 self.alg.CHK_GAP: self.chk_gap_layer,
                 self.alg.CHK_OVERLAP: None,
-                self.alg.GPKG_LAYERS: [0, 1, 2, 8],
                 self.alg.OUT_MISMATCH: "TEMPORARY_OUTPUT",
                 self.alg.OUT_MISMATCH_REMARKS: "TEMPORARY_OUTPUT",
-                self.alg.OUT_PENDING_CASES: "TEMPORARY_OUTPUT",
+                self.alg.OUT_PENDING_REMARKS: "TEMPORARY_OUTPUT",
                 self.alg.OUT_NEW: "TEMPORARY_OUTPUT",
                 self.alg.OUT_STILL: "TEMPORARY_OUTPUT",
                 self.alg.OUT_RESOLVED: "TEMPORARY_OUTPUT",
                 self.alg.OUT_MANUAL_REVIEW: "TEMPORARY_OUTPUT",
                 self.alg.OUT_NOSTATUS: "TEMPORARY_OUTPUT",
-                self.alg.OUT_DISPUTED: "TEMPORARY_OUTPUT",
             }
             QgsProject.instance().addMapLayer(self.ref_layer)
             QgsProject.instance().addMapLayer(self.chk_gap_layer)

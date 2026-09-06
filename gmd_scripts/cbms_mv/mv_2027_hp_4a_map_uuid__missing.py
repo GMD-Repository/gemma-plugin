@@ -29,6 +29,7 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"
     INPUT_LAYER = "INPUT_LAYER"
+    BASE_LAYER = "BASE_LAYER"
     OUTPUT = "OUTPUT"
 
     def name(self):
@@ -181,18 +182,34 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
             f"Results: {len(invalid_features)} geotagged points with missing/NULL map_uuid or missing Form 2 records."
         )
 
+        # Build a temporary layer from invalid_features so select_mv can operate on it
+        temp_layer = QgsVectorLayer(
+            f"Point?crs={geojson_data.sourceCrs().authid()}", "temp", "memory"
+        )
+        temp_layer_dp = temp_layer.dataProvider()
+        temp_layer_dp.addAttributes(fields.toList())
+        temp_layer.updateFields()
+        temp_layer_dp.addFeatures(invalid_features)
+
+        # 6. Select & organize columns using select_mv
+        final_output = gmdhelpers.select_mv(
+            temp_layer,
+            ["status"],
+            context=context,
+            feedback=feedback,
+        )
+
         return gmdhelpers.export_features_to_sink(
             self,
             parameters,
             self.OUTPUT,
             context,
-            fields,
-            geojson_data.wkbType(),
-            geojson_data.sourceCrs(),
-            invalid_features,
+            final_output.fields(),
+            final_output.wkbType(),
+            final_output.sourceCrs(),
+            final_output.getFeatures(),
             feedback,
         )
-
 
     def createInstance(self):
         return self.__class__()
