@@ -704,7 +704,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
         if hasattr(super(), "postProcessAlgorithm"):
             try:
                 return super().postProcessAlgorithm(context, feedback)
-            except AttributeError:
+            except (AttributeError, TypeError, Exception):
                 pass
         return {}
 

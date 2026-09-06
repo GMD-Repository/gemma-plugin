@@ -80,7 +80,7 @@ Tab 1 allows you to designate the target destination directory before running:
 
 ## Tab 2 — EA Delineation & Merging
 
-The **EA Delineation & Merging** tab executes spatial aggregation, single-pass splitting for overpopulated EAs, and iterative merging for underpopulated EAs.
+The **EA Delineation & Merging** tab executes spatial aggregation, proposed boundary cut line generation for overpopulated EAs without destructively splitting EA polygons, and iterative merging for underpopulated EAs.
 
 ### Parameters & Options
 
@@ -92,7 +92,7 @@ The **EA Delineation & Merging** tab executes spatial aggregation, single-pass s
 | **Road Layer** | Vector (Line) | Road network lines used to snap EA split boundaries to road centrelines. Optional. |
 | **River Layer** | Vector (Line) | River and waterway centrelines used for split line snapping. Optional. |
 | **Minimum Household Count per EA** | Integer | Minimum target household threshold per EA (default: `100`). EAs below this limit are merged. |
-| **Maximum Household Count per EA** | Integer | Maximum target household threshold per EA (default: `300`). EAs above this limit are split. |
+| **Maximum Household Count per EA** | Integer | Maximum target household threshold per EA (default: `300`). EAs above this limit generate proposed delineation cut lines. |
 | **Splitting Rule (>300 Houses)** | Enumeration | Controls splitting rule: `Follow Roads & Rivers (Recommended)`, `Strict Minimum 100 Houses`, or `Do Not Split`. |
 | **Boundary Cut Method** | Enumeration | Selects line tool for splitting: `Auto (Roads First, then Houses)`, `Roads & Rivers Only`, `House Groups Only`, `Straight Line Only`, or `Do Not Split`. |
 | **Optimize for Compactness** | Boolean | Prefers spatially compact EA shapes over purely household-balanced splits (default: `True`). |
@@ -105,15 +105,15 @@ The **EA Delineation & Merging** tab executes spatial aggregation, single-pass s
 
 | Output Layer | Type | Style File (.qml) | Description |
 |--------------|------|-------------------|-------------|
-| **Output EA Layer** | Vector (Polygon) | `ea_output.qml` | Consolidated output layer containing all final updated EA polygons (`<geocode>_ea2026`). Styled with vibrant blue borders and automated labels. |
-| **Delineated EAs Layer** | Vector (Polygon) | `ea_output.qml` | Optional output containing sub-polygons generated from delineation (`<geocode>_delineated_ea2026`). |
+| **Output EA Layer** | Vector (Polygon) | `ea_output.qml` | Consolidated output layer containing all final updated EA polygons (`<geocode>_ea2026`). Delineation candidates remain intact as whole polygons. Styled with vibrant blue borders and automated labels. |
+| **Delineated EAs Layer** | Vector (Polygon) | `ea_output.qml` | Optional output containing candidate EAs evaluated for delineation (`<geocode>_delineated_ea2026`). |
 | **Merged EAs Layer** | Vector (Polygon) | `ea_output.qml` | Optional output containing EAs generated from merging underpopulated EAs (`<geocode>_merged_ea2026`). |
-| **Boundary Update Lines Layer** | Vector (Line) | `eadel_update_lines.qml` | Line layer (`<geocode>_eadel_update`) representing new boundary cuts generated from road/river splits. |
+| **Proposed Boundary Update Lines Layer** | Vector (Line) | `eadel_update_lines.qml` | Line layer (`<geocode>_eadel_update`) representing proposed boundary cut lines generated from road/river/cluster splits while preserving parent EA polygons intact. |
 | **Candidate for Delineation Layer** | Vector (Polygon) | `delineation_candidates.qml` | Layer containing EAs identified as candidates for delineation (>300 HH). Styled with amber highlight. |
 | **Candidate for Merging Layer** | Vector (Polygon) | `merge_candidates.qml` | Layer containing under-threshold initiator EAs (<=100 HH) and reference neighbor EAs evaluated for intra-barangay merging. |
-### Final Output Attribute Schema (`delineated_ea2026`, `merge_ea2026`, `special_ea`)
+### Final Output Attribute Schema (`delineated_ea2026`, `merge_ea2026`)
 
-The output layers `<geocode>_delineated_ea2026`, `<geocode>_merged_ea2026`, and `<geocode>_special_ea` share the following 18 standard attributes:
+The output layers `<geocode>_delineated_ea2026` and `<geocode>_merged_ea2026` share the following 18 standard attributes:
 
 | Field Name | Type | Description |
 |------------|------|-------------|
@@ -133,21 +133,8 @@ The output layers `<geocode>_delineated_ea2026`, `<geocode>_merged_ea2026`, and 
 | **new_ean** | String | Newly assigned post-delineation 6-digit EA sequence number code (e.g. `001000`). |
 | **hh_count** | Integer | New total household count aggregated from building points assigned to this polygon (whole number). |
 | **bldg_count** | Integer | New total building point count contained in this polygon. |
-| **ea_type** | String | EA classification and transformation type (`DELINEATED`, `MERGED`, `RETAINED`, `GAP`, `OVERLAP`, or `SPECIAL`). |
-| **remarks** | String | Processing note detailing action or split strategy (e.g. `Split along road network`, `Merged EA`, `Generated from Gap layer`). |
-
-### Special EA `new_ean` Naming Convention
-
-Special EAs (`special_ea` output polygons, resolved gap features, and overlap polygons) in Tab 2 are assigned 6-digit `new_ean` codes (`PPP000`) based on the existing non-special EAs within their parent Barangay:
-
-1. **When Non-Zero Suffixes Exist (`highest_suffix > 0`)**:
-   * If any split/child EA exists in the barangay (e.g., `001004` $\rightarrow \text{highest suffix} = 4$), the Special EA prefix (`PPP`) follows `(highest_suffix + 1)` and suffix (`SSS`) is `"000"`.
-   * *Example*: Highest suffix is `004` $\rightarrow$ Special EA becomes **`005000`**.
-2. **When All Suffixes are Base Zero (`highest_suffix == 0`)**:
-   * If all EAs in the barangay have base suffix `"000"` (e.g. `001000`, `002000`, `003000` $\rightarrow \text{highest prefix} = 3$), the Special EA prefix (`PPP`) follows `(highest_prefix + 1)` and suffix (`SSS`) is `"000"`.
-   * *Example*: Highest prefix is `003` $\rightarrow$ Special EA becomes **`004000`**.
-3. **Multiple Special EAs in Same Barangay**:
-   * Subsequent Special EAs in the same barangay increment sequentially (e.g. `004000`, `005000`, `006000`).
+| **ea_type** | String | EA classification and transformation type (`DELINEATED`, `MERGED`, or `RETAINED`). |
+| **remarks** | String | Processing note detailing action or split strategy (e.g. `Split along road network`, `Merged EA`). |
 
 In addition, the **`merge_ea2026`** (`<geocode>_merged_ea2026`) output layer includes the following 3 additional fields:
 

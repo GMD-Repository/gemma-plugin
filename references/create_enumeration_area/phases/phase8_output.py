@@ -1320,21 +1320,27 @@ def run_phase_8(
                     else:
                         feedback.reportError(f"Failed to add Special EA {i} to special EA sink.")
 
-            # 2. Add to Delineated EAs sink (specifically for features created from EA delineation / splitting)
-            is_delin_result = ea.get('from_split', False) or (ea.get('original_id') in delineation_candidate_ids and not ea.get('is_special_ea', False))
+            # 2. Add to Delineated EAs sink (specifically for features created from EA delineation / proposed delineation)
+            is_delin_result = ea.get('has_proposed_split', False) or ea.get('from_split', False) or (ea.get('original_id') in delineation_candidate_ids and not ea.get('is_special_ea', False))
             if is_delin_result:
-                sb = ea.get('split_by', 'point_based')
-                split_by_counts[sb] = split_by_counts.get(sb, 0) + 1
-                if delineated_sink is not None:
-                    delin_fid = delineated_feat_count + 1
-                    fid_idx_delin = export_fields.indexOf("fid")
-                    if fid_idx_delin != -1:
-                        exp_feat.setAttribute(fid_idx_delin, delin_fid)
-                    exp_feat.setId(delin_fid)
-                    if delineated_sink.addFeature(exp_feat, QgsFeatureSink.Flag.FastInsert):
-                        delineated_feat_count += 1
-                    else:
-                        feedback.reportError(f"Failed to add EA {i} to delineated sink.")
+                if ea.get('from_split', False) and ea.get('hh_count', 0) < min_household:
+                    feedback.pushWarning(
+                        f"[Output Sink] Skipping EA {ea.get('original_code')} from delineated output: "
+                        f"hh_count ({ea.get('hh_count', 0)}) is below minimum threshold ({min_household})."
+                    )
+                else:
+                    sb = ea.get('proposed_split_by') or ea.get('split_by', 'point_based')
+                    split_by_counts[sb] = split_by_counts.get(sb, 0) + 1
+                    if delineated_sink is not None:
+                        delin_fid = delineated_feat_count + 1
+                        fid_idx_delin = export_fields.indexOf("fid")
+                        if fid_idx_delin != -1:
+                            exp_feat.setAttribute(fid_idx_delin, delin_fid)
+                        exp_feat.setId(delin_fid)
+                        if delineated_sink.addFeature(exp_feat, QgsFeatureSink.Flag.FastInsert):
+                            delineated_feat_count += 1
+                        else:
+                            feedback.reportError(f"Failed to add EA {i} to delineated sink.")
 
             # 3. Add to Merged EAs sink if feature was generated from EA merging
             if ea.get('from_merge', False) and not ea.get('is_special_ea', False):
@@ -1606,108 +1612,178 @@ def run_phase_8(
     remarks_idx = src_fields.indexOf("remarks")
 
     all_splitting_lines = []
+    proposed_lines = p7.get("proposed_lines", [])
 
-    for candidate_id, part_tuples in final_geom_by_candidate.items():
-        if len(part_tuples) < 2:
-            continue
+    if proposed_lines:
+        for p_line in proposed_lines:
+            cand_id = p_line.get('ea_id')
+            line_geom = p_line.get('geom')
+            if line_geom is None or line_geom.isEmpty():
+                continue
 
-        if candidate_id not in full_ea_by_id:
-            continue
-        parent_feat = full_ea_by_id[candidate_id]
+            parent_feat = full_ea_by_id.get(cand_id)
+            if parent_feat is None:
+                continue
 
-        shared_edges = []
-        for p_i in range(len(part_tuples)):
-            for p_j in range(p_i + 1, len(part_tuples)):
-                geom_i = part_tuples[p_i][0]
-                geom_j = part_tuples[p_j][0]
-                if geom_i.isEmpty() or geom_j.isEmpty():
-                    continue
-                shared = geom_i.intersection(geom_j)
-                if shared is None or shared.isEmpty():
-                    continue
-                flat = QgsWkbTypes.flatType(shared.wkbType())
-                if flat in (QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString):
-                    shared_edges.append(shared)
-                elif flat == QgsWkbTypes.GeometryCollection or shared.isMultipart():
-                    try:
-                        for sub_part in shared.constParts():
-                            sub_geom = QgsGeometry(sub_part.clone())
-                            ptype = QgsWkbTypes.flatType(sub_geom.wkbType())
-                            if ptype in (QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString):
-                                shared_edges.append(sub_geom)
-                    except Exception:
-                        pass
+            _gap_tol = snap_tolerance * 4
+            _min_branch = snap_tolerance * 2
+            merged = refine_split_line(line_geom, _gap_tol, _min_branch)
 
-        if not shared_edges:
-            continue
+            line_bgy_feat = None
+            if barangay_index is not None and parent_feat.hasGeometry():
+                line_bgy_feat = get_parent_barangay(parent_feat.geometry(), barangay_index, barangay_by_id)
 
-        all_shared = QgsGeometry.unaryUnion(shared_edges)
-        if all_shared is None or all_shared.isEmpty():
-            feedback.pushWarning(
-                f"[eadel_update] unaryUnion of shared edges produced empty geometry "
-                f"for candidate {candidate_id}; skipping."
+            line_gc = str(parent_feat.attribute(geocode_idx) or "") if geocode_idx != -1 else ""
+            if line_bgy_feat is None and line_gc:
+                for b_feat in barangay_by_id.values():
+                    val = b_feat.attribute(bar_geocode_field)
+                    if val is not None:
+                        val_str = str(val).strip()
+                        if val_str.endswith(".0"):
+                            val_str = val_str[:-2]
+                        if val_str and line_gc.startswith(val_str):
+                            line_bgy_feat = b_feat
+                            break
+
+            line_reg = (
+                get_text_attr(line_bgy_feat, ["region", "reg_name", "region_name", "reg_desc", "adm1_en", "reg", "region_n", "reg_n"])
+                or get_text_attr(parent_feat, ["region", "reg_name", "region_name", "reg_desc", "adm1_en", "reg", "region_n", "reg_n"])
+                or ""
             )
-            continue
+            line_prov = (
+                get_text_attr(line_bgy_feat, ["province", "prov_name", "province_name", "prov_desc", "adm2_en", "prov", "province_n", "prov_n"])
+                or get_text_attr(parent_feat, ["province", "prov_name", "province_name", "prov_desc", "adm2_en", "prov", "province_n", "prov_n"])
+                or ""
+            )
+            line_cm = (
+                get_text_attr(line_bgy_feat, ["city_mun", "citymun", "city_mun_name", "citymun_name", "municipality", "city_name", "mun_name", "city", "mun", "adm3_en", "mun_desc", "city_n", "mun_n"])
+                or get_text_attr(parent_feat, ["city_mun", "citymun", "city_mun_name", "citymun_name", "municipality", "city_name", "mun_name", "city", "mun", "adm3_en", "mun_desc", "city_n", "mun_n"])
+                or ""
+            )
+            line_bgy = (
+                get_text_attr(line_bgy_feat, ["barangay", "bgy_name", "brgy_name", "barangay_name", "bgy_desc", "brgy_desc", "adm4_en", "name", "bgy", "brgy", "barangay_n", "bgy_n", "brgy_n"])
+                or get_text_attr(parent_feat, ["barangay", "bgy_name", "brgy_name", "barangay_name", "bgy_desc", "brgy_desc", "adm4_en", "name", "bgy", "brgy", "barangay_n", "bgy_n", "brgy_n"])
+                or ""
+            )
+            line_ean = get_text_attr(parent_feat, ["ean", "code", "ea_code"], prefer_text=False) or (str(parent_feat.attribute(ean_idx)) if ean_idx != -1 and parent_feat.attribute(ean_idx) is not None else "")
 
-        merged = all_shared.mergeLines()
-        if merged is None or merged.isEmpty():
-            merged = all_shared
+            attrs = {
+                'geocode': line_gc,
+                'ean': line_ean,
+                'region': line_reg,
+                'province': line_prov,
+                'city_mun': line_cm,
+                'barangay': line_bgy,
+                'indicator': str(parent_feat.attribute(eadel_indi_idx)) if eadel_indi_idx != -1 and parent_feat.attribute(eadel_indi_idx) is not None else "FOR DELINEATION",
+                'remarks': "Proposed delineation line",
+                'split_by': p_line.get('split_by', 'voronoi'),
+                'num_parts': p_line.get('num_parts', 2),
+                'part_hh_counts': p_line.get('part_hh_counts', []),
+                'parent_ea': p_line.get('parent_ea'),
+            }
 
-        _gap_tol = snap_tolerance * 4
-        _min_branch = snap_tolerance * 2
-        merged = refine_split_line(merged, _gap_tol, _min_branch)
+            all_splitting_lines.append((merged, attrs))
+    else:
+        for candidate_id, part_tuples in final_geom_by_candidate.items():
+            if len(part_tuples) < 2:
+                continue
 
-        # Resolve parent barangay for split line
-        line_bgy_feat = None
-        if barangay_index is not None and parent_feat.hasGeometry():
-            line_bgy_feat = get_parent_barangay(parent_feat.geometry(), barangay_index, barangay_by_id)
+            if candidate_id not in full_ea_by_id:
+                continue
+            parent_feat = full_ea_by_id[candidate_id]
 
-        line_gc = str(parent_feat.attribute(geocode_idx) or "") if geocode_idx != -1 else ""
-        if line_bgy_feat is None and line_gc:
-            for b_feat in barangay_by_id.values():
-                val = b_feat.attribute(bar_geocode_field)
-                if val is not None:
-                    val_str = str(val).strip()
-                    if val_str.endswith(".0"):
-                        val_str = val_str[:-2]
-                    if val_str and line_gc.startswith(val_str):
-                        line_bgy_feat = b_feat
-                        break
+            shared_edges = []
+            for p_i in range(len(part_tuples)):
+                for p_j in range(p_i + 1, len(part_tuples)):
+                    geom_i = part_tuples[p_i][0]
+                    geom_j = part_tuples[p_j][0]
+                    if geom_i.isEmpty() or geom_j.isEmpty():
+                        continue
+                    shared = geom_i.intersection(geom_j)
+                    if shared is None or shared.isEmpty():
+                        continue
+                    flat = QgsWkbTypes.flatType(shared.wkbType())
+                    if flat in (QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString):
+                        shared_edges.append(shared)
+                    elif flat == QgsWkbTypes.GeometryCollection or shared.isMultipart():
+                        try:
+                            for sub_part in shared.constParts():
+                                sub_geom = QgsGeometry(sub_part.clone())
+                                ptype = QgsWkbTypes.flatType(sub_geom.wkbType())
+                                if ptype in (QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString):
+                                    shared_edges.append(sub_geom)
+                        except Exception:
+                            pass
 
-        line_reg = (
-            get_text_attr(line_bgy_feat, ["region", "reg_name", "region_name", "reg_desc", "adm1_en", "reg", "region_n", "reg_n"])
-            or get_text_attr(parent_feat, ["region", "reg_name", "region_name", "reg_desc", "adm1_en", "reg", "region_n", "reg_n"])
-            or ""
-        )
-        line_prov = (
-            get_text_attr(line_bgy_feat, ["province", "prov_name", "province_name", "prov_desc", "adm2_en", "prov", "province_n", "prov_n"])
-            or get_text_attr(parent_feat, ["province", "prov_name", "province_name", "prov_desc", "adm2_en", "prov", "province_n", "prov_n"])
-            or ""
-        )
-        line_cm = (
-            get_text_attr(line_bgy_feat, ["city_mun", "citymun", "city_mun_name", "citymun_name", "municipality", "city_name", "mun_name", "city", "mun", "adm3_en", "mun_desc", "city_n", "mun_n"])
-            or get_text_attr(parent_feat, ["city_mun", "citymun", "city_mun_name", "citymun_name", "municipality", "city_name", "mun_name", "city", "mun", "adm3_en", "mun_desc", "city_n", "mun_n"])
-            or ""
-        )
-        line_bgy = (
-            get_text_attr(line_bgy_feat, ["barangay", "bgy_name", "brgy_name", "barangay_name", "bgy_desc", "brgy_desc", "adm4_en", "name", "bgy", "brgy", "barangay_n", "bgy_n", "brgy_n"])
-            or get_text_attr(parent_feat, ["barangay", "bgy_name", "brgy_name", "barangay_name", "bgy_desc", "brgy_desc", "adm4_en", "name", "bgy", "brgy", "barangay_n", "bgy_n", "brgy_n"])
-            or ""
-        )
-        line_ean = get_text_attr(parent_feat, ["ean", "code", "ea_code"], prefer_text=False) or (str(parent_feat.attribute(ean_idx)) if ean_idx != -1 and parent_feat.attribute(ean_idx) is not None else "")
+            if not shared_edges:
+                continue
 
-        attrs = {
-            'geocode': line_gc,
-            'ean': line_ean,
-            'region': line_reg,
-            'province': line_prov,
-            'city_mun': line_cm,
-            'barangay': line_bgy,
-            'indicator': str(parent_feat.attribute(eadel_indi_idx)) if eadel_indi_idx != -1 and parent_feat.attribute(eadel_indi_idx) is not None else "",
-            'remarks': str(parent_feat.attribute(remarks_idx)) if remarks_idx != -1 and parent_feat.attribute(remarks_idx) is not None else "",
-        }
+            all_shared = QgsGeometry.unaryUnion(shared_edges)
+            if all_shared is None or all_shared.isEmpty():
+                feedback.pushWarning(
+                    f"[eadel_update] unaryUnion of shared edges produced empty geometry "
+                    f"for candidate {candidate_id}; skipping."
+                )
+                continue
 
-        all_splitting_lines.append((merged, attrs))
+            merged = all_shared.mergeLines()
+            if merged is None or merged.isEmpty():
+                merged = all_shared
+
+            _gap_tol = snap_tolerance * 4
+            _min_branch = snap_tolerance * 2
+            merged = refine_split_line(merged, _gap_tol, _min_branch)
+
+            line_bgy_feat = None
+            if barangay_index is not None and parent_feat.hasGeometry():
+                line_bgy_feat = get_parent_barangay(parent_feat.geometry(), barangay_index, barangay_by_id)
+
+            line_gc = str(parent_feat.attribute(geocode_idx) or "") if geocode_idx != -1 else ""
+            if line_bgy_feat is None and line_gc:
+                for b_feat in barangay_by_id.values():
+                    val = b_feat.attribute(bar_geocode_field)
+                    if val is not None:
+                        val_str = str(val).strip()
+                        if val_str.endswith(".0"):
+                            val_str = val_str[:-2]
+                        if val_str and line_gc.startswith(val_str):
+                            line_bgy_feat = b_feat
+                            break
+
+            line_reg = (
+                get_text_attr(line_bgy_feat, ["region", "reg_name", "region_name", "reg_desc", "adm1_en", "reg", "region_n", "reg_n"])
+                or get_text_attr(parent_feat, ["region", "reg_name", "region_name", "reg_desc", "adm1_en", "reg", "region_n", "reg_n"])
+                or ""
+            )
+            line_prov = (
+                get_text_attr(line_bgy_feat, ["province", "prov_name", "province_name", "prov_desc", "adm2_en", "prov", "province_n", "prov_n"])
+                or get_text_attr(parent_feat, ["province", "prov_name", "province_name", "prov_desc", "adm2_en", "prov", "province_n", "prov_n"])
+                or ""
+            )
+            line_cm = (
+                get_text_attr(line_bgy_feat, ["city_mun", "citymun", "city_mun_name", "citymun_name", "municipality", "city_name", "mun_name", "city", "mun", "adm3_en", "mun_desc", "city_n", "mun_n"])
+                or get_text_attr(parent_feat, ["city_mun", "citymun", "city_mun_name", "citymun_name", "municipality", "city_name", "mun_name", "city", "mun", "adm3_en", "mun_desc", "city_n", "mun_n"])
+                or ""
+            )
+            line_bgy = (
+                get_text_attr(line_bgy_feat, ["barangay", "bgy_name", "brgy_name", "barangay_name", "bgy_desc", "brgy_desc", "adm4_en", "name", "bgy", "brgy", "barangay_n", "bgy_n", "brgy_n"])
+                or get_text_attr(parent_feat, ["barangay", "bgy_name", "brgy_name", "barangay_name", "bgy_desc", "brgy_desc", "adm4_en", "name", "bgy", "brgy", "barangay_n", "bgy_n", "brgy_n"])
+                or ""
+            )
+            line_ean = get_text_attr(parent_feat, ["ean", "code", "ea_code"], prefer_text=False) or (str(parent_feat.attribute(ean_idx)) if ean_idx != -1 and parent_feat.attribute(ean_idx) is not None else "")
+
+            attrs = {
+                'geocode': line_gc,
+                'ean': line_ean,
+                'region': line_reg,
+                'province': line_prov,
+                'city_mun': line_cm,
+                'barangay': line_bgy,
+                'indicator': str(parent_feat.attribute(eadel_indi_idx)) if eadel_indi_idx != -1 and parent_feat.attribute(eadel_indi_idx) is not None else "",
+                'remarks': str(parent_feat.attribute(remarks_idx)) if remarks_idx != -1 and parent_feat.attribute(remarks_idx) is not None else "",
+            }
+
+            all_splitting_lines.append((merged, attrs))
 
     if all_splitting_lines:
         geo5 = "00000"
@@ -1770,58 +1846,24 @@ def run_phase_8(
                     project.addMapLayer(line_layer)
                 feedback.pushInfo(
                     f"Created line layer '{layer_name}' with {len(features_to_add)} "
-                    f"feature(s) ({len(final_geom_by_candidate)} candidate(s) processed)."
+                    f"feature(s) ({len(all_splitting_lines)} candidate(s) processed)."
                 )
             else:
                 feedback.reportError(f"Failed to create memory layer for {layer_name}")
 
     feedback.pushInfo("Successfully created and structured Enumeration Areas.")
 
-    try:
-        total_proc = int(getattr(alg, 'total_ea_processed', 0) or 0)
-    except Exception:
-        total_proc = 0
-    try:
-        total_cand = int(getattr(alg, 'total_delin_candidates', 0) or 0)
-    except Exception:
-        total_cand = 0
-    feedback.pushInfo("--------------------------------------------------")
-    # Count primary over-populated areas (>300 HH)
-    primary_delin_cnt = 3 if len(delineation_candidate_ids) >= 3 else len(delineation_candidate_ids)
-    if primary_delin_cnt == 0:
-        primary_delin_cnt = total_cand
+    # ── Summary Report Generation ──────────────────────────────────────────
+    primary_delin_cnt = len(delineation_candidate_ids)
+    splitting_lines_count = len(all_splitting_lines)
 
-    if primary_delin_cnt == 0 and delineated_feat_count == 0:
-        delin_remark = f"No areas exceeded the target limit of {max_household} households."
+    if splitting_lines_count > 0:
+        delin_remark = f"Generated {splitting_lines_count} proposed delineation boundary cut line(s) (EAs preserved whole)."
+    elif primary_delin_cnt > 0:
+        delin_remark = f"Found {primary_delin_cnt} over-populated area(s), but no proposed cut lines generated."
     else:
-        split_parent_count = (delineated_feat_count // 2) if delineated_feat_count > 0 else 0
-        unsplit_cnt = max(0, primary_delin_cnt - split_parent_count)
-        
-        if delineated_feat_count > 0:
-            delin_remark = f"Created {delineated_feat_count} new split area(s)."
-            details = []
-            rd_cnt = split_by_counts.get('road', 0)
-            rv_cnt = split_by_counts.get('river', 0)
-            rr_cnt = split_by_counts.get('road+river', 0)
-            pb_cnt = split_by_counts.get('point_based', 0)
-            fg_cnt = split_by_counts.get('forced_grid', 0) + split_by_counts.get('forced_straight', 0)
-            if rd_cnt > 0:
-                details.append(f"{rd_cnt} split along road")
-            if rv_cnt > 0:
-                details.append(f"{rv_cnt} split along river")
-            if rr_cnt > 0:
-                details.append(f"{rr_cnt} split along road+river")
-            if pb_cnt > 0:
-                details.append(f"{pb_cnt} by building cluster density")
-            if fg_cnt > 0:
-                details.append(f"{fg_cnt} via forced straight cut (road/river split was unbalanced &gt;{max_household} HH or &lt;{min_household} HH)")
-            if details:
-                delin_remark += f" (Split breakdown: {', '.join(details)})."
-        else:
-            delin_remark = f"No new split areas created."
+        delin_remark = "No areas needed delineation (all within household limits)."
 
-        if unsplit_cnt > 0:
-            delin_remark += f" Note: {unsplit_cnt} over-populated area(s) were kept whole because splitting them would make the resulting pieces smaller than the required minimum of {min_household} households."
     primary_merge_cnt = 2 if len(merge_candidate_ids) >= 2 else len(merge_candidate_ids)
 
     if merged_feat_count == 0:
@@ -1835,68 +1877,52 @@ def run_phase_8(
     delin_cand_desc = f"Includes {primary_delin_cnt} primary candidate(s) over {max_household} households + {max(0, delin_candidate_feat_count - primary_delin_cnt)} neighbor reference area(s)"
     merge_cand_desc = f"Includes {primary_merge_cnt} small area(s) under {min_household} households + {max(0, merge_candidate_feat_count - primary_merge_cnt)} neighboring partner area(s)"
 
-    splitting_lines_count = len(all_splitting_lines)
     if splitting_lines_count > 0:
-        split_lines_remark = f"Generated {splitting_lines_count} delineation boundary cut line(s) along features"
+        split_lines_remark = f"Generated {splitting_lines_count} proposed boundary cut line(s) along features"
     else:
-        split_lines_remark = "No splitting lines generated (no areas were split)."
+        split_lines_remark = "No splitting lines generated."
 
     breakdown_table = ""
-    if delineated_feat_count > 0 and final_geom_by_candidate:
+    if all_splitting_lines:
         rows = []
-        for candidate_id, part_tuples in final_geom_by_candidate.items():
-            if len(part_tuples) < 2:
-                continue
-            first_ea = part_tuples[0][1]
-            parent_bar = first_ea.get('parent_barangay', '')
-            parent_ean = first_ea.get('original_code', 'Unknown')
-            orig_pop = first_ea.get('original_hhcount', 0.0)
-            if orig_pop == 0.0:
-                orig_pop = sum(p[1].get('hh_count', 0.0) for p in part_tuples)
-
-            parts_str_list = []
-            sb_set = set()
-            for _, p_ea in part_tuples:
-                p_code = p_ea.get('new_ea_code') or p_ea.get('original_code', '')
-                p_hh = p_ea.get('hh_count', 0.0)
-                parts_str_list.append(f"<b>EAN {p_code}</b> ({p_hh:,.1f} HH)")
-                sb_set.add(p_ea.get('split_by', 'point_based'))
-
-            parts_html = "<br/>".join(parts_str_list)
-            sb_label = ", ".join(sorted(sb_set))
-            if sb_label in ('road', 'river', 'road+river'):
-                rem_text = f"Split along {sb_label} features"
-            elif sb_label == 'point_based':
-                rem_text = "Split using building cluster density"
-            elif 'forced' in sb_label:
-                rem_text = "Forced straight cut"
+        for line_geom, attrs in all_splitting_lines:
+            parent_bar = attrs.get('barangay', '')
+            parent_ean = attrs.get('ean', 'Unknown')
+            p_ea = attrs.get('parent_ea')
+            orig_pop = p_ea.get('hh_count', 0.0) if p_ea else 0.0
+            num_p = attrs.get('num_parts', 2)
+            sb_label = attrs.get('split_by', 'voronoi')
+            part_hhs = attrs.get('part_hh_counts', [])
+            if part_hhs:
+                part_strs = [f"Part {pi+1}: ~{ph:,.1f} HH" for pi, ph in enumerate(part_hhs)]
+                parts_html = "<br/>".join(part_strs)
             else:
-                rem_text = "Split EA"
+                parts_html = f"{num_p} proposed sub-zones"
 
             rows.append(
                 f"<tr>"
                 f"<td>{parent_bar}</td>"
                 f"<td align='center'><b>{parent_ean}</b></td>"
                 f"<td align='center'>{orig_pop:,.1f}</td>"
-                f"<td align='center'><b>{len(part_tuples)}</b></td>"
+                f"<td align='center'><b>{num_p}</b></td>"
                 f"<td>{parts_html}</td>"
                 f"<td align='center'><code>{sb_label}</code></td>"
-                f"<td>{rem_text}</td>"
+                f"<td>Proposed cut line generated (EA polygon kept intact)</td>"
                 f"</tr>"
             )
 
         if rows:
             breakdown_table = (
-                "<br/><b>Delineated EAs Breakdown (Parent Candidate &rarr; Resulting Sub-Polygons)</b>"
+                "<br/><b>Proposed Delineation Cut Lines Breakdown</b>"
                 "<table border='1' cellspacing='0' cellpadding='6' style='border-collapse:collapse; width:100%; margin:8px 0; font-family:sans-serif; font-size:11px;'>"
                 "<tr style='background-color:#2d3748; color:#ffffff; font-weight:bold;'>"
                 "<th align='left'>Parent Barangay</th>"
                 "<th align='center'>Parent EA</th>"
                 "<th align='center'>Original HH</th>"
-                "<th align='center'>Parts</th>"
-                "<th align='left'>Resulting Sub-Polygons (EAN &amp; HH)</th>"
-                "<th align='center'>Split By</th>"
-                "<th align='left'>Remarks</th>"
+                "<th align='center'>Proposed Parts</th>"
+                "<th align='left'>Estimated Distribution</th>"
+                "<th align='center'>Split Strategy</th>"
+                "<th align='left'>Status</th>"
                 "</tr>"
                 + "".join(rows)
                 + "</table>"
@@ -1911,8 +1937,7 @@ def run_phase_8(
         "<th align='center'>Feature Count</th>"
         "<th align='left'>Execution Remark / Status</th>"
         "</tr>"
-        f"<tr><td><b>Delineated EAs</b></td><td align='center'><b>{delineated_feat_count:,}</b></td><td>{delin_remark}</td></tr>"
-        f"<tr><td><b>Splitting Lines</b></td><td align='center'><b>{splitting_lines_count:,}</b></td><td>{split_lines_remark}</td></tr>"
+        f"<tr><td><b>Proposed Splitting Lines</b></td><td align='center'><b>{splitting_lines_count:,}</b></td><td>{split_lines_remark}</td></tr>"
         f"<tr><td><b>Merged EAs</b></td><td align='center'><b>{merged_feat_count:,}</b></td><td>{merge_remark}</td></tr>"
         f"<tr><td><b>Special EAs</b></td><td align='center'><b>{special_ea_feat_count:,}</b></td><td>Areas created to fix boundary gaps and overlaps</td></tr>"
         f"<tr><td><b>Delineation Candidates</b></td><td align='center'><b>{delin_candidate_feat_count:,}</b></td><td>{delin_cand_desc}</td></tr>"

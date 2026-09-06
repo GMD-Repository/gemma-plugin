@@ -1185,27 +1185,7 @@ class EALauncherDialog(QDialog):
         self.river_status_lbl.setWordWrap(True)
         inputs_layout.addWidget(self.river_status_lbl)
 
-        # Gap (Optional)
-        inputs_layout.addWidget(QLabel("Gap Layer (Polygon, Optional)"))
-        self.gap_combo = QgsMapLayerComboBox(self)
-        self.gap_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
-        self.gap_combo.setAllowEmptyLayer(True)
-        self.gap_combo.setLayer(None)
-        inputs_layout.addWidget(self.gap_combo)
-        self.gap_status_lbl = QLabel("Optional.")
-        self.gap_status_lbl.setWordWrap(True)
-        inputs_layout.addWidget(self.gap_status_lbl)
 
-        # Overlap (Optional)
-        inputs_layout.addWidget(QLabel("Overlap Layer (Polygon, Optional)"))
-        self.overlap_combo = QgsMapLayerComboBox(self)
-        self.overlap_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
-        self.overlap_combo.setAllowEmptyLayer(True)
-        self.overlap_combo.setLayer(None)
-        inputs_layout.addWidget(self.overlap_combo)
-        self.overlap_status_lbl = QLabel("Optional.")
-        self.overlap_status_lbl.setWordWrap(True)
-        inputs_layout.addWidget(self.overlap_status_lbl)
 
         # Designated Output Folder
         inputs_layout.addWidget(QLabel("Designated Output Folder*"))
@@ -1312,12 +1292,9 @@ class EALauncherDialog(QDialog):
         self.out_merged_lbl.setFont(QFont("Segoe UI", 9))
         outputs_layout.addWidget(self.out_merged_lbl)
 
-        self.out_special_lbl = QLabel("• Special EAs (Gap/Overlap): <i>-</i>")
-        self.out_special_lbl.setWordWrap(True)
-        self.out_special_lbl.setFont(QFont("Segoe UI", 9))
-        outputs_layout.addWidget(self.out_special_lbl)
 
-        self.out_splitting_lines_lbl = QLabel("• Splitting Lines: <i>-</i>")
+
+        self.out_splitting_lines_lbl = QLabel("• Proposed Splitting Lines: <i>-</i>")
         self.out_splitting_lines_lbl.setWordWrap(True)
         self.out_splitting_lines_lbl.setFont(QFont("Segoe UI", 9))
         outputs_layout.addWidget(self.out_splitting_lines_lbl)
@@ -1642,8 +1619,6 @@ class EALauncherDialog(QDialog):
             getattr(self, 'prev_ea_combo', None),
             getattr(self, 'road_combo', None),
             getattr(self, 'river_combo', None),
-            getattr(self, 'gap_combo', None),
-            getattr(self, 'overlap_combo', None),
         ):
             if combo is not None:
                 try:
@@ -1925,8 +1900,6 @@ class EALauncherDialog(QDialog):
             getattr(self, 'prev_ea_combo', None),
             getattr(self, 'road_combo', None),
             getattr(self, 'river_combo', None),
-            getattr(self, 'gap_combo', None),
-            getattr(self, 'overlap_combo', None),
         ]:
             if combo:
                 self._safe_set_layer(combo, None)
@@ -1958,14 +1931,11 @@ class EALauncherDialog(QDialog):
             self.out_delineated_lbl.setText("• Delineated EAs: <i>-</i>")
         if hasattr(self, 'out_merged_lbl'):
             self.out_merged_lbl.setText("• Merged EAs: <i>-</i>")
-        if hasattr(self, 'out_special_lbl'):
-            self.out_special_lbl.setText("• Special EAs (Gap/Overlap): <i>-</i>")
         if hasattr(self, 'out_splitting_lines_lbl'):
             self.out_splitting_lines_lbl.setText("• Splitting Lines: <i>-</i>")
         for edit in [
             getattr(self, 'delineated_edit', None),
             getattr(self, 'merged_edit', None),
-            getattr(self, 'special_ea_edit', None),
             getattr(self, 'delin_cand_edit', None),
             getattr(self, 'merge_cand_edit', None),
             getattr(self, 'extracted_bldg_edit', None),
@@ -2022,8 +1992,6 @@ class EALauncherDialog(QDialog):
         pravea_keywords   = ["previous", "prev", "ea", "enumeration"]
         road_keywords     = ["road", "highway", "street", "way", "route"]
         river_keywords    = ["river", "stream", "water", "drainage", "creek"]
-        gap_keywords      = ["gap", "gaps"]
-        overlap_keywords  = ["overlap", "overlaps"]
 
         # Candidates: first match per slot wins (order of iteration = layer panel order)
         candidates = {
@@ -2032,8 +2000,6 @@ class EALauncherDialog(QDialog):
             "prev_ea":  None,
             "road":     None,
             "river":    None,
-            "gap":      None,
-            "overlap":  None,
         }
 
         for layer in layers:
@@ -2043,11 +2009,7 @@ class EALauncherDialog(QDialog):
             geom = layer.geometryType()
 
             if geom == 2:  # Polygon
-                if candidates["gap"] is None and any(k in name_lower for k in gap_keywords):
-                    candidates["gap"] = layer
-                elif candidates["overlap"] is None and any(k in name_lower for k in overlap_keywords):
-                    candidates["overlap"] = layer
-                elif candidates["bar"] is None and any(k in name_lower for k in barangay_keywords) \
+                if candidates["bar"] is None and any(k in name_lower for k in barangay_keywords) \
                         and not any(k in name_lower for k in pravea_keywords):
                     candidates["bar"] = layer
                 elif candidates["prev_ea"] is None and any(k in name_lower for k in pravea_keywords):
@@ -2074,10 +2036,6 @@ class EALauncherDialog(QDialog):
             self._safe_set_layer(self.road_combo, candidates["road"])
         if candidates["river"]:
             self._safe_set_layer(self.river_combo, candidates["river"])
-        if candidates["gap"]:
-            self._safe_set_layer(self.gap_combo, candidates["gap"])
-        if candidates["overlap"]:
-            self._safe_set_layer(self.overlap_combo, candidates["overlap"])
 
         # Auto-detect designated output folder if not yet set
         if hasattr(self, 'output_folder_widget'):
@@ -2163,19 +2121,7 @@ class EALauncherDialog(QDialog):
         else:
             self.river_status_lbl.setText(f"Active: {river_layer.featureCount()} line features loaded.")
 
-        # 6. Gap Layer (Optional)
-        gap_layer = self._safe_get_layer(self.gap_combo)
-        if not gap_layer:
-            self.gap_status_lbl.setText("Optional: Gap workflow will be skipped.")
-        else:
-            self.gap_status_lbl.setText(f"Active: {gap_layer.featureCount()} polygon features loaded.")
 
-        # 7. Overlap Layer (Optional)
-        overlap_layer = self._safe_get_layer(self.overlap_combo)
-        if not overlap_layer:
-            self.overlap_status_lbl.setText("Optional: Overlap workflow will be skipped.")
-        else:
-            self.overlap_status_lbl.setText(f"Active: {overlap_layer.featureCount()} polygon features loaded.")
             
         # Update output layer placeholders and preview labels using 5-digit geocode prefix
         geo5 = self._extract_5digit_geocode()
@@ -2184,17 +2130,13 @@ class EALauncherDialog(QDialog):
                 self.out_delineated_lbl.setText(f"• Delineated EAs: <b>{geo5}_delineated_ea2026.gpkg</b>")
             if hasattr(self, 'out_merged_lbl'):
                 self.out_merged_lbl.setText(f"• Merged EAs: <b>{geo5}_merged_ea2026.gpkg</b>")
-            if hasattr(self, 'out_special_lbl'):
-                self.out_special_lbl.setText(f"• Special EAs (Gap/Overlap): <b>{geo5}_special_ea.gpkg</b>")
             if hasattr(self, 'out_splitting_lines_lbl'):
-                self.out_splitting_lines_lbl.setText(f"• Splitting Lines: <b>{geo5}_eadel_update.gpkg</b>")
+                self.out_splitting_lines_lbl.setText(f"• Proposed Splitting Lines: <b>{geo5}_eadel_update.gpkg</b>")
 
             if hasattr(self, 'delineated_edit'):
                 self.delineated_edit.setPlaceholderText(f"{geo5}_delineated_ea2026")
             if hasattr(self, 'merged_edit'):
                 self.merged_edit.setPlaceholderText(f"{geo5}_merged_ea2026")
-            if hasattr(self, 'special_ea_edit'):
-                self.special_ea_edit.setPlaceholderText(f"{geo5}_special_ea")
             if hasattr(self, 'delin_cand_edit'):
                 self.delin_cand_edit.setPlaceholderText(f"{geo5}_delineation_candidates")
             if hasattr(self, 'merge_cand_edit'):
@@ -2206,17 +2148,13 @@ class EALauncherDialog(QDialog):
                 self.out_delineated_lbl.setText("• Delineated EAs: <i>-</i>")
             if hasattr(self, 'out_merged_lbl'):
                 self.out_merged_lbl.setText("• Merged EAs: <i>-</i>")
-            if hasattr(self, 'out_special_lbl'):
-                self.out_special_lbl.setText("• Special EAs (Gap/Overlap): <i>-</i>")
             if hasattr(self, 'out_splitting_lines_lbl'):
-                self.out_splitting_lines_lbl.setText("• Splitting Lines: <i>-</i>")
+                self.out_splitting_lines_lbl.setText("• Proposed Splitting Lines: <i>-</i>")
 
             if hasattr(self, 'delineated_edit'):
                 self.delineated_edit.setPlaceholderText("[Temporary Scratch Layer]")
             if hasattr(self, 'merged_edit'):
                 self.merged_edit.setPlaceholderText("[Temporary Scratch Layer]")
-            if hasattr(self, 'special_ea_edit'):
-                self.special_ea_edit.setPlaceholderText("[Temporary Scratch Layer]")
             if hasattr(self, 'delin_cand_edit'):
                 self.delin_cand_edit.setPlaceholderText("[Temporary Scratch Layer]")
             if hasattr(self, 'merge_cand_edit'):
@@ -2517,8 +2455,6 @@ class EALauncherDialog(QDialog):
         prev_ea_layer = self._safe_get_layer(self.prev_ea_combo)
         road_layer = self._safe_get_layer(self.road_combo)
         river_layer = self._safe_get_layer(self.river_combo)
-        gap_layer = self._safe_get_layer(self.gap_combo)
-        overlap_layer = self._safe_get_layer(self.overlap_combo)
 
         if not bar_layer or not bldg_layer or not prev_ea_layer:
             self.log_console.append(
@@ -2541,7 +2477,6 @@ class EALauncherDialog(QDialog):
         # Define permanent output layer file paths (.gpkg)
         delineated_file = os.path.normpath(os.path.join(out_folder, f"{geo5}_delineated_ea2026.gpkg")).replace("\\", "/")
         merged_file = os.path.normpath(os.path.join(out_folder, f"{geo5}_merged_ea2026.gpkg")).replace("\\", "/")
-        special_ea_file = os.path.normpath(os.path.join(out_folder, f"{geo5}_special_ea.gpkg")).replace("\\", "/")
 
         # Prepare parameters: Execute algorithm in-memory first; permanent .gpkg files are created ONLY if features exist
         parameters = {
@@ -2550,8 +2485,6 @@ class EALauncherDialog(QDialog):
             'PREVIOUS_EA_INPUT': prev_ea_layer,
             'ROAD_INPUT': road_layer,
             'RIVER_INPUT': river_layer,
-            'GAP_INPUT': gap_layer,
-            'OVERLAP_INPUT': overlap_layer,
             'SNAP_TOLERANCE': self.tolerance_spin.value(),
             'ENABLE_THRESHOLDS': self.enable_thresholds_chk.isChecked(),
             'MIN_HOUSEHOLD': self.min_hh_spin.value(),
@@ -2567,7 +2500,6 @@ class EALauncherDialog(QDialog):
             # Temporary scratch sinks during processing execution
             'DELINEATED_OUTPUT': 'TEMPORARY_OUTPUT',
             'MERGED_OUTPUT': 'TEMPORARY_OUTPUT',
-            'SPECIAL_EA_OUTPUT': 'TEMPORARY_OUTPUT',
             'DELINEATION_CANDIDATE_OUTPUT': 'TEMPORARY_OUTPUT',
             'MERGE_CANDIDATE_OUTPUT': 'TEMPORARY_OUTPUT',
             'EXTRACTED_BUILDINGS_OUTPUT': 'TEMPORARY_OUTPUT',
@@ -2667,7 +2599,6 @@ class EALauncherDialog(QDialog):
                     ('EXTRACTED_BUILDINGS_OUTPUT', f"{geo5}_extracted_bldgpts", reference_group, "1. Base Layer Building Points.qml", False, None),
                     ('DELINEATED_OUTPUT', f"{geo5}_delineated_ea2026", eas_group, "ea_output.qml", True, delineated_file),
                     ('MERGED_OUTPUT', f"{geo5}_merged_ea2026", eas_group, "ea_output.qml", True, merged_file),
-                    ('SPECIAL_EA_OUTPUT', f"{geo5}_special_ea", eas_group, "ea_output.qml", True, special_ea_file),
                     ('DELINEATION_CANDIDATE_OUTPUT', f"{geo5}_delineation_candidates", candidates_group, "delineation_candidates.qml", False, None),
                     ('MERGE_CANDIDATE_OUTPUT', f"{geo5}_merge_candidates", candidates_group, "merge_candidates.qml", False, None),
                 ]

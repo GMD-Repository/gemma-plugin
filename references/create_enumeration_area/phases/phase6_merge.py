@@ -33,6 +33,8 @@ def is_delineation_candidate(ea_item, max_household, eadel_indi_col_idx=-1, full
         return False
     if ea_item.get('is_special_ea', False):
         return False
+    if ea_item.get('has_proposed_split', False):
+        return True
     orig_id = ea_item.get('original_id')
     if orig_id is None:
         return False
@@ -48,7 +50,7 @@ def is_delineation_candidate(ea_item, max_household, eadel_indi_col_idx=-1, full
 
 
 def is_merge_candidate(ea_item, min_household, merge_candidate_ids=None):
-    if ea_item.get('from_split', False):
+    if ea_item.get('from_split', False) or ea_item.get('has_proposed_split', False):
         return False
     if ea_item.get('is_special_ea', False):
         return False
@@ -398,5 +400,6 @@ def run_phase_6(alg, parameters, context, feedback, multi_feedback, p1, p2, p5):
         raise QgsProcessingException("Algorithm cancelled by user.")
 
     return {
-        "merged_eas": final_merged_eas
+        "merged_eas": final_merged_eas,
+        "proposed_lines": p5.get("proposed_lines", []),
     }

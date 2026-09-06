@@ -164,7 +164,8 @@ class TestEADialogRefresh(unittest.TestCase):
     def test_fill_missing_hh_count_strictly_requires_hh_count_in_ea_layer(self, mock_msgbox):
         """Verify that fill_missing_hh_count rejects layers having only 'hhcount' or 'household'."""
         from references.create_enumeration_area.dialog import EALauncherDialog
-        from qgis.core import QgsVectorLayer, QgsField, QVariant
+        from qgis.core import QgsVectorLayer, QgsField
+        from qgis.PyQt.QtCore import QVariant
 
         mock_dlg = MagicMock(spec=EALauncherDialog)
         mock_dlg.prev_ea_combo = MagicMock()
@@ -198,7 +199,8 @@ class TestEADialogRefresh(unittest.TestCase):
     def test_fill_missing_hh_count_rejects_missing_household_in_bldg_layer(self, mock_msgbox):
         """Verify that fill_missing_hh_count rejects building layers lacking hhcount/hh_count."""
         from references.create_enumeration_area.dialog import EALauncherDialog
-        from qgis.core import QgsVectorLayer, QgsField, QVariant
+        from qgis.core import QgsVectorLayer, QgsField
+        from qgis.PyQt.QtCore import QVariant
 
         mock_dlg = MagicMock(spec=EALauncherDialog)
         mock_dlg.prev_ea_combo = MagicMock()
@@ -232,7 +234,8 @@ class TestEADialogRefresh(unittest.TestCase):
     def test_fill_missing_hh_count_populates_from_bldg_hhcount(self, mock_msgbox):
         """Verify that fill_missing_hh_count computes and updates hh_count and bldg_count in EA from building 'hhcount'."""
         from references.create_enumeration_area.dialog import EALauncherDialog
-        from qgis.core import QgsVectorLayer, QgsField, QVariant, QgsFeature, QgsGeometry, QgsPointXY
+        from qgis.core import QgsVectorLayer, QgsField, QgsFeature, QgsGeometry, QgsPointXY
+        from qgis.PyQt.QtCore import QVariant
 
         mock_dlg = MagicMock(spec=EALauncherDialog)
         mock_dlg.prev_ea_combo = MagicMock()
@@ -291,7 +294,8 @@ class TestEADialogRefresh(unittest.TestCase):
     def test_fill_missing_hh_count_proportional_scaling_to_parent_hhcount(self, mock_msgbox):
         """Verify that fill_missing_hh_count proportionally scales building point counts to match parent hhcount and sets bldg_count."""
         from references.create_enumeration_area.dialog import EALauncherDialog
-        from qgis.core import QgsVectorLayer, QgsField, QVariant, QgsFeature, QgsGeometry, QgsPointXY
+        from qgis.core import QgsVectorLayer, QgsField, QgsFeature, QgsGeometry, QgsPointXY
+        from qgis.PyQt.QtCore import QVariant
 
         mock_dlg = MagicMock(spec=EALauncherDialog)
         mock_dlg.prev_ea_combo = MagicMock()
@@ -384,7 +388,8 @@ class TestEADialogRefresh(unittest.TestCase):
     def test_fill_missing_hh_count_updates_existing_non_empty_values(self, mock_msgbox):
         """Verify that fill_missing_hh_count updates EAs even when hh_count is already non-empty."""
         from references.create_enumeration_area.dialog import EALauncherDialog
-        from qgis.core import QgsVectorLayer, QgsField, QVariant, QgsFeature, QgsGeometry, QgsPointXY
+        from qgis.core import QgsVectorLayer, QgsField, QgsFeature, QgsGeometry, QgsPointXY
+        from qgis.PyQt.QtCore import QVariant
 
         mock_dlg = MagicMock(spec=EALauncherDialog)
         mock_dlg.prev_ea_combo = MagicMock()
@@ -440,7 +445,8 @@ class TestEADialogRefresh(unittest.TestCase):
     def test_fill_missing_hh_count_building_fallback_to_one(self, mock_msgbox):
         """Verify delineation logic: building points with null/empty/0 hhcount fallback to 1.0."""
         from references.create_enumeration_area.dialog import EALauncherDialog
-        from qgis.core import QgsVectorLayer, QgsField, QVariant, QgsFeature, QgsGeometry, QgsPointXY
+        from qgis.core import QgsVectorLayer, QgsField, QgsFeature, QgsGeometry, QgsPointXY
+        from qgis.PyQt.QtCore import QVariant
 
         mock_dlg = MagicMock(spec=EALauncherDialog)
         mock_dlg.prev_ea_combo = MagicMock()
@@ -500,7 +506,8 @@ class TestEADialogRefresh(unittest.TestCase):
     def test_fill_missing_hh_count_scales_to_match_hhcount_for_split_sub_eas(self, mock_msgbox):
         """Verify that sub-EAs with parent hhcount 320 and building sums (67, 96 = 163) strictly scale to sum to 320."""
         from references.create_enumeration_area.dialog import EALauncherDialog
-        from qgis.core import QgsVectorLayer, QgsField, QVariant, QgsFeature, QgsGeometry, QgsPointXY
+        from qgis.core import QgsVectorLayer, QgsField, QgsFeature, QgsGeometry, QgsPointXY
+        from qgis.PyQt.QtCore import QVariant
 
         mock_dlg = MagicMock(spec=EALauncherDialog)
         mock_dlg.prev_ea_combo = MagicMock()
