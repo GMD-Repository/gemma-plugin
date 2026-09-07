@@ -69,6 +69,12 @@ class MockGenericClass(metaclass=MockMetaClass):
     def __index__(self): return 0
     def __len__(self): return 0
     def __bool__(self): return True
+    def __gt__(self, other): return False
+    def __ge__(self, other): return False
+    def __lt__(self, other): return False
+    def __le__(self, other): return False
+    def __eq__(self, other): return False
+    def __ne__(self, other): return True
     def __or__(self, other): return self
     def __ror__(self, other): return self
     def __and__(self, other): return self
@@ -81,6 +87,28 @@ class MockGenericClass(metaclass=MockMetaClass):
 
     def __call__(self, *args, **kwargs):
         return MockGenericClass()
+
+
+class QgsMapLayerComboBox(MockGenericClass):
+    def __init__(self, parent=None):
+        self._layer = None
+        self.layerChanged = MockSignal()
+
+    def setLayer(self, layer):
+        self._layer = layer
+        self.layerChanged.emit(layer)
+
+    def currentLayer(self):
+        return self._layer
+
+    def setFilters(self, filters):
+        pass
+
+    def setMinimumHeight(self, h):
+        pass
+
+    def setFixedHeight(self, h):
+        pass
 
 
 class QgsPointXY:
@@ -641,6 +669,28 @@ class QgsVectorDataProvider:
         return self._layer._fields
 
 
+class MockSignal:
+    def __init__(self):
+        self._slots = []
+
+    def connect(self, slot):
+        if slot not in self._slots:
+            self._slots.append(slot)
+
+    def disconnect(self, slot=None):
+        if slot is None:
+            self._slots.clear()
+        elif slot in self._slots:
+            self._slots.remove(slot)
+
+    def emit(self, *args, **kwargs):
+        for slot in list(self._slots):
+            try:
+                slot(*args, **kwargs)
+            except Exception:
+                pass
+
+
 _MOCK_LAYER_CACHE = {}
 
 
@@ -651,6 +701,8 @@ class QgsVectorLayer:
         self._provider = provider
         self._fields = QgsFields()
         self._features = []
+        self._selected_fids = set()
+        self.selectionChanged = MockSignal()
         raw_path = str(path).split("|")[0].replace("\\", "/")
         if raw_path in _MOCK_LAYER_CACHE:
             cached_fields, cached_feats = _MOCK_LAYER_CACHE[raw_path]
@@ -685,7 +737,21 @@ class QgsVectorLayer:
     def id(self): return f"layer_{self._name}"
     def setSubsetString(self, string): return True
     def selectByExpression(self, expr): pass
-    def selectedFeatureCount(self): return 0
+    def selectByIds(self, fids):
+        self._selected_fids = set(fids)
+        self.selectionChanged.emit()
+    def removeSelection(self):
+        self._selected_fids = set()
+        self.selectionChanged.emit()
+    def selectAll(self):
+        self._selected_fids = set(f.id() for f in self._features)
+        self.selectionChanged.emit()
+    def selectedFeatureIds(self):
+        return list(self._selected_fids)
+    def selectedFeatures(self):
+        return [f for f in self._features if f.id() in self._selected_fids]
+    def selectedFeatureCount(self):
+        return len(self._selected_fids)
     def triggerRepaint(self): pass
     def isEditable(self): return getattr(self, '_is_editable', False)
     def startEditing(self):
@@ -1255,10 +1321,69 @@ def setup_qgis_mock_if_needed():
     core_mod.QgsVectorFileWriter = QgsVectorFileWriter
 
     # PyQt attributes
-    class MockSignal:
-        def emit(self, *args, **kwargs): pass
-        def connect(self, *args, **kwargs): pass
-        def disconnect(self, *args, **kwargs): pass
+    class MockQWidget:
+        def __init__(self, parent=None, *args, **kwargs):
+            self._parent = parent
+            self._enabled = True
+        def setParent(self, parent): self._parent = parent
+        def parent(self): return self._parent
+        def setEnabled(self, enabled): self._enabled = bool(enabled)
+        def isEnabled(self): return bool(self._enabled)
+        def setWindowTitle(self, title): pass
+        def setLayout(self, layout): pass
+        def setMinimumSize(self, *args): pass
+        def setMinimumWidth(self, *args): pass
+        def setMinimumHeight(self, *args): pass
+        def setMaximumHeight(self, *args): pass
+        def setFixedHeight(self, *args): pass
+        def resize(self, *args): pass
+        def show(self): pass
+        def hide(self): pass
+        def setStyleSheet(self, style): pass
+        def setFont(self, font): pass
+
+    class MockQDialog(MockQWidget):
+        def exec_(self): return 1
+        def exec(self): return 1
+        def accept(self): pass
+        def reject(self): pass
+        def close(self): pass
+
+    class MockQCheckBox(MockQWidget):
+        def __init__(self, text="", parent=None):
+            super().__init__(parent)
+            self._text = text
+            self._checked = False
+            self.toggled = MockSignal()
+
+        def isChecked(self): return bool(self._checked)
+        def setChecked(self, checked):
+            self._checked = bool(checked)
+            self.toggled.emit(self._checked)
+        def text(self): return self._text
+        def setText(self, text): self._text = text
+        def setToolTip(self, tip): pass
+
+    class MockQSpinBox(MockQWidget):
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self._value = 0
+            self._range = (0, 99999)
+        def setValue(self, v): self._value = int(v)
+        def value(self): return int(self._value)
+        def setRange(self, min_v, max_v): self._range = (min_v, max_v)
+        def setToolTip(self, tip): pass
+
+    class MockQDoubleSpinBox(MockQWidget):
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self._value = 0.0
+            self._range = (0.0, 99999.0)
+        def setValue(self, v): self._value = float(v)
+        def value(self): return float(self._value)
+        def setRange(self, min_v, max_v): self._range = (min_v, max_v)
+        def setSingleStep(self, step): pass
+        def setToolTip(self, tip): pass
 
     qtcore_mod.QCoreApplication = MockQCoreApplication
     qtcore_mod.QThread = MockQThread
@@ -1269,6 +1394,11 @@ def setup_qgis_mock_if_needed():
 
     qtgui_mod.QWidget = MockQWidget
     qtgui_mod.QDialog = MockQDialog
+    qtgui_mod.QCheckBox = MockQCheckBox
+    qtgui_mod.QSpinBox = MockQSpinBox
+    qtgui_mod.QDoubleSpinBox = MockQDoubleSpinBox
+
+    gui_mod.QgsMapLayerComboBox = QgsMapLayerComboBox
 
     pyqt_mod.QtCore = qtcore_mod
     pyqt_mod.QtWidgets = qtgui_mod
@@ -1305,6 +1435,9 @@ def setup_qgis_mock_if_needed():
 
         pyqt5_qtgui_mod.QWidget = MockQWidget
         pyqt5_qtgui_mod.QDialog = MockQDialog
+        pyqt5_qtgui_mod.QCheckBox = MockQCheckBox
+        pyqt5_qtgui_mod.QSpinBox = MockQSpinBox
+        pyqt5_qtgui_mod.QDoubleSpinBox = MockQDoubleSpinBox
 
         pyqt5_mod.QtCore = pyqt5_qtcore_mod
         pyqt5_mod.QtWidgets = pyqt5_qtgui_mod

@@ -37,6 +37,7 @@ from qgis.core import (
     QgsPointXY,
     QgsWkbTypes,
     QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
     QgsProcessingFeedback,
     QgsField,
     QgsMapLayerProxyModel,
@@ -64,13 +65,18 @@ class SplitEADialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle("Run Delineation - Split EA Polygons")
-        self.setMinimumSize(540, 560)
-        self.resize(580, 580)
+        self.setMinimumSize(560, 680)
+        self.resize(620, 720)
 
         self.default_output_dir = default_output_dir or ""
         self.default_geocode = default_geocode or ""
         self.default_bldg_layer = default_bldg_layer
         self.default_min_hh = int(default_min_hh or 99)
+
+        self._prev_poly_layer = None
+        self._prev_line_layer = None
+        self._poly_user_toggled = False
+        self._line_user_toggled = False
 
         self._init_ui()
         self._auto_detect_layers()
@@ -92,33 +98,59 @@ class SplitEADialog(QDialog):
         # ── 1. Input Layers Group ──────────────────────────────────────────
         inputs_group = QGroupBox("Input Layers")
         inputs_layout = QVBoxLayout(inputs_group)
-        inputs_layout.setSpacing(6)
+        inputs_layout.setContentsMargins(10, 10, 10, 10)
+        inputs_layout.setSpacing(4)
 
         # EA Polygon Layer (delineation_ea)
         inputs_layout.addWidget(QLabel("Target EA Polygon Layer (delineation_ea)*:"))
         self.poly_combo = QgsMapLayerComboBox(self)
+        self.poly_combo.setMinimumHeight(28)
         self.poly_combo.setFilters(QgsMapLayerProxyModel.PolygonLayer)
         self.poly_combo.layerChanged.connect(self._on_layer_selection_changed)
         inputs_layout.addWidget(self.poly_combo)
+
+        poly_sel_row = QHBoxLayout()
+        self.poly_selected_chk = QCheckBox("Selected features only (0 selected)")
+        self.poly_selected_chk.setMinimumHeight(22)
+        self.poly_selected_chk.setToolTip("When checked, only the selected/highlighted polygon features in this layer will be split.")
+        self.poly_selected_chk.toggled.connect(self._on_poly_chk_toggled)
+        poly_sel_row.addWidget(self.poly_selected_chk)
+        poly_sel_row.addStretch()
+        inputs_layout.addLayout(poly_sel_row)
 
         self.poly_status_lbl = QLabel("No polygon layer selected.")
         self.poly_status_lbl.setStyleSheet("color: #7F8C8D; font-size: 11px;")
         inputs_layout.addWidget(self.poly_status_lbl)
 
+        inputs_layout.addSpacing(4)
+
         # Proposed Cut Lines Layer (eadel_update)
         inputs_layout.addWidget(QLabel("Proposed Cut Lines Layer (eadel_update)*:"))
         self.line_combo = QgsMapLayerComboBox(self)
+        self.line_combo.setMinimumHeight(28)
         self.line_combo.setFilters(QgsMapLayerProxyModel.LineLayer)
         self.line_combo.layerChanged.connect(self._on_layer_selection_changed)
         inputs_layout.addWidget(self.line_combo)
+
+        line_sel_row = QHBoxLayout()
+        self.line_selected_chk = QCheckBox("Selected features only (0 selected)")
+        self.line_selected_chk.setMinimumHeight(22)
+        self.line_selected_chk.setToolTip("When checked, only the selected/highlighted cut lines in this layer will be used for splitting.")
+        self.line_selected_chk.toggled.connect(self._on_line_chk_toggled)
+        line_sel_row.addWidget(self.line_selected_chk)
+        line_sel_row.addStretch()
+        inputs_layout.addLayout(line_sel_row)
 
         self.line_status_lbl = QLabel("No line layer selected.")
         self.line_status_lbl.setStyleSheet("color: #7F8C8D; font-size: 11px;")
         inputs_layout.addWidget(self.line_status_lbl)
 
+        inputs_layout.addSpacing(4)
+
         # Building Points Layer
         inputs_layout.addWidget(QLabel("Building Point Layer (bldgpts)*:"))
         self.bldg_combo = QgsMapLayerComboBox(self)
+        self.bldg_combo.setMinimumHeight(28)
         self.bldg_combo.setFilters(QgsMapLayerProxyModel.PointLayer)
         self.bldg_combo.layerChanged.connect(self._on_layer_selection_changed)
         inputs_layout.addWidget(self.bldg_combo)
@@ -132,12 +164,14 @@ class SplitEADialog(QDialog):
         # ── 2. Settings Group ──────────────────────────────────────────────
         settings_group = QGroupBox("Splitting Options")
         settings_layout = QVBoxLayout(settings_group)
+        settings_layout.setContentsMargins(10, 10, 10, 10)
         settings_layout.setSpacing(6)
 
         # Minimum Household Threshold
         min_hh_layout = QHBoxLayout()
         min_hh_layout.addWidget(QLabel("Minimum Household Threshold per EA:"))
         self.min_hh_spin = QSpinBox()
+        self.min_hh_spin.setMinimumHeight(26)
         self.min_hh_spin.setRange(1, 99999)
         self.min_hh_spin.setValue(self.default_min_hh)
         self.min_hh_spin.setToolTip(
@@ -151,6 +185,7 @@ class SplitEADialog(QDialog):
         tol_layout = QHBoxLayout()
         tol_layout.addWidget(QLabel("Line Endpoint Extension (meters):"))
         self.tolerance_spin = QDoubleSpinBox()
+        self.tolerance_spin.setMinimumHeight(26)
         self.tolerance_spin.setRange(0.0, 50.0)
         self.tolerance_spin.setValue(1.0)
         self.tolerance_spin.setSingleStep(0.5)
@@ -177,7 +212,8 @@ class SplitEADialog(QDialog):
 
         self.log_console = QTextEdit()
         self.log_console.setReadOnly(True)
-        self.log_console.setFixedHeight(120)
+        self.log_console.setMinimumHeight(90)
+        self.log_console.setMaximumHeight(140)
         self.log_console.setFont(QFont("Consolas", 8))
         main_layout.addWidget(self.log_console)
 
@@ -187,6 +223,7 @@ class SplitEADialog(QDialog):
 
         self.close_btn = QPushButton("Close")
         self.close_btn.setMinimumWidth(80)
+        self.close_btn.setMinimumHeight(28)
         self.close_btn.clicked.connect(self.reject)
         btn_layout.addWidget(self.close_btn)
 
@@ -194,6 +231,7 @@ class SplitEADialog(QDialog):
 
         self.run_btn = QPushButton("Run Split")
         self.run_btn.setMinimumWidth(130)
+        self.run_btn.setMinimumHeight(28)
         self.run_btn.setStyleSheet("font-weight: bold; background-color: #27ae60; color: white;")
         self.run_btn.clicked.connect(self.run_split)
         btn_layout.addWidget(self.run_btn)
@@ -249,9 +287,109 @@ class SplitEADialog(QDialog):
 
         self._on_layer_selection_changed()
 
-    def _on_layer_selection_changed(self):
-        """Update layer info labels when selection changes."""
+    def closeEvent(self, event):
+        self._disconnect_selection_signals()
+        super().closeEvent(event)
+
+    def _disconnect_selection_signals(self):
+        if self._prev_poly_layer and hasattr(self._prev_poly_layer, "selectionChanged"):
+            try:
+                self._prev_poly_layer.selectionChanged.disconnect(self._update_poly_selection_ui)
+            except Exception:
+                pass
+        if self._prev_line_layer and hasattr(self._prev_line_layer, "selectionChanged"):
+            try:
+                self._prev_line_layer.selectionChanged.disconnect(self._update_line_selection_ui)
+            except Exception:
+                pass
+
+    def _on_poly_chk_toggled(self, checked: bool):
+        self._poly_user_toggled = True
+
+    def _on_line_chk_toggled(self, checked: bool):
+        self._line_user_toggled = True
+
+    def _update_poly_selection_ui(self):
+        """Update polygon selection checkbox state and label."""
         poly_layer = self.poly_combo.currentLayer()
+        if poly_layer and poly_layer.isValid() and hasattr(poly_layer, "selectedFeatureCount"):
+            try:
+                count = int(poly_layer.selectedFeatureCount())
+            except (ValueError, TypeError):
+                count = 0
+            self.poly_selected_chk.setText(f"Selected features only ({count} selected)")
+            if count > 0:
+                self.poly_selected_chk.setEnabled(True)
+                if not self._poly_user_toggled:
+                    self.poly_selected_chk.setChecked(True)
+            else:
+                self.poly_selected_chk.setChecked(False)
+                self.poly_selected_chk.setEnabled(False)
+                self._poly_user_toggled = False
+        else:
+            self.poly_selected_chk.setText("Selected features only (0 selected)")
+            self.poly_selected_chk.setChecked(False)
+            self.poly_selected_chk.setEnabled(False)
+            self._poly_user_toggled = False
+
+    def _update_line_selection_ui(self):
+        """Update cut lines selection checkbox state and label."""
+        line_layer = self.line_combo.currentLayer()
+        if line_layer and line_layer.isValid() and hasattr(line_layer, "selectedFeatureCount"):
+            try:
+                count = int(line_layer.selectedFeatureCount())
+            except (ValueError, TypeError):
+                count = 0
+            self.line_selected_chk.setText(f"Selected features only ({count} selected)")
+            if count > 0:
+                self.line_selected_chk.setEnabled(True)
+                if not self._line_user_toggled:
+                    self.line_selected_chk.setChecked(True)
+            else:
+                self.line_selected_chk.setChecked(False)
+                self.line_selected_chk.setEnabled(False)
+                self._line_user_toggled = False
+        else:
+            self.line_selected_chk.setText("Selected features only (0 selected)")
+            self.line_selected_chk.setChecked(False)
+            self.line_selected_chk.setEnabled(False)
+            self._line_user_toggled = False
+
+    def _on_layer_selection_changed(self):
+        """Update layer info labels and dynamic selection listeners when layers change."""
+        poly_layer = self.poly_combo.currentLayer()
+        if self._prev_poly_layer != poly_layer:
+            if self._prev_poly_layer and hasattr(self._prev_poly_layer, "selectionChanged"):
+                try:
+                    self._prev_poly_layer.selectionChanged.disconnect(self._update_poly_selection_ui)
+                except Exception:
+                    pass
+            self._prev_poly_layer = poly_layer
+            self._poly_user_toggled = False
+            if poly_layer and hasattr(poly_layer, "selectionChanged"):
+                try:
+                    poly_layer.selectionChanged.connect(self._update_poly_selection_ui)
+                except Exception:
+                    pass
+
+        line_layer = self.line_combo.currentLayer()
+        if self._prev_line_layer != line_layer:
+            if self._prev_line_layer and hasattr(self._prev_line_layer, "selectionChanged"):
+                try:
+                    self._prev_line_layer.selectionChanged.disconnect(self._update_line_selection_ui)
+                except Exception:
+                    pass
+            self._prev_line_layer = line_layer
+            self._line_user_toggled = False
+            if line_layer and hasattr(line_layer, "selectionChanged"):
+                try:
+                    line_layer.selectionChanged.connect(self._update_line_selection_ui)
+                except Exception:
+                    pass
+
+        self._update_poly_selection_ui()
+        self._update_line_selection_ui()
+
         if poly_layer and poly_layer.isValid():
             self.poly_status_lbl.setText(
                 f"Target to update: <b>{poly_layer.name()}</b> ({poly_layer.featureCount()} polygon features)"
@@ -261,7 +399,6 @@ class SplitEADialog(QDialog):
             self.poly_status_lbl.setText("No valid polygon layer selected.")
             self.poly_status_lbl.setStyleSheet("color: #e74c3c; font-size: 11px;")
 
-        line_layer = self.line_combo.currentLayer()
         if line_layer and line_layer.isValid():
             self.line_status_lbl.setText(
                 f"Selected cut lines: <b>{line_layer.name()}</b> ({line_layer.featureCount()} line features)"
@@ -349,18 +486,26 @@ class SplitEADialog(QDialog):
             return QgsGeometry.fromPolylineXY(new_poly)
 
     def _extend_line_to_traverse_polygon(
-        self, line_geom: QgsGeometry, poly_geom: QgsGeometry, extend_tol: float = 1.0
+        self,
+        line_geom: QgsGeometry,
+        poly_geom: QgsGeometry,
+        extend_dist_map_units: float = 0.001,
+        extend_tol: Optional[float] = None,
     ) -> QgsGeometry:
         """Extend cut line endpoints outward to guarantee it fully traverses through the target polygon boundary."""
+        if extend_tol is not None:
+            extend_dist_map_units = extend_tol
         if not line_geom or line_geom.isEmpty():
             return line_geom
         if not poly_geom or poly_geom.isEmpty():
-            return self._extend_line_endpoints(line_geom, extend_tol)
+            return self._extend_line_endpoints(line_geom, extend_dist_map_units)
 
         bbox = poly_geom.boundingBox()
         poly_diag = math.hypot(bbox.width(), bbox.height())
-        if poly_diag < 1e-6:
-            poly_diag = 100.0
+        if poly_diag < 1e-9:
+            poly_diag = 1.0
+
+        ext_len = max(poly_diag * 0.5, extend_dist_map_units) + (extend_dist_map_units * 2.0)
 
         def extend_segment_coords(pts: List[QgsPointXY]) -> List[QgsPointXY]:
             if len(pts) < 2:
@@ -375,27 +520,16 @@ class SplitEADialog(QDialog):
             p0, p1 = new_pts[0], new_pts[1]
             dx0, dy0 = p0.x() - p1.x(), p0.y() - p1.y()
             dist0 = math.hypot(dx0, dy0)
-            if dist0 > 1e-9:
-                p0_pt_geom = QgsGeometry.fromPointXY(p0)
-                # If endpoint is inside or on boundary, extend past the whole polygon
-                if poly_geom.contains(p0_pt_geom) or poly_geom.intersects(p0_pt_geom):
-                    ext_len0 = poly_diag + max(extend_tol, 1.0)
-                else:
-                    ext_len0 = max(extend_tol, 1.0)
-                new_p0 = QgsPointXY(p0.x() + (dx0 / dist0) * ext_len0, p0.y() + (dy0 / dist0) * ext_len0)
+            if dist0 > 1e-12:
+                new_p0 = QgsPointXY(p0.x() + (dx0 / dist0) * ext_len, p0.y() + (dy0 / dist0) * ext_len)
                 new_pts[0] = new_p0
 
             # Extend end point pn outward away from pn_prev
             pn, pn_prev = new_pts[-1], new_pts[-2]
             dxn, dyn = pn.x() - pn_prev.x(), pn.y() - pn_prev.y()
             distn = math.hypot(dxn, dyn)
-            if distn > 1e-9:
-                pn_pt_geom = QgsGeometry.fromPointXY(pn)
-                if poly_geom.contains(pn_pt_geom) or poly_geom.intersects(pn_pt_geom):
-                    ext_lenn = poly_diag + max(extend_tol, 1.0)
-                else:
-                    ext_lenn = max(extend_tol, 1.0)
-                new_pn = QgsPointXY(pn.x() + (dxn / distn) * ext_lenn, pn.y() + (dyn / distn) * ext_lenn)
+            if distn > 1e-12:
+                new_pn = QgsPointXY(pn.x() + (dxn / distn) * ext_len, pn.y() + (dyn / distn) * ext_len)
                 new_pts[-1] = new_pn
 
             return new_pts
@@ -525,6 +659,58 @@ class SplitEADialog(QDialog):
             QMessageBox.warning(self, "Empty Input", "The selected cut lines layer contains 0 features.")
             return
 
+        use_selected_poly = self.poly_selected_chk.isChecked() and (poly_layer.selectedFeatureCount() > 0)
+        selected_poly_ids = set(poly_layer.selectedFeatureIds()) if use_selected_poly else set()
+        if self.poly_selected_chk.isChecked() and poly_layer.selectedFeatureCount() == 0:
+            QMessageBox.warning(
+                self,
+                "No Polygons Selected",
+                "The 'Selected features only' option is checked for the polygon layer, but no polygon features are currently selected in QGIS.",
+            )
+            return
+
+        use_selected_lines = self.line_selected_chk.isChecked() and (line_layer.selectedFeatureCount() > 0)
+        if self.line_selected_chk.isChecked() and line_layer.selectedFeatureCount() == 0:
+            QMessageBox.warning(
+                self,
+                "No Cut Lines Selected",
+                "The 'Selected features only' option is checked for cut lines, but no cut line features are currently selected in QGIS.",
+            )
+            return
+
+        poly_crs = poly_layer.crs()
+        line_crs = line_layer.crs()
+
+        xform_line_to_poly = None
+        if poly_crs.isValid() and line_crs.isValid() and poly_crs.authid() != line_crs.authid():
+            try:
+                xform_line_to_poly = QgsCoordinateTransform(line_crs, poly_crs, QgsProject.instance())
+            except Exception:
+                xform_line_to_poly = None
+
+        raw_line_feats = line_layer.selectedFeatures() if use_selected_lines else list(line_layer.getFeatures())
+        selected_line_feats = []
+        for lf in raw_line_feats:
+            if not lf or not lf.hasGeometry() or lf.geometry().isEmpty():
+                continue
+            geom = QgsGeometry(lf.geometry())
+            if xform_line_to_poly:
+                try:
+                    geom.transform(xform_line_to_poly)
+                except Exception:
+                    pass
+            new_lf = QgsFeature(lf)
+            new_lf.setGeometry(geom)
+            selected_line_feats.append(new_lf)
+
+        if self.line_selected_chk.isChecked() and len(selected_line_feats) == 0:
+            QMessageBox.warning(
+                self,
+                "No Cut Lines Selected",
+                "The 'Selected features only' option is checked for cut lines, but no cut line features are currently selected in QGIS.",
+            )
+            return
+
         self.run_btn.setEnabled(False)
         self.close_btn.setEnabled(False)
         self.progress_bar.setValue(10)
@@ -533,20 +719,37 @@ class SplitEADialog(QDialog):
         self.status_banner.setStyleSheet("color: #2980b9; font-weight: bold;")
 
         self._log(f"Starting EA polygon split pipeline...")
-        self._log(f"Target polygon layer: '{poly_layer.name()}' ({in_poly_count} features)")
-        self._log(f"Input cut lines layer: '{line_layer.name()}' ({in_line_count} features)")
+        if use_selected_poly:
+            self._log(f"Target polygon layer: '{poly_layer.name()}' — Splitting {len(selected_poly_ids)} SELECTED feature(s) of {in_poly_count} total")
+        else:
+            self._log(f"Target polygon layer: '{poly_layer.name()}' ({in_poly_count} features)")
+
+        if use_selected_lines:
+            self._log(f"Input cut lines layer: '{line_layer.name()}' — Using {len(selected_line_feats)} SELECTED line(s) of {in_line_count} total")
+        else:
+            self._log(f"Input cut lines layer: '{line_layer.name()}' ({in_line_count} features)")
+
         if bldg_layer and bldg_layer.isValid():
             self._log(f"Building points layer: '{bldg_layer.name()}' ({bldg_layer.featureCount()} features)")
 
         try:
             extend_tol = self.tolerance_spin.value()
-            crs_auth = poly_layer.crs().authid() if poly_layer.crs().isValid() else "EPSG:4326"
+            crs_auth = poly_crs.authid() if poly_crs.isValid() else "EPSG:4326"
+
+            is_geographic = poly_crs.isGeographic() if poly_crs.isValid() else False
+            if is_geographic:
+                extend_dist_map_units = max(extend_tol / 111320.0, 0.00001)
+            else:
+                extend_dist_map_units = max(extend_tol, 0.5)
 
             self.progress_bar.setValue(20)
             self._log("Indexing proposed cut lines and matching to EA polygons...")
 
-            line_spatial_index = QgsSpatialIndex(line_layer.getFeatures())
-            line_lookup = {f.id(): f for f in line_layer.getFeatures()}
+            line_spatial_index = QgsSpatialIndex()
+            for lf in selected_line_feats:
+                if lf and lf.hasGeometry() and not lf.geometry().isEmpty():
+                    line_spatial_index.addFeature(lf)
+            line_lookup = {f.id(): f for f in selected_line_feats}
 
             exploded_features = []
             parent_split_groups = []
@@ -556,17 +759,33 @@ class SplitEADialog(QDialog):
                 if not poly_geom or poly_geom.isEmpty():
                     continue
 
+                if use_selected_poly and poly_feat.id() not in selected_poly_ids:
+                    # Unselected polygon -> preserve whole and untouched
+                    exploded_features.append(poly_feat)
+                    parent_split_groups.append({"parent": poly_feat, "parts": [poly_geom]})
+                    continue
+
                 # Find cut lines that intersect this specific polygon
-                cand_line_ids = line_spatial_index.intersects(poly_geom.boundingBox())
+                if use_selected_lines:
+                    candidate_lines = selected_line_feats
+                else:
+                    cand_line_ids = line_spatial_index.intersects(poly_geom.boundingBox())
+                    candidate_lines = [line_lookup[lid] for lid in cand_line_ids if lid in line_lookup]
+
                 matching_lines = []
-                for lid in cand_line_ids:
-                    lfeat = line_lookup.get(lid)
+                for lfeat in candidate_lines:
                     if lfeat and lfeat.geometry() and not lfeat.geometry().isEmpty():
-                        if poly_geom.intersects(lfeat.geometry()):
+                        lg = lfeat.geometry()
+                        if poly_geom.intersects(lg) or poly_geom.distance(lg) < (extend_dist_map_units * 3.0):
                             matching_lines.append(lfeat)
 
                 if not matching_lines:
                     # No cut lines intersect this EA -> preserve whole
+                    if use_selected_poly:
+                        self._log(
+                            f"Selected polygon '{poly_feat.attribute('ean') or poly_feat.id()}' did not intersect any of the {len(selected_line_feats)} cut line(s).",
+                            "WARNING",
+                        )
                     exploded_features.append(poly_feat)
                     parent_split_groups.append({"parent": poly_feat, "parts": [poly_geom]})
                     continue
@@ -576,7 +795,13 @@ class SplitEADialog(QDialog):
                 dp_poly = single_poly_layer.dataProvider()
                 dp_poly.addAttributes(poly_layer.fields())
                 single_poly_layer.updateFields()
-                dp_poly.addFeatures([QgsFeature(poly_feat)])
+                pf_copy = QgsFeature(poly_layer.fields())
+                pf_copy.setGeometry(poly_geom)
+                for fld in poly_layer.fields():
+                    val = poly_feat.attribute(fld.name())
+                    if val is not None and val != NULL:
+                        pf_copy.setAttribute(fld.name(), val)
+                dp_poly.addFeatures([pf_copy])
                 single_poly_layer.updateExtents()
 
                 # Create lines layer for matching cut lines only
@@ -589,49 +814,79 @@ class SplitEADialog(QDialog):
                 for lf in matching_lines:
                     lg = lf.geometry()
                     if extend_tol > 0.0:
-                        lg = self._extend_line_endpoints(lg, extend_tol)
-                    new_lf = QgsFeature(lf)
+                        lg = self._extend_line_to_traverse_polygon(lg, poly_geom, extend_dist_map_units)
+                    new_lf = QgsFeature(line_layer.fields())
                     new_lf.setGeometry(lg)
                     prepared_line_feats.append(new_lf)
                 dp_lines.addFeatures(prepared_line_feats)
                 single_lines_layer.updateExtents()
 
-                # Run native:splitwithlines on this single polygon
-                split_res = processing.run(
-                    "native:splitwithlines",
-                    {
-                        "INPUT": single_poly_layer,
-                        "LINES": single_lines_layer,
-                        "OUTPUT": "TEMPORARY_OUTPUT",
-                    },
-                )
-                raw_split = split_res.get("OUTPUT")
-
-                # Explode multipart to singleparts
-                single_res = processing.run(
-                    "native:multiparttosingleparts",
-                    {
-                        "INPUT": raw_split,
-                        "OUTPUT": "TEMPORARY_OUTPUT",
-                    },
-                )
-                exploded = single_res.get("OUTPUT")
-
                 child_geoms = []
-                if exploded and isinstance(exploded, QgsVectorLayer) and exploded.featureCount() > 0:
-                    for sub_feat in exploded.getFeatures():
-                        if sub_feat.geometry() and not sub_feat.geometry().isEmpty():
-                            child_geoms.append(sub_feat.geometry())
-                            sub_feat_full = QgsFeature(poly_layer.fields())
-                            sub_feat_full.setGeometry(sub_feat.geometry())
-                            for fld in poly_layer.fields():
-                                fname = fld.name()
-                                val = poly_feat.attribute(fname)
-                                if val is not None and val != NULL:
-                                    sub_feat_full.setAttribute(fname, val)
-                            exploded_features.append(sub_feat_full)
 
-                if not child_geoms:
+                # Attempt 1: Run native:splitwithlines on this single polygon
+                if processing:
+                    try:
+                        split_res = processing.run(
+                            "native:splitwithlines",
+                            {
+                                "INPUT": single_poly_layer,
+                                "LINES": single_lines_layer,
+                                "OUTPUT": "TEMPORARY_OUTPUT",
+                            },
+                        )
+                        raw_split = split_res.get("OUTPUT")
+
+                        single_res = processing.run(
+                            "native:multiparttosingleparts",
+                            {
+                                "INPUT": raw_split,
+                                "OUTPUT": "TEMPORARY_OUTPUT",
+                            },
+                        )
+                        exploded = single_res.get("OUTPUT")
+
+                        if exploded and isinstance(exploded, QgsVectorLayer) and exploded.featureCount() > 0:
+                            for sub_feat in exploded.getFeatures():
+                                if sub_feat.geometry() and not sub_feat.geometry().isEmpty():
+                                    child_geoms.append(sub_feat.geometry())
+                    except Exception as e:
+                        self._log(f"Split algorithm notice: {str(e)}", "INFO")
+
+                # Attempt 2: Fallback to iterative QgsGeometry.splitGeometry across all matching lines
+                if len(child_geoms) <= 1:
+                    current_pieces = [QgsGeometry(poly_geom)]
+                    for lf in prepared_line_feats:
+                        lg = lf.geometry()
+                        if not lg or lg.isEmpty():
+                            continue
+                        polylines = lg.asMultiPolyline() if lg.isMultipart() else [lg.asPolyline()]
+                        for pline in polylines:
+                            if len(pline) < 2:
+                                continue
+                            next_pieces = []
+                            for piece in current_pieces:
+                                working_piece = QgsGeometry(piece)
+                                res, new_subgeoms, _ = working_piece.splitGeometry(pline, True)
+                                if res == 0 and new_subgeoms:
+                                    next_pieces.append(working_piece)
+                                    next_pieces.extend(new_subgeoms)
+                                else:
+                                    next_pieces.append(piece)
+                            current_pieces = next_pieces
+                    if len(current_pieces) > 1:
+                        child_geoms = current_pieces
+
+                if len(child_geoms) > 1:
+                    for cg in child_geoms:
+                        sub_feat_full = QgsFeature(poly_layer.fields())
+                        sub_feat_full.setGeometry(cg)
+                        for fld in poly_layer.fields():
+                            fname = fld.name()
+                            val = poly_feat.attribute(fname)
+                            if val is not None and val != NULL:
+                                sub_feat_full.setAttribute(fname, val)
+                        exploded_features.append(sub_feat_full)
+                else:
                     child_geoms = [poly_geom]
                     exploded_features.append(poly_feat)
 
@@ -685,7 +940,10 @@ class SplitEADialog(QDialog):
                     f"Computing building & household counts using '{bldg_layer.name()}' "
                     f"(household field: '{bldg_hh_name or 'none [fallback 1/point]'}')..."
                 )
-                bldg_spatial_index = QgsSpatialIndex(bldg_layer.getFeatures())
+                bldg_spatial_index = QgsSpatialIndex()
+                for bf in bldg_layer.getFeatures():
+                    if bf and bf.hasGeometry() and not bf.geometry().isEmpty():
+                        bldg_spatial_index.addFeature(bf)
                 bldg_lookup = {f.id(): f for f in bldg_layer.getFeatures()}
 
             # Ensure poly_layer has hh_count, bldg_count, new_ean, and ea_type fields

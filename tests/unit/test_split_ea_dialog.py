@@ -352,6 +352,218 @@ class TestSplitEADialog(unittest.TestCase):
         self.assertGreater(ext_pts[1].x(), 10.0)
         self.assertAlmostEqual(ext_pts[1].y(), 5.0, places=4)
 
+    def test_selection_ui_and_signals(self):
+        """Verify layer selection updates UI checkbox labels and enables/disables them."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+
+        poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "delineated_ea", "memory")
+        dp_poly = poly_lyr.dataProvider()
+        f1 = QgsFeature()
+        f1.setId(1)
+        f2 = QgsFeature()
+        f2.setId(2)
+        dp_poly.addFeatures([f1, f2])
+
+        dlg = SplitEADialog()
+        dlg.poly_combo.currentLayer = MagicMock(return_value=poly_lyr)
+        dlg._on_layer_selection_changed()
+
+        self.assertFalse(dlg.poly_selected_chk.isChecked())
+        self.assertIn("0 selected", dlg.poly_selected_chk.text())
+
+        # Select feature 1
+        poly_lyr.selectByIds([1])
+        dlg._update_poly_selection_ui()
+        self.assertTrue(dlg.poly_selected_chk.isChecked())
+        self.assertIn("1 selected", dlg.poly_selected_chk.text())
+
+        # Deselect
+        poly_lyr.removeSelection()
+        dlg._update_poly_selection_ui()
+        self.assertFalse(dlg.poly_selected_chk.isChecked())
+        self.assertIn("0 selected", dlg.poly_selected_chk.text())
+
+    @patch("references.create_enumeration_area.split_dialog.processing.run")
+    def test_run_split_with_selected_polygon_only(self, mock_proc_run):
+        """Verify that when a single polygon is selected, only that polygon is split while others remain untouched."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+
+        # Polygon layer with 2 features: EA 001000 and EA 002000
+        poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "delineated_ea", "memory")
+        dp_poly = poly_lyr.dataProvider()
+        dp_poly.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("hh_count", QVariant.Int),
+            QgsField("bldg_count", QVariant.Int),
+            QgsField("ea_type", QVariant.String),
+        ])
+        poly_lyr.updateFields()
+
+        poly1 = QgsFeature(poly_lyr.fields())
+        poly1.setId(1)
+        poly1.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        poly1.setAttribute("ean", "001000")
+        poly1.setAttribute("hh_count", 300)
+        poly1.setAttribute("bldg_count", 30)
+        poly1.setAttribute("ea_type", "RETAINED")
+
+        poly2 = QgsFeature(poly_lyr.fields())
+        poly2.setId(2)
+        poly2.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(20, 0), QgsPointXY(30, 0), QgsPointXY(30, 10), QgsPointXY(20, 10), QgsPointXY(20, 0)
+        ]]))
+        poly2.setAttribute("ean", "002000")
+        poly2.setAttribute("hh_count", 400)
+        poly2.setAttribute("bldg_count", 40)
+        poly2.setAttribute("ea_type", "RETAINED")
+
+        dp_poly.addFeatures([poly1, poly2])
+        poly_lyr.updateExtents()
+
+        # Cut line crossing polygon 1 at x=5
+        line_lyr = QgsVectorLayer("LineString?crs=epsg:4326", "eadel_update", "memory")
+        dp_line = line_lyr.dataProvider()
+        line_feat = QgsFeature()
+        line_feat.setId(1)
+        line_feat.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(5, -1), QgsPointXY(5, 11)]))
+        dp_line.addFeatures([line_feat])
+        line_lyr.updateExtents()
+
+        # Mock split output for polygon 1 (2 split pieces)
+        split_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "split_res", "memory")
+        dp_split = split_lyr.dataProvider()
+        dp_split.addAttributes([QgsField("hh_count", QVariant.Int), QgsField("bldg_count", QVariant.Int)])
+        split_lyr.updateFields()
+
+        f1 = QgsFeature(split_lyr.fields())
+        f1.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(5, 0), QgsPointXY(5, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        f2 = QgsFeature(split_lyr.fields())
+        f2.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(5, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(5, 10), QgsPointXY(5, 0)
+        ]]))
+        dp_split.addFeatures([f1, f2])
+        split_lyr.updateExtents()
+
+        mock_proc_run.return_value = {"OUTPUT": split_lyr}
+
+        # Select ONLY polygon 1
+        poly_lyr.selectByIds([1])
+
+        dlg = SplitEADialog()
+        dlg.poly_combo.currentLayer = MagicMock(return_value=poly_lyr)
+        dlg.line_combo.currentLayer = MagicMock(return_value=line_lyr)
+        dlg.bldg_combo.currentLayer = MagicMock(return_value=None)
+        dlg.tolerance_spin.value = MagicMock(return_value=1.0)
+        dlg.min_hh_spin.value = MagicMock(return_value=1)
+        dlg.poly_selected_chk.setChecked(True)
+        dlg.status_banner = MagicMock()
+        dlg.progress_bar = MagicMock()
+        dlg.log_console = MagicMock()
+
+        dlg.run_split()
+
+        # Total features in poly_lyr should now be 3 (2 from split poly 1 + 1 untouched poly 2)
+        updated_features = list(poly_lyr.getFeatures())
+        self.assertEqual(len(updated_features), 3)
+
+        # Check that untouched poly 2 is present and retained
+        eans = [f.attribute("ean") or f.attribute("new_ean") for f in updated_features]
+        self.assertIn("002000", eans)
+
+        # Check types: split pieces are DELINEATED, un-split poly 2 is RETAINED
+        types_by_ean = {f.attribute("new_ean"): f.attribute("ea_type") for f in updated_features}
+        self.assertEqual(types_by_ean.get("002000"), "RETAINED")
+        self.assertEqual(types_by_ean.get("001000"), "DELINEATED")
+        self.assertEqual(types_by_ean.get("001001"), "DELINEATED")
+
+    @patch("references.create_enumeration_area.split_dialog.processing.run")
+    def test_run_split_with_selected_cut_lines_only(self, mock_proc_run):
+        """Verify that when cut lines are selected, only selected cut lines are used for splitting."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+
+        poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "delineated_ea", "memory")
+        dp_poly = poly_lyr.dataProvider()
+        dp_poly.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("hh_count", QVariant.Int),
+            QgsField("bldg_count", QVariant.Int),
+            QgsField("ea_type", QVariant.String),
+        ])
+        poly_lyr.updateFields()
+
+        poly = QgsFeature(poly_lyr.fields())
+        poly.setId(1)
+        poly.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        poly.setAttribute("ean", "001000")
+        poly.setAttribute("hh_count", 300)
+        poly.setAttribute("bldg_count", 30)
+        dp_poly.addFeatures([poly])
+        poly_lyr.updateExtents()
+
+        # Two cut lines: line 1 (x=5) and line 2 (y=5)
+        line_lyr = QgsVectorLayer("LineString?crs=epsg:4326", "eadel_update", "memory")
+        dp_line = line_lyr.dataProvider()
+        l1 = QgsFeature()
+        l1.setId(1)
+        l1.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(5, -1), QgsPointXY(5, 11)]))
+        l2 = QgsFeature()
+        l2.setId(2)
+        l2.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(-1, 5), QgsPointXY(11, 5)]))
+        dp_line.addFeatures([l1, l2])
+        line_lyr.updateExtents()
+
+        # Mock split output for split with line 1 only
+        split_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "split_res", "memory")
+        dp_split = split_lyr.dataProvider()
+        dp_split.addAttributes([QgsField("hh_count", QVariant.Int), QgsField("bldg_count", QVariant.Int)])
+        split_lyr.updateFields()
+
+        f1 = QgsFeature(split_lyr.fields())
+        f1.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(5, 0), QgsPointXY(5, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        f2 = QgsFeature(split_lyr.fields())
+        f2.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(5, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(5, 10), QgsPointXY(5, 0)
+        ]]))
+        dp_split.addFeatures([f1, f2])
+        split_lyr.updateExtents()
+
+        def side_effect(alg_name, params):
+            # Verify that single_lines_layer in params has only 1 line feature (line 1)
+            lines_input = params.get("LINES")
+            if lines_input:
+                self.assertEqual(lines_input.featureCount(), 1)
+            return {"OUTPUT": split_lyr}
+
+        mock_proc_run.side_effect = side_effect
+
+        # Select line 1 ONLY
+        line_lyr.selectByIds([1])
+
+        dlg = SplitEADialog()
+        dlg.poly_combo.currentLayer = MagicMock(return_value=poly_lyr)
+        dlg.line_combo.currentLayer = MagicMock(return_value=line_lyr)
+        dlg.bldg_combo.currentLayer = MagicMock(return_value=None)
+        dlg.tolerance_spin.value = MagicMock(return_value=1.0)
+        dlg.min_hh_spin.value = MagicMock(return_value=1)
+        dlg.line_selected_chk.setChecked(True)
+        dlg.status_banner = MagicMock()
+        dlg.progress_bar = MagicMock()
+        dlg.log_console = MagicMock()
+
+        dlg.run_split()
+
+        updated_features = list(poly_lyr.getFeatures())
+        self.assertEqual(len(updated_features), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
+
