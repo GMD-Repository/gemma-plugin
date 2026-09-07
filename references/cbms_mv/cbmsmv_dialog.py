@@ -88,6 +88,17 @@ except (ImportError, ValueError):
             sys.path.insert(0, _plugin_root)
         from gmd_scripts.gmdhelpers import load_cbms_json_to_layer
 
+try:
+    from .cbmsmv_review_dock import CbmsMvReviewDock, is_valid_qobject
+except (ImportError, ValueError):
+    try:
+        from cbmsmv_review_dock import CbmsMvReviewDock, is_valid_qobject
+    except (ImportError, ValueError):
+        _ref_dir = os.path.dirname(__file__)
+        if _ref_dir not in sys.path:
+            sys.path.insert(0, _ref_dir)
+        from cbmsmv_review_dock import CbmsMvReviewDock, is_valid_qobject
+
 
 # ---------------------------------------------------------------------------
 # Dynamic Rule Discovery from gmd_scripts/cbms_mv
@@ -216,6 +227,7 @@ class CbmsmvDialog(QDialog):
         self._result_layers: Dict[str, Dict[str, Any]] = {}
         self._execution_summary: List[Dict[str, Any]] = []
         self._is_validating = False
+        self._active_review_dock = None
 
         self.context = QgsProcessingContext()
         self.context.setProject(self.project)
@@ -733,8 +745,10 @@ class CbmsmvDialog(QDialog):
         # Feature Table
         table = QTableWidget()
         field_names = [f.name() for f in layer.fields()] if layer and layer.isValid() else []
-        table.setColumnCount(len(field_names))
-        table.setHorizontalHeaderLabels(field_names)
+        headers = field_names + ["Action"]
+        action_col = len(field_names)
+        table.setColumnCount(len(headers))
+        table.setHorizontalHeaderLabels(headers)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setAlternatingRowColors(True)
         table.verticalHeader().setVisible(True)
@@ -746,6 +760,7 @@ class CbmsmvDialog(QDialog):
 
             for row_idx, feat in enumerate(features):
                 fid = feat.id()
+
                 for col_idx, fname in enumerate(field_names):
                     val = feat[fname]
                     val_str = "" if val is None else str(val)
@@ -755,10 +770,33 @@ class CbmsmvDialog(QDialog):
                         item.setData(Qt.UserRole, fid)
                     table.setItem(row_idx, col_idx, item)
 
+                # Action button in the last column: Edit
+                btn_row_edit = QPushButton("Edit")
+                btn_row_edit.setToolTip(f"Open Navigation Dock to edit feature #{row_idx + 1}")
+                btn_row_edit.setStyleSheet("""
+                    QPushButton {
+                        background-color: #EBF8FF;
+                        color: #2B6CB0;
+                        font-weight: 600;
+                        padding: 2px 8px;
+                        border-radius: 3px;
+                        border: 1px solid #BEE3F8;
+                        font-size: 10.5px;
+                    }
+                    QPushButton:hover {
+                        background-color: #BEE3F8;
+                        color: #1A365D;
+                    }
+                """)
+                btn_row_edit.clicked.connect(
+                    lambda checked=False, f_id=fid: self._launch_review_dock(val_id, check_name, layer, target_fid=f_id)
+                )
+                table.setCellWidget(row_idx, action_col, btn_row_edit)
+
             table.setSortingEnabled(True)
 
         table.itemDoubleClicked.connect(
-            lambda item: self._on_table_row_double_clicked(layer, table, item.row())
+            lambda item: self._on_table_row_double_clicked(val_id, check_name, layer, table, item.row())
         )
         edit_filter.textChanged.connect(
             lambda text: self._filter_feature_table(table, text)
@@ -767,8 +805,15 @@ class CbmsmvDialog(QDialog):
         layout.addWidget(table, stretch=1)
         return tab
 
-    def _on_table_row_double_clicked(self, layer: QgsVectorLayer, table: QTableWidget, row: int):
-        """Zoom to and flash feature on QGIS map canvas upon double-clicking table row."""
+    def _on_table_row_double_clicked(
+        self,
+        val_id: str,
+        check_name: str,
+        layer: QgsVectorLayer,
+        table: QTableWidget,
+        row: int,
+    ):
+        """Zoom to feature on canvas and open interactive Navigation Dock."""
         item0 = table.item(row, 0)
         if not item0:
             return
@@ -788,15 +833,19 @@ class CbmsmvDialog(QDialog):
             except Exception as exc:
                 self.lbl_footer_status.setText(f"Could not zoom to feature: {exc}")
 
+        # Open review dock focusing on this feature
+        self._launch_review_dock(val_id, check_name, layer, target_fid=fid)
+
     def _filter_feature_table(self, table: QTableWidget, text: str):
-        """Filter table rows matching search string across all columns."""
+        """Filter table rows matching search string across all data columns."""
         search = text.strip().lower()
+        data_cols = max(0, table.columnCount() - 1)
         for row in range(table.rowCount()):
             if not search:
                 table.setRowHidden(row, False)
                 continue
             match = False
-            for col in range(table.columnCount()):
+            for col in range(data_cols):
                 it = table.item(row, col)
                 if it and search in it.text().lower():
                     match = True
@@ -834,6 +883,161 @@ class CbmsmvDialog(QDialog):
             )
         except Exception as exc:
             QMessageBox.critical(self, "Export Error", f"Failed to export CSV:\n{exc}")
+
+    # -----------------------------------------------------------------------
+    # Review & Fix Dock Integration (Check & Update Pattern)
+    # -----------------------------------------------------------------------
+    def _get_or_load_main_building_layer(self) -> Optional[QgsVectorLayer]:
+        """
+        Locate the main Geotagged Building Points layer in the QGIS project matching
+        the input file path. If not currently loaded, loads it into the project.
+        """
+        points_path = self.file_points.filePath().strip() if hasattr(self, "file_points") else ""
+        if not points_path or not os.path.exists(points_path):
+            QMessageBox.warning(
+                self,
+                "Missing Building Points Layer",
+                "Geotagged Building Points (.geojson) file path is not configured or does not exist.\n\n"
+                "Please configure a valid points file in the 'Data Config' tab first.",
+            )
+            return None
+
+        proj = self.project if self.project else QgsProject.instance()
+        norm_path = os.path.normpath(points_path).lower()
+
+        # 1. Search existing project layers
+        for layer in proj.mapLayers().values():
+            if isinstance(layer, QgsVectorLayer) and layer.isValid():
+                src = os.path.normpath(layer.source().split("|")[0]).lower()
+                if src == norm_path:
+                    return layer
+
+        # 2. Not loaded in project yet, load it
+        try:
+            layer_name = f"Building Points ({os.path.basename(points_path)})"
+            pt_layer = QgsVectorLayer(points_path, layer_name, "ogr")
+            if pt_layer.isValid():
+                group_name = "2027 CBMS Primary Inputs"
+                grp = self._get_or_create_layer_group(group_name)
+                proj.addMapLayer(pt_layer, False)
+                grp.addLayer(pt_layer)
+                self._log_info(f"Loaded main building points layer into '{group_name}': {layer_name}")
+                return pt_layer
+            else:
+                QMessageBox.critical(
+                    self,
+                    "Layer Load Error",
+                    f"Failed to load building points file:\n{points_path}",
+                )
+                return None
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Layer Load Exception",
+                f"Error loading building points layer:\n{exc}",
+            )
+            return None
+
+    def _launch_review_dock(
+        self,
+        val_id: str,
+        check_name: str,
+        error_layer: QgsVectorLayer,
+        start_index: int = 0,
+        target_fid: Optional[int] = None,
+    ):
+        """Launch or update the interactive Check & Update Review Dock."""
+        if not error_layer or not error_layer.isValid():
+            QMessageBox.warning(self, "Invalid Layer", "The validation error layer is invalid.")
+            return
+
+        if error_layer.featureCount() == 0:
+            QMessageBox.information(
+                self,
+                "No Issues",
+                f"Validation check '{val_id}' has 0 flagged issues to review.",
+            )
+            return
+
+        main_layer = self._get_or_load_main_building_layer()
+        if not main_layer:
+            return
+
+        # Close existing dock if one is already open
+        if self._active_review_dock:
+            dock = self._active_review_dock
+            self._active_review_dock = None
+            try:
+                try:
+                    dock.dock_closed.disconnect(self._on_review_dock_closed)
+                except Exception:
+                    pass
+                dock.parent_dialog = None
+                dock.close()
+            except Exception:
+                pass
+
+        try:
+            dock = CbmsMvReviewDock(
+                parent_dialog=self,
+                val_id=val_id,
+                check_name=check_name,
+                error_layer=error_layer,
+                main_layer=main_layer,
+                start_index=start_index,
+            )
+            dock.dock_closed.connect(self._on_review_dock_closed)
+
+            if self.iface:
+                self.iface.addDockWidget(Qt.RightDockWidgetArea, dock)
+
+            dock.show()
+            dock.raise_()
+            if target_fid is not None:
+                dock.jump_to_fid(target_fid)
+            else:
+                dock.jump_to_index(start_index)
+            self._active_review_dock = dock
+
+            # Minimize main dialog to give full visibility to canvas and dock
+            self.showMinimized()
+            self.lbl_footer_status.setText(
+                f"Reviewing '{val_id}' in dock (Item {dock.current_index + 1}/{error_layer.featureCount():,})"
+            )
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Error Launching Review Dock",
+                f"Failed to open review dock:\n{exc}",
+            )
+
+    def _on_review_dock_closed(self):
+        """Slot triggered when review dock is closed."""
+        self._active_review_dock = None
+        if is_valid_qobject(self):
+            try:
+                self.showNormal()
+                self.raise_()
+                self.activateWindow()
+            except Exception:
+                pass
+
+    def closeEvent(self, event):
+        """Clean up active review dock when dialog closes."""
+        if hasattr(self, "_active_review_dock") and self._active_review_dock:
+            dock = self._active_review_dock
+            self._active_review_dock = None
+            try:
+                try:
+                    dock.dock_closed.disconnect(self._on_review_dock_closed)
+                except Exception:
+                    pass
+                dock.parent_dialog = None
+                dock.close()
+            except Exception:
+                pass
+        super().closeEvent(event)
+
 
     # -----------------------------------------------------------------------
     # Tab 1: Data Config
