@@ -1701,13 +1701,10 @@ class PackageDialog(QDialog, DialogUi):
         """
         Check if a layer name ends with any of the excluded system role layer pattern suffixes:
         _bldg_point, _bldgpts, _bgy, _ea, _landmark, _block, _road, _river, _bridge, _railroad.
-        Exempts layers ending with '_special_ea'.
         """
         if not layer_name:
             return True
         name_lower = layer_name.strip().lower()
-        if name_lower.endswith("_special_ea"):
-            return False
         excluded_patterns = [
             "_bldg_point",
             "_bldgpts",
@@ -1721,7 +1718,9 @@ class PackageDialog(QDialog, DialogUi):
             "_railroad",
         ]
         for pat in excluded_patterns:
-            if name_lower.endswith(pat):
+            if name_lower.endswith(pat) or name_lower == pat or (pat + "_") in name_lower:
+                return True
+            if pat in ["_bldg_point", "_bldgpts", "_landmark", "_railroad", "_bridge"] and pat in name_lower:
                 return True
         return False
 

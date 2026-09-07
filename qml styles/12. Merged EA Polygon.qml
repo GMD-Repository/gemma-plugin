@@ -375,7 +375,7 @@
   </selection>
   <labeling type="simple">
     <settings calloutType="simple">
-      <text-style fontSizeUnit="Point" fontWeight="75" forcedBold="0" legendString="Aa" fontLetterSpacing="0" fontSizeMapUnitScale="3x:0,0,0,0,0,0" tabStopDistanceMapUnitScale="3x:0,0,0,0,0,0" textColor="255,204,0,255,rgb:1,0.80000000000000004,0,1" tabStopDistance="80" fieldName="'New EA: '  ||  &quot;new_ea&quot;" fontWordSpacing="0" fontSize="9" useSubstitutions="0" forcedItalic="0" multilineHeight="1" tabStopDistanceUnit="Point" namedStyle="Bold" multilineHeightUnit="Percentage" fontFamily="MS Shell Dlg 2" fontUnderline="0" previewBkgrdColor="255,255,255,255,rgb:1,1,1,1" allowHtml="0" textOrientation="horizontal" capitalization="0" blendMode="0" textOpacity="1" fontStrikeout="0" fontKerning="1" fontItalic="0" stretchFactor="100" isExpression="1">
+      <text-style forcedItalic="0" multilineHeight="1" fieldName="'New EA: '  ||  &quot;new_ea&quot;" textOrientation="horizontal" fontSizeUnit="Point" fontStrikeout="0" stretchFactor="100" tabStopDistance="80" fontSize="9" namedStyle="Bold" tabStopDistanceMapUnitScale="3x:0,0,0,0,0,0" isExpression="1" textColor="255,204,0,255,rgb:1,0.80000000000000004,0,1" blendMode="0" legendString="Aa" forcedBold="0" fontSizeMapUnitScale="3x:0,0,0,0,0,0" tabStopDistanceUnit="Point" fontKerning="1" fontWeight="75" allowHtml="0" fontItalic="0" fontFamily="MS Shell Dlg 2" fontWordSpacing="0" textOpacity="1" previewBkgrdColor="255,255,255,255,rgb:1,1,1,1" multilineHeightUnit="Percentage" useSubstitutions="0" fontUnderline="0" fontLetterSpacing="0" capitalization="0">
         <families/>
         <text-buffer bufferDraw="1" bufferBlendMode="0" bufferSizeUnits="MM" bufferSizeMapUnitScale="3x:0,0,0,0,0,0" bufferNoFill="1" bufferJoinStyle="128" bufferColor="22,8,8,255,hsv:0,0.64271000228885333,0.0878919661249714,1" bufferOpacity="1" bufferSize="1"/>
         <text-mask maskSizeUnits="MM" maskJoinStyle="128" maskSize2="1.5" maskOpacity="1" maskSize="1.5" maskType="0" maskSizeMapUnitScale="3x:0,0,0,0,0,0" maskEnabled="0" maskedSymbolLayers=""/>
@@ -522,7 +522,8 @@
       <Option value="30" type="int" name="QFieldSync/tracking_time_requirement_interval_seconds"/>
       <Option value="0" type="int" name="QFieldSync/value_map_button_interface_threshold"/>
       <Option type="List" name="dualview/previewExpressions">
-        <Option value="'New EA: '  ||  &quot;new_ea&quot;" type="QString"/>
+        <Option type="QString" value="'New EA: '  ||  &quot;new_ea&quot;"/>
+        <Option type="QString" value="COALESCE( &quot;NAME&quot;, '&lt;NULL>' )"/>
       </Option>
       <Option value="0" type="QString" name="embeddedWidgets/count"/>
       <Option value="true" type="bool" name="isOfflineEditable"/>
@@ -808,7 +809,7 @@
         </config>
       </editWidget>
     </field>
-    <field configurationFlags="NoFlag" name="new_ea">
+    <field configurationFlags="NoFlag" name="new_ean">
       <editWidget type="TextEdit">
         <config>
           <Option type="Map">
@@ -879,33 +880,33 @@
     </field>
   </fieldConfiguration>
   <aliases>
-    <alias index="0" field="fid" name=""/>
-    <alias index="1" field="map_uuid" name=""/>
-    <alias index="2" field="geocode" name=""/>
-    <alias index="3" field="region" name="Region"/>
-    <alias index="4" field="province" name="Province"/>
-    <alias index="5" field="city_mun" name="City/Municipality"/>
-    <alias index="6" field="barangay" name="Barangay"/>
-    <alias index="7" field="code" name=""/>
-    <alias index="8" field="name" name=""/>
-    <alias index="9" field="ean" name=""/>
-    <alias index="10" field="hhcount" name=""/>
-    <alias index="11" field="bldgcount" name=""/>
-    <alias index="12" field="sy" name=""/>
-    <alias index="13" field="split_by" name=""/>
-    <alias index="14" field="bldg_count" name="Building Count"/>
-    <alias index="15" field="hh_count" name="Household Count"/>
-    <alias index="16" field="bldgpoints_value" name=""/>
-    <alias index="17" field="correspondence_ea_geocode" name=""/>
-    <alias index="18" field="ea_type" name=""/>
-    <alias index="19" field="special_type" name=""/>
-    <alias index="20" field="source_id" name=""/>
-    <alias index="21" field="new_ea" name="New Enumeration Area Number (EAN)"/>
-    <alias index="22" field="indicator" name="What is the Status of the Enumeration Area?"/>
-    <alias index="23" field="remarks" name="Remarks"/>
-    <alias index="24" field="gps" name=""/>
-    <alias index="25" field="min_circle" name=""/>
-    <alias index="26" field="EACount" name=""/>
+    <alias field="fid" name="" index="0"/>
+    <alias field="map_uuid" name="" index="1"/>
+    <alias field="geocode" name="" index="2"/>
+    <alias field="region" name="Region" index="3"/>
+    <alias field="province" name="Province" index="4"/>
+    <alias field="city_mun" name="City/Municipality" index="5"/>
+    <alias field="barangay" name="Barangay" index="6"/>
+    <alias field="code" name="" index="7"/>
+    <alias field="name" name="" index="8"/>
+    <alias field="ean" name="" index="9"/>
+    <alias field="hhcount" name="" index="10"/>
+    <alias field="bldgcount" name="" index="11"/>
+    <alias field="sy" name="" index="12"/>
+    <alias field="split_by" name="" index="13"/>
+    <alias field="bldg_count" name="Building Count" index="14"/>
+    <alias field="hh_count" name="Household Count" index="15"/>
+    <alias field="bldgpoints_value" name="" index="16"/>
+    <alias field="correspondence_ea_geocode" name="" index="17"/>
+    <alias field="ea_type" name="" index="18"/>
+    <alias field="special_type" name="" index="19"/>
+    <alias field="source_id" name="" index="20"/>
+    <alias field="new_ea" name="New Enumeration Area Number (EAN)" index="21"/>
+    <alias field="indicator" name="What is the Status of the Enumeration Area?" index="22"/>
+    <alias field="remarks" name="Remarks" index="23"/>
+    <alias field="gps" name="" index="24"/>
+    <alias field="min_circle" name="" index="25"/>
+    <alias field="EACount" name="" index="26"/>
   </aliases>
   <splitPolicies>
     <policy field="fid" policy="Duplicate"/>
@@ -929,7 +930,7 @@
     <policy field="ea_type" policy="Duplicate"/>
     <policy field="special_type" policy="Duplicate"/>
     <policy field="source_id" policy="Duplicate"/>
-    <policy field="new_ea" policy="Duplicate"/>
+    <policy field="new_ean" policy="Duplicate"/>
     <policy field="indicator" policy="Duplicate"/>
     <policy field="remarks" policy="Duplicate"/>
     <policy field="gps" policy="Duplicate"/>
@@ -958,7 +959,7 @@
     <policy field="ea_type" policy="Duplicate"/>
     <policy field="special_type" policy="Duplicate"/>
     <policy field="source_id" policy="Duplicate"/>
-    <policy field="new_ea" policy="Duplicate"/>
+    <policy field="new_ean" policy="Duplicate"/>
     <policy field="indicator" policy="Duplicate"/>
     <policy field="remarks" policy="Duplicate"/>
     <policy field="gps" policy="Duplicate"/>
@@ -966,91 +967,91 @@
     <policy field="EACount" policy="Duplicate"/>
   </duplicatePolicies>
   <defaults>
-    <default field="fid" applyOnUpdate="0" expression=""/>
-    <default field="map_uuid" applyOnUpdate="0" expression=""/>
-    <default field="geocode" applyOnUpdate="0" expression=""/>
-    <default field="region" applyOnUpdate="0" expression=""/>
-    <default field="province" applyOnUpdate="0" expression=""/>
-    <default field="city_mun" applyOnUpdate="0" expression=""/>
-    <default field="barangay" applyOnUpdate="0" expression=""/>
-    <default field="code" applyOnUpdate="0" expression=""/>
-    <default field="name" applyOnUpdate="0" expression=""/>
-    <default field="ean" applyOnUpdate="0" expression=""/>
-    <default field="hhcount" applyOnUpdate="0" expression=""/>
-    <default field="bldgcount" applyOnUpdate="0" expression=""/>
-    <default field="sy" applyOnUpdate="0" expression=""/>
-    <default field="split_by" applyOnUpdate="0" expression=""/>
-    <default field="bldg_count" applyOnUpdate="0" expression=""/>
-    <default field="hh_count" applyOnUpdate="0" expression=""/>
-    <default field="bldgpoints_value" applyOnUpdate="0" expression=""/>
-    <default field="correspondence_ea_geocode" applyOnUpdate="0" expression=""/>
-    <default field="ea_type" applyOnUpdate="0" expression=""/>
-    <default field="special_type" applyOnUpdate="0" expression=""/>
-    <default field="source_id" applyOnUpdate="0" expression=""/>
-    <default field="new_ea" applyOnUpdate="0" expression=""/>
-    <default field="indicator" applyOnUpdate="0" expression=""/>
-    <default field="remarks" applyOnUpdate="0" expression=""/>
-    <default field="gps" applyOnUpdate="1" expression="case&#xa;    when &quot;min_circle&quot; is null or &#xa;    &quot;status&quot; is not current_value('status') or &#xa;    &quot;remarks_qp&quot; is not current_value('remarks_qp') then&#xa;round(&#xa;    distance(&#xa;        transform(coalesce(@position_coordinate, @gnss_coordinate),'EPSG:4326','EPSG:3857'),&#xa;        centroid(transform(minimal_circle($geometry),'EPSG:4326','EPSG:3857'))&#xa;    )&#xa;)&#xa;else&#xa;round(&#xa;    distance(&#xa;        transform(coalesce(@position_coordinate, @gnss_coordinate),'EPSG:4326','EPSG:3857'),&#xa;        centroid(transform(minimal_circle($geometry),'EPSG:4326','EPSG:3857'))&#xa;    )&#xa;)&#xa;end "/>
-    <default field="min_circle" applyOnUpdate="1" expression="case&#xa;    when &quot;min_circle&quot; is null or &#xa;    &quot;status&quot; is not current_value('status') or &#xa;    &quot;remarks_qp&quot; is not current_value('remarks_qp') then&#xa;round(&#xa;    sqrt(&#xa;        area(transform(minimal_circle($geometry),'EPSG:4326','EPSG:3857')) / pi()&#xa;    )&#xa;) &#xa;else&#xa;round(&#xa;    sqrt(&#xa;        area(transform(minimal_circle($geometry),'EPSG:4326','EPSG:3857')) / pi()&#xa;    )&#xa;) &#xa;end"/>
-    <default field="EACount" applyOnUpdate="0" expression=""/>
+    <default field="fid" expression="" applyOnUpdate="0"/>
+    <default field="map_uuid" expression="" applyOnUpdate="0"/>
+    <default field="geocode" expression="" applyOnUpdate="0"/>
+    <default field="region" expression="" applyOnUpdate="0"/>
+    <default field="province" expression="" applyOnUpdate="0"/>
+    <default field="city_mun" expression="" applyOnUpdate="0"/>
+    <default field="barangay" expression="" applyOnUpdate="0"/>
+    <default field="code" expression="" applyOnUpdate="0"/>
+    <default field="name" expression="" applyOnUpdate="0"/>
+    <default field="ean" expression="" applyOnUpdate="0"/>
+    <default field="hhcount" expression="" applyOnUpdate="0"/>
+    <default field="bldgcount" expression="" applyOnUpdate="0"/>
+    <default field="sy" expression="" applyOnUpdate="0"/>
+    <default field="split_by" expression="" applyOnUpdate="0"/>
+    <default field="bldg_count" expression="" applyOnUpdate="0"/>
+    <default field="hh_count" expression="" applyOnUpdate="0"/>
+    <default field="bldgpoints_value" expression="" applyOnUpdate="0"/>
+    <default field="correspondence_ea_geocode" expression="" applyOnUpdate="0"/>
+    <default field="ea_type" expression="" applyOnUpdate="0"/>
+    <default field="special_type" expression="" applyOnUpdate="0"/>
+    <default field="source_id" expression="" applyOnUpdate="0"/>
+    <default field="new_ea" expression="" applyOnUpdate="0"/>
+    <default field="indicator" expression="" applyOnUpdate="0"/>
+    <default field="remarks" expression="" applyOnUpdate="0"/>
+    <default field="gps" expression="case&#xa;    when &quot;min_circle&quot; is null or &#xa;    &quot;status&quot; is not current_value('status') or &#xa;    &quot;remarks_qp&quot; is not current_value('remarks_qp') then&#xa;round(&#xa;    distance(&#xa;        transform(coalesce(@position_coordinate, @gnss_coordinate),'EPSG:4326','EPSG:3857'),&#xa;        centroid(transform(minimal_circle($geometry),'EPSG:4326','EPSG:3857'))&#xa;    )&#xa;)&#xa;else&#xa;round(&#xa;    distance(&#xa;        transform(coalesce(@position_coordinate, @gnss_coordinate),'EPSG:4326','EPSG:3857'),&#xa;        centroid(transform(minimal_circle($geometry),'EPSG:4326','EPSG:3857'))&#xa;    )&#xa;)&#xa;end " applyOnUpdate="1"/>
+    <default field="min_circle" expression="case&#xa;    when &quot;min_circle&quot; is null or &#xa;    &quot;status&quot; is not current_value('status') or &#xa;    &quot;remarks_qp&quot; is not current_value('remarks_qp') then&#xa;round(&#xa;    sqrt(&#xa;        area(transform(minimal_circle($geometry),'EPSG:4326','EPSG:3857')) / pi()&#xa;    )&#xa;) &#xa;else&#xa;round(&#xa;    sqrt(&#xa;        area(transform(minimal_circle($geometry),'EPSG:4326','EPSG:3857')) / pi()&#xa;    )&#xa;) &#xa;end" applyOnUpdate="1"/>
+    <default field="EACount" expression="" applyOnUpdate="0"/>
   </defaults>
   <constraints>
-    <constraint field="fid" notnull_strength="2" unique_strength="1" constraints="3" exp_strength="0"/>
-    <constraint field="map_uuid" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="geocode" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="region" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="province" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="city_mun" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="barangay" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="code" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="name" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="ean" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="hhcount" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="bldgcount" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="sy" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="split_by" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="bldg_count" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="hh_count" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="bldgpoints_value" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="correspondence_ea_geocode" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="ea_type" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="special_type" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="source_id" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="new_ea" notnull_strength="0" unique_strength="0" constraints="4" exp_strength="2"/>
-    <constraint field="indicator" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="remarks" notnull_strength="0" unique_strength="0" constraints="4" exp_strength="1"/>
-    <constraint field="gps" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="min_circle" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
-    <constraint field="EACount" notnull_strength="0" unique_strength="0" constraints="0" exp_strength="0"/>
+    <constraint field="fid" exp_strength="0" constraints="3" unique_strength="1" notnull_strength="2"/>
+    <constraint field="map_uuid" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="geocode" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="region" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="province" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="city_mun" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="barangay" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="code" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="name" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="ean" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="hhcount" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="bldgcount" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="sy" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="split_by" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="bldg_count" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="hh_count" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="bldgpoints_value" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="correspondence_ea_geocode" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="ea_type" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="special_type" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="source_id" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="new_ea" exp_strength="2" constraints="4" unique_strength="0" notnull_strength="0"/>
+    <constraint field="indicator" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="remarks" exp_strength="1" constraints="4" unique_strength="0" notnull_strength="0"/>
+    <constraint field="gps" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="min_circle" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
+    <constraint field="EACount" exp_strength="0" constraints="0" unique_strength="0" notnull_strength="0"/>
   </constraints>
   <constraintExpressions>
-    <constraint exp="" field="fid" desc=""/>
-    <constraint exp="" field="map_uuid" desc=""/>
-    <constraint exp="" field="geocode" desc=""/>
-    <constraint exp="" field="region" desc=""/>
-    <constraint exp="" field="province" desc=""/>
-    <constraint exp="" field="city_mun" desc=""/>
-    <constraint exp="" field="barangay" desc=""/>
-    <constraint exp="" field="code" desc=""/>
-    <constraint exp="" field="name" desc=""/>
-    <constraint exp="" field="ean" desc=""/>
-    <constraint exp="" field="hhcount" desc=""/>
-    <constraint exp="" field="bldgcount" desc=""/>
-    <constraint exp="" field="sy" desc=""/>
-    <constraint exp="" field="split_by" desc=""/>
-    <constraint exp="" field="bldg_count" desc=""/>
-    <constraint exp="" field="hh_count" desc=""/>
-    <constraint exp="" field="bldgpoints_value" desc=""/>
-    <constraint exp="" field="correspondence_ea_geocode" desc=""/>
-    <constraint exp="" field="ea_type" desc=""/>
-    <constraint exp="" field="special_type" desc=""/>
-    <constraint exp="" field="source_id" desc=""/>
-    <constraint exp=" to_int(&quot;min_circle&quot;) >  to_int(&quot;gps&quot;)" field="new_ea" desc="Kindly approach the EA boundary to proceed with verification."/>
-    <constraint exp="" field="indicator" desc=""/>
-    <constraint exp="(&quot;indicator&quot; = 2 and &quot;remarks&quot; is not NULL) or &quot;indicator&quot; is not 2 " field="remarks" desc=""/>
-    <constraint exp="" field="gps" desc=""/>
-    <constraint exp="" field="min_circle" desc=""/>
-    <constraint exp="" field="EACount" desc=""/>
+    <constraint field="fid" desc="" exp=""/>
+    <constraint field="map_uuid" desc="" exp=""/>
+    <constraint field="geocode" desc="" exp=""/>
+    <constraint field="region" desc="" exp=""/>
+    <constraint field="province" desc="" exp=""/>
+    <constraint field="city_mun" desc="" exp=""/>
+    <constraint field="barangay" desc="" exp=""/>
+    <constraint field="code" desc="" exp=""/>
+    <constraint field="name" desc="" exp=""/>
+    <constraint field="ean" desc="" exp=""/>
+    <constraint field="hhcount" desc="" exp=""/>
+    <constraint field="bldgcount" desc="" exp=""/>
+    <constraint field="sy" desc="" exp=""/>
+    <constraint field="split_by" desc="" exp=""/>
+    <constraint field="bldg_count" desc="" exp=""/>
+    <constraint field="hh_count" desc="" exp=""/>
+    <constraint field="bldgpoints_value" desc="" exp=""/>
+    <constraint field="correspondence_ea_geocode" desc="" exp=""/>
+    <constraint field="ea_type" desc="" exp=""/>
+    <constraint field="special_type" desc="" exp=""/>
+    <constraint field="source_id" desc="" exp=""/>
+    <constraint field="new_ea" desc="Kindly approach the EA boundary to proceed with verification." exp=" to_int(&quot;min_circle&quot;) >  to_int(&quot;gps&quot;)"/>
+    <constraint field="indicator" desc="" exp=""/>
+    <constraint field="remarks" desc="" exp="(&quot;indicator&quot; = 2 and &quot;remarks&quot; is not NULL) or &quot;indicator&quot; is not 2 "/>
+    <constraint field="gps" desc="" exp=""/>
+    <constraint field="min_circle" desc="" exp=""/>
+    <constraint field="EACount" desc="" exp=""/>
   </constraintExpressions>
   <expressionfields/>
   <attributeactions>
@@ -1058,34 +1059,34 @@
   </attributeactions>
   <attributetableconfig actionWidgetStyle="dropDown" sortExpression="&quot;name&quot;" sortOrder="0">
     <columns>
-      <column hidden="0" type="field" width="-1" name="fid"/>
-      <column hidden="0" type="field" width="-1" name="map_uuid"/>
-      <column hidden="0" type="field" width="-1" name="geocode"/>
-      <column hidden="0" type="field" width="-1" name="region"/>
-      <column hidden="0" type="field" width="-1" name="province"/>
-      <column hidden="0" type="field" width="-1" name="city_mun"/>
-      <column hidden="0" type="field" width="-1" name="barangay"/>
-      <column hidden="0" type="field" width="-1" name="ean"/>
-      <column hidden="0" type="field" width="-1" name="name"/>
-      <column hidden="0" type="field" width="-1" name="code"/>
-      <column hidden="0" type="field" width="-1" name="hhcount"/>
-      <column hidden="0" type="field" width="-1" name="bldgcount"/>
-      <column hidden="0" type="field" width="-1" name="sy"/>
-      <column hidden="0" type="field" width="-1" name="hh_count"/>
-      <column hidden="0" type="field" width="-1" name="bldg_count"/>
-      <column hidden="0" type="field" width="-1" name="ea_type"/>
-      <column hidden="0" type="field" width="-1" name="remarks"/>
-      <column hidden="0" type="field" width="-1" name="split_by"/>
-      <column hidden="0" type="field" width="-1" name="bldgpoints_value"/>
-      <column hidden="0" type="field" width="-1" name="correspondence_ea_geocode"/>
-      <column hidden="0" type="field" width="-1" name="special_type"/>
-      <column hidden="0" type="field" width="-1" name="source_id"/>
-      <column hidden="0" type="field" width="-1" name="new_ea"/>
-      <column hidden="0" type="field" width="-1" name="indicator"/>
-      <column hidden="0" type="field" width="-1" name="gps"/>
-      <column hidden="0" type="field" width="-1" name="min_circle"/>
-      <column hidden="0" type="field" width="-1" name="EACount"/>
-      <column hidden="1" type="actions" width="-1"/>
+      <column type="field" width="-1" name="name" hidden="0"/>
+      <column type="field" width="-1" name="code" hidden="0"/>
+      <column type="field" width="-1" name="EACount" hidden="0"/>
+      <column type="field" width="-1" name="fid" hidden="0"/>
+      <column type="field" width="-1" name="map_uuid" hidden="0"/>
+      <column type="field" width="-1" name="geocode" hidden="0"/>
+      <column type="field" width="-1" name="ean" hidden="0"/>
+      <column type="field" width="-1" name="correspondence_ea_geocode" hidden="0"/>
+      <column type="field" width="-1" name="region" hidden="0"/>
+      <column type="field" width="-1" name="province" hidden="0"/>
+      <column type="field" width="-1" name="city_mun" hidden="0"/>
+      <column type="field" width="-1" name="barangay" hidden="0"/>
+      <column type="field" width="-1" name="remarks" hidden="0"/>
+      <column type="field" width="-1" name="hhcount" hidden="0"/>
+      <column type="field" width="-1" name="bldgcount" hidden="0"/>
+      <column type="field" width="-1" name="sy" hidden="0"/>
+      <column type="field" width="-1" name="split_by" hidden="0"/>
+      <column type="field" width="-1" name="bldg_count" hidden="0"/>
+      <column type="field" width="-1" name="hh_count" hidden="0"/>
+      <column type="field" width="-1" name="bldgpoints_value" hidden="0"/>
+      <column type="field" width="-1" name="ea_type" hidden="0"/>
+      <column type="field" width="-1" name="special_type" hidden="0"/>
+      <column type="field" width="-1" name="source_id" hidden="0"/>
+      <column type="field" width="-1" name="new_ea" hidden="0"/>
+      <column type="field" width="-1" name="indicator" hidden="0"/>
+      <column type="field" width="-1" name="gps" hidden="0"/>
+      <column type="field" width="-1" name="min_circle" hidden="0"/>
+      <column type="actions" width="-1" hidden="1"/>
     </columns>
   </attributetableconfig>
   <conditionalstyles>
@@ -1150,9 +1151,9 @@ def my_form_open(dialog, layer, feature):
         <labelFont strikethrough="0" style="" description="MS Shell Dlg 2,8.25,-1,5,50,0,0,0,0,0" italic="0" underline="0" bold="0"/>
       </labelStyle>
     </attributeEditorField>
-    <attributeEditorField verticalStretch="0" index="21" horizontalStretch="0" showLabel="1" name="new_ea">
-      <labelStyle labelColor="" overrideLabelColor="0" overrideLabelFont="0">
-        <labelFont strikethrough="0" style="" description="MS Shell Dlg 2,8.25,-1,5,50,0,0,0,0,0" italic="0" underline="0" bold="0"/>
+    <attributeEditorField name="new_ea" horizontalStretch="0" index="21" showLabel="1" verticalStretch="0">
+      <labelStyle labelColor="" overrideLabelFont="0" overrideLabelColor="0">
+        <labelFont strikethrough="0" bold="0" style="" description="MS Shell Dlg 2,8.25,-1,5,50,0,0,0,0,0" italic="0" underline="0"/>
       </labelStyle>
     </attributeEditorField>
     <attributeEditorField verticalStretch="0" index="14" horizontalStretch="0" showLabel="1" name="bldg_count">
@@ -1167,150 +1168,150 @@ def my_form_open(dialog, layer, feature):
     </attributeEditorField>
   </attributeEditorForm>
   <editable>
-    <field editable="0" name="0808_block_BGY_name"/>
-    <field editable="0" name="0808_block_BLOCKNUM"/>
-    <field editable="0" name="0808_block_BlockCount"/>
-    <field editable="1" name="2019GEOID"/>
-    <field editable="1" name="BGY_GEO"/>
-    <field editable="0" name="BLOCKNUM"/>
-    <field editable="0" name="BlockCount"/>
-    <field editable="1" name="CODE"/>
-    <field editable="0" name="EACount"/>
-    <field editable="1" name="GEOCODE"/>
-    <field editable="1" name="GEOID"/>
-    <field editable="1" name="Geocode"/>
-    <field editable="0" name="Minimum enclosing circles_centroid circle"/>
-    <field editable="0" name="Minimum enclosing circles_join centroid"/>
-    <field editable="0" name="Minimum enclosing circles_min circle"/>
-    <field editable="0" name="Minimum enclosing circles_x"/>
-    <field editable="0" name="Minimum enclosing circles_y"/>
-    <field editable="1" name="NAME"/>
-    <field editable="1" name="Old_Geo"/>
-    <field editable="1" name="Zonal"/>
-    <field editable="1" name="all info circle"/>
-    <field editable="1" name="barangay"/>
-    <field editable="1" name="barangay_code"/>
-    <field editable="1" name="bldg_count"/>
-    <field editable="1" name="bldgcount"/>
-    <field editable="1" name="bldgpoints_value"/>
-    <field editable="1" name="centroid circle"/>
-    <field editable="1" name="city_mun"/>
-    <field editable="1" name="city_mun_code"/>
-    <field editable="1" name="code"/>
-    <field editable="1" name="correspondence_ea_geocode"/>
-    <field editable="1" name="ea_geocode"/>
-    <field editable="1" name="ea_type"/>
-    <field editable="1" name="ean"/>
-    <field editable="1" name="eareferenc"/>
-    <field editable="1" name="fid"/>
-    <field editable="1" name="fid_1"/>
-    <field editable="1" name="floating"/>
-    <field editable="1" name="geo2019"/>
-    <field editable="1" name="geo2022"/>
-    <field editable="1" name="geocode"/>
-    <field editable="1" name="gps"/>
-    <field editable="1" name="hh_count"/>
-    <field editable="1" name="hhcount"/>
-    <field editable="1" name="indicator"/>
-    <field editable="1" name="join by meters"/>
-    <field editable="1" name="join centroid"/>
-    <field editable="0" name="join min circle"/>
-    <field editable="1" name="map_uuid"/>
-    <field editable="1" name="min circle"/>
-    <field editable="1" name="min_circle"/>
-    <field editable="1" name="mun_name"/>
-    <field editable="1" name="name"/>
-    <field editable="1" name="new_ea"/>
-    <field editable="1" name="province"/>
-    <field editable="1" name="province_code"/>
-    <field editable="1" name="region"/>
-    <field editable="1" name="region_code"/>
-    <field editable="1" name="remarks"/>
-    <field editable="1" name="source_id"/>
-    <field editable="1" name="special_type"/>
-    <field editable="1" name="split_by"/>
-    <field editable="1" name="status"/>
-    <field editable="1" name="sy"/>
-    <field editable="0" name="virtual_layer_BGY_name"/>
-    <field editable="0" name="virtual_layer_BLOCKNUM"/>
-    <field editable="0" name="virtual_layer_BlockCount"/>
-    <field editable="0" name="virtual_layer_EACount"/>
-    <field editable="0" name="virtual_layer_name"/>
-    <field editable="1" name="x"/>
-    <field editable="1" name="y"/>
+    <field name="0808_block_BGY_name" editable="0"/>
+    <field name="0808_block_BLOCKNUM" editable="0"/>
+    <field name="0808_block_BlockCount" editable="0"/>
+    <field name="2019GEOID" editable="1"/>
+    <field name="BGY_GEO" editable="1"/>
+    <field name="BLOCKNUM" editable="0"/>
+    <field name="BlockCount" editable="0"/>
+    <field name="CODE" editable="1"/>
+    <field name="EACount" editable="0"/>
+    <field name="GEOCODE" editable="1"/>
+    <field name="GEOID" editable="1"/>
+    <field name="Geocode" editable="1"/>
+    <field name="Minimum enclosing circles_centroid circle" editable="0"/>
+    <field name="Minimum enclosing circles_join centroid" editable="0"/>
+    <field name="Minimum enclosing circles_min circle" editable="0"/>
+    <field name="Minimum enclosing circles_x" editable="0"/>
+    <field name="Minimum enclosing circles_y" editable="0"/>
+    <field name="NAME" editable="1"/>
+    <field name="Old_Geo" editable="1"/>
+    <field name="Zonal" editable="1"/>
+    <field name="all info circle" editable="1"/>
+    <field name="barangay" editable="1"/>
+    <field name="barangay_code" editable="1"/>
+    <field name="bldg_count" editable="1"/>
+    <field name="bldgcount" editable="1"/>
+    <field name="bldgpoints_value" editable="1"/>
+    <field name="centroid circle" editable="1"/>
+    <field name="city_mun" editable="1"/>
+    <field name="city_mun_code" editable="1"/>
+    <field name="code" editable="1"/>
+    <field name="correspondence_ea_geocode" editable="1"/>
+    <field name="ea_geocode" editable="1"/>
+    <field name="ea_type" editable="1"/>
+    <field name="ean" editable="1"/>
+    <field name="eareferenc" editable="1"/>
+    <field name="fid" editable="1"/>
+    <field name="fid_1" editable="1"/>
+    <field name="floating" editable="1"/>
+    <field name="geo2019" editable="1"/>
+    <field name="geo2022" editable="1"/>
+    <field name="geocode" editable="1"/>
+    <field name="gps" editable="1"/>
+    <field name="hh_count" editable="1"/>
+    <field name="hhcount" editable="1"/>
+    <field name="indicator" editable="1"/>
+    <field name="join by meters" editable="1"/>
+    <field name="join centroid" editable="1"/>
+    <field name="join min circle" editable="0"/>
+    <field name="map_uuid" editable="1"/>
+    <field name="min circle" editable="1"/>
+    <field name="min_circle" editable="1"/>
+    <field name="mun_name" editable="1"/>
+    <field name="name" editable="1"/>
+    <field name="new_ea" editable="1"/>
+    <field name="province" editable="1"/>
+    <field name="province_code" editable="1"/>
+    <field name="region" editable="1"/>
+    <field name="region_code" editable="1"/>
+    <field name="remarks" editable="1"/>
+    <field name="source_id" editable="1"/>
+    <field name="special_type" editable="1"/>
+    <field name="split_by" editable="1"/>
+    <field name="status" editable="1"/>
+    <field name="sy" editable="1"/>
+    <field name="virtual_layer_BGY_name" editable="0"/>
+    <field name="virtual_layer_BLOCKNUM" editable="0"/>
+    <field name="virtual_layer_BlockCount" editable="0"/>
+    <field name="virtual_layer_EACount" editable="0"/>
+    <field name="virtual_layer_name" editable="0"/>
+    <field name="x" editable="1"/>
+    <field name="y" editable="1"/>
   </editable>
   <labelOnTop>
-    <field name="0808_block_BGY_name" labelOnTop="0"/>
-    <field name="0808_block_BLOCKNUM" labelOnTop="0"/>
-    <field name="0808_block_BlockCount" labelOnTop="0"/>
-    <field name="2019GEOID" labelOnTop="0"/>
-    <field name="BGY_GEO" labelOnTop="0"/>
-    <field name="BLOCKNUM" labelOnTop="0"/>
-    <field name="BlockCount" labelOnTop="0"/>
-    <field name="CODE" labelOnTop="0"/>
-    <field name="EACount" labelOnTop="0"/>
-    <field name="GEOCODE" labelOnTop="0"/>
-    <field name="GEOID" labelOnTop="0"/>
-    <field name="Geocode" labelOnTop="0"/>
-    <field name="Minimum enclosing circles_centroid circle" labelOnTop="0"/>
-    <field name="Minimum enclosing circles_join centroid" labelOnTop="0"/>
-    <field name="Minimum enclosing circles_min circle" labelOnTop="0"/>
-    <field name="Minimum enclosing circles_x" labelOnTop="0"/>
-    <field name="Minimum enclosing circles_y" labelOnTop="0"/>
-    <field name="NAME" labelOnTop="0"/>
-    <field name="Old_Geo" labelOnTop="0"/>
-    <field name="Zonal" labelOnTop="0"/>
-    <field name="all info circle" labelOnTop="0"/>
-    <field name="barangay" labelOnTop="0"/>
-    <field name="barangay_code" labelOnTop="0"/>
-    <field name="bldg_count" labelOnTop="0"/>
-    <field name="bldgcount" labelOnTop="0"/>
-    <field name="bldgpoints_value" labelOnTop="0"/>
-    <field name="centroid circle" labelOnTop="0"/>
-    <field name="city_mun" labelOnTop="0"/>
-    <field name="city_mun_code" labelOnTop="0"/>
-    <field name="code" labelOnTop="0"/>
-    <field name="correspondence_ea_geocode" labelOnTop="0"/>
-    <field name="ea_geocode" labelOnTop="0"/>
-    <field name="ea_type" labelOnTop="0"/>
-    <field name="ean" labelOnTop="0"/>
-    <field name="eareferenc" labelOnTop="0"/>
-    <field name="fid" labelOnTop="0"/>
-    <field name="fid_1" labelOnTop="0"/>
-    <field name="floating" labelOnTop="0"/>
-    <field name="geo2019" labelOnTop="0"/>
-    <field name="geo2022" labelOnTop="0"/>
-    <field name="geocode" labelOnTop="0"/>
-    <field name="gps" labelOnTop="0"/>
-    <field name="hh_count" labelOnTop="0"/>
-    <field name="hhcount" labelOnTop="0"/>
-    <field name="indicator" labelOnTop="0"/>
-    <field name="join by meters" labelOnTop="0"/>
-    <field name="join centroid" labelOnTop="0"/>
-    <field name="join min circle" labelOnTop="0"/>
-    <field name="map_uuid" labelOnTop="0"/>
-    <field name="min circle" labelOnTop="0"/>
-    <field name="min_circle" labelOnTop="0"/>
-    <field name="mun_name" labelOnTop="0"/>
-    <field name="name" labelOnTop="0"/>
-    <field name="new_ea" labelOnTop="0"/>
-    <field name="province" labelOnTop="0"/>
-    <field name="province_code" labelOnTop="0"/>
-    <field name="region" labelOnTop="0"/>
-    <field name="region_code" labelOnTop="0"/>
-    <field name="remarks" labelOnTop="0"/>
-    <field name="source_id" labelOnTop="0"/>
-    <field name="special_type" labelOnTop="0"/>
-    <field name="split_by" labelOnTop="0"/>
-    <field name="status" labelOnTop="0"/>
-    <field name="sy" labelOnTop="0"/>
-    <field name="virtual_layer_BGY_name" labelOnTop="0"/>
-    <field name="virtual_layer_BLOCKNUM" labelOnTop="0"/>
-    <field name="virtual_layer_BlockCount" labelOnTop="0"/>
-    <field name="virtual_layer_EACount" labelOnTop="0"/>
-    <field name="virtual_layer_name" labelOnTop="0"/>
-    <field name="x" labelOnTop="0"/>
-    <field name="y" labelOnTop="0"/>
+    <field labelOnTop="0" name="0808_block_BGY_name"/>
+    <field labelOnTop="0" name="0808_block_BLOCKNUM"/>
+    <field labelOnTop="0" name="0808_block_BlockCount"/>
+    <field labelOnTop="0" name="2019GEOID"/>
+    <field labelOnTop="0" name="BGY_GEO"/>
+    <field labelOnTop="0" name="BLOCKNUM"/>
+    <field labelOnTop="0" name="BlockCount"/>
+    <field labelOnTop="0" name="CODE"/>
+    <field labelOnTop="0" name="EACount"/>
+    <field labelOnTop="0" name="GEOCODE"/>
+    <field labelOnTop="0" name="GEOID"/>
+    <field labelOnTop="0" name="Geocode"/>
+    <field labelOnTop="0" name="Minimum enclosing circles_centroid circle"/>
+    <field labelOnTop="0" name="Minimum enclosing circles_join centroid"/>
+    <field labelOnTop="0" name="Minimum enclosing circles_min circle"/>
+    <field labelOnTop="0" name="Minimum enclosing circles_x"/>
+    <field labelOnTop="0" name="Minimum enclosing circles_y"/>
+    <field labelOnTop="0" name="NAME"/>
+    <field labelOnTop="0" name="Old_Geo"/>
+    <field labelOnTop="0" name="Zonal"/>
+    <field labelOnTop="0" name="all info circle"/>
+    <field labelOnTop="0" name="barangay"/>
+    <field labelOnTop="0" name="barangay_code"/>
+    <field labelOnTop="0" name="bldg_count"/>
+    <field labelOnTop="0" name="bldgcount"/>
+    <field labelOnTop="0" name="bldgpoints_value"/>
+    <field labelOnTop="0" name="centroid circle"/>
+    <field labelOnTop="0" name="city_mun"/>
+    <field labelOnTop="0" name="city_mun_code"/>
+    <field labelOnTop="0" name="code"/>
+    <field labelOnTop="0" name="correspondence_ea_geocode"/>
+    <field labelOnTop="0" name="ea_geocode"/>
+    <field labelOnTop="0" name="ea_type"/>
+    <field labelOnTop="0" name="ean"/>
+    <field labelOnTop="0" name="eareferenc"/>
+    <field labelOnTop="0" name="fid"/>
+    <field labelOnTop="0" name="fid_1"/>
+    <field labelOnTop="0" name="floating"/>
+    <field labelOnTop="0" name="geo2019"/>
+    <field labelOnTop="0" name="geo2022"/>
+    <field labelOnTop="0" name="geocode"/>
+    <field labelOnTop="0" name="gps"/>
+    <field labelOnTop="0" name="hh_count"/>
+    <field labelOnTop="0" name="hhcount"/>
+    <field labelOnTop="0" name="indicator"/>
+    <field labelOnTop="0" name="join by meters"/>
+    <field labelOnTop="0" name="join centroid"/>
+    <field labelOnTop="0" name="join min circle"/>
+    <field labelOnTop="0" name="map_uuid"/>
+    <field labelOnTop="0" name="min circle"/>
+    <field labelOnTop="0" name="min_circle"/>
+    <field labelOnTop="0" name="mun_name"/>
+    <field labelOnTop="0" name="name"/>
+    <field labelOnTop="0" name="new_ea"/>
+    <field labelOnTop="0" name="province"/>
+    <field labelOnTop="0" name="province_code"/>
+    <field labelOnTop="0" name="region"/>
+    <field labelOnTop="0" name="region_code"/>
+    <field labelOnTop="0" name="remarks"/>
+    <field labelOnTop="0" name="source_id"/>
+    <field labelOnTop="0" name="special_type"/>
+    <field labelOnTop="0" name="split_by"/>
+    <field labelOnTop="0" name="status"/>
+    <field labelOnTop="0" name="sy"/>
+    <field labelOnTop="0" name="virtual_layer_BGY_name"/>
+    <field labelOnTop="0" name="virtual_layer_BLOCKNUM"/>
+    <field labelOnTop="0" name="virtual_layer_BlockCount"/>
+    <field labelOnTop="0" name="virtual_layer_EACount"/>
+    <field labelOnTop="0" name="virtual_layer_name"/>
+    <field labelOnTop="0" name="x"/>
+    <field labelOnTop="0" name="y"/>
   </labelOnTop>
   <reuseLastValue>
     <field reuseLastValue="0" name="0808_block_BGY_name"/>
@@ -1359,7 +1360,7 @@ def my_form_open(dialog, layer, feature):
     <field reuseLastValue="0" name="min_circle"/>
     <field reuseLastValue="0" name="mun_name"/>
     <field reuseLastValue="0" name="name"/>
-    <field reuseLastValue="0" name="new_ea"/>
+    <field reuseLastValue="0" name="new_ean"/>
     <field reuseLastValue="0" name="province"/>
     <field reuseLastValue="0" name="province_code"/>
     <field reuseLastValue="0" name="region"/>
@@ -1405,7 +1406,7 @@ def my_form_open(dialog, layer, feature):
       <config/>
     </widget>
   </widgets>
-  <previewExpression>'New EA: '  ||  "new_ea"</previewExpression>
+  <previewExpression>'New EA: '  ||  "new_ean"</previewExpression>
   <mapTip enabled="1"></mapTip>
   <layerGeometryType>2</layerGeometryType>
 </qgis>
