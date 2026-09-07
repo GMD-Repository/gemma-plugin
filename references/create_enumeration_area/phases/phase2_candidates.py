@@ -641,8 +641,8 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         is_delin = False
         is_merge = False
 
-        if _orig_hh >= max_household:
-            if _effective_hh >= max_household:
+        if _orig_hh > max_household:
+            if _effective_hh > max_household:
                 is_delin = True
             else:
                 feedback.pushInfo(
@@ -661,7 +661,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         elif eadel_indi_col_idx != -1:
             val = _dc_feat.attribute(eadel_indi_col_idx)
             if val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"):
-                if _effective_hh >= max_household:
+                if _effective_hh > max_household:
                     is_delin = True
                 elif _effective_hh <= min_household:
                     is_merge = True

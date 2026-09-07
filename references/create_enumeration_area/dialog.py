@@ -2902,15 +2902,13 @@ class EALauncherDialog(QDialog):
             ea_count += 1
 
             # Classify candidates:
-            #   HH >= max_hh  → Delineation candidate (over-populated EA)
-            #   Explicit field indicator ("for delineation") → Delineation candidate
+            #   HH > max_hh   → Delineation candidate (strictly above max threshold)
             #   HH <= min_hh  → Merge candidate (under-populated EA)
-            #   Explicit field indicator ("for merging") → Merge candidate
-            is_delin = (hh >= max_hh)
+            is_delin = (hh > max_hh)
             if not is_delin and eadel_indi_idx != -1:
                 val = feat.attribute(eadel_indi_idx)
                 if val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"):
-                    if hh >= max_hh:
+                    if hh > max_hh:
                         is_delin = True
 
             is_merge = False
@@ -2924,7 +2922,7 @@ class EALauncherDialog(QDialog):
                 is_merge = (hh <= min_hh)
 
             if is_delin:
-                self.all_delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, f"Delineation (>= {max_hh} HH)"))
+                self.all_delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, f"Delineation (> {max_hh} HH)"))
             elif is_merge:
                 self.all_merge_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, f"Initiator (<= {min_hh} HH)"))
 

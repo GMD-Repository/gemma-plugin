@@ -1355,7 +1355,7 @@ def run_phase_8(
 
                         if cand_geom and not cand_geom.isEmpty():
                             _orig_hh_val = ea.get('original_hhcount', ea.get('hh_count', 0.0))
-                            if _orig_hh_val >= max_household:
+                            if _orig_hh_val > max_household:
                                 if delineated_sink is not None:
                                     if barangay_to_target:
                                         cand_geom.transform(barangay_to_target)

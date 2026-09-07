@@ -688,7 +688,7 @@ class SplitEADialog(QDialog):
                 bldg_spatial_index = QgsSpatialIndex(bldg_layer.getFeatures())
                 bldg_lookup = {f.id(): f for f in bldg_layer.getFeatures()}
 
-            # Ensure poly_layer has hh_count, bldg_count, and new_ean fields
+            # Ensure poly_layer has hh_count, bldg_count, new_ean, and ea_type fields
             poly_fields = poly_layer.fields()
             poly_field_names_lower = [poly_fields.at(i).name().lower() for i in range(poly_fields.count())]
             fields_to_add = []
@@ -698,11 +698,14 @@ class SplitEADialog(QDialog):
                 fields_to_add.append(QgsField("bldg_count", QVariant.Int))
             if "new_ean" not in poly_field_names_lower:
                 fields_to_add.append(QgsField("new_ean", QVariant.String))
+            if not any(f in poly_field_names_lower for f in ("ea_type", "eatype", "type")):
+                fields_to_add.append(QgsField("ea_type", QVariant.String))
 
             if fields_to_add:
                 poly_layer.dataProvider().addAttributes(fields_to_add)
                 poly_layer.updateFields()
                 poly_fields = poly_layer.fields()
+                poly_field_names_lower = [poly_fields.at(i).name().lower() for i in range(poly_fields.count())]
 
             # 6. Build new features, assign recalculated counts, and format new_ean according to delineation rules
             total_hh_sum = 0
@@ -835,6 +838,12 @@ class SplitEADialog(QDialog):
                             new_feat.setAttribute(fname, inside_bldg_count)
                         elif fname_lower == "new_ean":
                             new_feat.setAttribute(fname, assigned_new_ean)
+                        elif fname_lower in ("ea_type", "eatype", "type"):
+                            if len(part_data) > 1:
+                                new_feat.setAttribute(fname, "DELINEATED")
+                            else:
+                                val = parent_feat.attribute(fname)
+                                new_feat.setAttribute(fname, val if val is not None and val != NULL and str(val).strip() not in ("", "None", "NULL") else "RETAINED")
                         else:
                             val = parent_feat.attribute(fname)
                             if val is not None and val != NULL:

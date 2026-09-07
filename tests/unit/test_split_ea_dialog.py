@@ -199,9 +199,11 @@ class TestSplitEADialog(unittest.TestCase):
         self.assertEqual(len(updated_features), 2)
 
         # Baseline fields hhcount and bldgcount MUST remain preserved (350 and 50)
+        # And ea_type MUST be set to DELINEATED for split features
         for feat in updated_features:
             self.assertEqual(feat.attribute("hhcount"), 350)
             self.assertEqual(feat.attribute("bldgcount"), 50)
+            self.assertEqual(feat.attribute("ea_type"), "DELINEATED")
 
         # Part 1 (x: 0..5, highest HH=5): new_ean="001000", bldg_count=2, hh_count=5
         # Part 2 (x: 5..10, 2nd highest HH=4): new_ean="001001", bldg_count=1, hh_count=4

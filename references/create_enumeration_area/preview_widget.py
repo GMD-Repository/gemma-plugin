@@ -400,12 +400,12 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
             except Exception:
                 hh = 0.0
 
-            # Classify by hhcount thresholds & explicit indicators (strictly above/equal max threshold)
-            is_delin = (hh >= max_hh)
+            # Classify by hhcount thresholds & explicit indicators (strictly above max threshold)
+            is_delin = (hh > max_hh)
             if not is_delin and eadel_indi_idx != -1:
                 val = feat.attribute(eadel_indi_idx)
                 if val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"):
-                    if hh >= max_hh:
+                    if hh > max_hh:
                         is_delin = True
 
             is_merge = False

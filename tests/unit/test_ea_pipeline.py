@@ -66,11 +66,15 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
         ea_under = {"original_id": 4, "hh_count": 50.0}
         ea_over_not_in_candidate = {"original_id": 5, "hh_count": 400.0}
 
-        # 1. Over-threshold / Max threshold (>= 300) when present in delineation_candidate_ids
+        # 1. Over-threshold / Max threshold (> 300)
         self.assertTrue(is_delineation_candidate(ea_over, max_household=300, eadel_indi_col_idx=-1, full_ea_by_id={}, delineation_candidate_ids=delin_ids))
         self.assertTrue(is_delineation_candidate(ea_exact_max, max_household=300, eadel_indi_col_idx=-1, full_ea_by_id={}, delineation_candidate_ids=delin_ids))
         self.assertFalse(is_delineation_candidate(ea_normal, max_household=300, eadel_indi_col_idx=-1, full_ea_by_id={}, delineation_candidate_ids=delin_ids))
         self.assertFalse(is_delineation_candidate(ea_under, max_household=300, eadel_indi_col_idx=-1, full_ea_by_id={}, delineation_candidate_ids=delin_ids))
+
+        # Direct threshold checks (without candidate_ids override): strictly > max_household
+        self.assertTrue(is_delineation_candidate(ea_over, max_household=300, eadel_indi_col_idx=-1, full_ea_by_id={}, delineation_candidate_ids=None))
+        self.assertFalse(is_delineation_candidate(ea_exact_max, max_household=300, eadel_indi_col_idx=-1, full_ea_by_id={}, delineation_candidate_ids=None))
         
         # Over-threshold EA that is NOT in delineation_candidate_ids must NOT be a delineation candidate
         self.assertFalse(
