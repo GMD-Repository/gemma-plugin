@@ -1,5 +1,6 @@
 import os
 import json
+import processing
 from typing import Any, Optional, Dict, List
 
 from PyQt5.QtCore import QVariant
@@ -30,6 +31,7 @@ class mv_2027_hp_4b_longitude__missing(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"
     INPUT_LAYER = "INPUT_LAYER"
+    BASE_LAYER = "BASE_LAYER"
     OUTPUT = "OUTPUT"
 
     def name(self) -> str:
@@ -73,6 +75,16 @@ class mv_2027_hp_4b_longitude__missing(QgsProcessingAlgorithm):
         )
 
         self.addParameter(
+            QgsProcessingParameterFile(
+                self.BASE_LAYER,
+                "BASE_LAYER (.gpkg file)",
+                behavior=QgsProcessingParameterFile.File,
+                extension="gpkg",
+                optional=False,
+            )
+        )
+
+        self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
                 "mv_2027_hp_4b_longitude__missing",
@@ -90,49 +102,23 @@ class mv_2027_hp_4b_longitude__missing(QgsProcessingAlgorithm):
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
 
-        source_fields = geojson_data.fields()
-        fields = QgsFields(source_fields)
+        filtered_layer = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": geojson_data,
+                "EXPRESSION": '"longitude" IS NULL OR "latitude" IS NULL',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
 
-        # Resolve field names case-insensitively
-        def resolve_field_name(field_list, target_name):
-            for fld in field_list:
-                if fld.name().lower() == target_name.lower():
-                    return fld.name()
-            return None
 
-        long_field = resolve_field_name(source_fields, "longitude")
-        lat_field = resolve_field_name(source_fields, "latitude")
-
-        def is_null(val):
-            if val is None or val == NULL:
-                return True
-            if isinstance(val, QVariant) and val.isNull():
-                return True
-            return False
-
-        invalid_features = []
-
-        for f in geojson_data.getFeatures():
-            if feedback and feedback.isCanceled():
-                break
-
-            raw_long = f.attribute(long_field) if long_field else None
-            raw_lat = f.attribute(lat_field) if lat_field else None
-
-            # Flag if longitude or latitude is NULL
-            if is_null(raw_long) or is_null(raw_lat):
-                geom = f.geometry()
-                out_feat = QgsFeature(fields)
-                if geom is not None:
-                    out_feat.setGeometry(geom)
-
-                for i in range(source_fields.count()):
-                    out_feat.setAttribute(source_fields.at(i).name(), f.attribute(i))
-
-                invalid_features.append(out_feat)
-
-        feedback.pushInfo(
-            f"Results: {len(invalid_features)} features with NULL longitude or latitude."
+        final_output = gmdhelpers.select_mv(
+            filtered_layer,
+            ["longitude", "latitude"],
+            context=context,
+            feedback=feedback,
         )
 
         return gmdhelpers.export_features_to_sink(
@@ -140,10 +126,10 @@ class mv_2027_hp_4b_longitude__missing(QgsProcessingAlgorithm):
             parameters,
             self.OUTPUT,
             context,
-            fields,
-            geojson_data.wkbType(),
-            geojson_data.sourceCrs(),
-            invalid_features,
+            final_output.fields(),
+            final_output.wkbType(),
+            final_output.sourceCrs(),
+            final_output.getFeatures(),
             feedback,
         )
 

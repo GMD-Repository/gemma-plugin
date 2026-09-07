@@ -94,45 +94,21 @@ class mv_2027_hp_4c_remarks__invalid(QgsProcessingAlgorithm):
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
 
-        features = gmdhelpers.filter_geometry_validity(geojson_data, feedback)
-        fields = geojson_data.fields()
+        filtered_layer = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": geojson_data,
+                "EXPRESSION": 'regexp_match(lower("remarks"), \'delet|erase|remove|wrong tag|test\') > 0',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
 
-        # Helper to check if a remark is valid/non-empty (flagged for review/deletion)
-        def is_valid_remark(val: Any) -> bool:
-            if val is None or val == NULL:
-                return False
-            if isinstance(val, QVariant) and val.isNull():
-                return False
-            val_str = str(val).strip()
-            return val_str != "" and val_str.lower() not in ("null", "none", "nan", "na", "n/a")
 
-        flagged_features = [
-            f for f in features
-            if is_valid_remark(f["remarks"])
-        ]
-
-        # Add per-remarks count column and sort by remarks
-        if flagged_features:
-            flagged_features, fields = gmdhelpers.add_count(flagged_features, fields, "remarks")
-            flagged_features = gmdhelpers.arrange(flagged_features, "remarks")
-
-        feedback.pushInfo(
-            f"Results: Flagged {len(flagged_features)} feature(s) with deletion or review remarks."
-        )
-
-        # Build a temporary layer from flagged features to select and organize columns
-        temp_layer = QgsVectorLayer(
-            f"Point?crs={geojson_data.sourceCrs().authid()}", "temp", "memory"
-        )
-        temp_layer_dp = temp_layer.dataProvider()
-        temp_layer_dp.addAttributes(fields.toList())
-        temp_layer.updateFields()
-        temp_layer_dp.addFeatures(flagged_features)
-
-        # Select & organize columns using select_mv (standard CBMS fields + remarks + count)
         final_output = gmdhelpers.select_mv(
-            temp_layer,
-            ["remarks", "n"],
+            filtered_layer,
+            [],
             context=context,
             feedback=feedback,
         )

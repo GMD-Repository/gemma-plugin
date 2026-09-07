@@ -1,5 +1,6 @@
 import os
 import json
+import processing
 from typing import Any, Optional, Dict, List
 
 from PyQt5.QtCore import QVariant
@@ -31,6 +32,7 @@ class mv_2027_hp_4b_geom__missing(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"
     INPUT_LAYER = "INPUT_LAYER"
+    BASE_LAYER = "BASE_LAYER"
     OUTPUT = "OUTPUT"
 
     def name(self) -> str:
@@ -74,6 +76,16 @@ class mv_2027_hp_4b_geom__missing(QgsProcessingAlgorithm):
         )
 
         self.addParameter(
+            QgsProcessingParameterFile(
+                self.BASE_LAYER,
+                "BASE_LAYER (.gpkg file)",
+                behavior=QgsProcessingParameterFile.File,
+                extension="gpkg",
+                optional=False,
+            )
+        )
+
+        self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
                 "mv_2027_hp_4b_geom__missing",
@@ -91,47 +103,34 @@ class mv_2027_hp_4b_geom__missing(QgsProcessingAlgorithm):
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
 
-        fields = geojson_data.fields()
+        filtered_layer = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": geojson_data,
+                "EXPRESSION": 'is_empty_or_null($geometry) = True',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
 
-        def is_na(val: Any) -> bool:
-            if val is None or val == NULL:
-                return True
-            if isinstance(val, QVariant) and val.isNull():
-                return True
-            return str(val).strip().lower() in ("", "null", "none", "nan", "na")
 
-        long_name = "longitude"
-        lat_name = "latitude"
-        for field in fields:
-            fname = field.name().lower()
-            if fname == "longitude":
-                long_name = field.name()
-            elif fname == "latitude":
-                lat_name = field.name()
-
-        missing_features = []
-        for f in geojson_data.getFeatures():
-            if feedback and feedback.isCanceled():
-                break
-
-            geom = f.geometry()
-            geom_missing = geom is None or geom.isEmpty()
-
-            long_val = f.attribute(long_name) if long_name in fields.names() else NULL
-            lat_val = f.attribute(lat_name) if lat_name in fields.names() else NULL
-
-            if is_na(long_val) or is_na(lat_val) or geom_missing:
-                missing_features.append(f)
+        final_output = gmdhelpers.select_mv(
+            filtered_layer,
+            [],
+            context=context,
+            feedback=feedback,
+        )
 
         return gmdhelpers.export_features_to_sink(
             self,
             parameters,
             self.OUTPUT,
             context,
-            fields,
-            geojson_data.wkbType(),
-            geojson_data.sourceCrs(),
-            missing_features,
+            final_output.fields(),
+            final_output.wkbType(),
+            final_output.sourceCrs(),
+            final_output.getFeatures(),
             feedback,
         )
 

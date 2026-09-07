@@ -1,4 +1,7 @@
-from typing import Any, Optional, Dict
+import os
+import json
+import processing
+from typing import Any, Optional, Dict, List
 
 from PyQt5.QtCore import QVariant
 from qgis.core import (
@@ -71,6 +74,16 @@ class mv_2027_hp_4b_geocode__missing(QgsProcessingAlgorithm):
         )
 
         self.addParameter(
+            QgsProcessingParameterFile(
+                self.BASE_LAYER,
+                "BASE_LAYER (.gpkg file)",
+                behavior=QgsProcessingParameterFile.File,
+                extension="gpkg",
+                optional=False,
+            )
+        )
+
+        self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
                 "mv_2027_hp_4b_geocode__missing",
@@ -88,49 +101,20 @@ class mv_2027_hp_4b_geocode__missing(QgsProcessingAlgorithm):
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
 
-        features = gmdhelpers.filter_geometry_validity(geojson_data, feedback)
-        fields = geojson_data.fields()
+        filtered_layer = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": geojson_data,
+                "EXPRESSION": '"geocode" IS NULL OR length("geocode") != 14',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
 
-        # Resolve geocode column name case-insensitively
-        geocode_field = "ea_geocode"
-        for field in fields:
-            if field.name().lower() in ("ea_geocode", "geocode", "bsn_geoid", "geo_code"):
-                geocode_field = field.name()
-                break
 
-        # Helper to check for missing/null attribute values
-        def is_missing(val: Any) -> bool:
-            if val is None or val == NULL:
-                return True
-            if isinstance(val, QVariant) and val.isNull():
-                return True
-            return str(val).strip().lower() in ("", "null", "none", "nan", "na")
-
-        # Filter features where geocode is NULL / empty / missing
-        flagged_features = []
-        for f in features:
-            if feedback and feedback.isCanceled():
-                break
-            val = f.attribute(geocode_field) if geocode_field in fields.names() else NULL
-            if is_missing(val):
-                flagged_features.append(f)
-
-        feedback.pushInfo(
-            f"Flagged {len(flagged_features)} feature(s) with missing or null '{geocode_field}' values."
-        )
-
-        # Build a temporary layer from flagged_features so select_mv can operate on it
-        temp_layer = QgsVectorLayer(
-            f"Point?crs={geojson_data.sourceCrs().authid()}", "temp", "memory"
-        )
-        temp_layer_dp = temp_layer.dataProvider()
-        temp_layer_dp.addAttributes(fields.toList())
-        temp_layer.updateFields()
-        temp_layer_dp.addFeatures(flagged_features)
-
-        # Select & organize columns using select_mv
         final_output = gmdhelpers.select_mv(
-            temp_layer,
+            filtered_layer,
             [],
             context=context,
             feedback=feedback,
