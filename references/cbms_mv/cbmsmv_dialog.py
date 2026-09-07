@@ -15,6 +15,7 @@ import os
 import sys
 import ast
 import json
+import csv
 import datetime
 from typing import Optional, List, Dict, Any
 
@@ -47,6 +48,7 @@ from qgis.PyQt.QtWidgets import (
     QRadioButton,
     QButtonGroup,
     QTabWidget,
+    QStackedWidget,
     QWidget,
     QFrame,
     QMessageBox,
@@ -73,6 +75,7 @@ SETTINGS_KEY_FORM2 = "gemma/cbmsmv/form2_json_path"
 SETTINGS_KEY_POINTS = "gemma/cbmsmv/points_geojson_path"
 SETTINGS_KEY_BASE = "gemma/cbmsmv/base_gpkg_path"
 SETTINGS_KEY_LOAD_INPUTS = "gemma/cbmsmv/load_inputs_in_layers"
+SETTINGS_KEY_SELECTED_RULES = "gemma/cbmsmv/selected_rules"
 
 try:
     from ...gmd_scripts.gmdhelpers import load_cbms_json_to_layer
@@ -210,6 +213,8 @@ class CbmsmvDialog(QDialog):
 
         self._rules: List[Dict[str, Any]] = []
         self._rule_checkboxes: Dict[str, QTableWidgetItem] = {}
+        self._result_layers: Dict[str, Dict[str, Any]] = {}
+        self._execution_summary: List[Dict[str, Any]] = []
         self._is_validating = False
 
         self.context = QgsProcessingContext()
@@ -239,7 +244,7 @@ class CbmsmvDialog(QDialog):
     # UI Layout Construction
     # -----------------------------------------------------------------------
     def _init_ui(self):
-        """Initialize and assemble the main layout and tabs."""
+        """Initialize and assemble the main layout, view stack, and persistent action bar."""
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(14, 14, 14, 14)
         main_layout.setSpacing(10)
@@ -248,19 +253,20 @@ class CbmsmvDialog(QDialog):
         header_widget = self._create_header_banner()
         main_layout.addWidget(header_widget)
 
-        # 2. Three Main Tabs: Data Config, Validation Rules, Execution Logs
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setObjectName("mainTabWidget")
+        # 2. Main View Stack: Page 0 = Results Workspace, Page 1 = Configuration View
+        self.main_stack = QStackedWidget()
+        self.main_stack.setObjectName("mainStack")
 
-        self.tab_data_config = self._create_tab_data_config()
-        self.tab_validation_rules = self._create_tab_validation_rules()
-        self.tab_execution_logs = self._create_tab_execution_logs()
+        self.page_results = self._create_page_results()
+        self.page_config = self._create_page_config()
 
-        self.tab_widget.addTab(self.tab_data_config, "📋  Data Config")
-        self.tab_widget.addTab(self.tab_validation_rules, "⚙️  Validation Rules")
-        self.tab_widget.addTab(self.tab_execution_logs, "📊  Execution Logs")
+        self.main_stack.addWidget(self.page_results)  # index 0: Results
+        self.main_stack.addWidget(self.page_config)   # index 1: Configuration
 
-        main_layout.addWidget(self.tab_widget, stretch=1)
+        # Backward compatibility alias
+        self.tab_widget = self.config_tab_widget
+
+        main_layout.addWidget(self.main_stack, stretch=1)
 
         # 3. Bottom Action Bar
         bottom_bar = self._create_bottom_action_bar()
@@ -270,7 +276,7 @@ class CbmsmvDialog(QDialog):
     # Header Banner
     # -----------------------------------------------------------------------
     def _create_header_banner(self) -> QWidget:
-        """Create the top brand banner with title, description, and dynamic count badge."""
+        """Create the top brand banner with title, description, view switch button, and badge."""
         banner = QFrame()
         banner.setObjectName("headerBanner")
         banner_layout = QHBoxLayout(banner)
@@ -293,11 +299,592 @@ class CbmsmvDialog(QDialog):
         text_layout.addWidget(subtitle_label)
         banner_layout.addLayout(text_layout, stretch=1)
 
+        # Right side actions
+        right_layout = QHBoxLayout()
+        right_layout.setSpacing(8)
+
+        self.btn_header_config = QPushButton("⚙️  Configuration")
+        self.btn_header_config.setObjectName("btnHeaderConfig")
+        self.btn_header_config.setToolTip("Configure input files, validation rules, and inspect logs")
+        self.btn_header_config.setStyleSheet("""
+            QPushButton#btnHeaderConfig {
+                background-color: rgba(255, 255, 255, 0.18);
+                color: #FFFFFF;
+                font-weight: bold;
+                padding: 6px 14px;
+                border-radius: 5px;
+                border: 1px solid rgba(255, 255, 255, 0.4);
+                font-size: 11px;
+            }
+            QPushButton#btnHeaderConfig:hover {
+                background-color: rgba(255, 255, 255, 0.32);
+                border: 1px solid rgba(255, 255, 255, 0.7);
+            }
+        """)
+        self.btn_header_config.clicked.connect(self._toggle_view)
+        right_layout.addWidget(self.btn_header_config)
+
         self.lbl_header_badge = QLabel("READY")
         self.lbl_header_badge.setObjectName("headerBadge")
-        banner_layout.addWidget(self.lbl_header_badge)
+        right_layout.addWidget(self.lbl_header_badge)
+
+        banner_layout.addLayout(right_layout)
 
         return banner
+
+    # -----------------------------------------------------------------------
+    # View Switching & Navigation
+    # -----------------------------------------------------------------------
+    def _toggle_view(self):
+        """Toggle between Results Workspace and Configuration View."""
+        if self.main_stack.currentIndex() == 0:
+            self._switch_to_config()
+        else:
+            self._switch_to_results()
+
+    def _switch_to_results(self):
+        """Switch to Results Workspace (Page 0)."""
+        self.main_stack.setCurrentIndex(0)
+        if hasattr(self, "btn_header_config"):
+            self.btn_header_config.setText("⚙️  Configuration")
+            self.btn_header_config.setToolTip("Configure input files, validation rules, and inspect logs")
+
+    def _switch_to_config(self, tab_index: Optional[int] = None):
+        """Switch to Configuration View (Page 1), optionally selecting a tab."""
+        self.main_stack.setCurrentIndex(1)
+        if tab_index is not None and hasattr(self, "config_tab_widget"):
+            self.config_tab_widget.setCurrentIndex(tab_index)
+        if hasattr(self, "btn_header_config"):
+            self.btn_header_config.setText("📋  Results Workspace")
+            self.btn_header_config.setToolTip("Return to Results Workspace")
+
+    # -----------------------------------------------------------------------
+    # Page 1: Configuration View
+    # -----------------------------------------------------------------------
+    def _create_page_config(self) -> QWidget:
+        """
+        Create the Configuration View page housing the 3 original tabs:
+          1. Data Config
+          2. Validation Rules
+          3. Execution Logs
+        """
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        top_bar = QHBoxLayout()
+        top_bar.setContentsMargins(4, 2, 4, 4)
+
+        lbl_title = QLabel("⚙️  Configuration & Validation Rules")
+        lbl_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #1A365D;")
+        top_bar.addWidget(lbl_title)
+        top_bar.addStretch()
+
+        btn_back = QPushButton("  ⬅  Back to Results Workspace  ")
+        btn_back.setStyleSheet("""
+            QPushButton {
+                background-color: #3182CE;
+                color: #FFFFFF;
+                font-weight: bold;
+                padding: 6px 14px;
+                border-radius: 4px;
+                border: none;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #2B6CB0;
+            }
+        """)
+        btn_back.clicked.connect(self._switch_to_results)
+        top_bar.addWidget(btn_back)
+        layout.addLayout(top_bar)
+
+        self.config_tab_widget = QTabWidget()
+        self.config_tab_widget.setObjectName("configTabWidget")
+
+        self.tab_data_config = self._create_tab_data_config()
+        self.tab_validation_rules = self._create_tab_validation_rules()
+        self.tab_execution_logs = self._create_tab_execution_logs()
+
+        self.config_tab_widget.addTab(self.tab_data_config, "📋  Data Config")
+        self.config_tab_widget.addTab(self.tab_validation_rules, "⚙️  Validation Rules")
+        self.config_tab_widget.addTab(self.tab_execution_logs, "📊  Execution Logs")
+
+        layout.addWidget(self.config_tab_widget, stretch=1)
+        return page
+
+    # -----------------------------------------------------------------------
+    # Page 0: Main Screen Results Workspace
+    # -----------------------------------------------------------------------
+    def _create_page_results(self) -> QWidget:
+        """Create the Results Workspace with empty state and dynamic result tabs."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        self.results_stack = QStackedWidget()
+        self.results_stack.setObjectName("resultsStack")
+
+        # Subpage 0: Empty state
+        self.empty_state_widget = self._create_empty_state_widget()
+        self.results_stack.addWidget(self.empty_state_widget)
+
+        # Subpage 1: Results tabs
+        self.results_tab_widget = QTabWidget()
+        self.results_tab_widget.setObjectName("resultsTabWidget")
+        self.results_stack.addWidget(self.results_tab_widget)
+
+        layout.addWidget(self.results_stack, stretch=1)
+        return page
+
+    def _create_empty_state_widget(self) -> QWidget:
+        """Create a clean empty state card shown before any validation has been executed."""
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.setContentsMargins(30, 40, 30, 40)
+
+        card = QFrame()
+        card.setObjectName("emptyStateCard")
+        card.setMaximumWidth(620)
+        card.setStyleSheet("""
+            #emptyStateCard {
+                background-color: #FFFFFF;
+                border: 2px dashed #CBD5E0;
+                border-radius: 12px;
+                padding: 32px;
+            }
+        """)
+        card_layout = QVBoxLayout(card)
+        card_layout.setSpacing(14)
+        card_layout.setAlignment(Qt.AlignCenter)
+
+        icon_lbl = QLabel("📋")
+        icon_lbl.setAlignment(Qt.AlignCenter)
+        icon_lbl.setStyleSheet("font-size: 48px;")
+        card_layout.addWidget(icon_lbl)
+
+        title_lbl = QLabel("No Validation Results Yet")
+        title_lbl.setAlignment(Qt.AlignCenter)
+        title_lbl.setStyleSheet("font-size: 16px; font-weight: 600; color: #1A365D;")
+        card_layout.addWidget(title_lbl)
+
+        desc_lbl = QLabel(
+            "Configure your primary input files (Form 2 JSON, Geotagged Building Points GeoJSON, and Base GPKG) "
+            "and select validation rules in Configuration, then click Run Validation.\n\n"
+            "Flagged issues will be displayed here in separate tabs with full attribute inspection and QGIS canvas zoom."
+        )
+        desc_lbl.setAlignment(Qt.AlignCenter)
+        desc_lbl.setWordWrap(True)
+        desc_lbl.setStyleSheet("font-size: 11.5px; color: #718096; line-height: 1.5;")
+        card_layout.addWidget(desc_lbl)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(12)
+        btn_row.setAlignment(Qt.AlignCenter)
+
+        btn_cfg = QPushButton("  ⚙️  Open Configuration  ")
+        btn_cfg.setStyleSheet("""
+            QPushButton {
+                background-color: #EDF2F7;
+                color: #2D3748;
+                font-weight: 600;
+                padding: 8px 16px;
+                border-radius: 6px;
+                border: 1px solid #CBD5E0;
+                font-size: 11.5px;
+            }
+            QPushButton:hover {
+                background-color: #E2E8F0;
+                color: #1A202C;
+            }
+        """)
+        btn_cfg.clicked.connect(lambda: self._switch_to_config(0))
+
+        btn_quick_run = QPushButton("  ▶  Run Validation  ")
+        btn_quick_run.setStyleSheet("""
+            QPushButton {
+                background-color: #2B6CB0;
+                color: #FFFFFF;
+                font-weight: 600;
+                padding: 8px 20px;
+                border-radius: 6px;
+                border: none;
+                font-size: 11.5px;
+            }
+            QPushButton:hover {
+                background-color: #2C5282;
+            }
+        """)
+        btn_quick_run.clicked.connect(self.run_validation)
+
+        btn_row.addWidget(btn_cfg)
+        btn_row.addWidget(btn_quick_run)
+        card_layout.addLayout(btn_row)
+
+        layout.addWidget(card)
+        return container
+
+    def _populate_results_workspace(
+        self,
+        execution_summary: List[Dict[str, Any]],
+        result_layers: Dict[str, Dict[str, Any]],
+    ):
+        """
+        Populate the Results Workspace with:
+          1. Tab 0: Summary Overview (Scorecard table of all executed rules)
+          2. Dynamic Tabs: One tab per rule that produced flagged features (>0)
+        """
+        self.results_tab_widget.clear()
+
+        # Tab 0: Summary Overview
+        summary_tab = self._create_summary_tab(execution_summary, result_layers)
+        self.results_tab_widget.addTab(summary_tab, "📊  Summary Overview")
+
+        # Dynamic Error Tabs
+        for val_id, item in result_layers.items():
+            layer = item["layer"]
+            rule = item["rule"]
+            count = item["count"]
+            check_name = rule["name"]
+
+            err_tab = self._create_result_layer_tab(val_id, check_name, layer, count)
+            tab_title = f"🔴  {val_id} ({count})"
+            tab_index = self.results_tab_widget.addTab(err_tab, tab_title)
+            self.results_tab_widget.setTabToolTip(tab_index, f"{check_name} — {count} flagged feature(s)")
+
+        # Switch subpage of results_stack to show the tab widget
+        self.results_stack.setCurrentIndex(1)
+        self.results_tab_widget.setCurrentIndex(0)
+
+    def _create_summary_tab(
+        self,
+        execution_summary: List[Dict[str, Any]],
+        result_layers: Dict[str, Dict[str, Any]],
+    ) -> QWidget:
+        """Create the Summary Scorecard tab showing all executed rules."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        # Top KPI Scorecards
+        kpi_row = QHBoxLayout()
+        kpi_row.setSpacing(10)
+
+        total_rules = len(execution_summary)
+        flagged_rules = sum(1 for s in execution_summary if s.get("features_flagged", 0) > 0)
+        clean_rules = sum(1 for s in execution_summary if s.get("features_flagged", 0) == 0 and not str(s.get("status", "")).startswith(("Error", "Failed")))
+        total_flags = sum(s.get("features_flagged", 0) for s in execution_summary)
+
+        self._create_kpi_card(kpi_row, "Rules Tested", str(total_rules), "#2980B9")
+        self._create_kpi_card(kpi_row, "Passed (Clean)", str(clean_rules), "#27AE60")
+        self._create_kpi_card(kpi_row, "Rules Flagged", str(flagged_rules), "#E53E3E")
+        self._create_kpi_card(kpi_row, "Total Issues", f"{total_flags:,}", "#C53030")
+
+        layout.addLayout(kpi_row)
+
+        # Scorecard Table
+        table = QTableWidget()
+        table.setColumnCount(6)
+        table.setHorizontalHeaderLabels([
+            "Status",
+            "Validation ID",
+            "Validation Check Name",
+            "Base Layer",
+            "Issues Flagged",
+            "Action",
+        ])
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(False)
+        table.setRowCount(len(execution_summary))
+
+        for row, s in enumerate(execution_summary):
+            val_id = s.get("id", "")
+            name = s.get("name", "")
+            status = s.get("status", "")
+            flags = s.get("features_flagged", 0)
+            has_layer = val_id in result_layers
+
+            # 0. Status Badge
+            if flags > 0:
+                status_item = QTableWidgetItem(" 🔴 Flagged ")
+                status_item.setForeground(QColor("#C53030"))
+            elif str(status).startswith(("Error", "Failed")):
+                status_item = QTableWidgetItem(" ⚠️ Error ")
+                status_item.setForeground(QColor("#DD6B20"))
+            else:
+                status_item = QTableWidgetItem(" 🟢 Clean ")
+                status_item.setForeground(QColor("#27AE60"))
+            status_item.setFont(QFont("Segoe UI", 9, QFont.Bold))
+            status_item.setTextAlignment(Qt.AlignCenter)
+            table.setItem(row, 0, status_item)
+
+            # 1. Validation ID
+            id_item = QTableWidgetItem(val_id)
+            id_item.setFont(QFont("Consolas", 9))
+            table.setItem(row, 1, id_item)
+
+            # 2. Check Name
+            name_item = QTableWidgetItem(name)
+            table.setItem(row, 2, name_item)
+
+            # 3. Base Layer
+            rule_obj = next((r for r in self._rules if r["id"] == val_id), None)
+            has_base = rule_obj["has_base"] if rule_obj else False
+            base_item = QTableWidgetItem(" Required " if has_base else " — ")
+            base_item.setTextAlignment(Qt.AlignCenter)
+            if has_base:
+                base_item.setForeground(QColor("#2B6CB0"))
+            else:
+                base_item.setForeground(QColor("#A0AEC0"))
+            table.setItem(row, 3, base_item)
+
+            # 4. Issues Flagged
+            flags_item = QTableWidgetItem(f"{flags:,}")
+            flags_item.setTextAlignment(Qt.AlignCenter)
+            if flags > 0:
+                flags_item.setForeground(QColor("#C53030"))
+                flags_item.setFont(QFont("Segoe UI", 9, QFont.Bold))
+            else:
+                flags_item.setForeground(QColor("#27AE60"))
+            table.setItem(row, 4, flags_item)
+
+            # 5. Action Button
+            if flags > 0 and has_layer:
+                btn_view = QPushButton("View Tab ➔")
+                btn_view.setStyleSheet("""
+                    QPushButton {
+                        background-color: #EDF2F7;
+                        color: #2B6CB0;
+                        font-weight: bold;
+                        border: 1px solid #CBD5E0;
+                        border-radius: 3px;
+                        padding: 3px 8px;
+                        font-size: 10px;
+                    }
+                    QPushButton:hover {
+                        background-color: #BEE3F8;
+                    }
+                """)
+                btn_view.clicked.connect(lambda checked=False, vid=val_id: self._jump_to_result_tab(vid))
+                table.setCellWidget(row, 5, btn_view)
+            else:
+                empty_act = QTableWidgetItem("—")
+                empty_act.setTextAlignment(Qt.AlignCenter)
+                empty_act.setForeground(QColor("#A0AEC0"))
+                table.setItem(row, 5, empty_act)
+
+        # Connect double-click on row to jump to tab if flagged
+        def _on_summary_row_double_clicked(row, col):
+            id_it = table.item(row, 1)
+            if id_it:
+                self._jump_to_result_tab(id_it.text())
+        table.cellDoubleClicked.connect(_on_summary_row_double_clicked)
+
+        layout.addWidget(table, stretch=1)
+        return tab
+
+    def _jump_to_result_tab(self, val_id: str):
+        """Switch results_tab_widget to the tab matching val_id."""
+        if not val_id:
+            return
+        target = str(val_id)
+        for ti in range(1, self.results_tab_widget.count()):
+            if target in self.results_tab_widget.tabText(ti):
+                self.results_tab_widget.setCurrentIndex(ti)
+                break
+
+
+    def _create_result_layer_tab(
+        self,
+        val_id: str,
+        check_name: str,
+        layer: QgsVectorLayer,
+        count: int,
+    ) -> QWidget:
+        """Create an interactive feature table tab for a flagged validation rule."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        # Mini Toolbar
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(8)
+
+        # Title & count
+        title_box = QVBoxLayout()
+        title_box.setSpacing(1)
+        lbl_vname = QLabel(f"<b>{val_id}</b> — {check_name}")
+        lbl_vname.setStyleSheet("font-size: 11px; color: #1A365D;")
+        lbl_vcount = QLabel(f"<span style='color: #C53030; font-weight: bold;'>{count:,}</span> flagged feature(s) detected. Double-click any row to zoom on canvas.")
+        lbl_vcount.setStyleSheet("font-size: 10px; color: #4A5568;")
+        title_box.addWidget(lbl_vname)
+        title_box.addWidget(lbl_vcount)
+        toolbar.addLayout(title_box, stretch=1)
+
+        # Search filter
+        edit_filter = QLineEdit()
+        edit_filter.setPlaceholderText("🔍  Filter rows in this table...")
+        edit_filter.setClearButtonEnabled(True)
+        edit_filter.setFixedWidth(240)
+        toolbar.addWidget(edit_filter)
+
+        # Export to CSV
+        btn_csv = QPushButton("📥  Export to CSV")
+        btn_csv.setStyleSheet("""
+            QPushButton {
+                background-color: #EDF2F7;
+                color: #2D3748;
+                font-weight: bold;
+                padding: 5px 10px;
+                border-radius: 4px;
+                border: 1px solid #CBD5E0;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #E2E8F0;
+            }
+        """)
+        btn_csv.clicked.connect(lambda: self._export_layer_to_csv(layer, val_id))
+        toolbar.addWidget(btn_csv)
+
+        # Open QGIS Attribute Table
+        btn_qgis_tbl = QPushButton("📋  QGIS Table")
+        btn_qgis_tbl.setToolTip("Open layer in QGIS native Attribute Table")
+        btn_qgis_tbl.setStyleSheet("""
+            QPushButton {
+                background-color: #EDF2F7;
+                color: #2D3748;
+                font-weight: bold;
+                padding: 5px 10px;
+                border-radius: 4px;
+                border: 1px solid #CBD5E0;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #E2E8F0;
+            }
+        """)
+        btn_qgis_tbl.clicked.connect(lambda: self.iface.showAttributeTable(layer) if self.iface and layer and layer.isValid() else None)
+        toolbar.addWidget(btn_qgis_tbl)
+
+        layout.addLayout(toolbar)
+
+        # Feature Table
+        table = QTableWidget()
+        field_names = [f.name() for f in layer.fields()] if layer and layer.isValid() else []
+        table.setColumnCount(len(field_names))
+        table.setHorizontalHeaderLabels(field_names)
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(True)
+
+        if layer and layer.isValid():
+            features = list(layer.getFeatures())
+            table.setRowCount(len(features))
+            table.setSortingEnabled(False)
+
+            for row_idx, feat in enumerate(features):
+                fid = feat.id()
+                for col_idx, fname in enumerate(field_names):
+                    val = feat[fname]
+                    val_str = "" if val is None else str(val)
+                    item = QTableWidgetItem(val_str)
+                    item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                    if col_idx == 0:
+                        item.setData(Qt.UserRole, fid)
+                    table.setItem(row_idx, col_idx, item)
+
+            table.setSortingEnabled(True)
+
+        table.itemDoubleClicked.connect(
+            lambda item: self._on_table_row_double_clicked(layer, table, item.row())
+        )
+        edit_filter.textChanged.connect(
+            lambda text: self._filter_feature_table(table, text)
+        )
+
+        layout.addWidget(table, stretch=1)
+        return tab
+
+    def _on_table_row_double_clicked(self, layer: QgsVectorLayer, table: QTableWidget, row: int):
+        """Zoom to and flash feature on QGIS map canvas upon double-clicking table row."""
+        item0 = table.item(row, 0)
+        if not item0:
+            return
+        fid = item0.data(Qt.UserRole)
+        if fid is None:
+            return
+
+        if self.iface and layer and layer.isValid():
+            canvas = self.iface.mapCanvas()
+            try:
+                layer.selectByIds([fid])
+                if layer.isSpatial():
+                    canvas.zoomToFeatureIds(layer, [fid])
+                    canvas.flashFeatureIds(layer, [fid])
+                    canvas.refresh()
+                self.lbl_footer_status.setText(f"Zoomed to feature #{fid} in '{layer.name()}'")
+            except Exception as exc:
+                self.lbl_footer_status.setText(f"Could not zoom to feature: {exc}")
+
+    def _filter_feature_table(self, table: QTableWidget, text: str):
+        """Filter table rows matching search string across all columns."""
+        search = text.strip().lower()
+        for row in range(table.rowCount()):
+            if not search:
+                table.setRowHidden(row, False)
+                continue
+            match = False
+            for col in range(table.columnCount()):
+                it = table.item(row, col)
+                if it and search in it.text().lower():
+                    match = True
+                    break
+            table.setRowHidden(row, not match)
+
+    def _export_layer_to_csv(self, layer: QgsVectorLayer, val_id: str):
+        """Export the result layer attributes to a CSV file."""
+        if not layer or not layer.isValid():
+            QMessageBox.warning(self, "Export Error", "Layer is not valid for export.")
+            return
+
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            f"Export {val_id} to CSV",
+            f"{val_id}_results.csv",
+            "CSV Files (*.csv);;All Files (*.*)",
+        )
+        if not filename:
+            return
+
+        try:
+            with open(filename, "w", newline="", encoding="utf-8-sig") as fh:
+                writer = csv.writer(fh)
+                field_names = [f.name() for f in layer.fields()]
+                writer.writerow(field_names)
+                for feat in layer.getFeatures():
+                    row_vals = [feat[fname] if feat[fname] is not None else "" for fname in field_names]
+                    writer.writerow(row_vals)
+
+            QMessageBox.information(
+                self,
+                "Export Succeeded",
+                f"Successfully exported {layer.featureCount():,} records to:\n{filename}",
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Export Error", f"Failed to export CSV:\n{exc}")
 
     # -----------------------------------------------------------------------
     # Tab 1: Data Config
@@ -614,6 +1201,29 @@ class CbmsmvDialog(QDialog):
 
         return tab
 
+    def _save_rule_settings(self):
+        """Persist currently checked validation rule IDs into QSettings."""
+        enabled_rules = [
+            val_id for val_id, item in self._rule_checkboxes.items()
+            if item.checkState() == Qt.Checked
+        ]
+        self.settings.setValue(SETTINGS_KEY_SELECTED_RULES, json.dumps(enabled_rules))
+
+    def _get_saved_enabled_rule_ids(self) -> Optional[set]:
+        """Load the set of saved enabled rule IDs from QSettings if present."""
+        raw = self.settings.value(SETTINGS_KEY_SELECTED_RULES, None)
+        if raw is not None:
+            try:
+                if isinstance(raw, str):
+                    loaded = json.loads(raw)
+                    if isinstance(loaded, list):
+                        return set(loaded)
+                elif isinstance(raw, list):
+                    return set(raw)
+            except Exception:
+                pass
+        return None
+
     def refresh_rules(self):
         """
         Dynamically scan gmd_scripts/cbms_mv and populate the table.
@@ -631,6 +1241,8 @@ class CbmsmvDialog(QDialog):
     def _populate_rules_table(self, prev_states: Optional[Dict[str, Qt.CheckState]] = None):
         """Populate the table with the dynamically discovered cbms_mv algorithms."""
         prev_states = prev_states or {}
+        saved_enabled = self._get_saved_enabled_rule_ids()
+
         self.rules_table.blockSignals(True)
         self.rules_table.setRowCount(len(self._rules))
         self._rule_checkboxes.clear()
@@ -641,15 +1253,22 @@ class CbmsmvDialog(QDialog):
             # 0. Checkbox
             item_check = QTableWidgetItem()
             item_check.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            default_state = prev_states.get(val_id, Qt.Checked if rule.get("default", True) else Qt.Unchecked)
-            item_check.setCheckState(default_state)
+            
+            if prev_states and val_id in prev_states:
+                state = prev_states[val_id]
+            elif saved_enabled is not None:
+                state = Qt.Checked if val_id in saved_enabled else Qt.Unchecked
+            else:
+                state = Qt.Checked if rule.get("default", True) else Qt.Unchecked
+
+            item_check.setCheckState(state)
             self._rule_checkboxes[val_id] = item_check
             self.rules_table.setItem(row, 0, item_check)
 
             # 1. Validation ID
             item_id = QTableWidgetItem(val_id)
             item_id.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            item_id.setFont(QFont("Consolas", 9, QFont.Bold))
+            item_id.setFont(QFont("Consolas", 9))
             self.rules_table.setItem(row, 1, item_id)
 
             # 2. Validation Check Name
@@ -680,6 +1299,7 @@ class CbmsmvDialog(QDialog):
         """Handle checkbox changes in the rules table."""
         if item.column() == 0:
             self._update_rule_counts()
+            self._save_rule_settings()
 
     def _filter_rules_table(self, text: str):
         """Filter rows based on search input matching Validation ID or Validation Check Name."""
@@ -702,6 +1322,7 @@ class CbmsmvDialog(QDialog):
             item.setCheckState(state)
         self.rules_table.blockSignals(False)
         self._update_rule_counts()
+        self._save_rule_settings()
 
     def _select_base_layer_rules_only(self):
         """Select only rules that require Base Layers (.gpkg)."""
@@ -711,6 +1332,7 @@ class CbmsmvDialog(QDialog):
             item.setCheckState(Qt.Checked if rule["has_base"] else Qt.Unchecked)
         self.rules_table.blockSignals(False)
         self._update_rule_counts()
+        self._save_rule_settings()
 
     def _select_no_base_layer_rules_only(self):
         """Select only rules that do not require Base Layers."""
@@ -720,6 +1342,7 @@ class CbmsmvDialog(QDialog):
             item.setCheckState(Qt.Unchecked if rule["has_base"] else Qt.Checked)
         self.rules_table.blockSignals(False)
         self._update_rule_counts()
+        self._save_rule_settings()
 
     def _update_rule_counts(self):
         """Update the rule counter label, footer status, and KPI metrics."""
@@ -831,11 +1454,11 @@ class CbmsmvDialog(QDialog):
         vbox.setSpacing(2)
 
         lbl_val = QLabel(initial_val)
-        lbl_val.setStyleSheet(f"font-size: 20px; font-weight: bold; color: {color_hex};")
+        lbl_val.setStyleSheet(f"font-size: 22px; font-weight: 700; color: {color_hex};")
         lbl_val.setAlignment(Qt.AlignCenter)
 
         lbl_title = QLabel(title)
-        lbl_title.setStyleSheet("font-size: 10px; color: #666; text-transform: uppercase; font-weight: bold;")
+        lbl_title.setStyleSheet("font-size: 9.5px; color: #718096; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;")
         lbl_title.setAlignment(Qt.AlignCenter)
 
         vbox.addWidget(lbl_val)
@@ -859,20 +1482,29 @@ class CbmsmvDialog(QDialog):
         self.lbl_footer_status.setStyleSheet("color: #555; font-size: 11px;")
         layout.addWidget(self.lbl_footer_status, stretch=1)
 
+        self.footer_progress = QProgressBar()
+        self.footer_progress.setObjectName("footerProgressBar")
+        self.footer_progress.setRange(0, 100)
+        self.footer_progress.setValue(0)
+        self.footer_progress.setFixedWidth(140)
+        self.footer_progress.setFixedHeight(14)
+        self.footer_progress.setTextVisible(False)
+        self.footer_progress.setVisible(False)
+        layout.addWidget(self.footer_progress)
+
+        self.btn_reset = QPushButton("Reset Form")
+        self.btn_reset.clicked.connect(self._reset_form)
+        layout.addWidget(self.btn_reset)
+
+        self.btn_close = QPushButton("Close")
+        self.btn_close.clicked.connect(self.close)
+        layout.addWidget(self.btn_close)
+
         self.btn_run = QPushButton("  ▶  Run Validation  ")
         self.btn_run.setObjectName("btnRun")
         self.btn_run.setShortcut("Ctrl+Return")
         self.btn_run.setToolTip("Run Map Validation (Ctrl+Enter)")
         self.btn_run.clicked.connect(self.run_validation)
-
-        self.btn_reset = QPushButton("Reset Form")
-        self.btn_reset.clicked.connect(self._reset_form)
-
-        self.btn_close = QPushButton("Close")
-        self.btn_close.clicked.connect(self.close)
-
-        layout.addWidget(self.btn_reset)
-        layout.addWidget(self.btn_close)
         layout.addWidget(self.btn_run)
 
         return footer
@@ -885,6 +1517,12 @@ class CbmsmvDialog(QDialog):
         self.setStyleSheet("""
             QDialog {
                 background-color: #F8F9FA;
+                font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Roboto", "Helvetica Neue", sans-serif;
+                font-size: 11.5px;
+                color: #2D3748;
+            }
+            QWidget {
+                font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Roboto", "Helvetica Neue", sans-serif;
             }
             #headerBanner {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
@@ -893,25 +1531,28 @@ class CbmsmvDialog(QDialog):
             }
             #headerTitle {
                 color: #FFFFFF;
-                font-size: 16px;
-                font-weight: bold;
+                font-size: 15px;
+                font-weight: 600;
+                letter-spacing: 0.2px;
             }
             #headerSubtitle {
                 color: #CBD5E0;
                 font-size: 11px;
+                line-height: 1.3;
             }
             #headerBadge {
                 background-color: #38A169;
                 color: #FFFFFF;
-                font-size: 9px;
-                font-weight: bold;
+                font-size: 9.5px;
+                font-weight: 700;
                 padding: 4px 8px;
                 border-radius: 4px;
                 letter-spacing: 0.5px;
             }
             #sectionGroup {
-                font-weight: bold;
-                color: #2C3E50;
+                font-weight: 600;
+                font-size: 12px;
+                color: #1A365D;
                 border: 1px solid #D0D7DE;
                 border-radius: 6px;
                 margin-top: 10px;
@@ -936,12 +1577,21 @@ class CbmsmvDialog(QDialog):
                 background-color: #EDF2F7;
                 height: 18px;
                 font-size: 10px;
-                font-weight: bold;
+                font-weight: 600;
             }
             #validationProgressBar::chunk {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                     stop:0 #3182CE, stop:1 #63B3ED);
                 border-radius: 3px;
+            }
+            #footerProgressBar {
+                border: 1px solid #CBD5E0;
+                border-radius: 3px;
+                background-color: #EDF2F7;
+            }
+            #footerProgressBar::chunk {
+                background-color: #3182CE;
+                border-radius: 2px;
             }
             #consoleLog {
                 background-color: #1A202C;
@@ -949,16 +1599,18 @@ class CbmsmvDialog(QDialog):
                 border: 1px solid #2D3748;
                 border-radius: 6px;
                 padding: 8px;
-                font-family: Consolas, monospace;
+                font-family: "Consolas", "Cascadia Code", monospace;
+                font-size: 10.5px;
+                line-height: 1.4;
             }
             #btnRun {
                 background-color: #2B6CB0;
                 color: #FFFFFF;
-                font-weight: bold;
+                font-weight: 600;
                 padding: 7px 18px;
                 border-radius: 5px;
                 border: none;
-                font-size: 12px;
+                font-size: 11.5px;
             }
             #btnRun:hover {
                 background-color: #2C5282;
@@ -974,6 +1626,8 @@ class CbmsmvDialog(QDialog):
                 border: 1px solid #E2E8F0;
                 border-radius: 4px;
                 gridline-color: #EDF2F7;
+                font-size: 11px;
+                color: #2D3748;
             }
             QTableWidget::item:selected {
                 background-color: #EBF8FF;
@@ -982,10 +1636,47 @@ class CbmsmvDialog(QDialog):
             QHeaderView::section {
                 background-color: #EDF2F7;
                 color: #2D3748;
-                font-weight: bold;
+                font-size: 11px;
+                font-weight: 600;
                 padding: 6px 8px;
                 border: none;
                 border-bottom: 1px solid #CBD5E0;
+            }
+            QTabWidget::pane {
+                border: 1px solid #E2E8F0;
+                background-color: #FFFFFF;
+                border-radius: 4px;
+            }
+            QTabBar::tab {
+                background-color: #EDF2F7;
+                color: #4A5568;
+                font-size: 11px;
+                font-weight: 600;
+                padding: 6px 14px;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+                margin-right: 2px;
+            }
+            QTabBar::tab:selected {
+                background-color: #FFFFFF;
+                color: #2B6CB0;
+                border: 1px solid #E2E8F0;
+                border-bottom-color: #FFFFFF;
+            }
+            QLineEdit {
+                font-size: 11px;
+                padding: 4px 8px;
+                border: 1px solid #CBD5E0;
+                border-radius: 4px;
+                background-color: #FFFFFF;
+                color: #2D3748;
+            }
+            QLineEdit:focus {
+                border-color: #3182CE;
+            }
+            QPushButton {
+                font-size: 11px;
+                font-weight: 600;
             }
         """)
 
@@ -1052,17 +1743,27 @@ class CbmsmvDialog(QDialog):
     # Form Reset
     # -----------------------------------------------------------------------
     def _reset_form(self):
-        """Reset inputs and table selections to defaults."""
+        """Reset inputs, table selections, and results to defaults."""
         self.file_form2.setFilePath("")
         self.file_points.setFilePath("")
         self.file_base.setFilePath("")
         self.radio_memory.setChecked(True)
         self.file_widget_gpkg.setFilePath("")
+        self.settings.remove(SETTINGS_KEY_SELECTED_RULES)
         self._set_all_rules_checked(True)
         self.progress_bar.setValue(0)
+        if hasattr(self, "footer_progress"):
+            self.footer_progress.setValue(0)
+            self.footer_progress.setVisible(False)
         self.lbl_progress_status.setText("Status: Idle — Ready to run validation")
         self.lbl_kpi_flagged.setText("0")
         self.lbl_kpi_layers.setText("0")
+        self._result_layers.clear()
+        self._execution_summary.clear()
+        if hasattr(self, "results_tab_widget"):
+            self.results_tab_widget.clear()
+        if hasattr(self, "results_stack"):
+            self.results_stack.setCurrentIndex(0)
         self._on_inputs_changed()
         self._log_info("Form reset to default settings.")
 
@@ -1271,7 +1972,7 @@ class CbmsmvDialog(QDialog):
                 "Missing Form 2 Data File",
                 "Please specify the Form 2 Data File (.json) in the 'Data Config' tab.",
             )
-            self.tab_widget.setCurrentIndex(0)
+            self._switch_to_config(0)
             return
 
         if not points_path:
@@ -1280,7 +1981,7 @@ class CbmsmvDialog(QDialog):
                 "Missing Geotagged Points File",
                 "Please specify the Geotagged Building Points (.geojson) in the 'Data Config' tab.",
             )
-            self.tab_widget.setCurrentIndex(0)
+            self._switch_to_config(0)
             return
 
         if not os.path.exists(form2_path):
@@ -1289,7 +1990,7 @@ class CbmsmvDialog(QDialog):
                 "File Not Found",
                 f"Form 2 Data File does not exist:\n{form2_path}",
             )
-            self.tab_widget.setCurrentIndex(0)
+            self._switch_to_config(0)
             return
 
         if not os.path.exists(points_path):
@@ -1298,7 +1999,7 @@ class CbmsmvDialog(QDialog):
                 "File Not Found",
                 f"Geotagged Building Points file does not exist:\n{points_path}",
             )
-            self.tab_widget.setCurrentIndex(0)
+            self._switch_to_config(0)
             return
 
         # 2. Get enabled validation rules
@@ -1313,7 +2014,7 @@ class CbmsmvDialog(QDialog):
                 "No Rules Selected",
                 "Please enable at least one validation rule in the 'Validation Rules' tab.",
             )
-            self.tab_widget.setCurrentIndex(1)
+            self._switch_to_config(1)
             return
 
         # 3. Check Base Layer dependency
@@ -1330,7 +2031,7 @@ class CbmsmvDialog(QDialog):
                 QMessageBox.No,
             )
             if reply == QMessageBox.No:
-                self.tab_widget.setCurrentIndex(0)
+                self._switch_to_config(0)
                 return
 
             selected_rules = [r for r in selected_rules if not r["has_base"]]
@@ -1340,13 +2041,16 @@ class CbmsmvDialog(QDialog):
                     "No Rules to Run",
                     "All selected rules require Base Layers (.gpkg). Please provide the Base Layers file to continue.",
                 )
-                self.tab_widget.setCurrentIndex(0)
+                self._switch_to_config(0)
                 return
 
         # 4. Switch to Execution Logs tab and initialize session
-        self.tab_widget.setCurrentIndex(2)
+        self._switch_to_config(2)
         self.btn_run.setEnabled(False)
         self.progress_bar.setValue(0)
+        if hasattr(self, "footer_progress"):
+            self.footer_progress.setVisible(True)
+            self.footer_progress.setValue(0)
         self.lbl_progress_status.setText("Status: Initializing validation session...")
 
         self._log_step("INIT", "=== 2027 CBMS Form 2 Map Validation Session Started ===")
@@ -1355,6 +2059,10 @@ class CbmsmvDialog(QDialog):
         self._log_info(f"Base Layers (.gpkg)         : {base_path if base_path else '(None provided)'}")
         self._log_info(f"Destination                 : {'In-Memory Layers' if self.radio_memory.isChecked() else self.file_widget_gpkg.filePath()}")
         self._log_info(f"Queued Validation Algorithms: {len(selected_rules)}")
+
+        # Clear previous results
+        self._result_layers.clear()
+        self._execution_summary.clear()
 
         # 5. Execution context and feedback
         self.context = QgsProcessingContext()
@@ -1378,6 +2086,8 @@ class CbmsmvDialog(QDialog):
 
             pct = int((i / total_rules) * 100)
             self.progress_bar.setValue(pct)
+            if hasattr(self, "footer_progress"):
+                self.footer_progress.setValue(pct)
             self.lbl_progress_status.setText(f"Status: Executing [{val_id}] ({i+1}/{total_rules})...")
             self._log_step("RUN", f"[{i+1}/{total_rules}] Running '{val_id}'")
             self._log_info(f"Check: {check_name}")
@@ -1404,7 +2114,6 @@ class CbmsmvDialog(QDialog):
             alg_target = reg_id if is_registered else alg
 
             # Assemble standardized parameter dictionary
-            # Standard parameters for all CBMS MV algorithms:
             params: Dict[str, Any] = {
                 "INPUT_DATA": form2_path,
                 "INPUT_LAYER": points_path,
@@ -1466,6 +2175,13 @@ class CbmsmvDialog(QDialog):
                     self._log_warning(f"'{val_id}' completed: {flagged_count:,} issue(s) flagged.")
                     total_output_layers += 1
 
+                    # Register in result layers dictionary for the Results Workspace tabs
+                    self._result_layers[val_id] = {
+                        "layer": out_layer,
+                        "rule": rule,
+                        "count": flagged_count,
+                    }
+
                     # Add layer to QGIS canvas
                     if self.chk_load_canvas.isChecked():
                         if hasattr(self.context, "takeResultLayer"):
@@ -1473,6 +2189,7 @@ class CbmsmvDialog(QDialog):
                                 take_lyr = self.context.takeResultLayer(out_dest if isinstance(out_dest, str) else out_layer.id())
                                 if take_lyr and take_lyr.isValid():
                                     out_layer = take_lyr
+                                    self._result_layers[val_id]["layer"] = out_layer
                             except Exception:
                                 pass
 
@@ -1534,6 +2251,8 @@ class CbmsmvDialog(QDialog):
 
         # 7. Finalize execution session
         self.progress_bar.setValue(100)
+        if hasattr(self, "footer_progress"):
+            self.footer_progress.setValue(100)
         self.lbl_progress_status.setText("Status: Validation complete!")
         self.btn_run.setEnabled(True)
 
@@ -1541,6 +2260,26 @@ class CbmsmvDialog(QDialog):
         self._log_info(f"Total Algorithms Executed : {len(execution_summary)}")
         self._log_info(f"Total Issues Flagged      : {total_flagged_issues:,}")
         self._log_info(f"Generated Result Layers   : {total_output_layers}")
+
+        # Populate Results Workspace and switch to it
+        self._execution_summary = execution_summary
+        self._populate_results_workspace(execution_summary, self._result_layers)
+        self._switch_to_results()
+
+        # Update Header Badge
+        if hasattr(self, "lbl_header_badge"):
+            if total_flagged_issues > 0:
+                self.lbl_header_badge.setText(f"{total_flagged_issues:,} ISSUES FLAGGED")
+                self.lbl_header_badge.setStyleSheet(
+                    "background-color: #E53E3E; color: #FFFFFF; font-size: 9px; font-weight: bold; "
+                    "padding: 4px 8px; border-radius: 4px; letter-spacing: 0.5px;"
+                )
+            else:
+                self.lbl_header_badge.setText("ALL CLEAN")
+                self.lbl_header_badge.setStyleSheet(
+                    "background-color: #38A169; color: #FFFFFF; font-size: 9px; font-weight: bold; "
+                    "padding: 4px 8px; border-radius: 4px; letter-spacing: 0.5px;"
+                )
 
         # Generate summary audit report file if selected
         if self.chk_summary_report.isChecked():
