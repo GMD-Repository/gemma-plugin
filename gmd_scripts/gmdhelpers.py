@@ -408,6 +408,7 @@ REF_SELECT_MV_COLS  = [
     "bsn",
     "ea_geocode",
     "en_code",
+    "remarks"
 ]
 
 
