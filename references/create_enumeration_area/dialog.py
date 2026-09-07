@@ -221,7 +221,8 @@ class EALauncherDialog(QDialog):
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
-        self.setMinimumSize(1150, 700)
+        self.setMinimumSize(960, 620)
+        self.resize(1120, 720)
         self.setWindowFlags(
             Qt.Dialog |
             Qt.WindowCloseButtonHint |
@@ -424,6 +425,8 @@ class EALauncherDialog(QDialog):
         # ── Main Splitter: left (inputs+options) / right (results+log) ────
         splitter = QSplitter(Qt.Horizontal)
         splitter.setObjectName("preEaSplitter")
+        splitter.setChildrenCollapsible(False)
+        splitter.setOpaqueResize(True)
 
         # ── LEFT PANEL ──────────────────────────────────────────────────
         left_widget = QWidget()
@@ -655,7 +658,7 @@ class EALauncherDialog(QDialog):
         right_tabs.addTab(log_tab, "Processing Log")
 
         right_layout.addWidget(right_tabs)
-        right_widget.setMinimumWidth(480)
+        right_widget.setMinimumWidth(340)
         splitter.addWidget(right_widget)
 
         # ── Description Panel (third splitter pane) ──────────────────────
@@ -670,9 +673,12 @@ class EALauncherDialog(QDialog):
         self.pre_ea_desc_browser.setHtml(self._pre_ea_help_html())
         desc_panel_layout.addWidget(self.pre_ea_desc_browser)
 
-        self.pre_ea_desc_panel.setMinimumWidth(240)
+        self.pre_ea_desc_panel.setMinimumWidth(200)
         splitter.addWidget(self.pre_ea_desc_panel)
-        splitter.setSizes([310, 640, 260])
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
+        splitter.setSizes([300, 540, 240])
 
         tab_layout.addWidget(splitter, 1)
 
@@ -1386,7 +1392,7 @@ class EALauncherDialog(QDialog):
         scroll.setWidget(scroll_content)
         left_layout.addWidget(scroll)
 
-        left_widget.setMinimumWidth(390)
+        left_widget.setMinimumWidth(300)
         main_splitter.addWidget(left_widget)
 
         # Right Panel (Separated Tabs for Live Delineation Preview and Delineation Execution Logs)
@@ -1465,7 +1471,7 @@ class EALauncherDialog(QDialog):
         self.delin_right_tabs.addTab(logs_tab, "Processing Progress && Logs")
 
         right_layout.addWidget(self.delin_right_tabs)
-        right_widget.setMinimumWidth(480)
+        right_widget.setMinimumWidth(340)
         main_splitter.addWidget(right_widget)
 
         # ── Help / Description Panel ──────────────────────────────────────
@@ -1479,11 +1485,15 @@ class EALauncherDialog(QDialog):
         self.help_text.setHtml(self.algo.shortHelpString())
         help_layout.addWidget(self.help_text)
 
-        self.help_panel.setMinimumWidth(260)
+        self.help_panel.setMinimumWidth(200)
         main_splitter.addWidget(self.help_panel)
 
-        # Set proportional initial widths for the panels
-        main_splitter.setSizes([390, 500, 260])
+        main_splitter.setChildrenCollapsible(False)
+        main_splitter.setOpaqueResize(True)
+        main_splitter.setStretchFactor(0, 0)
+        main_splitter.setStretchFactor(1, 1)
+        main_splitter.setStretchFactor(2, 0)
+        main_splitter.setSizes([330, 530, 240])
         root.addWidget(main_splitter, 1)
 
         # ── Bottom Bar (Progress, Run, Cancel & Status Banner) ───────────
@@ -1712,7 +1722,7 @@ class EALauncherDialog(QDialog):
         merge_scroll.setWidget(merge_scroll_content)
         merge_left_layout.addWidget(merge_scroll)
 
-        merge_left_widget.setMinimumWidth(390)
+        merge_left_widget.setMinimumWidth(300)
         merge_splitter.addWidget(merge_left_widget)
 
         # Right Panel (Separated Tabs for Live Merge Preview and Merge Execution Logs)
@@ -1787,7 +1797,7 @@ class EALauncherDialog(QDialog):
         self.merge_right_tabs.addTab(merge_logs_tab, "Processing Progress && Logs")
 
         merge_right_layout.addWidget(self.merge_right_tabs)
-        merge_right_widget.setMinimumWidth(480)
+        merge_right_widget.setMinimumWidth(340)
         merge_splitter.addWidget(merge_right_widget)
 
         # ── Help / Description Panel ──────────────────────────────────────
@@ -1801,11 +1811,15 @@ class EALauncherDialog(QDialog):
         self.merge_help_text.setHtml(self.algo.shortHelpString())
         merge_help_layout.addWidget(self.merge_help_text)
 
-        self.merge_help_panel.setMinimumWidth(260)
+        self.merge_help_panel.setMinimumWidth(200)
         merge_splitter.addWidget(self.merge_help_panel)
 
-        # Set proportional initial widths for the panels
-        merge_splitter.setSizes([390, 500, 260])
+        merge_splitter.setChildrenCollapsible(False)
+        merge_splitter.setOpaqueResize(True)
+        merge_splitter.setStretchFactor(0, 0)
+        merge_splitter.setStretchFactor(1, 1)
+        merge_splitter.setStretchFactor(2, 0)
+        merge_splitter.setSizes([330, 530, 240])
         root.addWidget(merge_splitter, 1)
 
         # ── Bottom Bar (Progress, Run, Cancel & Status Banner) ───────────
@@ -2141,13 +2155,18 @@ class EALauncherDialog(QDialog):
         table = QTableWidget()
         table.setColumnCount(5)
         table.setHorizontalHeaderLabels(["Geocode", "Barangay", "EA Name", "Household Count", "Role / Status"])
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        table.horizontalHeader().setStretchLastSection(True)
+        hdr = table.horizontalHeader()
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(1, QHeaderView.Stretch)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectRows)
         table.setAlternatingRowColors(True)
         table.setMinimumHeight(150)
+        table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         return table
 
     # ── Live Candidate Preview Logic ────────────────────────────────────────
@@ -3008,6 +3027,10 @@ class EALauncherDialog(QDialog):
             table.setItem(row_idx, 3, item_hh)
             table.setItem(row_idx, 4, item_role)
 
+        table.resizeColumnsToContents()
+        if table.columnCount() > 1:
+            table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+
     # ── Console Controls ───────────────────────────────────────────────────
 
     def log_console_clear(self):
@@ -3592,6 +3615,8 @@ class EALauncherDialog(QDialog):
         # ── Main Splitter: left (inputs+options) / right (summary+log) ────
         splitter = QSplitter(Qt.Horizontal)
         splitter.setObjectName("eaMergeSplitter")
+        splitter.setChildrenCollapsible(False)
+        splitter.setOpaqueResize(True)
 
         # ── LEFT PANEL ──────────────────────────────────────────────────
         left_widget = QWidget()
@@ -3827,7 +3852,7 @@ class EALauncherDialog(QDialog):
         right_tabs.addTab(log_tab, "Processing Log")
 
         right_layout.addWidget(right_tabs)
-        right_widget.setMinimumWidth(480)
+        right_widget.setMinimumWidth(340)
         splitter.addWidget(right_widget)
 
         # ── Description Panel (third splitter pane) ──────────────────────
@@ -3842,9 +3867,12 @@ class EALauncherDialog(QDialog):
         self.ea_merge_desc_browser.setHtml(self._ea_merge_help_html())
         desc_panel_layout.addWidget(self.ea_merge_desc_browser)
 
-        self.ea_merge_desc_panel.setMinimumWidth(240)
+        self.ea_merge_desc_panel.setMinimumWidth(200)
         splitter.addWidget(self.ea_merge_desc_panel)
-        splitter.setSizes([310, 640, 260])
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
+        splitter.setSizes([300, 540, 240])
 
         tab_layout.addWidget(splitter, 1)
 

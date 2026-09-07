@@ -90,8 +90,11 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
         self.delineation_table.setHorizontalHeaderLabels([
             "Geocode", "Barangay", "EA Name", "Household Count"
         ])
-        self.delineation_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.delineation_table.horizontalHeader().setStretchLastSection(True)
+        delin_hdr = self.delineation_table.horizontalHeader()
+        delin_hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        delin_hdr.setSectionResizeMode(1, QHeaderView.Stretch)
+        delin_hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        delin_hdr.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.delineation_table.verticalHeader().setVisible(False)
         self.delineation_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.delineation_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -105,8 +108,11 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
         self.merge_table.setHorizontalHeaderLabels([
             "Geocode", "Barangay", "EA Name", "Household Count"
         ])
-        self.merge_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.merge_table.horizontalHeader().setStretchLastSection(True)
+        merge_hdr = self.merge_table.horizontalHeader()
+        merge_hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        merge_hdr.setSectionResizeMode(1, QHeaderView.Stretch)
+        merge_hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        merge_hdr.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.merge_table.verticalHeader().setVisible(False)
         self.merge_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.merge_table.setSelectionBehavior(QTableWidget.SelectRows)
