@@ -249,9 +249,9 @@ class CbmsmvDialog(QDialog):
         main_layout.setContentsMargins(14, 14, 14, 14)
         main_layout.setSpacing(10)
 
-        # 1. Header Banner
-        header_widget = self._create_header_banner()
-        main_layout.addWidget(header_widget)
+        # 1. Top Navigation Bar (compact)
+        nav_bar = self._create_top_bar()
+        main_layout.addWidget(nav_bar)
 
         # 2. Main View Stack: Page 0 = Results Workspace, Page 1 = Configuration View
         self.main_stack = QStackedWidget()
@@ -273,64 +273,26 @@ class CbmsmvDialog(QDialog):
         main_layout.addWidget(bottom_bar)
 
     # -----------------------------------------------------------------------
-    # Header Banner
+    # Top Navigation Bar
     # -----------------------------------------------------------------------
-    def _create_header_banner(self) -> QWidget:
-        """Create the top brand banner with title, description, view switch button, and badge."""
-        banner = QFrame()
-        banner.setObjectName("headerBanner")
-        banner_layout = QHBoxLayout(banner)
-        banner_layout.setContentsMargins(16, 12, 16, 12)
-        banner_layout.setSpacing(14)
+    def _create_top_bar(self) -> QWidget:
+        """Create a compact top navigation bar with view switch button."""
+        bar = QFrame()
+        bar.setObjectName("topNavBar")
+        bar_layout = QHBoxLayout(bar)
+        bar_layout.setContentsMargins(4, 2, 4, 4)
+        bar_layout.setSpacing(10)
 
-        text_layout = QVBoxLayout()
-        text_layout.setSpacing(2)
+        bar_layout.addStretch()
 
-        title_label = QLabel("2027 CBMS Form 2 Map Validation")
-        title_label.setObjectName("headerTitle")
-
-        subtitle_label = QLabel(
-            "Spatial & Attribute Consistency Validation Engine for CBMS Form 2 Datafiles, "
-            "Geotagged Points, and Reference Base Layers"
-        )
-        subtitle_label.setObjectName("headerSubtitle")
-
-        text_layout.addWidget(title_label)
-        text_layout.addWidget(subtitle_label)
-        banner_layout.addLayout(text_layout, stretch=1)
-
-        # Right side actions
-        right_layout = QHBoxLayout()
-        right_layout.setSpacing(8)
-
+        # View Switch Button
         self.btn_header_config = QPushButton("⚙️  Configuration")
         self.btn_header_config.setObjectName("btnHeaderConfig")
         self.btn_header_config.setToolTip("Configure input files, validation rules, and inspect logs")
-        self.btn_header_config.setStyleSheet("""
-            QPushButton#btnHeaderConfig {
-                background-color: rgba(255, 255, 255, 0.18);
-                color: #FFFFFF;
-                font-weight: bold;
-                padding: 6px 14px;
-                border-radius: 5px;
-                border: 1px solid rgba(255, 255, 255, 0.4);
-                font-size: 11px;
-            }
-            QPushButton#btnHeaderConfig:hover {
-                background-color: rgba(255, 255, 255, 0.32);
-                border: 1px solid rgba(255, 255, 255, 0.7);
-            }
-        """)
         self.btn_header_config.clicked.connect(self._toggle_view)
-        right_layout.addWidget(self.btn_header_config)
+        bar_layout.addWidget(self.btn_header_config)
 
-        self.lbl_header_badge = QLabel("READY")
-        self.lbl_header_badge.setObjectName("headerBadge")
-        right_layout.addWidget(self.lbl_header_badge)
-
-        banner_layout.addLayout(right_layout)
-
-        return banner
+        return bar
 
     # -----------------------------------------------------------------------
     # View Switching & Navigation
@@ -588,12 +550,11 @@ class CbmsmvDialog(QDialog):
 
         # Scorecard Table
         table = QTableWidget()
-        table.setColumnCount(6)
+        table.setColumnCount(5)
         table.setHorizontalHeaderLabels([
             "Status",
             "Validation ID",
             "Validation Check Name",
-            "Base Layer",
             "Issues Flagged",
             "Action",
         ])
@@ -602,7 +563,6 @@ class CbmsmvDialog(QDialog):
         table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setAlternatingRowColors(True)
         table.verticalHeader().setVisible(False)
@@ -638,18 +598,7 @@ class CbmsmvDialog(QDialog):
             name_item = QTableWidgetItem(name)
             table.setItem(row, 2, name_item)
 
-            # 3. Base Layer
-            rule_obj = next((r for r in self._rules if r["id"] == val_id), None)
-            has_base = rule_obj["has_base"] if rule_obj else False
-            base_item = QTableWidgetItem(" Required " if has_base else " — ")
-            base_item.setTextAlignment(Qt.AlignCenter)
-            if has_base:
-                base_item.setForeground(QColor("#2B6CB0"))
-            else:
-                base_item.setForeground(QColor("#A0AEC0"))
-            table.setItem(row, 3, base_item)
-
-            # 4. Issues Flagged
+            # 3. Issues Flagged
             flags_item = QTableWidgetItem(f"{flags:,}")
             flags_item.setTextAlignment(Qt.AlignCenter)
             if flags > 0:
@@ -657,9 +606,9 @@ class CbmsmvDialog(QDialog):
                 flags_item.setFont(QFont("Segoe UI", 9, QFont.Bold))
             else:
                 flags_item.setForeground(QColor("#27AE60"))
-            table.setItem(row, 4, flags_item)
+            table.setItem(row, 3, flags_item)
 
-            # 5. Action Button
+            # 4. Action Button
             if flags > 0 and has_layer:
                 btn_view = QPushButton("View Tab ➔")
                 btn_view.setStyleSheet("""
@@ -677,12 +626,12 @@ class CbmsmvDialog(QDialog):
                     }
                 """)
                 btn_view.clicked.connect(lambda checked=False, vid=val_id: self._jump_to_result_tab(vid))
-                table.setCellWidget(row, 5, btn_view)
+                table.setCellWidget(row, 4, btn_view)
             else:
                 empty_act = QTableWidgetItem("—")
                 empty_act.setTextAlignment(Qt.AlignCenter)
                 empty_act.setForeground(QColor("#A0AEC0"))
-                table.setItem(row, 5, empty_act)
+                table.setItem(row, 4, empty_act)
 
         # Connect double-click on row to jump to tab if flagged
         def _on_summary_row_double_clicked(row, col):
@@ -1156,12 +1105,6 @@ class CbmsmvDialog(QDialog):
         btn_select_all.clicked.connect(lambda: self._set_all_rules_checked(True))
         btn_deselect_all = QPushButton("Deselect All")
         btn_deselect_all.clicked.connect(lambda: self._set_all_rules_checked(False))
-        btn_base_only = QPushButton("With Base Layer")
-        btn_base_only.setToolTip("Select only algorithms requiring Base Layers (.gpkg)")
-        btn_base_only.clicked.connect(self._select_base_layer_rules_only)
-        btn_no_base = QPushButton("No Base Layer")
-        btn_no_base.setToolTip("Select only algorithms that do not require Base Layers")
-        btn_no_base.clicked.connect(self._select_no_base_layer_rules_only)
 
         btn_refresh = QToolButton()
         btn_refresh.setText("🔄")
@@ -1170,24 +1113,20 @@ class CbmsmvDialog(QDialog):
 
         toolbar.addWidget(btn_select_all)
         toolbar.addWidget(btn_deselect_all)
-        toolbar.addWidget(btn_base_only)
-        toolbar.addWidget(btn_no_base)
         toolbar.addWidget(btn_refresh)
         layout.addLayout(toolbar)
 
         # Rules Table
         self.rules_table = QTableWidget()
-        self.rules_table.setColumnCount(4)
+        self.rules_table.setColumnCount(3)
         self.rules_table.setHorizontalHeaderLabels([
             "Enable",
             "Validation ID",
             "Validation Check Name",
-            "Base Layer",
         ])
         self.rules_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.rules_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.rules_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.rules_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.rules_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.rules_table.setAlternatingRowColors(True)
         self.rules_table.verticalHeader().setVisible(False)
@@ -1278,20 +1217,6 @@ class CbmsmvDialog(QDialog):
             item_name.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             self.rules_table.setItem(row, 2, item_name)
 
-            # 3. Base Layer Required indicator
-            has_base = rule["has_base"]
-            item_base = QTableWidgetItem(" Required " if has_base else " — ")
-            item_base.setTextAlignment(Qt.AlignCenter)
-            item_base.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            if has_base:
-                item_base.setForeground(QColor("#2B6CB0"))
-                item_base.setFont(QFont("Segoe UI", 9, QFont.Bold))
-                item_base.setToolTip("Requires Base Layers (.gpkg) file")
-            else:
-                item_base.setForeground(QColor("#A0AEC0"))
-                item_base.setToolTip("Does not require Base Layers (.gpkg)")
-            self.rules_table.setItem(row, 3, item_base)
-
         self.rules_table.blockSignals(False)
         self.rules_table.itemChanged.connect(self._on_rule_item_changed)
 
@@ -1324,26 +1249,6 @@ class CbmsmvDialog(QDialog):
         self._update_rule_counts()
         self._save_rule_settings()
 
-    def _select_base_layer_rules_only(self):
-        """Select only rules that require Base Layers (.gpkg)."""
-        self.rules_table.blockSignals(True)
-        for rule in self._rules:
-            item = self._rule_checkboxes[rule["id"]]
-            item.setCheckState(Qt.Checked if rule["has_base"] else Qt.Unchecked)
-        self.rules_table.blockSignals(False)
-        self._update_rule_counts()
-        self._save_rule_settings()
-
-    def _select_no_base_layer_rules_only(self):
-        """Select only rules that do not require Base Layers."""
-        self.rules_table.blockSignals(True)
-        for rule in self._rules:
-            item = self._rule_checkboxes[rule["id"]]
-            item.setCheckState(Qt.Unchecked if rule["has_base"] else Qt.Checked)
-        self.rules_table.blockSignals(False)
-        self._update_rule_counts()
-        self._save_rule_settings()
-
     def _update_rule_counts(self):
         """Update the rule counter label, footer status, and KPI metrics."""
         total = len(self._rules)
@@ -1351,20 +1256,11 @@ class CbmsmvDialog(QDialog):
             1 for item in self._rule_checkboxes.values()
             if item.checkState() == Qt.Checked
         )
-        base_req = sum(
-            1 for rule in self._rules
-            if self._rule_checkboxes[rule["id"]].checkState() == Qt.Checked and rule["has_base"]
-        )
 
-        base_str = f" ({base_req} require Base Layer)" if base_req else ""
-        self.lbl_rules_count.setText(f"{enabled} of {total} validation rules enabled{base_str}")
+        self.lbl_rules_count.setText(f"{enabled} of {total} validation rules enabled")
         self.lbl_footer_status.setText(f"Ready • {enabled} validation rule(s) selected")
-        if hasattr(self, "lbl_header_badge"):
-            self.lbl_header_badge.setText(f"{total} RULES DETECTED")
         if hasattr(self, "lbl_kpi_rules"):
             self.lbl_kpi_rules.setText(str(enabled))
-        if hasattr(self, "lbl_kpi_base_req"):
-            self.lbl_kpi_base_req.setText(str(base_req))
 
     # -----------------------------------------------------------------------
     # Tab 3: Execution Logs
@@ -1381,7 +1277,6 @@ class CbmsmvDialog(QDialog):
         kpi_layout.setSpacing(10)
 
         self.lbl_kpi_rules = self._create_kpi_card(kpi_layout, "Rules Queued", "0", "#2980B9")
-        self.lbl_kpi_base_req = self._create_kpi_card(kpi_layout, "Requires Base", "0", "#805AD5")
         self.lbl_kpi_flagged = self._create_kpi_card(kpi_layout, "Issues Flagged", "0", "#C0392B")
         self.lbl_kpi_layers = self._create_kpi_card(kpi_layout, "Result Layers", "0", "#27AE60")
 
@@ -1482,16 +1377,6 @@ class CbmsmvDialog(QDialog):
         self.lbl_footer_status.setStyleSheet("color: #555; font-size: 11px;")
         layout.addWidget(self.lbl_footer_status, stretch=1)
 
-        self.footer_progress = QProgressBar()
-        self.footer_progress.setObjectName("footerProgressBar")
-        self.footer_progress.setRange(0, 100)
-        self.footer_progress.setValue(0)
-        self.footer_progress.setFixedWidth(140)
-        self.footer_progress.setFixedHeight(14)
-        self.footer_progress.setTextVisible(False)
-        self.footer_progress.setVisible(False)
-        layout.addWidget(self.footer_progress)
-
         self.btn_reset = QPushButton("Reset Form")
         self.btn_reset.clicked.connect(self._reset_form)
         layout.addWidget(self.btn_reset)
@@ -1524,30 +1409,23 @@ class CbmsmvDialog(QDialog):
             QWidget {
                 font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Roboto", "Helvetica Neue", sans-serif;
             }
-            #headerBanner {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #1A365D, stop:1 #2B6CB0);
-                border-radius: 8px;
+            #topNavBar {
+                background-color: transparent;
+                border: none;
             }
-            #headerTitle {
-                color: #FFFFFF;
-                font-size: 15px;
+            #btnHeaderConfig {
+                background-color: #EDF2F7;
+                color: #2B6CB0;
                 font-weight: 600;
-                letter-spacing: 0.2px;
-            }
-            #headerSubtitle {
-                color: #CBD5E0;
+                padding: 6px 14px;
+                border-radius: 5px;
+                border: 1px solid #CBD5E0;
                 font-size: 11px;
-                line-height: 1.3;
             }
-            #headerBadge {
-                background-color: #38A169;
-                color: #FFFFFF;
-                font-size: 9.5px;
-                font-weight: 700;
-                padding: 4px 8px;
-                border-radius: 4px;
-                letter-spacing: 0.5px;
+            QPushButton#btnHeaderConfig:hover {
+                background-color: #E2E8F0;
+                color: #1A365D;
+                border: 1px solid #A0AEC0;
             }
             #sectionGroup {
                 font-weight: 600;
@@ -1583,15 +1461,6 @@ class CbmsmvDialog(QDialog):
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                     stop:0 #3182CE, stop:1 #63B3ED);
                 border-radius: 3px;
-            }
-            #footerProgressBar {
-                border: 1px solid #CBD5E0;
-                border-radius: 3px;
-                background-color: #EDF2F7;
-            }
-            #footerProgressBar::chunk {
-                background-color: #3182CE;
-                border-radius: 2px;
             }
             #consoleLog {
                 background-color: #1A202C;
@@ -1752,9 +1621,6 @@ class CbmsmvDialog(QDialog):
         self.settings.remove(SETTINGS_KEY_SELECTED_RULES)
         self._set_all_rules_checked(True)
         self.progress_bar.setValue(0)
-        if hasattr(self, "footer_progress"):
-            self.footer_progress.setValue(0)
-            self.footer_progress.setVisible(False)
         self.lbl_progress_status.setText("Status: Idle — Ready to run validation")
         self.lbl_kpi_flagged.setText("0")
         self.lbl_kpi_layers.setText("0")
@@ -1833,6 +1699,24 @@ class CbmsmvDialog(QDialog):
                 pass
 
         return alg
+
+    def _remove_layer_group(self, group_name: str) -> bool:
+        """
+        Detect if group_name exists in the layer tree. If it does, remove all its layers
+        from the project and remove the group node. Returns True if removed, False otherwise.
+        """
+        proj = self.project if self.project else QgsProject.instance()
+        root = proj.layerTreeRoot()
+        grp = root.findGroup(group_name)
+        if grp:
+            layer_ids = [tree_layer.layerId() for tree_layer in grp.findLayers() if tree_layer and tree_layer.layerId()]
+            if layer_ids:
+                proj.removeMapLayers(layer_ids)
+            still_grp = root.findGroup(group_name)
+            if still_grp:
+                root.removeChildNode(still_grp)
+            return True
+        return False
 
     def _get_or_create_layer_group(self, group_name: str):
         """Find or create a top-level group in the QGIS Layer Tree."""
@@ -2048,9 +1932,6 @@ class CbmsmvDialog(QDialog):
         self._switch_to_config(2)
         self.btn_run.setEnabled(False)
         self.progress_bar.setValue(0)
-        if hasattr(self, "footer_progress"):
-            self.footer_progress.setVisible(True)
-            self.footer_progress.setValue(0)
         self.lbl_progress_status.setText("Status: Initializing validation session...")
 
         self._log_step("INIT", "=== 2027 CBMS Form 2 Map Validation Session Started ===")
@@ -2072,6 +1953,11 @@ class CbmsmvDialog(QDialog):
         # Load primary input data sources into QGIS Layers Panel if requested by user
         self._load_primary_input_sources_if_requested(form2_path, points_path, base_path)
 
+        # Remove existing '2027 CBMS MV Results' group to prevent stale error layers
+        if self.chk_group_layers.isChecked():
+            if self._remove_layer_group("2027 CBMS MV Results"):
+                self._log_info("Detected existing '2027 CBMS MV Results' layer group. Removed previous results before writing new layers.")
+
         total_rules = len(selected_rules)
         total_flagged_issues = 0
         total_output_layers = 0
@@ -2086,8 +1972,6 @@ class CbmsmvDialog(QDialog):
 
             pct = int((i / total_rules) * 100)
             self.progress_bar.setValue(pct)
-            if hasattr(self, "footer_progress"):
-                self.footer_progress.setValue(pct)
             self.lbl_progress_status.setText(f"Status: Executing [{val_id}] ({i+1}/{total_rules})...")
             self._log_step("RUN", f"[{i+1}/{total_rules}] Running '{val_id}'")
             self._log_info(f"Check: {check_name}")
@@ -2251,8 +2135,6 @@ class CbmsmvDialog(QDialog):
 
         # 7. Finalize execution session
         self.progress_bar.setValue(100)
-        if hasattr(self, "footer_progress"):
-            self.footer_progress.setValue(100)
         self.lbl_progress_status.setText("Status: Validation complete!")
         self.btn_run.setEnabled(True)
 
@@ -2265,21 +2147,6 @@ class CbmsmvDialog(QDialog):
         self._execution_summary = execution_summary
         self._populate_results_workspace(execution_summary, self._result_layers)
         self._switch_to_results()
-
-        # Update Header Badge
-        if hasattr(self, "lbl_header_badge"):
-            if total_flagged_issues > 0:
-                self.lbl_header_badge.setText(f"{total_flagged_issues:,} ISSUES FLAGGED")
-                self.lbl_header_badge.setStyleSheet(
-                    "background-color: #E53E3E; color: #FFFFFF; font-size: 9px; font-weight: bold; "
-                    "padding: 4px 8px; border-radius: 4px; letter-spacing: 0.5px;"
-                )
-            else:
-                self.lbl_header_badge.setText("ALL CLEAN")
-                self.lbl_header_badge.setStyleSheet(
-                    "background-color: #38A169; color: #FFFFFF; font-size: 9px; font-weight: bold; "
-                    "padding: 4px 8px; border-radius: 4px; letter-spacing: 0.5px;"
-                )
 
         # Generate summary audit report file if selected
         if self.chk_summary_report.isChecked():
