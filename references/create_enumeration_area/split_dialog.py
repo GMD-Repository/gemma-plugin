@@ -776,7 +776,11 @@ class SplitEADialog(QDialog):
                 for lfeat in candidate_lines:
                     if lfeat and lfeat.geometry() and not lfeat.geometry().isEmpty():
                         lg = lfeat.geometry()
-                        if poly_geom.intersects(lg) or poly_geom.distance(lg) < (extend_dist_map_units * 3.0):
+                        if (
+                            (use_selected_poly and use_selected_lines)
+                            or poly_geom.intersects(lg)
+                            or poly_geom.distance(lg) < max(extend_dist_map_units * 5.0, 50.0 if not is_geographic else 0.001)
+                        ):
                             matching_lines.append(lfeat)
 
                 if not matching_lines:
@@ -790,8 +794,8 @@ class SplitEADialog(QDialog):
                     parent_split_groups.append({"parent": poly_feat, "parts": [poly_geom]})
                     continue
 
-                # Create single polygon layer for isolated split
-                single_poly_layer = QgsVectorLayer(f"Polygon?crs={crs_auth}", "single_poly", "memory")
+                # Create single polygon layer for isolated split (MultiPolygon supports both Polygon and MultiPolygon)
+                single_poly_layer = QgsVectorLayer(f"MultiPolygon?crs={crs_auth}", "single_poly", "memory")
                 dp_poly = single_poly_layer.dataProvider()
                 dp_poly.addAttributes(poly_layer.fields())
                 single_poly_layer.updateFields()
@@ -804,8 +808,8 @@ class SplitEADialog(QDialog):
                 dp_poly.addFeatures([pf_copy])
                 single_poly_layer.updateExtents()
 
-                # Create lines layer for matching cut lines only
-                single_lines_layer = QgsVectorLayer(f"LineString?crs={crs_auth}", "single_lines", "memory")
+                # Create lines layer for matching cut lines only (MultiLineString supports both single & multipart)
+                single_lines_layer = QgsVectorLayer(f"MultiLineString?crs={crs_auth}", "single_lines", "memory")
                 dp_lines = single_lines_layer.dataProvider()
                 dp_lines.addAttributes(line_layer.fields())
                 single_lines_layer.updateFields()
@@ -852,9 +856,55 @@ class SplitEADialog(QDialog):
                     except Exception as e:
                         self._log(f"Split algorithm notice: {str(e)}", "INFO")
 
-                # Attempt 2: Fallback to iterative QgsGeometry.splitGeometry across all matching lines
+                # Attempt 2: Planar Polygonization fallback (combines polygon boundary + cut lines)
+                if len(child_geoms) <= 1 and processing:
+                    try:
+                        boundary_res = processing.run(
+                            "native:boundary",
+                            {
+                                "INPUT": single_poly_layer,
+                                "OUTPUT": "TEMPORARY_OUTPUT",
+                            },
+                        )
+                        boundary_lyr = boundary_res.get("OUTPUT")
+                        merged_lines_res = processing.run(
+                            "native:mergevectorlayers",
+                            {
+                                "LAYERS": [boundary_lyr, single_lines_layer],
+                                "OUTPUT": "TEMPORARY_OUTPUT",
+                            },
+                        )
+                        merged_lines_lyr = merged_lines_res.get("OUTPUT")
+                        polygonized_res = processing.run(
+                            "native:polygonize",
+                            {
+                                "INPUT": merged_lines_lyr,
+                                "OUTPUT": "TEMPORARY_OUTPUT",
+                            },
+                        )
+                        poly_output = polygonized_res.get("OUTPUT")
+                        if poly_output and isinstance(poly_output, QgsVectorLayer) and poly_output.featureCount() > 1:
+                            cand_parts = []
+                            for p_feat in poly_output.getFeatures():
+                                pg = p_feat.geometry()
+                                if pg and not pg.isEmpty():
+                                    pt_surface = pg.pointOnSurface()
+                                    if poly_geom.contains(pt_surface) or poly_geom.intersects(pt_surface):
+                                        cand_parts.append(pg)
+                            if len(cand_parts) > 1:
+                                child_geoms = cand_parts
+                    except Exception as e:
+                        self._log(f"Planar polygonization notice: {str(e)}", "INFO")
+
+                # Attempt 3: Iterative QgsGeometry.splitGeometry across all matching lines
                 if len(child_geoms) <= 1:
-                    current_pieces = [QgsGeometry(poly_geom)]
+                    # Deconstruct polygon into constituent parts to handle both single and multi-polygons
+                    if poly_geom.isMultipart():
+                        raw_parts = [QgsGeometry.fromPolygonXY(p) for p in poly_geom.asMultiPolygon()]
+                    else:
+                        raw_parts = [QgsGeometry(poly_geom)]
+
+                    current_pieces = list(raw_parts)
                     for lf in prepared_line_feats:
                         lg = lf.geometry()
                         if not lg or lg.isEmpty():
@@ -866,7 +916,11 @@ class SplitEADialog(QDialog):
                             next_pieces = []
                             for piece in current_pieces:
                                 working_piece = QgsGeometry(piece)
+                                # Try topological=True then topological=False
                                 res, new_subgeoms, _ = working_piece.splitGeometry(pline, True)
+                                if res != 0 or not new_subgeoms:
+                                    working_piece = QgsGeometry(piece)
+                                    res, new_subgeoms, _ = working_piece.splitGeometry(pline, False)
                                 if res == 0 and new_subgeoms:
                                     next_pieces.append(working_piece)
                                     next_pieces.extend(new_subgeoms)
@@ -1025,23 +1079,17 @@ class SplitEADialog(QDialog):
                         "area": area_val,
                     })
 
-                # If split into multiple parts, verify that no resulting piece falls below min_hh_threshold
+                # If split into multiple parts, log notice if any resulting piece falls below min_hh_threshold
                 if len(part_data) > 1 and bldg_spatial_index:
                     min_hh_threshold = self.min_hh_spin.value() if hasattr(self, "min_hh_spin") else 99
                     under_threshold_parts = [p for p in part_data if p["hh_count"] < min_hh_threshold]
                     if under_threshold_parts:
                         min_hh_found = min(p["hh_count"] for p in part_data)
                         self._log(
-                            f"PREVENTED split for EA '{parent_code_6}': Resulting sub-EA would have {min_hh_found} households, "
-                            f"falling below the minimum threshold ({min_hh_threshold} HH). Polygon preserved whole.",
+                            f"Notice: Resulting sub-EA for EA '{parent_code_6}' has {min_hh_found} households "
+                            f"(below threshold of {min_hh_threshold} HH). Sub-EAs successfully created.",
                             "WARNING",
                         )
-                        part_data = [{
-                            "geom": parent_feat.geometry(),
-                            "hh_count": sum(p["hh_count"] for p in part_data),
-                            "bldg_count": sum(p["bldg_count"] for p in part_data),
-                            "area": parent_feat.geometry().area() if parent_feat.geometry() else 0.0,
-                        }]
 
                 # If still split into multiple parts, sort by hh_count descending (with area as tie-breaker)
                 if len(part_data) > 1:
@@ -1134,6 +1182,17 @@ class SplitEADialog(QDialog):
 
             poly_layer.updateExtents()
             poly_layer.triggerRepaint()
+
+            # Highlight newly delineated child features on canvas
+            delineated_fids = [
+                f.id() for f in poly_layer.getFeatures()
+                if str(f.attribute("ea_type") or "").upper() == "DELINEATED"
+            ]
+            if delineated_fids:
+                try:
+                    poly_layer.selectByIds(delineated_fids)
+                except Exception:
+                    pass
 
             if bldg_spatial_index:
                 self._log(

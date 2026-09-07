@@ -215,8 +215,8 @@ class TestSplitEADialog(unittest.TestCase):
         self.assertIn((1, 4, "001001"), counts_and_ean)
 
     @patch("references.create_enumeration_area.split_dialog.processing.run")
-    def test_split_prevented_if_hh_count_falls_below_minimum_threshold(self, mock_proc_run):
-        """Verify split is prevented if any resulting child part would fall below min_hh threshold."""
+    def test_split_proceeds_with_notice_if_hh_count_falls_below_minimum_threshold(self, mock_proc_run):
+        """Verify split is preserved and completed with notice when sub-EA falls below min_hh threshold."""
         from references.create_enumeration_area.split_dialog import SplitEADialog
 
         poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "delineated_ea", "memory")
@@ -289,7 +289,7 @@ class TestSplitEADialog(unittest.TestCase):
         dlg.line_combo.currentLayer = MagicMock(return_value=line_lyr)
         dlg.bldg_combo.currentLayer = MagicMock(return_value=bldg_lyr)
         dlg.tolerance_spin.value = MagicMock(return_value=1.0)
-        # Set threshold to 10 (both parts 5 and 4 are < 10 -> split must be prevented)
+        # Threshold is set to 10 (both parts 5 and 4 are < 10 -> split still completes with notice)
         dlg.min_hh_spin.value = MagicMock(return_value=10)
         dlg.status_banner = MagicMock()
         dlg.progress_bar = MagicMock()
@@ -297,12 +297,12 @@ class TestSplitEADialog(unittest.TestCase):
 
         dlg.run_split()
 
-        # Check features in poly_lyr -> should remain 1 whole feature
+        # Check features in poly_lyr -> should be split into 2 features
         updated_features = list(poly_lyr.getFeatures())
-        self.assertEqual(len(updated_features), 1)
-        self.assertEqual(updated_features[0].attribute("hh_count"), 9)
-        self.assertEqual(updated_features[0].attribute("bldg_count"), 2)
-        self.assertEqual(updated_features[0].attribute("new_ean"), "001000")
+        self.assertEqual(len(updated_features), 2)
+        eans = [f.attribute("new_ean") for f in updated_features]
+        self.assertIn("001000", eans)
+        self.assertIn("001001", eans)
 
     def test_extract_parent_code_and_prefix_formats(self):
         """Verify _extract_parent_code_and_prefix standardizes ean/code to 6-digit code and 3-digit prefix."""
