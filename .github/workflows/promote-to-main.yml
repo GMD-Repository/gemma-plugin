@@ -25,6 +25,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   promote:
@@ -112,7 +113,7 @@ jobs:
         if: inputs.trigger_stable_release == true && success()
         uses: actions/github-script@v7
         with:
-          github-token: ${{ steps.generate-token.outputs.token || secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             try {
               await github.rest.actions.createWorkflowDispatch({
@@ -125,7 +126,7 @@ jobs:
                   custom_version: ''
                 }
               });
-              console.log('🚀 Triggered Release Gemma Plugin (Stable) workflow');
+              console.log('🚀 Successfully triggered Release Gemma Plugin (Stable) workflow');
             } catch (err) {
               console.log('⚠️ Could not trigger stable release:', err.message);
               core.setFailed('Failed to trigger stable release workflow');
