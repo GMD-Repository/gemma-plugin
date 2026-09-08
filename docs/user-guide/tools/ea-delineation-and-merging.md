@@ -84,15 +84,17 @@ The **Create Enumeration Areas** tab executes spatial aggregation, proposed boun
 
 To provide a clean and focused workflow, Tab 2 is split into two dedicated sub-tabs with **completely separated Live Preview tables, Execution Log consoles, and Action Run Buttons**:
 
-1. **Proposed Delineation Sub-Tab**: Focused on overpopulated EAs (`> 300 HH`). Features delineation threshold settings, road/river boundary snapping parameters, an isolated **Delineation Candidates Preview** table with KPI counter card, a dedicated delineation execution log console, and an **Extract Delineation Candidate** button that generates and loads only delineation layers:
-   - `<geocode>_delineated_ea2026.gpkg` (Delineated EAs)
-   - `<geocode>_delineation_candidates` (Candidate EAs evaluated for delineation)
-   - `<geocode>_extracted_bldgpts` (Base Layer Building Points reference)
-   - `<geocode>_eadel_update.gpkg` (Proposed boundary splitting lines)
-2. **Proposed Merging Sub-Tab**: Focused on underpopulated EAs (`<= 100 HH`). Features merging threshold settings, under-threshold candidate-to-candidate merging toggles, an isolated **Merge Candidates Preview** table with KPI counter card, a dedicated merging execution log console, and an **Extract Merge Candidate** button that generates and loads only merging layers:
-   - `<geocode>_merged_ea2026.gpkg` (Merged EAs)
-   - `<geocode>_merge_candidates` (Candidate EAs evaluated for merging)
-   - `<geocode>_extracted_bldgpts` (Base Layer Building Points reference)
+1. **Proposed Delineation Sub-Tab**: Focused on overpopulated EAs (`> 300 HH`). Features delineation threshold settings, road/river boundary snapping parameters, an isolated **Delineation Candidates Preview** table with KPI counter card, a dedicated delineation execution log console, and two action buttons:
+   - **Extract Delineation Candidate**: Generates and loads candidate layers (`<geocode>_delineated_ea2026.gpkg`, `<geocode>_delineation_candidates`, `<geocode>_extracted_bldgpts`, `<geocode>_eadel_update.gpkg`).
+   - **Run Delineation**: Opens a dedicated modal pop-up to split EA polygons with proposed cut lines in-place and recalculate building and household counts.
+2. **Proposed Merging Sub-Tab**: Focused on underpopulated EAs (`<= 100 HH`). Features merging threshold settings, under-threshold candidate-to-candidate merging toggles, an isolated **Merge Candidates Preview** table with KPI counter card, a dedicated merging execution log console, and two action buttons:
+   - **Extract Merge Candidate**: Generates and loads candidate layers (`<geocode>_merged_ea2026.gpkg`, `<geocode>_merge_candidates`, `<geocode>_extracted_bldgpts`).
+   - **Unmerge EA**: Opens a dedicated modal pop-up to unmerge recently merged EA polygons back into their constituent original geometries based on the EA previous layer, updating the merged layer in-place and recalculating `hh_count` (from building points `est_hhcount`) and `bldg_count` for each restored EA.
+3. **Merge Preview Tab (Individual EA Merging & Threshold Gating)**:
+   - Dedicated preview tab evaluating candidate EAs from the **Merged EA Layer** against potential contiguous absorptive partners in the **Previous EA Layer**.
+   - Structured with an 8-column layout: `Geocode`, `Barangay`, `EA Name`, `Household Count`, `Role / Status`, `Merge Partner (EAN)`, `Total HH Count`, and `Action`.
+   - **Maximum Threshold Gating**: Evaluates candidates against the maximum household threshold limit. If combined candidate EA and partner EA households exceed the maximum threshold (`max_hh`), that partner is excluded. If no partner meets the threshold criteria (or candidate EA alone exceeds the maximum threshold), the `Merge Partner (EAN)` dropdown is empty and disabled, and the `Action` button is disabled.
+   - **Individual EA Merging**: Allows granular, on-demand merging row-by-row via the green `[Merge]` action button. Clicking `[Merge]` unites candidate and partner geometries (`combine().buffer(0).makeValid()`), aggregates combined household counts, registers the merged polygon into `<geocode>_merged_ea2026` (and exports to `.gpkg` if an output folder is defined), updates the row status to `Merged ✓`, and locks the row against re-merging.
 
 > [!TIP]
 > **Two-Way Synchronization**: Selecting input layers, designating output directories, updating search filters, or adjusting shared threshold parameters in either sub-tab automatically synchronizes the corresponding controls across both sub-tabs in real time. Running either action button automatically discards temporary in-memory outputs belonging to the opposite sub-tab mode.

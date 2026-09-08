@@ -797,7 +797,286 @@ class TestEADialogRefresh(unittest.TestCase):
         mock_proj.removeMapLayer.assert_any_call("split_line_id")
 
 
+    def test_create_preview_table_columns_merge_mode(self):
+        """Verify that _create_preview_table(include_merge_partner=True) creates 8 columns with Total HH Count and Action."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=True)
+        self.assertEqual(table.columnCount(), 8)
+        headers = [table.horizontalHeaderItem(i).text() for i in range(8)]
+        self.assertIn("Merge Partner (EAN)", headers[5])
+        self.assertIn("Total HH Count", headers[6])
+        self.assertIn("Action", headers[7])
+
+    def test_populate_table_rows_combined_hh_count_dynamic_update(self):
+        """Verify that selecting a merge partner updates the Total HH Count column dynamically."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+        from qgis.PyQt.QtWidgets import QComboBox
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.current_theme = "light"
+        table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=True)
+
+        candidates = [
+            ("01701001", "EA 1", "Barangay 1", 50.0, "Initiator (<= 150 HH)", [("01701002", 120.0), ("01701003", 200.0)])
+        ]
+        EALauncherDialog._populate_table_rows(mock_dlg, table, candidates, is_delineation=False)
+
+        self.assertEqual(table.rowCount(), 1)
+        combo = table.cellWidget(0, 5)
+        self.assertIsInstance(combo, QComboBox)
+        self.assertEqual(combo.count(), 2)
+
+        # Initial combined count: 50 + 120 = 170
+        col6_item = table.item(0, 6)
+        self.assertIsNotNone(col6_item)
+        self.assertEqual(col6_item.text(), "170")
+
+        # Change selection to second neighbor (200 HH): 50 + 200 = 250
+        combo.setCurrentIndex(1)
+        self.assertEqual(table.item(0, 6).text(), "250")
+
+    def test_auto_detect_layers_separates_merged_ea_and_prev_ea(self):
+        """Verify auto-detection maps *_merged_ea* to merge_ea and base EA layers to prev_ea."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+        from qgis.core import QgsVectorLayer
+        from unittest.mock import patch
+
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.bar_combo = MagicMock()
+        mock_dlg.bldg_combo = MagicMock()
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.road_combo = MagicMock()
+        mock_dlg.river_combo = MagicMock()
+        mock_dlg.merge_ea_combo = MagicMock()
+        mock_dlg._safe_set_layer = MagicMock()
+
+        merged_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "01701_merged_ea2026", "memory")
+        prev_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "01701_ea", "memory")
+
+        with patch("references.create_enumeration_area.dialog.QgsProject") as mock_project_cls:
+            mock_proj = MagicMock()
+            mock_proj.mapLayers.return_value = {
+                "m_id": merged_layer,
+                "p_id": prev_ea_layer,
+            }
+            mock_project_cls.instance.return_value = mock_proj
+
+            EALauncherDialog.auto_detect_layers(mock_dlg)
+
+            # Check that merge_ea_combo received the merged_ea layer
+            mock_dlg._safe_set_layer.assert_any_call(mock_dlg.merge_ea_combo, merged_layer)
+            # Check that prev_ea_combo received the baseline ea layer
+            mock_dlg._safe_set_layer.assert_any_call(mock_dlg.prev_ea_combo, prev_ea_layer)
+
+
+    def test_reborn_live_preview_and_new_merge_preview_tabs(self):
+        """Verify that merge_table is 5 columns (reborn Live Preview) and merged_ea_table is 8 columns (Merge Preview)."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.current_theme = "light"
+
+        # 1. Reborn Live Preview table: 5 columns
+        reborn_table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=False)
+        self.assertEqual(reborn_table.columnCount(), 5)
+        headers_5 = [reborn_table.horizontalHeaderItem(i).text() for i in range(5)]
+        self.assertNotIn("Merge Partner (EAN)", headers_5)
+        self.assertNotIn("Total HH Count", headers_5)
+
+        # 2. New Merge Preview table: 8 columns
+        merge_preview_table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=True)
+        self.assertEqual(merge_preview_table.columnCount(), 8)
+        headers_8 = [merge_preview_table.horizontalHeaderItem(i).text() for i in range(8)]
+        self.assertIn("Merge Partner (EAN)", headers_8[5])
+        self.assertIn("Total HH Count", headers_8[6])
+        self.assertIn("Action", headers_8[7])
+
+        # 3. Populating reborn table with standard merge candidates (5 columns)
+        reborn_candidates = [
+            ("01701001", "EA 1", "Barangay 1", 45.0, "Initiator (<= 150 HH)")
+        ]
+        EALauncherDialog._populate_table_rows(mock_dlg, reborn_table, reborn_candidates, is_delineation=False)
+        self.assertEqual(reborn_table.rowCount(), 1)
+        self.assertIsNone(reborn_table.cellWidget(0, 5))  # No dropdown widget
+        self.assertEqual(reborn_table.item(0, 3).text(), "45")
+
+        # 4. Populating new Merge Preview table with candidates + neighbors (7 columns)
+        merge_ea_candidates = [
+            ("01701001", "EA 1", "Barangay 1", 45.0, "Initiator (<= 150 HH)", [("01701002", 100.0)])
+        ]
+        EALauncherDialog._populate_table_rows(mock_dlg, merge_preview_table, merge_ea_candidates, is_delineation=False)
+        self.assertEqual(merge_preview_table.rowCount(), 1)
+        combo = merge_preview_table.cellWidget(0, 5)
+        self.assertIsNotNone(combo)
+        self.assertEqual(merge_preview_table.item(0, 6).text(), "145")  # 45 + 100
+
+    def test_extract_merge_candidate_enabling_and_tooltips(self):
+        """Verify that Extract Merge Candidate button (self.merge_run_btn) validates inputs and explains missing requirements."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+        from qgis.core import QgsVectorLayer, QgsField
+        from qgis.PyQt.QtCore import QVariant
+
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.bar_combo = MagicMock()
+        mock_dlg.bldg_combo = MagicMock()
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.road_combo = MagicMock()
+        mock_dlg.river_combo = MagicMock()
+        mock_dlg.merge_bar_combo = MagicMock()
+        mock_dlg.merge_bldg_combo = MagicMock()
+        mock_dlg.merge_prev_ea_combo = MagicMock()
+        mock_dlg.merge_ea_combo = MagicMock()
+        mock_dlg.output_folder_widget = MagicMock()
+        mock_dlg.merge_output_folder_widget = MagicMock()
+        mock_dlg.bar_status_lbl = MagicMock()
+        mock_dlg.bldg_status_lbl = MagicMock()
+        mock_dlg.prev_ea_status_lbl = MagicMock()
+        mock_dlg.merge_bar_status_lbl = MagicMock()
+        mock_dlg.merge_bldg_status_lbl = MagicMock()
+        mock_dlg.merge_prev_ea_status_lbl = MagicMock()
+        mock_dlg.merge_ea_status_lbl = MagicMock()
+        mock_dlg.road_status_lbl = MagicMock()
+        mock_dlg.river_status_lbl = MagicMock()
+        mock_dlg.fill_missing_btn = MagicMock()
+        mock_dlg.merge_fill_missing_btn = MagicMock()
+        mock_dlg.run_btn = MagicMock()
+        mock_dlg.merge_run_btn = MagicMock()
+        mock_dlg._extract_5digit_geocode.return_value = "01701"
+
+        # Case 1: No layers and no output folder -> merge_run_btn disabled with informative tooltip
+        mock_dlg._safe_get_layer.return_value = None
+        mock_dlg.output_folder_widget.filePath.return_value = ""
+        mock_dlg.merge_output_folder_widget.filePath.return_value = ""
+
+        EALauncherDialog.validate_layer_inputs(mock_dlg)
+
+        mock_dlg.merge_run_btn.setEnabled.assert_called_with(False)
+        tooltip_call = mock_dlg.merge_run_btn.setToolTip.call_args[0][0]
+        self.assertIn("Cannot run:", tooltip_call)
+        self.assertIn("Barangay Boundary is required", tooltip_call)
+        self.assertIn("Designated output folder is required", tooltip_call)
+
+        # Case 2: Layers valid and output folder set in Sub-tab 2 -> merge_run_btn enabled!
+        bar_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Test_Bar", "memory")
+        bldg_layer = QgsVectorLayer("Point?crs=epsg:4326", "Test_Bldg", "memory")
+        bldg_layer.dataProvider().addAttributes([QgsField("hhcount", QVariant.Double)])
+        bldg_layer.updateFields()
+        prev_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Test_EA", "memory")
+        prev_ea_layer.dataProvider().addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        prev_ea_layer.updateFields()
+
+        def safe_get(combo):
+            if combo in (mock_dlg.bar_combo, mock_dlg.merge_bar_combo):
+                return bar_layer
+            if combo in (mock_dlg.bldg_combo, mock_dlg.merge_bldg_combo):
+                return bldg_layer
+            if combo in (mock_dlg.prev_ea_combo, mock_dlg.merge_prev_ea_combo):
+                return prev_ea_layer
+            return None
+
+        mock_dlg._safe_get_layer.side_effect = safe_get
+        # Output folder present in Sub-tab 2's merge_output_folder_widget
+        mock_dlg.output_folder_widget.filePath.return_value = ""
+        mock_dlg.merge_output_folder_widget.filePath.return_value = "C:/Outputs"
+
+        EALauncherDialog.validate_layer_inputs(mock_dlg)
+
+        mock_dlg.merge_run_btn.setEnabled.assert_called_with(True)
+        self.assertEqual(mock_dlg.merge_run_btn.setToolTip.call_args[0][0], "Extract Merge Candidates")
+
+    def test_neighbor_detection_same_barangay_and_enabled_dropdown(self):
+        """Verify that generate_preview detects contiguous EAs in the same barangay and enables the dropdown."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+        from qgis.core import QgsVectorLayer, QgsField, QgsFeature, QgsGeometry
+        from qgis.PyQt.QtCore import QVariant
+
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.delineation_table = MagicMock()
+        mock_dlg.merge_table = MagicMock()
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.merge_ea_combo = MagicMock()
+        mock_dlg.all_delineation_candidates = []
+        mock_dlg.all_merge_candidates = []
+        mock_dlg.all_merged_ea_candidates = []
+        mock_dlg.min_hh_spin = MagicMock()
+        mock_dlg.min_hh_spin.value.return_value = 150
+        mock_dlg.max_hh_spin = MagicMock()
+        mock_dlg.max_hh_spin.value.return_value = 350
+        mock_dlg.kpi_delin_val = MagicMock()
+        mock_dlg.kpi_merge_val = MagicMock()
+        mock_dlg.kpi_merged_ea_val = MagicMock()
+        mock_dlg.filter_previews = MagicMock()
+        mock_dlg.output_folder_widget = MagicMock()
+        mock_dlg.output_folder_widget.filePath.return_value = "C:/test"
+        mock_dlg.merge_output_folder_widget = MagicMock()
+        mock_dlg.merge_output_folder_widget.filePath.return_value = ""
+        mock_dlg._get_ea_name = lambda feat, ean, fields: f"EA {ean}"
+
+        # 1. Previous EA layer with two adjacent EAs in the same barangay "Barangay Alpha"
+        prev_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Prev_EAs", "memory")
+        prev_ea_layer.dataProvider().addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        prev_ea_layer.updateFields()
+
+        # EA 001: polygon (0,0) to (1,1)
+        f1 = QgsFeature(prev_ea_layer.fields())
+        f1.setAttributes(["001", "017280010001", "Barangay Alpha", 50.0])
+        f1.setGeometry(QgsGeometry.fromWkt("POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"))
+
+        # EA 002: adjacent polygon (1,0) to (2,1)
+        f2 = QgsFeature(prev_ea_layer.fields())
+        f2.setAttributes(["002", "017280010002", "Barangay Alpha", 120.0])
+        f2.setGeometry(QgsGeometry.fromWkt("POLYGON((1 0, 2 0, 2 1, 1 1, 1 0))"))
+
+        prev_ea_layer.dataProvider().addFeatures([f1, f2])
+
+        # 2. Merged EA layer containing candidate EA 001
+        merge_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Merge_EA", "memory")
+        merge_ea_layer.dataProvider().addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        merge_ea_layer.updateFields()
+        mf1 = QgsFeature(merge_ea_layer.fields())
+        mf1.setAttributes(["001", "017280010001", "Barangay Alpha", 50.0])
+        mf1.setGeometry(QgsGeometry.fromWkt("POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"))
+        merge_ea_layer.dataProvider().addFeatures([mf1])
+
+        mock_dlg._safe_get_layer.side_effect = lambda combo: (
+            prev_ea_layer if combo in (mock_dlg.prev_ea_combo, getattr(mock_dlg, 'merge_prev_ea_combo', None))
+            else merge_ea_layer
+        )
+
+        EALauncherDialog.generate_preview(mock_dlg)
+
+        # Verify all_merged_ea_candidates has EA 001 and detected neighbor EA 002
+        self.assertEqual(len(mock_dlg.all_merged_ea_candidates), 1)
+        cand = mock_dlg.all_merged_ea_candidates[0]
+        self.assertEqual(cand[0], "001")
+        self.assertEqual(len(cand[5]), 1)  # Neighbors list
+        self.assertEqual(cand[5][0][0], "002")
+        self.assertEqual(cand[5][0][1], 120.0)
+
+        # Verify rendered table cell dropdown is enabled with partner EA 002
+        table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=True)
+        EALauncherDialog._populate_table_rows(mock_dlg, table, mock_dlg.all_merged_ea_candidates, is_delineation=False)
+        combo = table.cellWidget(0, 5)
+        self.assertIsNotNone(combo)
+        self.assertTrue(combo.isEnabled())
+        self.assertEqual(combo.currentText(), "002")
+        self.assertEqual(table.item(0, 6).text(), "170")  # 50 + 120
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
 

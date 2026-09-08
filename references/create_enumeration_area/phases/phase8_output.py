@@ -429,6 +429,9 @@ def run_phase_8(
         ]
         export_fields = QgsFields()
         for fname in export_field_names:
+            if fname == "remarks":
+                export_fields.append(QgsField("remarks", QVariant.String))
+                continue
             idx = out_fields.indexOf(fname)
             if idx != -1:
                 export_fields.append(out_fields.at(idx))
