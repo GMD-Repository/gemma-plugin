@@ -108,8 +108,8 @@ class mv_2027_hp_4a_longitude__invalid(QgsProcessingAlgorithm):
         json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
 
         filter_expr = (
-            '("longitude" IS NOT NULL AND (to_real("longitude") < 110.0 OR to_real("longitude") > 129.18)) OR '
-            '("latitude" IS NOT NULL AND (to_real("latitude") < 4.0 OR to_real("latitude") > 22.4))'
+            '("sf_longitude" IS NOT NULL AND (to_real("sf_longitude") < 110.0 OR to_real("sf_longitude") > 129.18)) OR '
+            '("sf_latitude" IS NOT NULL AND (to_real("sf_latitude") < 4.0 OR to_real("sf_latitude") > 22.4))'
         )
 
         extracted_layer = processing.run(
@@ -125,7 +125,7 @@ class mv_2027_hp_4a_longitude__invalid(QgsProcessingAlgorithm):
 
         final_output = gmdhelpers.select_mv(
             extracted_layer,
-            [ "longitude", "latitude"],
+            ["sf_longitude", "sf_latitude"],
             context=context,
             feedback=feedback,
         )

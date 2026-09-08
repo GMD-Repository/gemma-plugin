@@ -113,7 +113,7 @@ class mv_2027_hp_4a_pos_longit__invalid(QgsProcessingAlgorithm):
                 "FIELD_TYPE": 0,  # Float / Double
                 "FIELD_LENGTH": 0,
                 "FIELD_PRECISION": 0,
-                "FORMULA":  'CASE \r\n WHEN "longitude" IS NOT NULL AND "latitude" IS NOT NULL \r\n AND "pos_longit" IS NOT NULL AND "pos_latitu" IS NOT NULL\r\n THEN distance(\r\n transform(make_point("longitude", "latitude"), \'EPSG:4326\', \'EPSG:3857\'),\r\n transform(make_point("pos_longit", "pos_latitu"), \'EPSG:4326\', \'EPSG:3857\')\r\n )\r\n ELSE NULL\r\nEND',
+                "FORMULA":  'CASE \r\n WHEN "sf_longitude" IS NOT NULL AND "sf_latitude" IS NOT NULL \r\n AND "sf_pos_longit" IS NOT NULL AND "sf_pos_latitu" IS NOT NULL\r\n THEN distance(\r\n transform(make_point("sf_longitude", "sf_latitude"), \'EPSG:4326\', \'EPSG:3857\'),\r\n transform(make_point("sf_pos_longit", "sf_pos_latitu"), \'EPSG:4326\', \'EPSG:3857\')\r\n )\r\n ELSE NULL\r\nEND',
                 "OUTPUT": "memory:",
             },
             context=context,
@@ -135,7 +135,7 @@ class mv_2027_hp_4a_pos_longit__invalid(QgsProcessingAlgorithm):
 
         final_output = gmdhelpers.select_mv(
             filtered_layer,
-            ["longitude", "latitude", "pos_longit", "pos_latitu", "distance_m"],
+            ["sf_longitude", "sf_latitude", "sf_pos_longit", "sf_pos_latitu", "distance_m"],
             context=context,
             feedback=feedback,
         )

@@ -106,7 +106,7 @@ class mv_2027_hp_4b_longitude__missing(QgsProcessingAlgorithm):
             "native:extractbyexpression",
             {
                 "INPUT": geojson_data,
-                "EXPRESSION": '"longitude" IS NULL OR "latitude" IS NULL',
+                "EXPRESSION": '"sf_longitude" IS NULL OR "sf_latitude" IS NULL',
                 "OUTPUT": "memory:",
             },
             context=context,
@@ -116,7 +116,7 @@ class mv_2027_hp_4b_longitude__missing(QgsProcessingAlgorithm):
 
         final_output = gmdhelpers.select_mv(
             filtered_layer,
-            ["longitude", "latitude"],
+            ["sf_longitude", "sf_latitude"],
             context=context,
             feedback=feedback,
         )

@@ -108,7 +108,7 @@ class mv_2027_hp_4a_ea_geocode__invalid(QgsProcessingAlgorithm):
         for feat in ref_ea.getFeatures():
             if feedback and feedback.isCanceled():
                 break
-            ea_code = feat.attribute("ea_geocode")
+            ea_code = feat.attribute("ref_ea_geocode")
             if ea_code is not None and ea_code != NULL:
                 ea_str = str(ea_code)
                 geom = feat.geometry()
@@ -132,7 +132,7 @@ class mv_2027_hp_4a_ea_geocode__invalid(QgsProcessingAlgorithm):
         for f in geojson_data.getFeatures():
             if feedback and feedback.isCanceled():
                 break
-            ea_val = f.attribute("ea_geocode")
+            ea_val = f.attribute("sf_ea_geocode")
             if ea_val is None or ea_val == NULL:
                 continue
 

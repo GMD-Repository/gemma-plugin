@@ -106,13 +106,13 @@ class mv_2027_hp_1a_map_uuid__missing(QgsProcessingAlgorithm):
             "native:joinattributestable",
             {
                 "INPUT": json_data,
-                "FIELD": "map_uuid",
+                "FIELD": "df_map_uuid",
                 "INPUT_2": geojson_data,
-                "FIELD_2": "map_uuid",
+                "FIELD_2": "sf_map_uuid",
                 "FIELDS_TO_COPY": [],
                 "METHOD": 1,                      # multiple = "first"
                 "DISCARD_NONMATCHING": False,      # LEFT JOIN (keep non-matching json records so sf_map_uuid is NULL)
-                "PREFIX": "sf_",
+                "PREFIX": "",
                 "OUTPUT": "memory:",
             },
             context=context,
@@ -132,7 +132,7 @@ class mv_2027_hp_1a_map_uuid__missing(QgsProcessingAlgorithm):
 
         final_output = gmdhelpers.select_mv(
             filtered_layer,
-            ["sf_map_uuid", "sf_longitude", "sf_latitude", "x_current", "y_current"],
+            ["df_fid", "df_map_uuid", "sf_map_uuid", "sf_longitude", "sf_latitude", "df_x_current", "df_y_current"],
             context=context,
             feedback=feedback,
         )

@@ -114,7 +114,7 @@ class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
             feedback=feedback,
         )["OUTPUT"]
 
-        # 2. Add rounded coordinate join key (coord_key) to json_data table using QGIS Field Calculator (x_current, y_current)
+        # 2. Add rounded coordinate join key (coord_key) to json_data table using QGIS Field Calculator (df_x_current, df_y_current)
         json_with_key = processing.run(
             "native:fieldcalculator",
             {
@@ -122,7 +122,7 @@ class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
                 "FIELD_NAME": "coord_key",
                 "FIELD_TYPE": 2,  # String
                 "FIELD_LENGTH": 100,
-                "FORMULA": 'to_string(round(to_real("x_current"), 7)) + \'_\' + to_string(round(to_real("y_current"), 7))',
+                "FORMULA": 'to_string(round(to_real("df_x_current"), 7)) + \'_\' + to_string(round(to_real("df_y_current"), 7))',
                 "OUTPUT": "memory:",
             },
             context=context,
@@ -140,7 +140,7 @@ class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
                 "FIELDS_TO_COPY": [],
                 "METHOD": 1,
                 "DISCARD_NONMATCHING": False,
-                "PREFIX": "sf_",
+                "PREFIX": "",
                 "OUTPUT": "memory:",
             },
             context=context,
@@ -152,7 +152,7 @@ class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
             "native:extractbyexpression",
             {
                 "INPUT": joined_layer,
-                "EXPRESSION": '"map_uuid" != "sf_map_uuid"',
+                "EXPRESSION": '"df_map_uuid" != "sf_map_uuid"',
                 "OUTPUT": "memory:",
             },
             context=context,
@@ -162,7 +162,7 @@ class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
         # 5. Select & organize output columns using select_mv
         final_output = gmdhelpers.select_mv(
             mismatched_layer,
-            ["x_current", "y_current", "sf_map_uuid", "sf_longitude", "sf_latitude"],
+            ["df_fid", "df_x_current", "df_y_current", "df_map_uuid", "sf_map_uuid", "sf_longitude", "sf_latitude"],
             context=context,
             feedback=feedback,
         )

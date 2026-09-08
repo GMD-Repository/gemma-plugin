@@ -98,7 +98,7 @@ class mv_2027_hp_4c_remarks__invalid(QgsProcessingAlgorithm):
             "native:extractbyexpression",
             {
                 "INPUT": geojson_data,
-                "EXPRESSION": 'regexp_match(lower("remarks"), \'delet|erase|remove|wrong tag|test\') > 0',
+                "EXPRESSION": 'regexp_match(lower("sf_remarks"), \'delet|erase|remove|wrong tag|test\') > 0',
                 "OUTPUT": "memory:",
             },
             context=context,
