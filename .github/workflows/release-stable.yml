@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   release:
@@ -88,7 +89,8 @@ jobs:
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
           from: ${{ secrets.MAIL_FROM || secrets.MAIL_USERNAME }}
-          to: ${{ steps.gsheet-emails.outputs.recipients || secrets.EMAIL_TO }}
+          to: ${{ secrets.MAIL_FROM || secrets.MAIL_USERNAME }}
+          bcc: ${{ steps.gsheet-emails.outputs.recipients || secrets.EMAIL_TO }}
           reply_to: ${{ secrets.MAIL_REPLY_TO || secrets.MAIL_FROM || secrets.MAIL_USERNAME }}
           subject: "[GEMMA Plugin] v${{ steps.release.outputs.version }} — Stable Release Ready"
           html_body: |
@@ -234,26 +236,7 @@ jobs:
             </body>
             </html>
 
-      # ── 6. Trigger docs deploy ───────────────────────────────────────
-      - name: Trigger GitHub Pages Deploy
-        if: steps.release.outputs.released == 'true' && success()
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.AI_TOKEN || secrets.GITHUB_TOKEN }}
-          script: |
-            try {
-              await github.rest.actions.createWorkflowDispatch({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: 'deploy-docs.yml',
-                ref: 'main',
-              });
-              console.log('🚀 Triggered Deploy VitePress Docs workflow');
-            } catch (err) {
-              console.log('⚠️ Could not trigger deploy-docs dispatch:', err.message);
-            }
-
-      # ── 7. Log release record to Google Sheet (Secured) ──────────────
+      # ── 6. Log release record to Google Sheet (Secured) ──────────────
       - name: Log release record to Google Sheet
         if: steps.release.outputs.released == 'true' && success()
         continue-on-error: true

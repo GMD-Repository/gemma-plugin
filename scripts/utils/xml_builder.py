@@ -75,8 +75,8 @@ def build_plugin_xml(
     Returns:
         Complete XML string for the plugin repository.
     """
-    # Ensure version has 'v' prefix
-    version_str = version if version.startswith("v") else f"v{version}"
+    # Ensure version matches metadata.txt format (strip leading 'v' if present)
+    version_str = version.lstrip("v") if (version.startswith("v") and len(version) > 1 and version[1].isdigit()) else version
 
     name = metadata.get("name", "GEMMA")
     description = metadata.get("description", "GIS Extension for Map Management and Analysis")
