@@ -14,13 +14,13 @@ hero:
       link: /getting-started
     - theme: alt
       text: Download
-      link: https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.1/gemma-plugin-v1.0.1.zip
+      link: https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.2/gemma-plugin-v1.0.2.zip
 
 features:
   - icon:
       src: /icons/overlap.svg
     title: MBI Checker
-    details: Detect overlaps and gaps between barangay polygon boundaries with building point validation. Supports exporting styled MBI layers as GPKG.
+    details: Detect overlaps and gaps between barangay polygon boundaries with building point validation and reference disputed case exclusion.
     link: /tools/mbi-checker
   - icon:
       src: /icons/mbi_validator.svg
@@ -77,6 +77,11 @@ features:
     title: Check and Update
     details: Interactive 3-Phase dialog workflow for georeferencing, targeted geometry error scanning/repair, and metadata updating.
     link: /tools/check-and-update
+  - icon:
+      src: /icons/compare_boundaries.svg
+    title: PSA - LGU Boundary Comparison
+    details: Audit PSA reference boundaries against LGU-submitted polygons using geocodes, global alignment models, and building point validation.
+    link: /tools/psa-lgu-comparison
   - icon:
       src: /icons/packager.svg
     title: Package for QField

@@ -670,6 +670,7 @@ class TestEAMergeProcessor(unittest.TestCase):
             self.assertEqual(str(ghost_row[12]), "2024")
             self.assertIn("Merged to EA 006000", str(ghost_row[13]))
             self.assertNotIn("FALSE", str(ghost_row[13]).upper())
+            self.assertIn("Merged with EA 005000", str(active_row[13]))
 
             wb.close()
             del ea_cells, active_row, ghost_row, wb, processor, result
@@ -686,44 +687,175 @@ class TestEAMergeProcessor(unittest.TestCase):
         self.assertEqual(_SUBHDR[1], "Mun")
         self.assertEqual(_SUBHDR[2], "Brgy")
         self.assertEqual(_SUBHDR[3], "EA")
-        self.assertEqual(_COL_GROUPS[0], ("Geographic Identification", 1, 4))
-        self.assertEqual(_COL_GROUPS[1], ("2024 EARF", 5, 6))
-        self.assertEqual(_COL_GROUPS[2], ("2024 Estimated", 7, 8))
-        self.assertEqual(_COL_GROUPS[3], ("2026 Preliminary EA", 9, 14))
+        self.assertEqual(_COL_GROUPS[0], ("2024 EARF", 5, 6))
+        self.assertEqual(_COL_GROUPS[1], ("2024 Estimated", 7, 8))
+        self.assertEqual(_COL_GROUPS[2], ("2026 Preliminary EA", 9, 14))
 
         styles = _Styles()
         self.assertIsNotNone(styles.fill_merged)
         self.assertIsNotNone(styles.fill_delineated)
         self.assertIsNotNone(styles.fill_special)
+        self.assertIsNotNone(styles.fill_summary_province)
+        self.assertIsNotNone(styles.fill_summary_citymun)
 
-        # Test barangay summary row name resolution
+        # Test 4-level hierarchy and delineated child baseline suppression
         ea_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "01728001_ea", "memory")
         pr = ea_layer.dataProvider()
         pr.addAttributes([
             QgsField("GEOCODE", QVariant.String),
+            QgsField("province", QVariant.String),
             QgsField("barangay", QVariant.String),
             QgsField("name", QVariant.String),
             QgsField("ean", QVariant.String),
             QgsField("hhcount", QVariant.Double),
             QgsField("bldgcount", QVariant.Int),
+            QgsField("new_ean", QVariant.String),
+            QgsField("hh_count", QVariant.Double),
+            QgsField("bldg_count", QVariant.Int),
+            QgsField("ea_type", QVariant.String),
         ])
         ea_layer.updateFields()
 
-        f = QgsFeature(ea_layer.fields())
-        f.setGeometry(make_square(0, 0, 100))
-        f.setAttributes(["01728001001", "Alzate", "EA 001000", "001000", 100.0, 20])
-        pr.addFeatures([f])
+        # Delineated EA with 2 child parts under parent EA 001000
+        f1 = QgsFeature(ea_layer.fields())
+        f1.setGeometry(make_square(0, 0, 100))
+        f1.setAttributes(["01728001", "La Union", "Alzate", "Alzate - EA 001000", "001000", 100.0, 20, "001004", 50.0, 10, "DELINEATED"])
+
+        f2 = QgsFeature(ea_layer.fields())
+        f2.setGeometry(make_square(100, 0, 100))
+        f2.setAttributes(["01728001", "La Union", "Alzate", "Alzate - EA 001000", "001000", 100.0, 20, "001005", 50.0, 10, "DELINEATED"])
+
+        pr.addFeatures([f1, f2])
         ea_layer.updateExtents()
 
         from references.create_enumeration_area.helpers.earf_writer import EARFWriter
         writer = EARFWriter(layer=ea_layer, geo_code="01728", citymun="Bangar", output_path="dummy.xlsx")
         rows = writer._collect_data_rows()
+
+        # Check Level 1: Province Summary
+        prov_rows = [r for r in rows if r.get("is_province_summary")]
+        self.assertEqual(len(prov_rows), 1)
+        self.assertEqual(prov_rows[0]["name"], "LA UNION")
+        self.assertEqual(prov_rows[0]["prov"], "017")
+        self.assertEqual(prov_rows[0]["mun"], "00")
+        self.assertEqual(prov_rows[0]["brgy"], "000")
+        self.assertEqual(prov_rows[0]["ea"], "000000")
+
+        # Check Level 2: Municipality Summary
+        mun_rows = [r for r in rows if r.get("is_citymun_summary")]
+        self.assertEqual(len(mun_rows), 1)
+        self.assertEqual(mun_rows[0]["name"], "BANGAR")
+        self.assertEqual(mun_rows[0]["mun"], "28")
+
+        # Check Level 3: Barangay Summary
         brgy_rows = [r for r in rows if r.get("is_barangay_summary")]
         self.assertEqual(len(brgy_rows), 1)
         self.assertEqual(brgy_rows[0]["name"], "ALZATE")
-        self.assertNotEqual(brgy_rows[0]["name"], "EA 001000")
 
-        del ea_layer, writer, rows, brgy_rows
+        # Check Level 4: Delineated Child rows
+        ea_data_rows = [r for r in rows if r.get("is_ea_row")]
+        self.assertEqual(len(ea_data_rows), 2)
+        # Part 1 has full baseline and parent EA in Col D
+        self.assertEqual(ea_data_rows[0]["ea"], "001000")
+        self.assertEqual(ea_data_rows[0]["eacount"], 1)
+        self.assertEqual(ea_data_rows[0]["hhcount"], 100)
+        self.assertEqual(ea_data_rows[0]["bldgcount"], 20)
+        self.assertEqual(ea_data_rows[0]["new_ean"], "001004")
+
+        # Part 2 retains parent EA in Col D, but has blank baseline counts to prevent double-counting
+        self.assertEqual(ea_data_rows[1]["ea"], "001000")
+        self.assertIsNone(ea_data_rows[1]["eacount"])
+        self.assertIsNone(ea_data_rows[1]["hhcount"])
+        self.assertIsNone(ea_data_rows[1]["bldgcount"])
+        self.assertEqual(ea_data_rows[1]["new_ean"], "001005")
+
+        del ea_layer, writer, rows, prov_rows, mun_rows, brgy_rows, ea_data_rows
+        gc.collect()
+
+    def test_epsg4326_geographic_crs_retains_untouched_and_partially_clipped_features(self):
+        """Test that geographic CRS (EPSG:4326 with degree coordinates) retains untouched EAs."""
+        ea_layer = QgsVectorLayer("Polygon?crs=EPSG:4326", "01728001_ea2024", "memory")
+        pr = ea_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("GEOCODE", QVariant.String),
+            QgsField("EA_NO", QVariant.String),
+            QgsField("CITYMUN", QVariant.String),
+            QgsField("hhcount", QVariant.Double),
+            QgsField("bldgcount", QVariant.Int),
+        ])
+        ea_layer.updateFields()
+
+        # Three EAs in EPSG:4326 degrees:
+        # EA 001000: (120.0, 14.0, 0.01, 0.01) - replaced by delineated layer
+        # EA 002000: (120.01, 14.0, 0.01, 0.01) - untouched
+        # EA 003000: (120.02, 14.0, 0.01, 0.01) - untouched
+        f1 = QgsFeature(ea_layer.fields())
+        f1.setGeometry(make_square(120.0, 14.0, 0.01))
+        f1.setAttributes(["01728001", "001000", "Bangar", 100.0, 20])
+
+        f2 = QgsFeature(ea_layer.fields())
+        f2.setGeometry(make_square(120.01, 14.0, 0.01))
+        f2.setAttributes(["01728001", "002000", "Bangar", 150.0, 30])
+
+        f3 = QgsFeature(ea_layer.fields())
+        f3.setGeometry(make_square(120.02, 14.0, 0.01))
+        f3.setAttributes(["01728001", "003000", "Bangar", 200.0, 40])
+
+        pr.addFeatures([f1, f2, f3])
+        ea_layer.updateExtents()
+
+        # Delineated replacement covering only EA 001000 (split into 2 parts)
+        repl_layer = QgsVectorLayer("Polygon?crs=EPSG:4326", "01728001_delineated_ea2026", "memory")
+        rpr = repl_layer.dataProvider()
+        rpr.addAttributes([
+            QgsField("GEOCODE", QVariant.String),
+            QgsField("new_ean", QVariant.String),
+            QgsField("hh_count", QVariant.Double),
+            QgsField("bldg_count", QVariant.Int),
+        ])
+        repl_layer.updateFields()
+
+        rf1 = QgsFeature(repl_layer.fields())
+        rf1.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(120.0, 14.0),
+            QgsPointXY(120.005, 14.0),
+            QgsPointXY(120.005, 14.01),
+            QgsPointXY(120.0, 14.01),
+            QgsPointXY(120.0, 14.0),
+        ]]))
+        rf1.setAttributes(["01728001", "001004", 50.0, 10])
+
+        rf2 = QgsFeature(repl_layer.fields())
+        rf2.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(120.005, 14.0),
+            QgsPointXY(120.01, 14.0),
+            QgsPointXY(120.01, 14.01),
+            QgsPointXY(120.005, 14.01),
+            QgsPointXY(120.005, 14.0),
+        ]]))
+        rf2.setAttributes(["01728001", "001005", 50.0, 10])
+
+        rpr.addFeatures([rf1, rf2])
+        repl_layer.updateExtents()
+
+        processor = EAMergeProcessor(
+            ea_layer=ea_layer,
+            replacement_layers=[repl_layer],
+        )
+        result = processor.run()
+        self.assertTrue(result.success)
+        out_layer = result.output_layer
+        self.assertIsNotNone(out_layer)
+
+        # Final features: 2 untouched EAs (002000, 003000) + 2 replacement parts (001004, 001005) = 4 features
+        self.assertEqual(out_layer.featureCount(), 4)
+        new_eans = [f.attribute("new_ean") for f in out_layer.getFeatures()]
+        self.assertIn("001004", new_eans)
+        self.assertIn("001005", new_eans)
+        self.assertIn("002000", new_eans)
+        self.assertIn("003000", new_eans)
+
+        del ea_layer, repl_layer, processor, result, out_layer
         gc.collect()
 
 

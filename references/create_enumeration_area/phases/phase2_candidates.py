@@ -143,6 +143,9 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     ]
     export_fields = QgsFields()
     for fname in export_field_names:
+        if fname == "remarks":
+            export_fields.append(QgsField("remarks", QVariant.String))
+            continue
         idx = out_fields.indexOf(fname)
         if idx != -1:
             export_fields.append(out_fields.at(idx))
@@ -641,8 +644,8 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         is_delin = False
         is_merge = False
 
-        if _orig_hh >= max_household:
-            if _effective_hh >= max_household:
+        if _orig_hh > max_household:
+            if _effective_hh > max_household:
                 is_delin = True
             else:
                 feedback.pushInfo(
@@ -661,7 +664,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         elif eadel_indi_col_idx != -1:
             val = _dc_feat.attribute(eadel_indi_col_idx)
             if val is not None and str(val).strip().lower() in ("for delineation", "for_delineation"):
-                if _effective_hh >= max_household or _deducted_spec_hh == 0.0:
+                if _effective_hh > max_household:
                     is_delin = True
                 elif _effective_hh <= min_household:
                     is_merge = True
@@ -772,10 +775,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                 raise QgsProcessingException("Algorithm cancelled by user.")
 
             is_cand = feat.id() in delineation_candidate_ids
-            parent_bar = resolve_ea_parent_barangay(feat)
-            is_ref_in_bar = (not is_cand) and (parent_bar in delineation_candidate_bar_geocodes)
-
-            if not (is_cand or is_ref_in_bar):
+            if not is_cand:
                 continue
 
             out_feat = QgsFeature(delin_cand_fields)
