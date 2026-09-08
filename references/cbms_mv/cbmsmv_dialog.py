@@ -32,6 +32,7 @@ from qgis.core import (
     QgsProcessingFeedback,
     QgsProcessingUtils,
     QgsProviderRegistry,
+    QgsFeatureRequest,
 )
 from qgis.gui import QgsFileWidget
 from qgis.PyQt.QtCore import Qt, QTimer, pyqtSignal, QSize
@@ -98,6 +99,21 @@ except (ImportError, ValueError):
         if _ref_dir not in sys.path:
             sys.path.insert(0, _ref_dir)
         from cbmsmv_review_dock import CbmsMvReviewDock, is_valid_qobject
+
+try:
+    from .cbms_mv_fix import get_fix_handler, has_fix
+except (ImportError, ValueError):
+    try:
+        from cbms_mv_fix import get_fix_handler, has_fix
+    except (ImportError, ValueError):
+        _fix_dir = os.path.join(os.path.dirname(__file__), "cbms_mv_fix")
+        if _fix_dir not in sys.path:
+            sys.path.insert(0, _fix_dir)
+        try:
+            from cbms_mv_fix import get_fix_handler, has_fix
+        except Exception:
+            get_fix_handler = lambda v: None
+            has_fix = lambda v: False
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +345,7 @@ class CbmsmvDialog(QDialog):
         if tab_index is not None and hasattr(self, "config_tab_widget"):
             self.config_tab_widget.setCurrentIndex(tab_index)
         if hasattr(self, "btn_header_config"):
-            self.btn_header_config.setText("📋  Results Workspace")
+            self.btn_header_config.setText("Home")
             self.btn_header_config.setToolTip("Return to Results Workspace")
 
     # -----------------------------------------------------------------------
@@ -354,24 +370,6 @@ class CbmsmvDialog(QDialog):
         lbl_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #1A365D;")
         top_bar.addWidget(lbl_title)
         top_bar.addStretch()
-
-        btn_back = QPushButton("  ⬅  Back to Results Workspace  ")
-        btn_back.setStyleSheet("""
-            QPushButton {
-                background-color: #3182CE;
-                color: #FFFFFF;
-                font-weight: bold;
-                padding: 6px 14px;
-                border-radius: 4px;
-                border: none;
-                font-size: 11px;
-            }
-            QPushButton:hover {
-                background-color: #2B6CB0;
-            }
-        """)
-        btn_back.clicked.connect(self._switch_to_results)
-        top_bar.addWidget(btn_back)
         layout.addLayout(top_bar)
 
         self.config_tab_widget = QTabWidget()
@@ -673,7 +671,7 @@ class CbmsmvDialog(QDialog):
         layer: QgsVectorLayer,
         count: int,
     ) -> QWidget:
-        """Create an interactive feature table tab for a flagged validation rule."""
+        """Create an interactive feature table tab with in-place cell editing, multiselect, and fix actions."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -686,9 +684,13 @@ class CbmsmvDialog(QDialog):
         # Title & count
         title_box = QVBoxLayout()
         title_box.setSpacing(1)
-        lbl_vname = QLabel(f"<b>{val_id}</b> — {check_name}")
+        lbl_vname = QLabel(f"<b>{check_name}</b>")
+        lbl_vname.setToolTip(f"Validation ID: {val_id}")
         lbl_vname.setStyleSheet("font-size: 11px; color: #1A365D;")
-        lbl_vcount = QLabel(f"<span style='color: #C53030; font-weight: bold;'>{count:,}</span> flagged feature(s) detected. Double-click any row to zoom on canvas.")
+        lbl_vcount = QLabel(
+            f"<span style='color: #C53030; font-weight: bold;'>{count:,}</span> flagged feature(s) detected. "
+            f"Click row to zoom; double-click cell to edit in-place."
+        )
         lbl_vcount.setStyleSheet("font-size: 10px; color: #4A5568;")
         title_box.addWidget(lbl_vname)
         title_box.addWidget(lbl_vcount)
@@ -698,16 +700,17 @@ class CbmsmvDialog(QDialog):
         edit_filter = QLineEdit()
         edit_filter.setPlaceholderText("🔍  Filter rows in this table...")
         edit_filter.setClearButtonEnabled(True)
-        edit_filter.setFixedWidth(240)
+        edit_filter.setFixedWidth(210)
         toolbar.addWidget(edit_filter)
 
-        # Export to CSV
-        btn_csv = QPushButton("📥  Export to CSV")
-        btn_csv.setStyleSheet("""
+        # Select All / None toggle
+        btn_select_all = QPushButton("☑  Select All")
+        btn_select_all.setToolTip("Toggle select all or none of visible rows")
+        btn_select_all.setStyleSheet("""
             QPushButton {
                 background-color: #EDF2F7;
                 color: #2D3748;
-                font-weight: bold;
+                font-weight: 600;
                 padding: 5px 10px;
                 border-radius: 4px;
                 border: 1px solid #CBD5E0;
@@ -717,41 +720,76 @@ class CbmsmvDialog(QDialog):
                 background-color: #E2E8F0;
             }
         """)
-        btn_csv.clicked.connect(lambda: self._export_layer_to_csv(layer, val_id))
-        toolbar.addWidget(btn_csv)
+        toolbar.addWidget(btn_select_all)
 
-        # Open QGIS Attribute Table
-        btn_qgis_tbl = QPushButton("📋  QGIS Table")
-        btn_qgis_tbl.setToolTip("Open layer in QGIS native Attribute Table")
-        btn_qgis_tbl.setStyleSheet("""
+        # Fix Selected (batch action)
+        has_auto_fix = has_fix(val_id)
+        btn_fix_selected = QPushButton("⚡  Fix Selected (0)")
+        btn_fix_selected.setEnabled(False)
+        btn_fix_selected.setToolTip(
+            f"Run automated fix on all checked features for '{val_id}'" if has_auto_fix
+            else f"No automated fix registered for '{val_id}'"
+        )
+        btn_fix_selected.setStyleSheet("""
             QPushButton {
-                background-color: #EDF2F7;
-                color: #2D3748;
+                background-color: #F0FFF4;
+                color: #22543D;
                 font-weight: bold;
-                padding: 5px 10px;
+                padding: 5px 12px;
                 border-radius: 4px;
-                border: 1px solid #CBD5E0;
+                border: 1px solid #C6F6D5;
+                font-size: 11px;
+            }
+            QPushButton:hover:enabled {
+                background-color: #C6F6D5;
+                color: #1C4532;
+            }
+            QPushButton:disabled {
+                background-color: #F7FAFC;
+                color: #A0AEC0;
+                border: 1px solid #E2E8F0;
+            }
+        """)
+        toolbar.addWidget(btn_fix_selected)
+
+        # Save Layer Changes
+        btn_save_changes = QPushButton("💾  Save Changes")
+        btn_save_changes.setToolTip("Commit buffered edits on the main building points layer directly to disk")
+        btn_save_changes.setStyleSheet("""
+            QPushButton {
+                background-color: #EBF8FF;
+                color: #2B6CB0;
+                font-weight: bold;
+                padding: 5px 12px;
+                border-radius: 4px;
+                border: 1px solid #BEE3F8;
                 font-size: 11px;
             }
             QPushButton:hover {
-                background-color: #E2E8F0;
+                background-color: #BEE3F8;
+                color: #1A365D;
             }
         """)
-        btn_qgis_tbl.clicked.connect(lambda: self.iface.showAttributeTable(layer) if self.iface and layer and layer.isValid() else None)
-        toolbar.addWidget(btn_qgis_tbl)
+        btn_save_changes.clicked.connect(self._save_main_layer_changes)
+        toolbar.addWidget(btn_save_changes)
 
         layout.addLayout(toolbar)
 
         # Feature Table
         table = QTableWidget()
         field_names = [f.name() for f in layer.fields()] if layer and layer.isValid() else []
-        headers = field_names + ["Action"]
-        action_col = len(field_names)
+        headers = ["☑"] + field_names + ["Action"]
+        action_col = len(headers) - 1
         table.setColumnCount(len(headers))
         table.setHorizontalHeaderLabels(headers)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setAlternatingRowColors(True)
         table.verticalHeader().setVisible(True)
+
+        table.setColumnWidth(0, 38)
+        table.setColumnWidth(action_col, 136)
+
+        table.setProperty("is_populating", True)
 
         if layer and layer.isValid():
             features = list(layer.getFeatures())
@@ -760,25 +798,47 @@ class CbmsmvDialog(QDialog):
 
             for row_idx, feat in enumerate(features):
                 fid = feat.id()
+                uuid_val = feat["map_uuid"] if "map_uuid" in feat.fields().names() else None
+                uuid_str = str(uuid_val).strip() if uuid_val is not None else ""
 
+                # Column 0: Checkbox
+                chk_item = QTableWidgetItem()
+                chk_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable)
+                chk_item.setCheckState(Qt.Unchecked)
+                chk_item.setData(Qt.UserRole, fid)
+                chk_item.setData(Qt.UserRole + 1, uuid_str)
+                table.setItem(row_idx, 0, chk_item)
+
+                # Attribute Data Columns (1 to len(field_names))
                 for col_idx, fname in enumerate(field_names):
                     val = feat[fname]
                     val_str = "" if val is None else str(val)
                     item = QTableWidgetItem(val_str)
-                    item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-                    if col_idx == 0:
-                        item.setData(Qt.UserRole, fid)
-                    table.setItem(row_idx, col_idx, item)
+                    if fname == "map_uuid":
+                        item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                        item.setToolTip("Primary UUID key (read-only to preserve layer integrity)")
+                    else:
+                        item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
+                    item.setData(Qt.UserRole, fid)
+                    item.setData(Qt.UserRole + 1, uuid_str)
+                    item.setData(Qt.UserRole + 2, fname)
+                    table.setItem(row_idx, col_idx + 1, item)
 
-                # Action button in the last column: Edit
+                # Column Action: Edit & Fix buttons
+                action_widget = QWidget()
+                action_layout = QHBoxLayout(action_widget)
+                action_layout.setContentsMargins(4, 2, 4, 2)
+                action_layout.setSpacing(4)
+                action_layout.setAlignment(Qt.AlignCenter)
+
                 btn_row_edit = QPushButton("Edit")
-                btn_row_edit.setToolTip(f"Open Navigation Dock to edit feature #{row_idx + 1}")
+                btn_row_edit.setToolTip(f"Open Navigation Review Dock / Feature Form for feature #{row_idx + 1}")
                 btn_row_edit.setStyleSheet("""
                     QPushButton {
                         background-color: #EBF8FF;
                         color: #2B6CB0;
                         font-weight: 600;
-                        padding: 2px 8px;
+                        padding: 2px 7px;
                         border-radius: 3px;
                         border: 1px solid #BEE3F8;
                         font-size: 10.5px;
@@ -791,12 +851,62 @@ class CbmsmvDialog(QDialog):
                 btn_row_edit.clicked.connect(
                     lambda checked=False, f_id=fid: self._launch_review_dock(val_id, check_name, layer, target_fid=f_id)
                 )
-                table.setCellWidget(row_idx, action_col, btn_row_edit)
+                action_layout.addWidget(btn_row_edit)
+
+                btn_row_fix = QPushButton("Fix")
+                if has_auto_fix:
+                    btn_row_fix.setToolTip(f"Run automated fix for feature #{row_idx + 1} ({val_id})")
+                    btn_row_fix.setStyleSheet("""
+                        QPushButton {
+                            background-color: #F0FFF4;
+                            color: #22543D;
+                            font-weight: 600;
+                            padding: 2px 7px;
+                            border-radius: 3px;
+                            border: 1px solid #C6F6D5;
+                            font-size: 10.5px;
+                        }
+                        QPushButton:hover {
+                            background-color: #C6F6D5;
+                            color: #1C4532;
+                        }
+                    """)
+                    btn_row_fix.clicked.connect(
+                        lambda checked=False, u=uuid_str, r=row_idx: self._execute_fix(val_id, layer, table, [u], [r])
+                    )
+                else:
+                    btn_row_fix.setEnabled(False)
+                    btn_row_fix.setToolTip(f"No automated fix registered for '{val_id}'")
+                    btn_row_fix.setStyleSheet("""
+                        QPushButton {
+                            background-color: #F7FAFC;
+                            color: #A0AEC0;
+                            padding: 2px 7px;
+                            border-radius: 3px;
+                            border: 1px solid #E2E8F0;
+                            font-size: 10.5px;
+                        }
+                    """)
+                action_layout.addWidget(btn_row_fix)
+
+                table.setCellWidget(row_idx, action_col, action_widget)
 
             table.setSortingEnabled(True)
 
-        table.itemDoubleClicked.connect(
-            lambda item: self._on_table_row_double_clicked(val_id, check_name, layer, table, item.row())
+        table.setProperty("is_populating", False)
+
+        # Wire Signals
+        table.itemChanged.connect(
+            lambda item: self._on_table_item_changed(val_id, layer, table, item, btn_fix_selected)
+        )
+        table.itemClicked.connect(
+            lambda item: self._on_table_row_clicked(layer, table, item.row())
+        )
+        btn_select_all.clicked.connect(
+            lambda: self._toggle_select_all(table, btn_select_all, btn_fix_selected, val_id)
+        )
+        btn_fix_selected.clicked.connect(
+            lambda: self._fix_selected_features(val_id, layer, table)
         )
         edit_filter.textChanged.connect(
             lambda text: self._filter_feature_table(table, text)
@@ -805,15 +915,264 @@ class CbmsmvDialog(QDialog):
         layout.addWidget(table, stretch=1)
         return tab
 
-    def _on_table_row_double_clicked(
+    def _on_table_item_changed(
         self,
         val_id: str,
-        check_name: str,
         layer: QgsVectorLayer,
         table: QTableWidget,
-        row: int,
+        item: QTableWidgetItem,
+        btn_fix_selected: Optional[QPushButton] = None,
     ):
-        """Zoom to feature on canvas and open interactive Navigation Dock."""
+        """Handle checkbox toggles and direct cell value editing."""
+        if table.property("is_populating"):
+            return
+
+        col = item.column()
+        row = item.row()
+
+        # Case 1: Checkbox toggled in Column 0
+        if col == 0:
+            if btn_fix_selected:
+                checked_count = sum(
+                    1 for r in range(table.rowCount())
+                    if table.item(r, 0) and table.item(r, 0).checkState() == Qt.Checked
+                )
+                btn_fix_selected.setText(f"⚡  Fix Selected ({checked_count})")
+                btn_fix_selected.setEnabled(has_fix(val_id) and checked_count > 0)
+            return
+
+        # Case 2: Action column
+        if col >= table.columnCount() - 1:
+            return
+
+        # Case 3: Data attribute cell edited in-place
+        field_name = item.data(Qt.UserRole + 2)
+        map_uuid = item.data(Qt.UserRole + 1)
+        fid = item.data(Qt.UserRole)
+        if not field_name or field_name == "map_uuid":
+            return
+
+        new_val_str = item.text().strip()
+
+        # 1. Update in results memory layer
+        if layer and layer.isValid():
+            f_idx = layer.fields().indexOf(field_name)
+            if f_idx != -1:
+                if not layer.isEditable():
+                    layer.startEditing()
+                layer.changeAttributeValue(fid, f_idx, new_val_str)
+
+        # 2. Update in main building points layer
+        main_layer = self._get_or_load_main_building_layer()
+        if main_layer and main_layer.isValid() and map_uuid:
+            m_idx = main_layer.fields().indexOf(field_name)
+            if m_idx != -1:
+                if not main_layer.isEditable():
+                    main_layer.startEditing()
+                req = QgsFeatureRequest().setFilterExpression(f'"map_uuid" = \'{map_uuid}\'')
+                for mf in main_layer.getFeatures(req):
+                    main_layer.changeAttributeValue(mf.id(), m_idx, new_val_str)
+                    break
+
+        # Subtle highlight to show cell was manually modified
+        item.setBackground(QColor("#FEFCBF"))
+        self.lbl_footer_status.setText(f"Updated '{field_name}' = '{new_val_str}' for feature UUID {map_uuid}")
+
+    def _toggle_select_all(
+        self,
+        table: QTableWidget,
+        btn_select_all: QPushButton,
+        btn_fix_selected: QPushButton,
+        val_id: str,
+    ):
+        """Toggle checking/unchecking all visible rows in the table."""
+        visible_rows = [r for r in range(table.rowCount()) if not table.isRowHidden(r)]
+        all_checked = all(
+            table.item(r, 0) and table.item(r, 0).checkState() == Qt.Checked
+            for r in visible_rows
+        ) if visible_rows else False
+
+        target_state = Qt.Unchecked if all_checked else Qt.Checked
+        table.setProperty("is_populating", True)
+        for r in visible_rows:
+            it = table.item(r, 0)
+            if it:
+                it.setCheckState(target_state)
+        table.setProperty("is_populating", False)
+
+        checked_count = len(visible_rows) if target_state == Qt.Checked else 0
+        btn_fix_selected.setText(f"⚡  Fix Selected ({checked_count})")
+        btn_fix_selected.setEnabled(has_fix(val_id) and checked_count > 0)
+        btn_select_all.setText("☐  Select None" if target_state == Qt.Checked else "☑  Select All")
+
+    def _fix_selected_features(self, val_id: str, layer: QgsVectorLayer, table: QTableWidget):
+        """Batch execute fix for all checked rows in the table."""
+        target_uuids = []
+        target_rows = []
+        for r in range(table.rowCount()):
+            item0 = table.item(r, 0)
+            if item0 and item0.checkState() == Qt.Checked:
+                uuid_val = item0.data(Qt.UserRole + 1)
+                if uuid_val:
+                    target_uuids.append(str(uuid_val).strip())
+                    target_rows.append(r)
+
+        if not target_uuids:
+            QMessageBox.information(self, "No Selection", "Please select at least one row using the checkboxes.")
+            return
+
+        self._execute_fix(val_id, layer, table, target_uuids, target_rows)
+
+    def _execute_fix(
+        self,
+        val_id: str,
+        layer: QgsVectorLayer,
+        table: QTableWidget,
+        target_uuids: List[str],
+        target_rows: Optional[List[int]] = None,
+    ):
+        """Execute automated fix for one or more features using registered fix handler."""
+        handler = get_fix_handler(val_id)
+        if not handler:
+            QMessageBox.warning(
+                self,
+                "No Fix Available",
+                f"No automated fix algorithm has been registered for '{val_id}'.\n\n"
+                f"To add one, create references/cbms_mv/cbms_mv_fix/{val_id}_fix.py.",
+            )
+            return
+
+        main_layer = self._get_or_load_main_building_layer()
+        if not main_layer or not main_layer.isValid():
+            QMessageBox.critical(
+                self,
+                "Layer Missing",
+                "Cannot run fix: Geotagged Building Points layer is not loaded.",
+            )
+            return
+
+        try:
+            feedback = QgsProcessingFeedback()
+            res = handler(main_layer, target_uuids, feedback=feedback)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Fix Error",
+                f"An error occurred while executing fix for '{val_id}':\n{exc}",
+            )
+            return
+
+        if not res.get("success"):
+            QMessageBox.warning(
+                self,
+                "Fix Incomplete",
+                res.get("message", "Fix did not complete successfully."),
+            )
+            return
+
+        updated_values = res.get("updated_values", {})
+        fixed_count = res.get("fixed_count", len(updated_values))
+
+        # Synchronize table cells and layer
+        table.setProperty("is_populating", True)
+        try:
+            if not layer.isEditable():
+                layer.startEditing()
+
+            rows_to_check = target_rows if target_rows is not None else list(range(table.rowCount()))
+            for r in rows_to_check:
+                item0 = table.item(r, 0)
+                if not item0:
+                    continue
+                r_uuid = str(item0.data(Qt.UserRole + 1)).strip()
+                r_fid = item0.data(Qt.UserRole)
+                if r_uuid in updated_values:
+                    col_updates = updated_values[r_uuid]
+                    for c in range(1, table.columnCount() - 1):
+                        c_item = table.item(r, c)
+                        if c_item:
+                            fname = c_item.data(Qt.UserRole + 2)
+                            if fname in col_updates:
+                                new_text = str(col_updates[fname])
+                                c_item.setText(new_text)
+                                # Highlight fixed cell in green
+                                c_item.setBackground(QColor("#C6F6D5"))
+                                # Also update result layer
+                                f_idx = layer.fields().indexOf(fname)
+                                if f_idx != -1:
+                                    layer.changeAttributeValue(r_fid, f_idx, new_text)
+
+                    # Uncheck row after successful fix
+                    item0.setCheckState(Qt.Unchecked)
+
+                    # Update the row's Fix button to show Fixed
+                    action_cell = table.cellWidget(r, table.columnCount() - 1)
+                    if action_cell:
+                        for btn in action_cell.findChildren(QPushButton):
+                            if btn.text() == "Fix":
+                                btn.setText("✓ Fixed")
+                                btn.setEnabled(False)
+                                btn.setStyleSheet("""
+                                    QPushButton {
+                                        background-color: #C6F6D5;
+                                        color: #22543D;
+                                        font-weight: bold;
+                                        padding: 2px 7px;
+                                        border-radius: 3px;
+                                        border: 1px solid #9AE6B4;
+                                        font-size: 10.5px;
+                                    }
+                                """)
+        finally:
+            table.setProperty("is_populating", False)
+
+        # Refresh map canvas if available
+        if self.iface:
+            self.iface.mapCanvas().refresh()
+
+        self.lbl_footer_status.setText(f"⚡ Successfully fixed {fixed_count} feature(s) for '{val_id}'.")
+        QMessageBox.information(
+            self,
+            "Fix Complete",
+            f"Successfully applied fix to {fixed_count} feature(s) for rule:\n{val_id}\n\n"
+            f"Changes are buffered in the building points layer.\n"
+            f"Click 'Save Changes' in the toolbar to commit to disk.",
+        )
+
+    def _save_main_layer_changes(self):
+        """Commit pending edits on the main building points layer to disk."""
+        main_layer = self._get_or_load_main_building_layer()
+        if not main_layer or not main_layer.isValid():
+            QMessageBox.warning(self, "No Layer", "Building points layer is not loaded.")
+            return
+
+        if not main_layer.isEditable():
+            QMessageBox.information(self, "No Pending Changes", "The building points layer has no unsaved changes.")
+            return
+
+        try:
+            success = main_layer.commitChanges()
+            if success:
+                main_layer.startEditing()  # Keep editable for continued workflow
+                self.lbl_footer_status.setText("💾 Layer changes saved successfully to disk.")
+                QMessageBox.information(
+                    self,
+                    "Changes Saved",
+                    "All edits and fixes have been committed directly to the building points file on disk.",
+                )
+            else:
+                errors = main_layer.commitErrors()
+                err_msg = "\n".join(errors) if errors else "Unknown commit error."
+                QMessageBox.critical(
+                    self,
+                    "Save Failed",
+                    f"Failed to commit changes to building points layer:\n{err_msg}",
+                )
+        except Exception as exc:
+            QMessageBox.critical(self, "Save Error", f"Error committing layer changes:\n{exc}")
+
+    def _on_table_row_clicked(self, layer: QgsVectorLayer, table: QTableWidget, row: int):
+        """Zoom and flash canvas feature when clicking any table row."""
         item0 = table.item(row, 0)
         if not item0:
             return
@@ -833,19 +1192,16 @@ class CbmsmvDialog(QDialog):
             except Exception as exc:
                 self.lbl_footer_status.setText(f"Could not zoom to feature: {exc}")
 
-        # Open review dock focusing on this feature
-        self._launch_review_dock(val_id, check_name, layer, target_fid=fid)
-
     def _filter_feature_table(self, table: QTableWidget, text: str):
-        """Filter table rows matching search string across all data columns."""
+        """Filter table rows matching search string across data columns."""
         search = text.strip().lower()
-        data_cols = max(0, table.columnCount() - 1)
+        last_col = max(0, table.columnCount() - 1)
         for row in range(table.rowCount()):
             if not search:
                 table.setRowHidden(row, False)
                 continue
             match = False
-            for col in range(data_cols):
+            for col in range(1, last_col):
                 it = table.item(row, col)
                 if it and search in it.text().lower():
                     match = True
@@ -1091,10 +1447,10 @@ class CbmsmvDialog(QDialog):
         grid_sources.addWidget(self.lbl_status_form2, 0, 2)
 
         # 2. Geotagged Building Points (.geojson)
-        lbl_points = QLabel("Geotagged Building Points (.geojson):")
+        lbl_points = QLabel("Form 2 Geotagged Building Points (.geojson):")
         lbl_points.setStyleSheet("font-weight: bold; color: #2C3E50;")
         self.file_points = QgsFileWidget()
-        self.file_points.setDialogTitle("Select Geotagged Building Points (.geojson)")
+        self.file_points.setDialogTitle("Select Form 2 Geotagged Building Points (.geojson)")
         self.file_points.setFilter("GeoJSON Vector Files (*.geojson);;All Files (*.*)")
         self.file_points.setStorageMode(QgsFileWidget.GetFile)
         self.file_points.fileChanged.connect(self._on_inputs_changed)
@@ -1180,11 +1536,11 @@ class CbmsmvDialog(QDialog):
 
         # Checkboxes
         self.chk_load_canvas = QCheckBox("Add generated error/flag layers directly into QGIS Canvas")
-        self.chk_load_canvas.setChecked(True)
+        self.chk_load_canvas.setChecked(False)
         vbox_output.addWidget(self.chk_load_canvas)
 
         self.chk_group_layers = QCheckBox("Group validation result layers under '2027 CBMS MV Results'")
-        self.chk_group_layers.setChecked(True)
+        self.chk_group_layers.setChecked(False)
         vbox_output.addWidget(self.chk_group_layers)
 
         self.chk_summary_report = QCheckBox("Generate validation audit report (JSON && Summary CSV)")

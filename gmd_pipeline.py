@@ -204,17 +204,17 @@ class GMDPipeline(object):
         #self.updating_boundaries_menu.addAction(self.comparison_panel_action)
 
         # 2. EA Delineation Submenu
-        #self.ea_delineation_menu = QMenu(u'EA Delineation')
-        #self.gema_add_submenu(self.ea_delineation_menu, create_ea_icon)
+        self.ea_delineation_menu = QMenu(u'EA Delineation')
+        self.gema_add_submenu(self.ea_delineation_menu, create_ea_icon)
 
         #self.create_ea_action = QAction(create_ea_icon, "EA Delineation and Merging", self.iface.mainWindow())
         #self.create_ea_action.triggered.connect(self.show_create_ea_dialog)
         #self.ea_delineation_menu.addAction(self.create_ea_action)
 
-        #self.package_qfield_action = QAction(packager_icon, "Package for QField", self.iface.mainWindow())
-        #self.package_qfield_action.triggered.connect(self.show_package_dialog)
-        #self.package_qfield_action.setShortcut("Ctrl+Alt+Q")
-        #self.ea_delineation_menu.addAction(self.package_qfield_action)
+        self.package_qfield_action = QAction(packager_icon, "Package for QField", self.iface.mainWindow())
+        self.package_qfield_action.triggered.connect(self.show_package_dialog)
+        self.package_qfield_action.setShortcut("Ctrl+Alt+Q")
+        self.ea_delineation_menu.addAction(self.package_qfield_action)
 
         # 3. Others Submenu
         #self.others_menu = QMenu(u'Others')
