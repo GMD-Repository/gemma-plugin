@@ -2587,29 +2587,23 @@ class PackageDialog(QDialog, DialogUi):
         Returns a dict of original actions so they can be restored.
         """
         project = QgsProject.instance()
-        assigned_layer_ids = set()
+        tree_checked_layer_ids = set()
+        tree_unchecked_layer_ids = set()
         
-        # 1. Group Panel (LayerGroupsTreeWidget)
+        # 1. Group Panel (LayerGroupsTreeWidget) - traverse recursively
         if hasattr(self, 'layer_groups_tree'):
+            def collect_tree_states(item):
+                lid = item.data(0, Qt.UserRole)
+                if lid:
+                    if item.checkState(0) == Qt.Checked:
+                        tree_checked_layer_ids.add(lid)
+                    else:
+                        tree_unchecked_layer_ids.add(lid)
+                for i in range(item.childCount()):
+                    collect_tree_states(item.child(i))
+
             for i in range(self.layer_groups_tree.topLevelItemCount()):
-                group_item = self.layer_groups_tree.topLevelItem(i)
-                if group_item.checkState(0) != Qt.Checked:
-                    continue
-                for j in range(group_item.childCount()):
-                    layer_item = group_item.child(j)
-                    if layer_item.checkState(0) == Qt.Checked:
-                        active_name = self._get_active_layer_name(layer_item)
-                        if not active_name or active_name == self.tr("— None —"):
-                            continue
-                        combo = self.layer_groups_tree.itemWidget(layer_item, 1)
-                        layer_id = layer_item.data(0, Qt.UserRole)
-                        if layer_id:
-                            assigned_layer_ids.add(layer_id)
-                        else:
-                            layers_by_name = project.mapLayersByName(active_name)
-                            if layers_by_name:
-                                assigned_layer_ids.add(layers_by_name[0].id())
-                                
+                collect_tree_states(self.layer_groups_tree.topLevelItem(i))
 
         # 3. Raster Configuration
         if hasattr(self, 'raster_table'):
@@ -2618,7 +2612,7 @@ class PackageDialog(QDialog, DialogUi):
                 if chk_item and chk_item.checkState() == Qt.Checked:
                     layer_id = chk_item.data(Qt.UserRole)
                     if layer_id:
-                        assigned_layer_ids.add(layer_id)
+                        tree_checked_layer_ids.add(layer_id)
 
         # 4. Per-layer Data Source Configuration
         settings = QSettings()
@@ -2627,7 +2621,7 @@ class PackageDialog(QDialog, DialogUi):
             layer_ds_policies = json.loads(layer_ds_json)
             if isinstance(layer_ds_policies, dict):
                 for layer_id in layer_ds_policies.keys():
-                    assigned_layer_ids.add(layer_id)
+                    tree_checked_layer_ids.add(layer_id)
         except Exception:
             pass
                         
@@ -2651,11 +2645,25 @@ class PackageDialog(QDialog, DialogUi):
 
             if is_generated_img:
                 layer.setCustomProperty("QFieldSync/action", "copy")
-            elif layer.id() not in assigned_layer_ids:
-                fields = layer.fields() if hasattr(layer, 'fields') else None
-                if fields and (fields.indexOf("ea_geocode") != -1 or fields.indexOf("geocode") != -1):
+            elif layer.id() in tree_checked_layer_ids:
+                # Explicitly checked in the layer groups tree -> package layer
+                if not layer.customProperty("QFieldSync/action"):
                     layer.setCustomProperty("QFieldSync/action", "copy")
-                    # Temporarily strip leading digits + '_' so OfflineConverter does not duplicate code in filename
+            elif layer.id() in tree_unchecked_layer_ids:
+                # Explicitly unchecked in the layer groups tree -> skip packaging
+                layer.setCustomProperty("QFieldSync/action", "no_action")
+            else:
+                # Not explicitly in tree -> check for geocode attributes
+                field_names = [f.name().strip().lower() for f in layer.fields()] if hasattr(layer, 'fields') else []
+                known_geocodes = (
+                    "ea_geocode", "eageocode", "geocode", "ea_code", "eacode",
+                    "bgy_code", "bgycode", "bsn_geoid", "ean", "new_ean", "new_ea",
+                    "code", "psgc", "bgy_geocode", "correspondence_ea_geocode",
+                    "brgy_code", "barangay_code"
+                )
+                has_any_geocode = any(k in field_names for k in known_geocodes)
+                if has_any_geocode:
+                    layer.setCustomProperty("QFieldSync/action", "copy")
                     orig_name = layer.name()
                     m = re.match(r"^\d+_(.+)$", orig_name)
                     if m:
@@ -2825,6 +2833,11 @@ class PackageDialog(QDialog, DialogUi):
         )
         self.dirsToCopyWidget.save_settings()
         self._ensure_ea_update_not_offline_and_writable()
+
+        # Ensure all unassigned layers are filtered to this geocode before packaging
+        is_ea_mode = self.output_dropdown.currentText() == self.tr("EA Level")
+        for _unassigned_lyr in self._get_unassigned_map_layers():
+            self._filter_unassigned_layer(_unassigned_lyr, code_digits, is_ea_level=is_ea_mode)
 
         # In batch mode, old generated rasters from previous iterations may
         # still be loaded and get copied again. Keep only the current raster.
@@ -3264,8 +3277,18 @@ class PackageDialog(QDialog, DialogUi):
                     "GMD Pipeline",
                     Qgis.Warning,
                 )
-
-
+            try:
+                # Ensure unassigned layers are filtered right before export
+                is_ea_mode = self.output_dropdown.currentText() == self.tr("EA Level")
+                for _unassigned_lyr in self._get_unassigned_map_layers():
+                    self._filter_unassigned_layer(_unassigned_lyr, code_digits, is_ea_level=is_ea_mode)
+                self._export_individual_layers(code_digits, subfolder_path, packaged_project_file)
+            except Exception as e:
+                QgsApplication.instance().messageLog().logMessage(
+                    f"Could not export individual layers for {code_digits}: {e}",
+                    "GMD Pipeline",
+                    Qgis.Warning,
+                )
 
             self.do_post_offline_convert_action(True)
         except PackagingCanceledError:
@@ -4285,52 +4308,17 @@ class PackageDialog(QDialog, DialogUi):
                 print(f"Could not update QGZ zip entries for duplicate code cleanup: {e}")
 
     def _filter_unassigned_layer(self, layer, target_geocode, is_ea_level):
-        """Filter an unassigned layer based on ea_geocode / geocode fields.
+        """Filter an unassigned layer based on attribute values (ea_geocode, geocode, new_ean/ean, bgy_code, etc.).
         
-        If no ea_geocode or geocode field exists, or if all attribute values are null/empty,
-        does nothing and keeps the layer unfiltered.
+        Dynamically detects geocode and EA attributes from layer schema and data values
+        without relying on specific layer names. If no recognizable geocode attribute exists,
+        or if all attribute values are null/empty, leaves the layer unfiltered.
         """
         if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
             return
 
         if layer.isEditable():
             layer.rollBack()
-
-        fields = layer.fields()
-        has_ea_geocode = fields.indexOf("ea_geocode") != -1
-        has_geocode = fields.indexOf("geocode") != -1
-
-        # If the layer does not have 'ea_geocode' or 'geocode' column, do not filter
-        if not has_ea_geocode and not has_geocode:
-            layer.setCustomProperty("QFieldSync/action", "copy")
-            return
-
-        # If the layer does not have data/values in the geocode attribute, do nothing
-        target_field_name = "ea_geocode" if has_ea_geocode else "geocode"
-        target_field_idx = fields.indexOf(target_field_name)
-
-        has_data = False
-        try:
-            req = QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry).setSubsetOfAttributes([target_field_idx], fields)
-            for feat in layer.getFeatures(req):
-                attrs = feat.attributes()
-                if target_field_idx < len(attrs):
-                    val = attrs[target_field_idx]
-                    if val is not None and val != NULL:
-                        if hasattr(val, "isNull") and val.isNull():
-                            continue
-                        s_val = str(val).strip()
-                        if s_val and s_val.lower() not in ("null", "none", "nan"):
-                            has_data = True
-                            break
-        except Exception as e:
-            print(f"Error checking attribute data for layer {layer.name()}: {e}")
-            has_data = False
-
-        if not has_data:
-            # Layer has no features or no data/values in the attribute column -> do nothing
-            layer.setCustomProperty("QFieldSync/action", "copy")
-            return
 
         raw_geocode = str(target_geocode).split('_', 1)[0].strip() if target_geocode else ""
         if raw_geocode.isdigit():
@@ -4346,19 +4334,153 @@ class PackageDialog(QDialog, DialogUi):
             clean_target_geocode = raw_geocode
 
         bgy_prefix = clean_target_geocode[:8] if clean_target_geocode else ""
+        ea_suffix = clean_target_geocode[8:] if len(clean_target_geocode) > 8 else ""
+
+        # Build case-insensitive field mapping: lowercase_name -> (actual_name, index, field_obj)
+        field_map = {}
+        for i, fld in enumerate(layer.fields()):
+            field_map[fld.name().strip().lower()] = (fld.name(), i, fld)
+
+        def _get_field_sample_values(fname):
+            """Returns a list of non-null, non-empty string sample values for a field."""
+            if fname not in field_map:
+                return []
+            actual_n, f_idx, fld = field_map[fname]
+            samples = []
+            try:
+                # Prefer dataProvider to inspect raw source records directly (bypassing any current subset filter)
+                dp = layer.dataProvider()
+                from qgis.core import QgsFeatureRequest
+                req = QgsFeatureRequest().setLimit(50) if hasattr(QgsFeatureRequest, 'setLimit') else None
+                feat_iter = dp.getFeatures(req) if (dp and req is not None) else (dp.getFeatures() if dp else layer.getFeatures())
+                for feat in feat_iter:
+                    val = feat[actual_n] if actual_n in [f.name() for f in feat.fields()] else (feat.attributes()[f_idx] if f_idx < len(feat.attributes()) else None)
+                    if val is not None and val != NULL:
+                        if hasattr(val, "isNull") and val.isNull():
+                            continue
+                        s_val = str(val).strip()
+                        if s_val and s_val.lower() not in ("null", "none", "nan"):
+                            samples.append(s_val)
+                            if len(samples) >= 20:
+                                break
+            except Exception:
+                try:
+                    for feat in layer.getFeatures():
+                        val = feat[actual_n] if actual_n in [f.name() for f in feat.fields()] else (feat.attributes()[f_idx] if f_idx < len(feat.attributes()) else None)
+                        if val is not None and val != NULL:
+                            if hasattr(val, "isNull") and val.isNull():
+                                continue
+                            s_val = str(val).strip()
+                            if s_val and s_val.lower() not in ("null", "none", "nan"):
+                                samples.append(s_val)
+                                if len(samples) >= 20:
+                                    break
+                except Exception:
+                    pass
+            return samples
+
+        # 1. EA geocode candidates (14 digits)
+        ea_geocode_aliases = (
+            "ea_geocode", "eageocode", "correspondence_ea_geocode", "correspondence_geocode",
+            "ea_code", "eacode", "psgc_ea", "ea_geoid", "ea_id"
+        )
+        ea_geo_field = None
+        for alias in ea_geocode_aliases:
+            if alias in field_map and _get_field_sample_values(alias):
+                ea_geo_field = field_map[alias][0]
+                break
+
+        # 2. BSN geoid candidates
+        bsn_field = None
+        for alias in ("bsn_geoid", "geoid"):
+            if alias in field_map and _get_field_sample_values(alias):
+                bsn_field = field_map[alias][0]
+                break
+
+        # 3. EA Number / Suffix candidates (e.g. new_ean, ean)
+        ean_aliases = (
+            "new_ean", "newean", "ean", "new_ea", "newea", "ea_num", "ean_num",
+            "ea_number", "ea_2026", "ean_2026", "ea_del", "eadel"
+        )
+        ean_field = None
+        for alias in ean_aliases:
+            if alias in field_map and _get_field_sample_values(alias):
+                ean_field = field_map[alias][0]
+                break
+
+        # 4. Geocode field candidates (geocode, geocd, psgc, code)
+        geocode_field = None
+        for alias in ("geocode", "geocd", "psgc", "code"):
+            if alias in field_map and _get_field_sample_values(alias):
+                geocode_field = field_map[alias][0]
+                break
+
+        # 5. Barangay code candidates (bgy_code, bgy_geocode, barangay_code, brgy_code, etc.)
+        bgy_aliases = (
+            "bgy_code", "bgycode", "bgy_geocode", "bgygeocode", "barangay_code",
+            "brgy_code", "brgycode", "bgy_id", "brgy_id", "psgc_bgy", "psgc_brgy"
+        )
+        bgy_field = None
+        for alias in bgy_aliases:
+            if alias in field_map and _get_field_sample_values(alias):
+                bgy_field = field_map[alias][0]
+                break
+
+        if not any([ea_geo_field, bsn_field, ean_field, geocode_field, bgy_field]):
+            # No recognized geocode attribute with data -> leave unfiltered
+            layer.setCustomProperty("QFieldSync/action", "copy")
+            return
 
         if is_ea_level:
-            # EA Level: "ea_geocode" = '01732003001001'
-            if has_ea_geocode:
-                layer.setSubsetString(f"\"ea_geocode\" = '{clean_target_geocode}'")
-            else:
-                layer.setSubsetString(f"\"geocode\" = '{clean_target_geocode}'")
+            # -------------------------------------------------------------
+            # EA Level (14 digits)
+            # -------------------------------------------------------------
+            if ea_geo_field:
+                layer.setSubsetString(f"\"{ea_geo_field}\" = '{clean_target_geocode}'")
+            elif bsn_field:
+                layer.setSubsetString(f"substr(\"{bsn_field}\", 1, 14) = '{clean_target_geocode}'")
+            elif ean_field and ea_suffix:
+                # Build candidate representations of the EA suffix (e.g. "001001", "1001", "001", "1")
+                ean_candidates = [ea_suffix]
+                if ea_suffix.lstrip("0"):
+                    ean_candidates.append(ea_suffix.lstrip("0"))
+                if len(ea_suffix) == 6:
+                    ean_candidates.append(ea_suffix[:3])
+                    ean_candidates.append(ea_suffix[3:])
+                    if (ea_suffix[:3]).lstrip("0"):
+                        ean_candidates.append((ea_suffix[:3]).lstrip("0"))
+                    if (ea_suffix[3:]).lstrip("0"):
+                        ean_candidates.append((ea_suffix[3:]).lstrip("0"))
+                ean_conditions = " OR ".join([f"\"{ean_field}\" = '{c}'" for c in dict.fromkeys(ean_candidates)])
+
+                if geocode_field:
+                    layer.setSubsetString(f"\"{geocode_field}\" LIKE '{bgy_prefix}%' AND ({ean_conditions})")
+                elif bgy_field:
+                    layer.setSubsetString(f"\"{bgy_field}\" LIKE '{bgy_prefix}%' AND ({ean_conditions})")
+                else:
+                    layer.setSubsetString(f"({ean_conditions})")
+            elif geocode_field:
+                # Check if geocode contains 14-digit values or 8-digit values
+                samples = _get_field_sample_values(geocode_field.lower())
+                has_long_geocodes = any(len(s) >= 14 for s in samples)
+                if has_long_geocodes:
+                    layer.setSubsetString(f"\"{geocode_field}\" = '{clean_target_geocode}'")
+                else:
+                    layer.setSubsetString(f"\"{geocode_field}\" LIKE '{bgy_prefix}%'")
+            elif bgy_field:
+                layer.setSubsetString(f"\"{bgy_field}\" LIKE '{bgy_prefix}%'")
         else:
-            # Barangay Level: "geocode" LIKE '01732003%'
-            if has_geocode:
-                layer.setSubsetString(f"\"geocode\" LIKE '{bgy_prefix}%'")
-            else:
-                layer.setSubsetString(f"\"ea_geocode\" LIKE '{bgy_prefix}%'")
+            # -------------------------------------------------------------
+            # Barangay Level (8 digits)
+            # -------------------------------------------------------------
+            if geocode_field:
+                layer.setSubsetString(f"\"{geocode_field}\" LIKE '{bgy_prefix}%'")
+            elif ea_geo_field:
+                layer.setSubsetString(f"\"{ea_geo_field}\" LIKE '{bgy_prefix}%'")
+            elif bgy_field:
+                layer.setSubsetString(f"\"{bgy_field}\" LIKE '{bgy_prefix}%'")
+            elif bsn_field:
+                layer.setSubsetString(f"substr(\"{bsn_field}\", 1, 8) = '{bgy_prefix}'")
 
         layer.setCustomProperty("QFieldSync/action", "copy")
 
@@ -4407,19 +4529,9 @@ class PackageDialog(QDialog, DialogUi):
                 # Last resort: geocode prefix match
                 lyr.setSubsetString(f"substr(\"geocode\", 1, 8) = '{bgy_prefix}'")
 
-        # ea_update: keep unfiltered
-        for lyr in QgsProject.instance().mapLayers().values():
-            if not isinstance(lyr, QgsVectorLayer) or not lyr.isValid():
-                continue
-            if self._normalized_layer_name(lyr.name()).lower().endswith("_ea_update"):
-                lyr.setSubsetString("")
-
         # Filter unassigned layers
         unassigned_layers = self._get_unassigned_map_layers()
         for lyr in unassigned_layers:
-            if self._normalized_layer_name(lyr.name()).lower().endswith("_ea_update"):
-                lyr.setSubsetString("")
-                continue
             self._filter_unassigned_layer(lyr, ea_geocode, is_ea_level=True)
 
         # Optional linear layers: select by location against the bgy layer
@@ -5040,6 +5152,10 @@ class PackageDialog(QDialog, DialogUi):
         self.dirsToCopyWidget.save_settings()
         self._ensure_ea_update_not_offline_and_writable()
 
+        # Ensure all unassigned layers are filtered to this EA geocode before packaging
+        for _unassigned_lyr in self._get_unassigned_map_layers():
+            self._filter_unassigned_layer(_unassigned_lyr, code_digits, is_ea_level=True)
+
         # Remove stale generated rasters from previous iterations
         try:
             keep_sources = set()
@@ -5278,7 +5394,7 @@ class PackageDialog(QDialog, DialogUi):
                 idx = orig_name.find("_")
                 suffix = orig_name[idx:]
             else:
-                suffix = ""
+                suffix = f"_{orig_name}"
             layer_rename_map[orig_name] = f"{code_digits}{suffix}"
 
         bldg_new_name = f"{code_digits}_bldgpts"
@@ -5499,6 +5615,8 @@ class PackageDialog(QDialog, DialogUi):
                 )
 
             try:
+                for _unassigned_lyr in self._get_unassigned_map_layers():
+                    self._filter_unassigned_layer(_unassigned_lyr, code_digits, is_ea_level=True)
                 self._export_individual_layers(code_digits, subfolder_path, packaged_project_file)
             except Exception as e:
                 QgsApplication.instance().messageLog().logMessage(
@@ -6046,6 +6164,10 @@ class PackageDialog(QDialog, DialogUi):
 
             # Call the instance method to filter layers
             self.filter_layers(self.layers, selected_geocode)
+            is_ea = self.output_dropdown.currentText() == self.tr("EA Level")
+            unassigned_layers = self._get_unassigned_map_layers()
+            for lyr in unassigned_layers:
+                self._filter_unassigned_layer(lyr, selected_geocode, is_ea_level=is_ea)
             self._ensure_ea_update_not_offline_and_writable()
 
             project = QgsProject.instance()
@@ -6352,19 +6474,9 @@ class PackageDialog(QDialog, DialogUi):
         apply_subset(bldg_layer, bgy_prefix, 8)
         apply_subset(block_layer, bgy_prefix, 8)
 
-        # ea_update: keep unfiltered
-        for lyr in QgsProject.instance().mapLayers().values():
-            if not isinstance(lyr, QgsVectorLayer) or not lyr.isValid():
-                continue
-            if self._normalized_layer_name(lyr.name()).lower().endswith("_ea_update"):
-                lyr.setSubsetString("")
-
         # Filter unassigned layers for Barangay level
         unassigned_layers = self._get_unassigned_map_layers()
         for lyr in unassigned_layers:
-            if self._normalized_layer_name(lyr.name()).lower().endswith("_ea_update"):
-                lyr.setSubsetString("")
-                continue
             self._filter_unassigned_layer(lyr, bgy_geocode, is_ea_level=False)
 
         # Optional linear layers: select by location against the bgy layer
@@ -6530,6 +6642,10 @@ class PackageDialog(QDialog, DialogUi):
         self.qfield_preferences.set_value("exportDirectoryProject", str(subfolder_path))
         self.dirsToCopyWidget.save_settings()
         self._ensure_ea_update_not_offline_and_writable()
+
+        # Ensure all unassigned layers are filtered to this BGY geocode before packaging
+        for _unassigned_lyr in self._get_unassigned_map_layers():
+            self._filter_unassigned_layer(_unassigned_lyr, code_digits, is_ea_level=False)
 
         # Remove stale generated rasters from previous iterations
         try:
@@ -6797,7 +6913,7 @@ class PackageDialog(QDialog, DialogUi):
                 idx = orig_name.find("_")
                 suffix = orig_name[idx:]
             else:
-                suffix = ""
+                suffix = f"_{orig_name}"
             layer_rename_map[orig_name] = f"{code_digits}{suffix}"
 
         bldg_new_name = f"{code_digits}_bldgpts"
@@ -7004,6 +7120,8 @@ class PackageDialog(QDialog, DialogUi):
                     "GMD Pipeline", Qgis.Warning,
                 )
             try:
+                for _unassigned_lyr in self._get_unassigned_map_layers():
+                    self._filter_unassigned_layer(_unassigned_lyr, code_digits, is_ea_level=False)
                 self._export_individual_layers(code_digits, subfolder_path, packaged_project_file)
             except Exception as e:
                 QgsApplication.instance().messageLog().logMessage(
@@ -7381,8 +7499,7 @@ class PackageDialog(QDialog, DialogUi):
                     layer.setSubsetString(f"geocode LIKE '{prefix}%'")
                     updated_layers.append(layer)
                 elif layer_name.endswith('_ea_update'):
-                    # Keep _ea_update unfiltered.
-                    layer.setSubsetString("")
+                    layer.setSubsetString(f"geocode LIKE '{prefix}%'")
                     updated_layers.append(layer)
                 elif layer_name.endswith('_block'):
                     layer.setSubsetString(f"geocode LIKE '{prefix}%'")
