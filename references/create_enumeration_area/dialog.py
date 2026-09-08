@@ -457,6 +457,14 @@ class EALauncherDialog(QDialog):
         inputs_layout.setContentsMargins(8, 8, 8, 8)
         inputs_layout.setSpacing(6)
 
+        # Row 1: Dedicated Auto Arrange action button
+        self.pre_ea_auto_arrange_btn = QPushButton("Auto Arrange")
+        self.pre_ea_auto_arrange_btn.setToolTip("Auto-arrange project layer ordering, apply QML styles, and auto-detect matching layers.")
+        self.pre_ea_auto_arrange_btn.clicked.connect(self._pre_ea_auto_arrange_and_detect_layers)
+        self.auto_arrange_btn = self.pre_ea_auto_arrange_btn  # Alias for backward compatibility
+        inputs_layout.addWidget(self.pre_ea_auto_arrange_btn)
+
+        # Row 2: Auto-detect Layers
         self.pre_ea_detect_btn = QPushButton("Auto-detect Layers")
         self.pre_ea_detect_btn.setToolTip(
             "Scan project layers and auto-select Barangay (*_bgy) and EA (*_ea / *_ea2024) layers."
@@ -825,19 +833,28 @@ class EALauncherDialog(QDialog):
     def _pre_ea_auto_arrange_and_detect_layers(self):
         """Auto-arrange project layer tree, apply QML styles, and auto-detect Pre-EA input layers."""
         try:
-            from ...gmd_scripts.auto_arrange import auto_arrange_layers
+            from .auto_arrange import auto_arrange_layers
             res = auto_arrange_layers(iface=getattr(self, 'iface', None))
             self._pre_ea_auto_detect_layers()
             self.auto_detect_layers()
             self._ea_merge_auto_detect_ea_layer()
+            msg = f"Auto Arrange completed: {res['total']} layers processed ({res['styled']} styled, {res['reordered']} reordered)."
             if hasattr(self, 'pre_ea_log_console'):
                 self.pre_ea_log_console.append(
-                    f"<span style='color: #0969da; font-weight: bold;'>[INFO]</span> "
-                    f"Auto Arrange completed: {res['total']} layers processed ({res['styled']} styled, {res['reordered']} reordered)."
+                    f"<span style='color: #0969da; font-weight: bold;'>[INFO]</span> {msg}"
+                )
+            if hasattr(self, 'log_console'):
+                self.log_console.append(
+                    f"<span style='color: #0969da; font-weight: bold;'>[INFO]</span> {msg}"
+                )
+            if hasattr(self, 'merge_log_console'):
+                self.merge_log_console.append(
+                    f"<span style='color: #0969da; font-weight: bold;'>[INFO]</span> {msg}"
                 )
         except Exception as e:
             QgsMessageLog.logMessage(f"Auto Arrange error: {e}", "GEMMA", Qgis.Warning)
             self._pre_ea_auto_detect_layers()
+            self.auto_detect_layers()
             self._ea_merge_auto_detect_ea_layer()
 
     def _pre_ea_validate_inputs(self):
@@ -1204,13 +1221,7 @@ class EALauncherDialog(QDialog):
         inputs_layout.setContentsMargins(8, 8, 8, 8)
         inputs_layout.setSpacing(8)
 
-        # Row 1: Dedicated Auto Arrange action button
-        self.auto_arrange_btn = QPushButton("Auto Arrange")
-        self.auto_arrange_btn.setToolTip("Auto-arrange project layer ordering, apply QML styles, and auto-detect matching layers.")
-        self.auto_arrange_btn.clicked.connect(self.auto_arrange_and_detect_layers)
-        inputs_layout.addWidget(self.auto_arrange_btn)
-
-        # Row 2: Sub-row for Auto-detect Layers and Fill missing hhcount
+        # Row 1: Sub-row for Auto-detect Layers and Fill missing hhcount
         inputs_btn_layout = QHBoxLayout()
         self.detect_btn = QPushButton("Auto-detect Layers")
         self.detect_btn.setToolTip("Scan current QGIS project layers and auto-select matching layers.")
@@ -1581,13 +1592,7 @@ class EALauncherDialog(QDialog):
         merge_inputs_layout.setContentsMargins(8, 8, 8, 8)
         merge_inputs_layout.setSpacing(8)
 
-        # Row 1: Dedicated Auto Arrange action button
-        self.merge_auto_arrange_btn = QPushButton("Auto Arrange")
-        self.merge_auto_arrange_btn.setToolTip("Auto-arrange project layer ordering, apply QML styles, and auto-detect matching layers.")
-        self.merge_auto_arrange_btn.clicked.connect(self.auto_arrange_and_detect_layers)
-        merge_inputs_layout.addWidget(self.merge_auto_arrange_btn)
-
-        # Row 2: Sub-row for Auto-detect Layers and Fill missing hhcount
+        # Row 1: Sub-row for Auto-detect Layers and Fill missing hhcount
         merge_inputs_btn_layout = QHBoxLayout()
         self.merge_detect_btn = QPushButton("Auto-detect Layers")
         self.merge_detect_btn.setToolTip("Scan current QGIS project layers and auto-select matching layers.")
@@ -2811,27 +2816,7 @@ class EALauncherDialog(QDialog):
 
     def auto_arrange_and_detect_layers(self):
         """Auto-arrange project layer tree, apply QML styles, and auto-detect input layers."""
-        try:
-            from .auto_arrange import auto_arrange_layers
-            res = auto_arrange_layers(iface=getattr(self, 'iface', None))
-            self._pre_ea_auto_detect_layers()
-            self.auto_detect_layers()
-            self._ea_merge_auto_detect_ea_layer()
-            if hasattr(self, 'log_console'):
-                self.log_console.append(
-                    f"<span style='color: #0969da; font-weight: bold;'>[INFO]</span> "
-                    f"Auto Arrange completed: {res['total']} layers processed ({res['styled']} styled, {res['reordered']} reordered)."
-                )
-            if hasattr(self, 'merge_log_console'):
-                self.merge_log_console.append(
-                    f"<span style='color: #0969da; font-weight: bold;'>[INFO]</span> "
-                    f"Auto Arrange completed: {res['total']} layers processed ({res['styled']} styled, {res['reordered']} reordered)."
-                )
-        except Exception as e:
-            QgsMessageLog.logMessage(f"Auto Arrange error: {e}", "GEMMA", Qgis.Warning)
-            self._pre_ea_auto_detect_layers()
-            self.auto_detect_layers()
-            self._ea_merge_auto_detect_ea_layer()
+        self._pre_ea_auto_arrange_and_detect_layers()
 
     def validate_layer_inputs(self):
         """Perform validation on selected layers and show dynamic status subtitles."""
