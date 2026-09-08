@@ -8174,4 +8174,3 @@ class RasterClipWorker(QThread):
 
 
 
-
