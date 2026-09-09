@@ -106,7 +106,7 @@ class mv_2027_hp_4b_geom__invalid(QgsProcessingAlgorithm):
             "native:extractbyexpression",
             {
                 "INPUT": geojson_data,
-                "EXPRESSION": "geometry_type( $geometry) != 'Point' OR round($X,7) != round(\"longitude\",7) OR round($Y,7) != round(\"latitude\",7)",
+                "EXPRESSION": "geometry_type( $geometry) != 'Point' OR round($X,7) != round(\"sf_longitude\",7) OR round($Y,7) != round(\"sf_latitude\",7)",
                 "OUTPUT": "memory:",
             },
             context=context,
@@ -116,7 +116,7 @@ class mv_2027_hp_4b_geom__invalid(QgsProcessingAlgorithm):
 
         final_output = gmdhelpers.select_mv(
             filtered_layer,
-            ["longitude", "latitude"],
+            ["sf_longitude", "sf_latitude"],
             context=context,
             feedback=feedback,
         )

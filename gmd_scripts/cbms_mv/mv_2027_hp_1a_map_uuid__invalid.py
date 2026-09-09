@@ -106,13 +106,13 @@ class mv_2027_hp_1a_map_uuid__invalid(QgsProcessingAlgorithm):
             "native:joinattributestable",
             {
                 "INPUT": json_data,
-                "FIELD": "map_uuid",
+                "FIELD": "df_map_uuid",
                 "INPUT_2": geojson_data,
-                "FIELD_2": "map_uuid",
+                "FIELD_2": "sf_map_uuid",
                 "FIELDS_TO_COPY": [],
                 "METHOD": 1,                      # multiple = "first"
                 "DISCARD_NONMATCHING": True,       # INNER JOIN
-                "PREFIX": "sf_",
+                "PREFIX": "",
                 "OUTPUT": "memory:",
             },
             context=context,
@@ -121,9 +121,9 @@ class mv_2027_hp_1a_map_uuid__invalid(QgsProcessingAlgorithm):
 
         filter_expr = (
             '"sf_longitude" IS NULL OR "sf_latitude" IS NULL OR '
-            '"x_current" IS NULL OR "y_current" IS NULL OR '
-            'round(to_real("sf_longitude"), 7) != round(to_real("x_current"), 7) OR '
-            'round(to_real("sf_latitude"), 7) != round(to_real("y_current"), 7)'
+            '"df_x_current" IS NULL OR "df_y_current" IS NULL OR '
+            'round(to_real("sf_longitude"), 7) != round(to_real("df_x_current"), 7) OR '
+            'round(to_real("sf_latitude"), 7) != round(to_real("df_y_current"), 7)'
         )
 
         filtered_layer = processing.run(
@@ -139,7 +139,7 @@ class mv_2027_hp_1a_map_uuid__invalid(QgsProcessingAlgorithm):
 
         final_output = gmdhelpers.select_mv(
             filtered_layer,
-            ["sf_map_uuid","sf_longitude", "sf_latitude", "x_current", "y_current"],
+            ["df_fid", "df_map_uuid", "sf_map_uuid", "sf_longitude", "sf_latitude", "df_x_current", "df_y_current"],
             context=context,
             feedback=feedback,
         )

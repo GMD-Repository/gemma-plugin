@@ -111,11 +111,12 @@ class mv_2027_hp_4a_geom__invalid(QgsProcessingAlgorithm):
         for ref_f in ref_bldg_point.getFeatures():
             if feedback and feedback.isCanceled():
                 break
-            uuid_val = ref_f.attribute("map_uuid")
+            uuid_val = ref_f.attribute("ref_map_uuid")
             if uuid_val is not None and uuid_val != NULL:
+                bsn_val = ref_f.attribute("ref_bsn_geoid")
                 ref_map[str(uuid_val)] = {
                     "geom": ref_f.geometry(),
-                    "bsn_geoid": ref_f.attribute("bsn_geoid") if hasattr(ref_f, "attribute") else NULL,
+                    "bsn_geoid": bsn_val if bsn_val is not None else NULL,
                 }
 
         # 2. Setup ellipsoidal distance calculator (measures distance in meters)
@@ -148,7 +149,7 @@ class mv_2027_hp_4a_geom__invalid(QgsProcessingAlgorithm):
         for f in geojson_data.getFeatures():
             if feedback and feedback.isCanceled():
                 break
-            uuid_val = f.attribute("map_uuid")
+            uuid_val = f.attribute("sf_map_uuid")
             if uuid_val is None or uuid_val == NULL:
                 continue
 

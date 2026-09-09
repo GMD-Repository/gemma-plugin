@@ -17,7 +17,7 @@ import ast
 import json
 import csv
 import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 from qgis.core import (
     Qgis,
@@ -32,11 +32,12 @@ from qgis.core import (
     QgsProcessingFeedback,
     QgsProcessingUtils,
     QgsProviderRegistry,
+    QgsFeature,
     QgsFeatureRequest,
 )
 from qgis.gui import QgsFileWidget
 from qgis.PyQt.QtCore import Qt, QTimer, pyqtSignal, QSize
-from qgis.PyQt.QtGui import QIcon, QColor, QFont, QTextCursor
+from qgis.PyQt.QtGui import QIcon, QColor, QFont, QTextCursor, QKeySequence
 from qgis.PyQt.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -65,6 +66,7 @@ from qgis.PyQt.QtWidgets import (
     QToolButton,
     QFileDialog,
     QApplication,
+    QShortcut,
 )
 
 try:
@@ -244,9 +246,15 @@ class CbmsmvDialog(QDialog):
         self._execution_summary: List[Dict[str, Any]] = []
         self._is_validating = False
         self._active_review_dock = None
+        self._pending_json_edits: Dict[str, Dict[str, Any]] = {}
 
         self.context = QgsProcessingContext()
         self.context.setProject(self.project)
+
+        # Scoped Ctrl+S shortcut for saving changes without conflicting with QGIS global shortcuts
+        self._save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
+        self._save_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+        self._save_shortcut.activated.connect(self._on_shortcut_save)
 
         self._setup_dialog_icon()
         self._init_ui()
@@ -663,7 +671,6 @@ class CbmsmvDialog(QDialog):
                 self.results_tab_widget.setCurrentIndex(ti)
                 break
 
-
     def _create_result_layer_tab(
         self,
         val_id: str,
@@ -673,6 +680,9 @@ class CbmsmvDialog(QDialog):
     ) -> QWidget:
         """Create an interactive feature table tab with in-place cell editing, multiselect, and fix actions."""
         tab = QWidget()
+        tab.setProperty("val_id", val_id)
+        tab.setProperty("check_name", check_name)
+
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
@@ -687,10 +697,16 @@ class CbmsmvDialog(QDialog):
         lbl_vname = QLabel(f"<b>{check_name}</b>")
         lbl_vname.setToolTip(f"Validation ID: {val_id}")
         lbl_vname.setStyleSheet("font-size: 11px; color: #1A365D;")
-        lbl_vcount = QLabel(
-            f"<span style='color: #C53030; font-weight: bold;'>{count:,}</span> flagged feature(s) detected. "
-            f"Click row to zoom; double-click cell to edit in-place."
-        )
+        if count == 0:
+            lbl_vcount = QLabel(
+                "<span style='color: #2F855A; font-weight: bold;'>✓ 0 flagged features.</span> "
+                "All issues for this validation check are resolved!"
+            )
+        else:
+            lbl_vcount = QLabel(
+                f"<span style='color: #C53030; font-weight: bold;'>{count:,}</span> flagged feature(s) detected. "
+                f"Click row to zoom; double-click cell to edit in-place."
+            )
         lbl_vcount.setStyleSheet("font-size: 10px; color: #4A5568;")
         title_box.addWidget(lbl_vname)
         title_box.addWidget(lbl_vcount)
@@ -718,20 +734,20 @@ class CbmsmvDialog(QDialog):
             }
             QPushButton:hover {
                 background-color: #E2E8F0;
+                color: #1A202C;
             }
         """)
         toolbar.addWidget(btn_select_all)
 
-        # Fix Selected (batch action)
+        # Batch Fix Selected Button
         has_auto_fix = has_fix(val_id)
         btn_fix_selected = QPushButton("⚡  Fix Selected (0)")
         btn_fix_selected.setEnabled(False)
         btn_fix_selected.setToolTip(
-            f"Run automated fix on all checked features for '{val_id}'" if has_auto_fix
-            else f"No automated fix registered for '{val_id}'"
+            f"Apply automated fix to checked rows ({val_id})" if has_auto_fix else f"No automated fix available for '{val_id}'"
         )
         btn_fix_selected.setStyleSheet("""
-            QPushButton {
+            QPushButton:enabled {
                 background-color: #F0FFF4;
                 color: #22543D;
                 font-weight: bold;
@@ -754,7 +770,7 @@ class CbmsmvDialog(QDialog):
 
         # Save Layer Changes
         btn_save_changes = QPushButton("💾  Save Changes")
-        btn_save_changes.setToolTip("Commit buffered edits on the main building points layer directly to disk")
+        btn_save_changes.setToolTip("Commit edits on GeoJSON and JSON to disk and re-run check (Ctrl+S)")
         btn_save_changes.setStyleSheet("""
             QPushButton {
                 background-color: #EBF8FF;
@@ -770,7 +786,7 @@ class CbmsmvDialog(QDialog):
                 color: #1A365D;
             }
         """)
-        btn_save_changes.clicked.connect(self._save_main_layer_changes)
+        btn_save_changes.clicked.connect(lambda checked=False, v=val_id: self._save_changes(v))
         toolbar.addWidget(btn_save_changes)
 
         layout.addLayout(toolbar)
@@ -796,17 +812,40 @@ class CbmsmvDialog(QDialog):
             table.setRowCount(len(features))
             table.setSortingEnabled(False)
 
+            field_names_lower = {f.name().lower(): f.name() for f in layer.fields()}
+            sf_fid_col = field_names_lower.get("sf_fid")
+            df_fid_col = field_names_lower.get("df_fid")
+            fid_col = sf_fid_col or field_names_lower.get("fid") or df_fid_col
+
+            sf_uuid_col = field_names_lower.get("sf_map_uuid")
+            df_uuid_col = field_names_lower.get("df_map_uuid")
+            uuid_col = sf_uuid_col or field_names_lower.get("map_uuid") or df_uuid_col
+
             for row_idx, feat in enumerate(features):
-                fid = feat.id()
-                uuid_val = feat["map_uuid"] if "map_uuid" in feat.fields().names() else None
+                err_fid = feat.id()
+                # Resolve source IDs for GeoJSON (sf_) and Form 2 JSON (df_)
+                source_fid = feat[fid_col] if fid_col and feat[fid_col] is not None else feat.id()
+                sf_fid_val = feat[sf_fid_col] if sf_fid_col and feat[sf_fid_col] is not None else source_fid
+                df_fid_val = feat[df_fid_col] if df_fid_col and feat[df_fid_col] is not None else None
+
+                uuid_val = feat[uuid_col] if uuid_col else None
                 uuid_str = str(uuid_val).strip() if uuid_val is not None else ""
+                sf_uuid_val = feat[sf_uuid_col] if sf_uuid_col else uuid_val
+                sf_uuid_str = str(sf_uuid_val).strip() if sf_uuid_val is not None else ""
+                df_uuid_val = feat[df_uuid_col] if df_uuid_col else uuid_val
+                df_uuid_str = str(df_uuid_val).strip() if df_uuid_val is not None else ""
 
                 # Column 0: Checkbox
                 chk_item = QTableWidgetItem()
                 chk_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable)
                 chk_item.setCheckState(Qt.Unchecked)
-                chk_item.setData(Qt.UserRole, fid)
+                chk_item.setData(Qt.UserRole, source_fid)
                 chk_item.setData(Qt.UserRole + 1, uuid_str)
+                chk_item.setData(Qt.UserRole + 3, err_fid)
+                chk_item.setData(Qt.UserRole + 4, df_fid_val)
+                chk_item.setData(Qt.UserRole + 5, df_uuid_str)
+                chk_item.setData(Qt.UserRole + 6, sf_fid_val)
+                chk_item.setData(Qt.UserRole + 7, sf_uuid_str)
                 table.setItem(row_idx, 0, chk_item)
 
                 # Attribute Data Columns (1 to len(field_names))
@@ -814,14 +853,23 @@ class CbmsmvDialog(QDialog):
                     val = feat[fname]
                     val_str = "" if val is None else str(val)
                     item = QTableWidgetItem(val_str)
-                    if fname == "map_uuid":
+                    fn_lower = fname.lower()
+                    if fn_lower in ("fid", "sf_fid", "df_fid", "ref_fid"):
                         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-                        item.setToolTip("Primary UUID key (read-only to preserve layer integrity)")
+                        item.setToolTip("Record FID (read-only primary key anchor)")
+                    elif fn_lower.startswith("ref_"):
+                        item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                        item.setToolTip("Reference dataset attribute (read-only)")
                     else:
                         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
-                    item.setData(Qt.UserRole, fid)
+                    item.setData(Qt.UserRole, source_fid)
                     item.setData(Qt.UserRole + 1, uuid_str)
                     item.setData(Qt.UserRole + 2, fname)
+                    item.setData(Qt.UserRole + 3, err_fid)
+                    item.setData(Qt.UserRole + 4, df_fid_val)
+                    item.setData(Qt.UserRole + 5, df_uuid_str)
+                    item.setData(Qt.UserRole + 6, sf_fid_val)
+                    item.setData(Qt.UserRole + 7, sf_uuid_str)
                     table.setItem(row_idx, col_idx + 1, item)
 
                 # Column Action: Edit & Fix buttons
@@ -849,7 +897,9 @@ class CbmsmvDialog(QDialog):
                     }
                 """)
                 btn_row_edit.clicked.connect(
-                    lambda checked=False, f_id=fid: self._launch_review_dock(val_id, check_name, layer, target_fid=f_id)
+                    lambda checked=False, s_id=source_fid, u=uuid_str: self._launch_review_dock(
+                        val_id, check_name, layer, target_fid=s_id, target_uuid=u
+                    )
                 )
                 action_layout.addWidget(btn_row_edit)
 
@@ -872,7 +922,9 @@ class CbmsmvDialog(QDialog):
                         }
                     """)
                     btn_row_fix.clicked.connect(
-                        lambda checked=False, u=uuid_str, r=row_idx: self._execute_fix(val_id, layer, table, [u], [r])
+                        lambda checked=False, s_id=source_fid, u=uuid_str, r=row_idx: self._execute_fix(
+                            val_id, layer, table, target_fids=[s_id], target_uuids=[u], target_rows=[r]
+                        )
                     )
                 else:
                     btn_row_fix.setEnabled(False)
@@ -947,12 +999,34 @@ class CbmsmvDialog(QDialog):
 
         # Case 3: Data attribute cell edited in-place
         field_name = item.data(Qt.UserRole + 2)
+        target_fid = item.data(Qt.UserRole)
         map_uuid = item.data(Qt.UserRole + 1)
-        fid = item.data(Qt.UserRole)
-        if not field_name or field_name == "map_uuid":
+        err_fid = item.data(Qt.UserRole + 3)
+        df_fid = item.data(Qt.UserRole + 4)
+        df_uuid = item.data(Qt.UserRole + 5)
+        sf_fid = item.data(Qt.UserRole + 6) or target_fid
+        sf_uuid = item.data(Qt.UserRole + 7) or map_uuid
+        fn_lower = field_name.lower()
+        if not field_name or fn_lower in ("fid", "sf_fid", "df_fid", "ref_fid") or fn_lower.startswith("ref_"):
             return
 
         new_val_str = item.text().strip()
+
+        # If map_uuid was edited, keep cached UUID in table items synchronized
+        if fn_lower in ("map_uuid", "sf_map_uuid"):
+            sf_uuid = new_val_str
+            item.setData(Qt.UserRole + 7, new_val_str)
+            item.setData(Qt.UserRole + 1, new_val_str)
+            chk_item = table.item(row, 0)
+            if chk_item:
+                chk_item.setData(Qt.UserRole + 7, new_val_str)
+                chk_item.setData(Qt.UserRole + 1, new_val_str)
+        elif fn_lower == "df_map_uuid":
+            df_uuid = new_val_str
+            item.setData(Qt.UserRole + 5, new_val_str)
+            chk_item = table.item(row, 0)
+            if chk_item:
+                chk_item.setData(Qt.UserRole + 5, new_val_str)
 
         # 1. Update in results memory layer
         if layer and layer.isValid():
@@ -960,23 +1034,84 @@ class CbmsmvDialog(QDialog):
             if f_idx != -1:
                 if not layer.isEditable():
                     layer.startEditing()
-                layer.changeAttributeValue(fid, f_idx, new_val_str)
+                layer.changeAttributeValue(err_fid if err_fid is not None else target_fid, f_idx, new_val_str)
 
-        # 2. Update in main building points layer
-        main_layer = self._get_or_load_main_building_layer()
-        if main_layer and main_layer.isValid() and map_uuid:
-            m_idx = main_layer.fields().indexOf(field_name)
-            if m_idx != -1:
-                if not main_layer.isEditable():
-                    main_layer.startEditing()
-                req = QgsFeatureRequest().setFilterExpression(f'"map_uuid" = \'{map_uuid}\'')
-                for mf in main_layer.getFeatures(req):
-                    main_layer.changeAttributeValue(mf.id(), m_idx, new_val_str)
-                    break
+        # 2. If it's a df_ column -> buffer into pending JSON edits
+        if fn_lower.startswith("df_"):
+            clean_prop = field_name[3:]
+            rec_k = f"fid_{df_fid}" if df_fid is not None else f"uuid_{df_uuid or map_uuid}"
+            if rec_k not in self._pending_json_edits:
+                self._pending_json_edits[rec_k] = {
+                    "df_fid": df_fid,
+                    "uuid": df_uuid or map_uuid,
+                    "props": {},
+                }
+            self._pending_json_edits[rec_k]["props"][clean_prop] = new_val_str
+            self.lbl_footer_status.setText(f"Buffered JSON edit '{clean_prop}' = '{new_val_str}' (Press Ctrl+S to save)")
+
+        # 3. If it's an sf_ or unprefixed column -> update main building points layer in memory
+        else:
+            main_layer = self._get_or_load_main_building_layer()
+            if main_layer and main_layer.isValid():
+                main_feat = self._find_main_feature(main_layer, fid=sf_fid, map_uuid=sf_uuid)
+                if main_feat:
+                    # Strip sf_ prefix if main layer has unprefixed field
+                    target_m_name = (
+                        field_name[3:]
+                        if (field_name.startswith("sf_") and field_name not in [f.name() for f in main_layer.fields()])
+                        else field_name
+                    )
+                    m_idx = main_layer.fields().indexOf(target_m_name)
+                    if m_idx != -1:
+                        if not main_layer.isEditable():
+                            main_layer.startEditing()
+                        main_layer.changeAttributeValue(main_feat.id(), m_idx, new_val_str)
+            self.lbl_footer_status.setText(f"Updated '{field_name}' = '{new_val_str}' for feature FID #{sf_fid} (Press Ctrl+S to save)")
 
         # Subtle highlight to show cell was manually modified
         item.setBackground(QColor("#FEFCBF"))
-        self.lbl_footer_status.setText(f"Updated '{field_name}' = '{new_val_str}' for feature UUID {map_uuid}")
+
+    def _find_main_feature(
+        self,
+        main_layer: QgsVectorLayer,
+        fid: Any = None,
+        map_uuid: Optional[str] = None,
+    ) -> Optional[QgsFeature]:
+        """
+        Locate a feature in main_layer prioritizing fid, then fallback to map_uuid.
+        Guarantees correct feature resolution even if duplicate map_uuids exist.
+        """
+        if not main_layer or not main_layer.isValid():
+            return None
+
+        # 1. Locate by fid attribute if 'fid' field exists in main_layer
+        if fid is not None and "fid" in [f.name().lower() for f in main_layer.fields()]:
+            try:
+                if isinstance(fid, int) or (isinstance(fid, str) and str(fid).isdigit()):
+                    expr = f'"fid" = {int(fid)}'
+                else:
+                    expr = f'"fid" = \'{str(fid).replace(chr(39), chr(39)+chr(39))}\''
+                for f in main_layer.getFeatures(QgsFeatureRequest().setFilterExpression(expr)):
+                    return f
+            except Exception:
+                pass
+
+        # 2. Locate by QGIS internal feature ID
+        if fid is not None:
+            try:
+                feat = main_layer.getFeature(int(fid))
+                if feat.isValid():
+                    return feat
+            except Exception:
+                pass
+
+        # 3. Fallback: Locate by map_uuid
+        if map_uuid:
+            clean_uuid = str(map_uuid).strip().replace("'", "''")
+            for f in main_layer.getFeatures(QgsFeatureRequest().setFilterExpression(f'"map_uuid" = \'{clean_uuid}\'')):
+                return f
+
+        return None
 
     def _toggle_select_all(
         self,
@@ -1007,28 +1142,31 @@ class CbmsmvDialog(QDialog):
 
     def _fix_selected_features(self, val_id: str, layer: QgsVectorLayer, table: QTableWidget):
         """Batch execute fix for all checked rows in the table."""
+        target_fids = []
         target_uuids = []
         target_rows = []
         for r in range(table.rowCount()):
             item0 = table.item(r, 0)
             if item0 and item0.checkState() == Qt.Checked:
+                fid_val = item0.data(Qt.UserRole)
                 uuid_val = item0.data(Qt.UserRole + 1)
-                if uuid_val:
-                    target_uuids.append(str(uuid_val).strip())
-                    target_rows.append(r)
+                target_fids.append(fid_val)
+                target_uuids.append(str(uuid_val).strip() if uuid_val else "")
+                target_rows.append(r)
 
-        if not target_uuids:
+        if not target_fids and not target_uuids:
             QMessageBox.information(self, "No Selection", "Please select at least one row using the checkboxes.")
             return
 
-        self._execute_fix(val_id, layer, table, target_uuids, target_rows)
+        self._execute_fix(val_id, layer, table, target_fids=target_fids, target_uuids=target_uuids, target_rows=target_rows)
 
     def _execute_fix(
         self,
         val_id: str,
         layer: QgsVectorLayer,
         table: QTableWidget,
-        target_uuids: List[str],
+        target_fids: Optional[List[Any]] = None,
+        target_uuids: Optional[List[str]] = None,
         target_rows: Optional[List[int]] = None,
     ):
         """Execute automated fix for one or more features using registered fix handler."""
@@ -1053,7 +1191,10 @@ class CbmsmvDialog(QDialog):
 
         try:
             feedback = QgsProcessingFeedback()
-            res = handler(main_layer, target_uuids, feedback=feedback)
+            try:
+                res = handler(main_layer, target_fids=target_fids, target_uuids=target_uuids, feedback=feedback)
+            except TypeError:
+                res = handler(main_layer, target_uuids or target_fids, feedback=feedback)
         except Exception as exc:
             QMessageBox.critical(
                 self,
@@ -1084,10 +1225,20 @@ class CbmsmvDialog(QDialog):
                 item0 = table.item(r, 0)
                 if not item0:
                     continue
-                r_uuid = str(item0.data(Qt.UserRole + 1)).strip()
                 r_fid = item0.data(Qt.UserRole)
-                if r_uuid in updated_values:
+                r_uuid = str(item0.data(Qt.UserRole + 1)).strip() if item0.data(Qt.UserRole + 1) else ""
+                r_err_fid = item0.data(Qt.UserRole + 3)
+
+                # Prioritize fid lookup, fallback to uuid
+                col_updates = None
+                if r_fid in updated_values:
+                    col_updates = updated_values[r_fid]
+                elif str(r_fid) in updated_values:
+                    col_updates = updated_values[str(r_fid)]
+                elif r_uuid and r_uuid in updated_values:
                     col_updates = updated_values[r_uuid]
+
+                if col_updates:
                     for c in range(1, table.columnCount() - 1):
                         c_item = table.item(r, c)
                         if c_item:
@@ -1100,7 +1251,19 @@ class CbmsmvDialog(QDialog):
                                 # Also update result layer
                                 f_idx = layer.fields().indexOf(fname)
                                 if f_idx != -1:
-                                    layer.changeAttributeValue(r_fid, f_idx, new_text)
+                                    layer.changeAttributeValue(r_err_fid if r_err_fid is not None else r_fid, f_idx, new_text)
+                                # If fname is df_*, buffer into pending JSON edits
+                                if fname.lower().startswith("df_"):
+                                    r_df_fid = c_item.data(Qt.UserRole + 4)
+                                    r_df_uuid = c_item.data(Qt.UserRole + 5)
+                                    rec_k = f"fid_{r_df_fid}" if r_df_fid is not None else f"uuid_{r_df_uuid or r_uuid}"
+                                    if rec_k not in self._pending_json_edits:
+                                        self._pending_json_edits[rec_k] = {
+                                            "df_fid": r_df_fid,
+                                            "uuid": r_df_uuid or r_uuid,
+                                            "props": {},
+                                        }
+                                    self._pending_json_edits[rec_k]["props"][fname[3:]] = new_text
 
                     # Uncheck row after successful fix
                     item0.setCheckState(Qt.Unchecked)
@@ -1135,60 +1298,502 @@ class CbmsmvDialog(QDialog):
             self,
             "Fix Complete",
             f"Successfully applied fix to {fixed_count} feature(s) for rule:\n{val_id}\n\n"
-            f"Changes are buffered in the building points layer.\n"
-            f"Click 'Save Changes' in the toolbar to commit to disk.",
+            f"Changes are buffered.\n"
+            f"Click 'Save Changes' in the toolbar (or press Ctrl+S) to commit to disk and re-run check.",
         )
 
-    def _save_main_layer_changes(self):
-        """Commit pending edits on the main building points layer to disk."""
-        main_layer = self._get_or_load_main_building_layer()
-        if not main_layer or not main_layer.isValid():
-            QMessageBox.warning(self, "No Layer", "Building points layer is not loaded.")
+    def _on_shortcut_save(self):
+        """Handle Ctrl+S shortcut, strictly scoped to this dialog window and its child controls."""
+        if not self.isActiveWindow():
             return
+        self._save_changes()
 
-        if not main_layer.isEditable():
-            QMessageBox.information(self, "No Pending Changes", "The building points layer has no unsaved changes.")
-            return
+    def _save_json_changes(self) -> Tuple[bool, int, str]:
+        """
+        Commit pending JSON attribute edits to the Form 2 JSON file on disk.
+        Returns (success: bool, updated_count: int, message: str).
+        """
+        form2_path = self.file_form2.filePath().strip()
+        if not form2_path:
+            return False, 0, "Form 2 Data File path is not specified."
+        if not os.path.exists(form2_path):
+            return False, 0, f"Form 2 Data File does not exist on disk:\n{form2_path}"
+
+        if not self._pending_json_edits:
+            return True, 0, "No pending JSON edits."
 
         try:
-            success = main_layer.commitChanges()
-            if success:
-                main_layer.startEditing()  # Keep editable for continued workflow
-                self.lbl_footer_status.setText("💾 Layer changes saved successfully to disk.")
-                QMessageBox.information(
-                    self,
-                    "Changes Saved",
-                    "All edits and fixes have been committed directly to the building points file on disk.",
+            with open(form2_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            return False, 0, f"Failed to read/parse Form 2 JSON file:\n{e}"
+
+        # Locate records container (mirroring load_cbms_json in gmdhelpers)
+        records = []
+        if isinstance(data, list):
+            records = data
+        elif isinstance(data, dict):
+            for key in ["records", "features", "data", "cover_page"]:
+                if key in data and isinstance(data[key], list):
+                    records = data[key]
+                    break
+            if not records:
+                records = [data]
+
+        has_fid_in_props = False
+        for rec in records:
+            props = rec.get("properties", rec) if isinstance(rec, dict) else {}
+            if isinstance(props, dict) and any(str(k).strip().lower() == "fid" for k in props.keys()):
+                has_fid_in_props = True
+                break
+
+        updated_count = 0
+        for rec_key, record_info in self._pending_json_edits.items():
+            t_df_fid = record_info.get("df_fid")
+            t_uuid = str(record_info.get("uuid") or "").strip()
+            props_to_update = record_info.get("props", {})
+
+            target_rec = None
+
+            # 1. Match by 1-based index if no explicit fid property exists
+            if not has_fid_in_props and t_df_fid is not None:
+                try:
+                    idx = int(t_df_fid) - 1
+                    if 0 <= idx < len(records):
+                        candidate = records[idx]
+                        c_props = candidate.get("properties", candidate) if isinstance(candidate, dict) else candidate
+                        if isinstance(c_props, dict):
+                            c_uuid = str(c_props.get("map_uuid") or c_props.get("df_map_uuid") or "").strip()
+                            if not t_uuid or not c_uuid or c_uuid == t_uuid:
+                                target_rec = candidate
+                except (ValueError, TypeError):
+                    pass
+
+            # 2. Match by explicit 'fid' in record properties
+            if target_rec is None and t_df_fid is not None:
+                t_fid_str = str(t_df_fid).strip()
+                for rec in records:
+                    if not isinstance(rec, dict):
+                        continue
+                    c_props = rec.get("properties", rec) if isinstance(rec.get("properties"), dict) else rec
+                    if not isinstance(c_props, dict):
+                        continue
+                    for k, v in c_props.items():
+                        if str(k).strip().lower() in ("fid", "df_fid") and str(v).strip() == t_fid_str:
+                            target_rec = rec
+                            break
+                    if target_rec is not None:
+                        break
+
+            # 3. Match by map_uuid
+            if target_rec is None and t_uuid:
+                for rec in records:
+                    if not isinstance(rec, dict):
+                        continue
+                    c_props = rec.get("properties", rec) if isinstance(rec.get("properties"), dict) else rec
+                    if not isinstance(c_props, dict):
+                        continue
+                    for k, v in c_props.items():
+                        if str(k).strip().lower() in ("map_uuid", "df_map_uuid") and str(v).strip() == t_uuid:
+                            target_rec = rec
+                            break
+                    if target_rec is not None:
+                        break
+
+            if target_rec is not None and isinstance(target_rec, dict):
+                target_dict = (
+                    target_rec.get("properties", target_rec)
+                    if isinstance(target_rec.get("properties"), dict)
+                    else target_rec
                 )
-            else:
-                errors = main_layer.commitErrors()
-                err_msg = "\n".join(errors) if errors else "Unknown commit error."
+                for prop_name, new_val in props_to_update.items():
+                    matched_key = None
+                    for existing_k in target_dict.keys():
+                        if existing_k == prop_name or existing_k.lower() == prop_name.lower():
+                            matched_key = existing_k
+                            break
+                    if not matched_key:
+                        for existing_k in target_dict.keys():
+                            if existing_k == f"df_{prop_name}" or existing_k.lower() == f"df_{prop_name}".lower():
+                                matched_key = existing_k
+                                break
+
+                    final_key = matched_key if matched_key else prop_name
+
+                    existing_val = target_dict.get(final_key)
+                    typed_val = new_val
+                    if existing_val is not None:
+                        if isinstance(existing_val, bool):
+                            typed_val = str(new_val).lower() in ("true", "1", "yes", "t")
+                        elif isinstance(existing_val, int) and not isinstance(existing_val, bool):
+                            try:
+                                typed_val = int(new_val)
+                            except (ValueError, TypeError):
+                                typed_val = new_val
+                        elif isinstance(existing_val, float):
+                            try:
+                                typed_val = float(new_val)
+                            except (ValueError, TypeError):
+                                typed_val = new_val
+                    elif new_val == "":
+                        typed_val = None
+
+                    target_dict[final_key] = typed_val
+
+                updated_count += 1
+
+        # Atomic write back to Form 2 JSON file
+        tmp_file = form2_path + ".tmp"
+        try:
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            os.replace(tmp_file, form2_path)
+        except Exception as e:
+            if os.path.exists(tmp_file):
+                try:
+                    os.remove(tmp_file)
+                except Exception:
+                    pass
+            return False, 0, f"Error saving Form 2 JSON to disk:\n{e}"
+
+        self._pending_json_edits.clear()
+
+        # If a Form 2 table layer is loaded into QGIS canvas, refresh it
+        if self.project:
+            for lyr in self.project.mapLayers().values():
+                if lyr.name().startswith("Form 2 (") or (hasattr(lyr, "source") and lyr.source() == form2_path):
+                    try:
+                        lyr.dataProvider().forceReload()
+                        lyr.triggerRepaint()
+                    except Exception:
+                        pass
+
+        return True, updated_count, f"Successfully saved {updated_count} record(s) to Form 2 JSON."
+
+    def _save_changes(self, target_val_id: Optional[str] = None) -> bool:
+        """
+        Commit pending edits on both the Geotagged Building Points (.geojson)
+        and Form 2 Data (.json) files to disk, and automatically re-run the
+        validation check for the current/target validation ID.
+        """
+        # Ensure any active cell editor in the table commits its value
+        focus_w = QApplication.focusWidget()
+        if focus_w and isinstance(focus_w, QLineEdit) and focus_w.parent():
+            p = focus_w.parent()
+            if isinstance(p, QTableWidget):
+                p.clearFocus()
+                p.setFocus()
+            elif p.parent() and isinstance(p.parent(), QTableWidget):
+                p.parent().clearFocus()
+                p.parent().setFocus()
+
+        main_layer = self._get_or_load_main_building_layer()
+        geojson_saved = False
+        geojson_err = None
+
+        # 1. Commit GeoJSON Layer changes if dirty
+        if main_layer and main_layer.isValid() and main_layer.isEditable() and main_layer.isModified():
+            try:
+                success = main_layer.commitChanges()
+                if success:
+                    main_layer.startEditing()  # Keep editable for continued workflow
+                    geojson_saved = True
+                else:
+                    errors = main_layer.commitErrors()
+                    geojson_err = "\n".join(errors) if errors else "Unknown commit error."
+            except Exception as exc:
+                geojson_err = str(exc)
+
+        if geojson_err:
+            QMessageBox.critical(
+                self,
+                "Save Failed",
+                f"Failed to commit changes to Geotagged Building Points (.geojson):\n{geojson_err}",
+            )
+            return False
+
+        # 2. Commit Form 2 JSON changes if dirty
+        json_saved = False
+        json_updated_count = 0
+        if self._pending_json_edits:
+            ok, json_updated_count, json_msg = self._save_json_changes()
+            if not ok:
                 QMessageBox.critical(
                     self,
                     "Save Failed",
-                    f"Failed to commit changes to building points layer:\n{err_msg}",
+                    f"Failed to commit changes to Form 2 Data (.json):\n{json_msg}",
                 )
+                return False
+            json_saved = True
+
+        # 3. Assemble saved message
+        saved_parts = []
+        if geojson_saved:
+            saved_parts.append("Building Points (.geojson)")
+        if json_saved:
+            saved_parts.append(f"Form 2 Data ({json_updated_count} record(s) in .json)")
+
+        if saved_parts:
+            saved_msg = f"Successfully saved edits to: {' and '.join(saved_parts)}."
+        else:
+            saved_msg = "No unsaved edits pending on disk."
+
+        # 4. Determine validation ID to re-run
+        val_id = target_val_id
+        if not val_id and hasattr(self, "results_tab_widget"):
+            cur_widget = self.results_tab_widget.currentWidget()
+            if cur_widget:
+                val_id = cur_widget.property("val_id")
+            if not val_id and self.results_tab_widget.currentIndex() > 0:
+                cur_text = self.results_tab_widget.tabText(self.results_tab_widget.currentIndex())
+                for r in self._rules:
+                    if r["id"] in cur_text:
+                        val_id = r["id"]
+                        break
+
+        # 5. Re-run validation check if a valid val_id is active
+        if val_id:
+            self._rerun_validation_check(val_id, saved_msg=saved_msg)
+        else:
+            self.lbl_footer_status.setText(f"💾 {saved_msg}")
+            QMessageBox.information(
+                self,
+                "Changes Saved",
+                f"{saved_msg}\n\nAll changes have been successfully committed to disk.",
+            )
+
+        return True
+
+    def _save_main_layer_changes(self):
+        """Backwards compatible alias for _save_changes."""
+        return self._save_changes()
+
+    def _rerun_validation_check(self, val_id: str, saved_msg: str = ""):
+        """
+        Execute a single validation rule using fresh disk data and update its
+        corresponding tab in the Results Workspace as well as the Summary Overview.
+        """
+        form2_path = self.file_form2.filePath().strip()
+        points_path = self.file_points.filePath().strip()
+        base_path = self.file_base.filePath().strip()
+
+        if not form2_path or not os.path.exists(form2_path):
+            self.lbl_footer_status.setText(f"💾 {saved_msg} (Cannot re-run: Form 2 JSON missing)")
+            return
+        if not points_path or not os.path.exists(points_path):
+            self.lbl_footer_status.setText(f"💾 {saved_msg} (Cannot re-run: Building Points file missing)")
+            return
+
+        rule = next((r for r in self._rules if r["id"] == val_id), None)
+        if not rule:
+            rule = {"id": val_id, "name": val_id.replace("_", " ").title(), "has_base": False}
+
+        if rule.get("has_base") and (not base_path or not os.path.exists(base_path)):
+            self.lbl_footer_status.setText(f"💾 {saved_msg} (Cannot re-run: Base Layers GPKG required)")
+            return
+
+        reg_id = f"gmd_pipeline:{val_id}"
+        is_registered = QgsApplication.processingRegistry().algorithmById(reg_id) is not None
+        alg = self._get_algorithm_instance(val_id)
+        if not is_registered and not alg:
+            self.lbl_footer_status.setText(f"💾 {saved_msg} (Could not instantiate algorithm '{val_id}')")
+            return
+
+        alg_target = reg_id if is_registered else alg
+
+        self.lbl_footer_status.setText(f"⚡ Re-running check '{val_id}' with fresh data...")
+        QApplication.processEvents()
+
+        params = {
+            "INPUT_DATA": form2_path,
+            "INPUT_LAYER": points_path,
+            "OUTPUT": "TEMPORARY_OUTPUT",
+        }
+        if base_path:
+            params["BASE_LAYER"] = base_path
+
+        param_defs = [p.name() for p in alg.parameterDefinitions()] if alg else []
+        if "OUTPUT_ERRORS" in param_defs:
+            params["OUTPUT_ERRORS"] = "TEMPORARY_OUTPUT"
+        if "OPEN_FOR_EDITING" in param_defs:
+            params["OPEN_FOR_EDITING"] = False
+
+        feedback = ProcessingFeedbackBridge(self._log_info, self._log_warning, self._log_error)
+        self._log_step("RERUN", f"Re-running validation check '{val_id}' after saving changes...")
+
+        try:
+            result = processing.run(alg_target, params, context=self.context, feedback=feedback)
         except Exception as exc:
-            QMessageBox.critical(self, "Save Error", f"Error committing layer changes:\n{exc}")
+            self._log_error(f"Execution error re-running '{val_id}': {exc}")
+            QMessageBox.critical(
+                self,
+                "Re-run Error",
+                f"{saved_msg}\n\nError executing validation algorithm '{val_id}':\n{exc}",
+            )
+            return
+
+        # Retrieve output layer
+        out_dest = result.get("OUTPUT")
+        out_layer = None
+        if out_dest:
+            if isinstance(out_dest, QgsVectorLayer):
+                out_layer = out_dest
+            elif isinstance(out_dest, str):
+                proj = self.project if self.project else QgsProject.instance()
+                out_layer = QgsProcessingUtils.mapLayerFromString(out_dest, self.context)
+                if not out_layer and proj:
+                    out_layer = proj.mapLayer(out_dest)
+                if not out_layer and os.path.exists(out_dest):
+                    out_layer = QgsVectorLayer(out_dest, val_id, "ogr")
+
+        if out_layer and out_layer.isValid():
+            new_count = out_layer.featureCount()
+        else:
+            new_count = 0
+            out_layer = QgsVectorLayer("none", val_id, "memory")
+
+        # Update result layers dictionary
+        self._result_layers[val_id] = {
+            "layer": out_layer,
+            "rule": rule,
+            "count": new_count,
+        }
+
+        # Update execution summary entry
+        found_in_summary = False
+        for s_entry in self._execution_summary:
+            if s_entry["id"] == val_id:
+                s_entry["features_flagged"] = new_count
+                s_entry["status"] = "Flagged" if new_count > 0 else "Passed"
+                found_in_summary = True
+                break
+        if not found_in_summary:
+            self._execution_summary.append({
+                "id": val_id,
+                "name": rule["name"],
+                "status": "Flagged" if new_count > 0 else "Passed",
+                "features_flagged": new_count,
+            })
+
+        # Update KPI scorecards
+        total_flagged = sum(item["count"] for item in self._result_layers.values())
+        self.lbl_kpi_flagged.setText(f"{total_flagged:,}")
+        flagged_layers = sum(1 for item in self._result_layers.values() if item["count"] > 0)
+        self.lbl_kpi_layers.setText(str(flagged_layers))
+
+        # Update QGIS Canvas Layer if canvas loading is enabled
+        proj = self.project if self.project else QgsProject.instance()
+        if proj and self.chk_load_canvas.isChecked():
+            # Remove old layer for this val_id if present
+            matching_ids = [
+                l.id() for l in proj.mapLayers().values()
+                if l.name().startswith(f"{val_id} (") or l.name() == val_id
+            ]
+            if matching_ids:
+                proj.removeMapLayers(matching_ids)
+
+            # If new issues exist, load updated layer into group or project
+            if new_count > 0 and out_layer.isValid():
+                out_layer.setName(f"{val_id} ({new_count})")
+                if self.chk_group_layers.isChecked():
+                    grp = self._get_or_create_layer_group("2027 CBMS MV Results")
+                    proj.addMapLayer(out_layer, False)
+                    grp.addLayer(out_layer)
+                else:
+                    proj.addMapLayer(out_layer)
+
+            if self.iface:
+                self.iface.mapCanvas().refresh()
+
+        # Update Results Tab
+        target_tab_idx = None
+        for ti in range(1, self.results_tab_widget.count()):
+            w = self.results_tab_widget.widget(ti)
+            if w and w.property("val_id") == val_id:
+                target_tab_idx = ti
+                break
+            if val_id in self.results_tab_widget.tabText(ti):
+                target_tab_idx = ti
+                break
+
+        new_tab = self._create_result_layer_tab(val_id, rule["name"], out_layer, new_count)
+        tab_title = f"🔴  {val_id} ({new_count})" if new_count > 0 else f"🟢  {val_id} (0)"
+
+        if target_tab_idx is not None:
+            self.results_tab_widget.removeTab(target_tab_idx)
+            self.results_tab_widget.insertTab(target_tab_idx, new_tab, tab_title)
+            self.results_tab_widget.setTabToolTip(target_tab_idx, f"{rule['name']} — {new_count} flagged feature(s)")
+            self.results_tab_widget.setCurrentIndex(target_tab_idx)
+        else:
+            tab_idx = self.results_tab_widget.addTab(new_tab, tab_title)
+            self.results_tab_widget.setTabToolTip(tab_idx, f"{rule['name']} — {new_count} flagged feature(s)")
+            self.results_tab_widget.setCurrentIndex(tab_idx)
+
+        # Update Summary Overview (Tab 0)
+        if self.results_tab_widget.count() > 0:
+            active_idx = self.results_tab_widget.currentIndex()
+            new_summary = self._create_summary_tab(self._execution_summary, self._result_layers)
+            self.results_tab_widget.removeTab(0)
+            self.results_tab_widget.insertTab(0, new_summary, "📊  Summary Overview")
+            self.results_tab_widget.setCurrentIndex(active_idx)
+
+        # User feedback
+        if new_count == 0:
+            self._log_success(f"'{val_id}' re-run complete: 0 flagged issues! All issues resolved.")
+            self.lbl_footer_status.setText(f"🎉 '{val_id}' resolved! 0 flagged features remaining.")
+            QMessageBox.information(
+                self,
+                "Check Re-run: Clean!",
+                f"{saved_msg}\n\n"
+                f"🎉 Re-run of validation check '{val_id}' completed:\n"
+                f"0 flagged issues detected!\n\n"
+                f"All features for this validation check are now consistent and valid.",
+            )
+        else:
+            self._log_warning(f"'{val_id}' re-run complete: {new_count:,} flagged feature(s) remaining.")
+            self.lbl_footer_status.setText(f"💾 Changes saved • '{val_id}' re-run: {new_count:,} issue(s) remaining.")
+            QMessageBox.information(
+                self,
+                "Check Re-run Complete",
+                f"{saved_msg}\n\n"
+                f"Re-run of validation check '{val_id}' completed:\n"
+                f"{new_count:,} flagged feature(s) remaining in this check.",
+            )
 
     def _on_table_row_clicked(self, layer: QgsVectorLayer, table: QTableWidget, row: int):
         """Zoom and flash canvas feature when clicking any table row."""
         item0 = table.item(row, 0)
         if not item0:
             return
-        fid = item0.data(Qt.UserRole)
-        if fid is None:
+        target_fid = item0.data(Qt.UserRole)
+        map_uuid = item0.data(Qt.UserRole + 1)
+        err_fid = item0.data(Qt.UserRole + 3)
+
+        if not self.iface:
             return
 
-        if self.iface and layer and layer.isValid():
-            canvas = self.iface.mapCanvas()
+        canvas = self.iface.mapCanvas()
+        main_layer = self._get_or_load_main_building_layer()
+        target_layer = main_layer if (main_layer and main_layer.isValid()) else layer
+
+        if not target_layer or not target_layer.isValid():
+            return
+
+        feat = None
+        if target_layer == main_layer:
+            feat = self._find_main_feature(main_layer, fid=target_fid, map_uuid=map_uuid)
+        if not feat and layer and layer.isValid() and err_fid is not None:
+            feat = layer.getFeature(int(err_fid))
+
+        if feat and feat.isValid():
             try:
-                layer.selectByIds([fid])
-                if layer.isSpatial():
-                    canvas.zoomToFeatureIds(layer, [fid])
-                    canvas.flashFeatureIds(layer, [fid])
+                self.iface.setActiveLayer(target_layer)
+                target_layer.selectByIds([feat.id()])
+                if target_layer.isSpatial():
+                    canvas.zoomToFeatureIds(target_layer, [feat.id()])
+                    canvas.flashFeatureIds(target_layer, [feat.id()])
                     canvas.refresh()
-                self.lbl_footer_status.setText(f"Zoomed to feature #{fid} in '{layer.name()}'")
+                self.lbl_footer_status.setText(f"Zoomed to feature FID #{target_fid} in '{target_layer.name()}'")
             except Exception as exc:
                 self.lbl_footer_status.setText(f"Could not zoom to feature: {exc}")
 
@@ -1300,7 +1905,8 @@ class CbmsmvDialog(QDialog):
         check_name: str,
         error_layer: QgsVectorLayer,
         start_index: int = 0,
-        target_fid: Optional[int] = None,
+        target_fid: Optional[Any] = None,
+        target_uuid: Optional[str] = None,
     ):
         """Launch or update the interactive Check & Update Review Dock."""
         if not error_layer or not error_layer.isValid():
@@ -1350,7 +1956,7 @@ class CbmsmvDialog(QDialog):
             dock.show()
             dock.raise_()
             if target_fid is not None:
-                dock.jump_to_fid(target_fid)
+                dock.jump_to_fid(target_fid, target_uuid)
             else:
                 dock.jump_to_index(start_index)
             self._active_review_dock = dock
@@ -1379,7 +1985,28 @@ class CbmsmvDialog(QDialog):
                 pass
 
     def closeEvent(self, event):
-        """Clean up active review dock when dialog closes."""
+        """Prompt to save unsaved edits and clean up active review dock when dialog closes."""
+        main_layer = self._get_or_load_main_building_layer()
+        has_unsaved = (
+            (main_layer and main_layer.isValid() and main_layer.isEditable() and main_layer.isModified())
+            or bool(self._pending_json_edits)
+        )
+        if has_unsaved:
+            reply = QMessageBox.question(
+                self,
+                "Unsaved Changes",
+                "You have unsaved changes in your GeoJSON / Form 2 JSON data.\n\nDo you want to save them before closing?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Save,
+            )
+            if reply == QMessageBox.Save:
+                if not self._save_changes():
+                    event.ignore()
+                    return
+            elif reply == QMessageBox.Cancel:
+                event.ignore()
+                return
+
         if hasattr(self, "_active_review_dock") and self._active_review_dock:
             dock = self._active_review_dock
             self._active_review_dock = None

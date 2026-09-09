@@ -115,11 +115,17 @@ class CbmsMvReviewDock(QDockWidget):
         if not self.error_layer or not self.error_layer.isValid():
             return
 
+        field_names_lower = {f.name().lower(): f.name() for f in self.error_layer.fields()}
+        fid_col = field_names_lower.get("sf_fid") or field_names_lower.get("fid") or field_names_lower.get("df_fid")
+        uuid_col = field_names_lower.get("sf_map_uuid") or field_names_lower.get("map_uuid") or field_names_lower.get("df_map_uuid")
+
         for feat in self.error_layer.getFeatures():
-            uuid_val = feat["map_uuid"] if "map_uuid" in feat.fields().names() else None
+            source_fid = feat[fid_col] if fid_col and feat[fid_col] is not None else feat.id()
+            uuid_val = feat[uuid_col] if uuid_col else None
             uuid_str = str(uuid_val).strip() if uuid_val is not None else ""
             self.error_features.append({
-                "fid": feat.id(),
+                "fid": source_fid,
+                "error_fid": feat.id(),
                 "map_uuid": uuid_str,
                 "feature": feat,
             })
@@ -269,25 +275,35 @@ class CbmsMvReviewDock(QDockWidget):
         self.feature_combo.blockSignals(False)
 
         current_item = self.error_features[index]
+        current_fid = current_item["fid"]
         current_uuid = current_item["map_uuid"]
 
-        # Update display banner
-        uuid_display = current_uuid if current_uuid else f"FID #{current_item['fid']}"
-        self.lbl_feat_info.setText(f"UUID: {uuid_display}")
+        # Update display banner prioritizing fid
+        info_parts = [f"FID #{current_fid}"]
+        if current_uuid:
+            info_parts.append(f"UUID: {current_uuid}")
+        self.lbl_feat_info.setText(" | ".join(info_parts))
 
         # Locate feature on main layer and error layer
-        main_feat = self._find_main_feature(current_uuid)
+        main_feat = self._find_main_feature(fid=current_fid, map_uuid=current_uuid)
         err_feat = current_item["feature"]
 
         # Synchronize QGIS map canvas
         self._sync_map_canvas(main_feat, err_feat)
 
-    def jump_to_fid(self, fid: int):
-        """Find feature in error_features by fid and jump to it."""
+    def jump_to_fid(self, fid: Any, target_uuid: Optional[str] = None):
+        """Find feature in error_features by fid and jump to it, with fallback to map_uuid."""
+        fid_str = str(fid).strip()
         for idx, item in enumerate(self.error_features):
-            if item["fid"] == fid:
+            if str(item["fid"]).strip() == fid_str or str(item.get("error_fid", "")).strip() == fid_str:
                 self.jump_to_index(idx)
                 return
+        if target_uuid:
+            clean = str(target_uuid).strip().lower()
+            for idx, item in enumerate(self.error_features):
+                if item["map_uuid"].lower() == clean:
+                    self.jump_to_index(idx)
+                    return
         if self.error_features:
             self.jump_to_index(0)
 
@@ -317,15 +333,43 @@ class CbmsMvReviewDock(QDockWidget):
     # -----------------------------------------------------------------------
     # Feature Resolution & Map Synchronization
     # -----------------------------------------------------------------------
-    def _find_main_feature(self, map_uuid: str) -> Optional[QgsFeature]:
-        """Query the main building points layer for the feature matching map_uuid."""
-        if not self.main_layer or not self.main_layer.isValid() or not map_uuid:
+    def _find_main_feature(self, fid: Any = None, map_uuid: Optional[str] = None) -> Optional[QgsFeature]:
+        """
+        Query the main building points layer for the feature prioritizing fid, then map_uuid.
+        Guarantees correct target resolution even with duplicate map_uuids.
+        """
+        if not self.main_layer or not self.main_layer.isValid():
             return None
 
-        clean_uuid = str(map_uuid).strip().replace("'", "''")
-        req = QgsFeatureRequest().setFilterExpression(f'"map_uuid" = \'{clean_uuid}\'')
-        for feat in self.main_layer.getFeatures(req):
-            return feat
+        # 1. Locate by fid attribute if 'fid' field exists in main_layer
+        if fid is not None and "fid" in [f.name().lower() for f in self.main_layer.fields()]:
+            try:
+                if isinstance(fid, int) or (isinstance(fid, str) and str(fid).isdigit()):
+                    expr = f'"fid" = {int(fid)}'
+                else:
+                    expr = f'"fid" = \'{str(fid).replace(chr(39), chr(39)+chr(39))}\''
+                req = QgsFeatureRequest().setFilterExpression(expr)
+                for feat in self.main_layer.getFeatures(req):
+                    return feat
+            except Exception:
+                pass
+
+        # 2. Locate by QGIS internal feature ID
+        if fid is not None:
+            try:
+                feat = self.main_layer.getFeature(int(fid))
+                if feat.isValid():
+                    return feat
+            except Exception:
+                pass
+
+        # 3. Fallback: by map_uuid
+        if map_uuid:
+            clean_uuid = str(map_uuid).strip().replace("'", "''")
+            req = QgsFeatureRequest().setFilterExpression(f'"map_uuid" = \'{clean_uuid}\'')
+            for feat in self.main_layer.getFeatures(req):
+                return feat
+
         return None
 
     def _sync_map_canvas(self, main_feat: Optional[QgsFeature], err_feat: QgsFeature):
@@ -339,24 +383,24 @@ class CbmsMvReviewDock(QDockWidget):
         target_layer = self.main_layer if (self.main_layer and self.main_layer.isValid()) else self.error_layer
         target_feat = main_feat if main_feat else err_feat
 
-        if not target_layer or not target_feat:
+        if not target_layer or not target_layer.isValid() or not target_feat:
             return
 
-        feat_id = target_feat.id()
+        fid = target_feat.id()
 
         try:
-            # Set target layer active
+            # Select target layer and feature
             self.iface.setActiveLayer(target_layer)
+            target_layer.selectByIds([fid])
 
-            # Automatically start editing mode on the main layer if not already editing
-            if target_layer.isEditable() is False:
+            # Ensure layer is editable for quick fixes
+            if not target_layer.isEditable():
                 target_layer.startEditing()
 
-            # Select and zoom
-            target_layer.selectByIds([feat_id])
+            # Zoom and flash on canvas
             if target_layer.isSpatial():
-                canvas.zoomToFeatureIds(target_layer, [feat_id])
-                canvas.flashFeatureIds(target_layer, [feat_id])
+                canvas.zoomToFeatureIds(target_layer, [fid])
+                canvas.flashFeatureIds(target_layer, [fid])
                 canvas.refresh()
         except Exception:
             pass
@@ -370,6 +414,7 @@ class CbmsMvReviewDock(QDockWidget):
             return
 
         current_item = self.error_features[self.current_index]
+        current_fid = current_item["fid"]
         current_uuid = current_item["map_uuid"]
 
         # Target layer
@@ -379,7 +424,7 @@ class CbmsMvReviewDock(QDockWidget):
             return
 
         # Target feature: locate on main layer first, fallback to error layer
-        target_feat = self._find_main_feature(current_uuid) if self.main_layer else current_item["feature"]
+        target_feat = self._find_main_feature(fid=current_fid, map_uuid=current_uuid) if self.main_layer else current_item["feature"]
         if not target_feat:
             target_feat = current_item["feature"]
 
@@ -387,7 +432,7 @@ class CbmsMvReviewDock(QDockWidget):
             QMessageBox.warning(
                 self,
                 "Feature Not Found",
-                f"Could not locate feature with map_uuid:\n{current_uuid}\nin '{target_layer.name()}'.",
+                f"Could not locate feature (FID: {current_fid}, UUID: {current_uuid}) in '{target_layer.name()}'.",
             )
             return
 

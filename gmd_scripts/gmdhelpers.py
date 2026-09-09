@@ -125,8 +125,59 @@ def export_features_to_sink(alg, parameters, param_name, context, fields, wkb_ty
     return {param_name: dest_id}
 
 
-def load_cbms_geojson(alg, parameters, param_name, context):
-    """Loads and validates a CBMS GeoJSON vector layer or source from algorithm parameters."""
+def add_prefix_to_layer_fields(layer, prefix="", context=None, feedback=None):
+    """
+    Renames all attribute fields in a layer or source by prepending prefix (e.g. 'sf_', 'ref_').
+    Ensures '{prefix}fid' is present as the first attribute (using $id if 'fid' was not an explicit attribute).
+    Returns a new memory QgsVectorLayer with renamed fields and unchanged geometry/CRS.
+    """
+    if not layer or not prefix:
+        return layer
+
+    fields = layer.fields()
+    if fields.count() > 0 and all(f.name().startswith(prefix) for f in fields):
+        return layer
+
+    field_mapping = []
+    has_fid = any(f.name().lower() == "fid" for f in fields)
+
+    # Prepend {prefix}fid via $id if fid attribute does not already exist
+    if not has_fid:
+        field_mapping.append({
+            "expression": "$id",
+            "length": 0,
+            "name": f"{prefix}fid",
+            "precision": 0,
+            "type": QVariant.LongLong,
+        })
+
+    for f in fields:
+        old_name = f.name()
+        new_name = old_name if old_name.startswith(prefix) else f"{prefix}{old_name}"
+        field_mapping.append({
+            "expression": f'"{old_name}"',
+            "length": f.length(),
+            "name": new_name,
+            "precision": f.precision(),
+            "type": f.type(),
+        })
+
+    return processing.run(
+        "native:refactorfields",
+        {
+            "INPUT": layer,
+            "FIELDS_MAPPING": field_mapping,
+            "OUTPUT": "memory:",
+        },
+        context=context,
+        feedback=feedback,
+    )["OUTPUT"]
+
+
+def load_cbms_geojson(alg, parameters, param_name, context, prefix="sf_"):
+    """Loads and validates a CBMS GeoJSON vector layer or source from algorithm parameters.
+    Automatically prefixes all attribute fields with prefix (default: 'sf_') and ensures 'sf_fid' is present.
+    """
     input_layer_path = alg.parameterAsFile(parameters, param_name, context)
     vlayer = None
 
@@ -144,11 +195,16 @@ def load_cbms_geojson(alg, parameters, param_name, context):
     if source is None:
         raise QgsProcessingException(alg.invalidSourceError(parameters, param_name))
 
+    if prefix:
+        source = add_prefix_to_layer_fields(source, prefix=prefix, context=context)
+
     return source
 
 
-def load_cbms_json(alg, parameters, param_name, context, feedback=None):
-    """Loads a JSON file from algorithm parameters and returns it as a non-spatial QgsVectorLayer table."""
+def load_cbms_json(alg, parameters, param_name, context, feedback=None, prefix="df_"):
+    """Loads a JSON file from algorithm parameters and returns it as a non-spatial QgsVectorLayer table.
+    Automatically prefixes all columns with prefix (default: 'df_') and ensures 'df_fid' is present.
+    """
     json_path = alg.parameterAsFile(parameters, param_name, context)
     if not json_path or not os.path.exists(json_path):
         if feedback:
@@ -182,8 +238,15 @@ def load_cbms_json(alg, parameters, param_name, context, feedback=None):
 
     fields = QgsFields()
     field_names = []
+    raw_keys_map = {}
 
-    # Inspect records to dynamically create fields
+    # Ensure prefix + "fid" exists as the first field
+    fid_field_name = f"{prefix}fid" if prefix else "fid"
+    fields.append(QgsField(fid_field_name, QVariant.Int))
+    field_names.append(fid_field_name)
+    raw_keys_map[fid_field_name] = "fid"
+
+    # Inspect records to dynamically create fields with prefix
     for rec in records:
         if isinstance(rec, dict):
             props = rec.get("properties", rec) if isinstance(rec.get("properties"), dict) else rec
@@ -193,7 +256,10 @@ def load_cbms_json(alg, parameters, param_name, context, feedback=None):
         if isinstance(props, dict):
             for k, v in props.items():
                 k_name = str(k).strip()
-                if k_name and k_name not in field_names:
+                if not k_name:
+                    continue
+                prefixed_k = k_name if (not prefix or k_name.startswith(prefix)) else f"{prefix}{k_name}"
+                if prefixed_k not in field_names:
                     if isinstance(v, bool):
                         ftype = QVariant.Bool
                     elif isinstance(v, int):
@@ -202,14 +268,22 @@ def load_cbms_json(alg, parameters, param_name, context, feedback=None):
                         ftype = QVariant.Double
                     else:
                         ftype = QVariant.String
-                    fields.append(QgsField(k_name, ftype))
-                    field_names.append(k_name)
+                    fields.append(QgsField(prefixed_k, ftype))
+                    field_names.append(prefixed_k)
+                    raw_keys_map[prefixed_k] = k_name
 
     dp.addAttributes(fields)
     table_layer.updateFields()
 
     features = []
+    has_fid_in_props = False
     for rec in records:
+        props = rec.get("properties", rec) if isinstance(rec, dict) else {}
+        if isinstance(props, dict) and any(str(k).strip().lower() == "fid" for k in props.keys()):
+            has_fid_in_props = True
+            break
+
+    for idx, rec in enumerate(records):
         if isinstance(rec, dict):
             props = rec.get("properties", rec) if isinstance(rec.get("properties"), dict) else rec
         else:
@@ -218,12 +292,22 @@ def load_cbms_json(alg, parameters, param_name, context, feedback=None):
         feat = QgsFeature(fields)
 
         if isinstance(props, dict):
+            props_lower = {str(k).strip().lower(): v for k, v in props.items()}
             for fn in field_names:
-                if fn in props:
-                    val = props[fn]
+                orig_k = raw_keys_map.get(fn)
+                if orig_k and orig_k in props:
+                    val = props[orig_k]
                     feat.setAttribute(fn, val if val is not None else NULL)
+                elif orig_k and orig_k.lower() in props_lower:
+                    val = props_lower[orig_k.lower()]
+                    feat.setAttribute(fn, val if val is not None else NULL)
+                elif fn == fid_field_name and not has_fid_in_props:
+                    feat.setAttribute(fn, idx + 1)
                 else:
                     feat.setAttribute(fn, NULL)
+        else:
+            if not has_fid_in_props:
+                feat.setAttribute(fid_field_name, idx + 1)
 
         features.append(feat)
 
@@ -231,8 +315,10 @@ def load_cbms_json(alg, parameters, param_name, context, feedback=None):
     return table_layer
 
 
-def load_base_layer(alg, parameters, param_name, context, suffix="_bldg_point"):
-    """Loads a reference sub-layer ending with suffix (default: '_bldg_point') from a BASE_LAYER GeoPackage parameter."""
+def load_base_layer(alg, parameters, param_name, context, suffix="_bldg_point", prefix="ref_"):
+    """Loads a reference sub-layer ending with suffix (default: '_bldg_point') from a BASE_LAYER GeoPackage parameter.
+    Automatically prefixes all attribute fields with prefix (default: 'ref_') and ensures 'ref_fid' is present.
+    """
     base_layer_path = alg.parameterAsFile(parameters, param_name, context)
     ref_bldg_point = None
 
@@ -259,10 +345,15 @@ def load_base_layer(alg, parameters, param_name, context, suffix="_bldg_point"):
     if not ref_bldg_point or not ref_bldg_point.isValid():
         source = alg.parameterAsSource(parameters, param_name, context)
         if source is not None:
+            if prefix:
+                source = add_prefix_to_layer_fields(source, prefix=prefix, context=context)
             return source
         raise QgsProcessingException(
             f"Could not load reference building point layer ending with '{suffix}' from '{base_layer_path}'"
         )
+
+    if prefix:
+        ref_bldg_point = add_prefix_to_layer_fields(ref_bldg_point, prefix=prefix, context=context)
 
     return ref_bldg_point
 
@@ -398,17 +489,18 @@ def create_temporary_layer(
 
 
 REF_SELECT_MV_COLS  = [
-    "map_uuid",
-    "bsn_geoid",
-    "region_code",
-    "province_code",
-    "city_mun_code",
-    "barangay_code",
-    "ean",
-    "bsn",
-    "ea_geocode",
-    "en_code",
-    "remarks"
+    "sf_fid",
+    "sf_map_uuid",
+    "sf_bsn_geoid",
+    "sf_region_code",
+    "sf_province_code",
+    "sf_city_mun_code",
+    "sf_barangay_code",
+    "sf_ean",
+    "sf_bsn",
+    "sf_ea_geocode",
+    "sf_en_code",
+    "sf_remarks"
 ]
 
 
@@ -416,24 +508,11 @@ def select_mv(layer, *extra_fields, context=None, feedback=None, base_fields=Non
     """
     Selects and retains specific columns from a layer using QGIS native:retainfields.
 
-    Pre-selects standard CBMS columns by default:
-        map_uuid, bsn_geoid, region_code, province_code, city_mun_code,
-        barangay_code, ean, bsn, ea_geocode, en_code
+    Pre-selects standard CBMS columns by default (with sf_ prefix):
+        sf_map_uuid, sf_bsn_geoid, sf_region_code, sf_province_code, sf_city_mun_code,
+        sf_barangay_code, sf_ean, sf_bsn, sf_ea_geocode, sf_en_code, sf_remarks
 
     Appends any extra user-specified columns.
-
-    Usage examples:
-        # 1. Multiple additional columns
-        final_output = select_mv(semi_final_output, ["ref_map_uuid", "ref_bsn_geoid"])
-
-        # 2. Single additional column
-        final_output = select_mv(semi_final_output, ["ref_bsn_geoid"])
-
-        # 3. Default columns only (no extra columns)
-        final_output = select_mv(semi_final_output, [])
-        # or
-        final_output = select_mv(semi_final_output)
-
     """
     if layer is None:
         return None
@@ -461,8 +540,15 @@ def select_mv(layer, *extra_fields, context=None, feedback=None, base_fields=Non
     if existing_fields:
         for name in target_names:
             name_lower = name.lower()
+            match = None
             if name_lower in existing_fields:
-                fields_to_retain.append(existing_fields[name_lower])
+                match = existing_fields[name_lower]
+            elif f"sf_{name_lower}" in existing_fields:
+                match = existing_fields[f"sf_{name_lower}"]
+            elif name_lower.startswith("sf_") and name_lower[3:] in existing_fields:
+                match = existing_fields[name_lower[3:]]
+            if match and match not in fields_to_retain:
+                fields_to_retain.append(match)
     else:
         fields_to_retain = target_names
 

@@ -105,7 +105,7 @@ class mv_2027_hp_4b_geocode__missing(QgsProcessingAlgorithm):
             "native:extractbyexpression",
             {
                 "INPUT": geojson_data,
-                "EXPRESSION": '"ea_geocode" IS NULL OR length("ea_geocode") != 14',
+                "EXPRESSION": '"sf_ea_geocode" IS NULL OR length("sf_ea_geocode") != 14',
                 "OUTPUT": "memory:",
             },
             context=context,

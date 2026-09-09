@@ -123,7 +123,7 @@ class mv_2027_hp_4a_map_uuid__duplicate(QgsProcessingAlgorithm):
             })
 
         fields_mapping.append({
-            "expression": 'count(1, group_by:="map_uuid")',
+            "expression": 'count(1, group_by:="sf_map_uuid")',
             "length": 0,
             "name": "n",
             "precision": 0,
@@ -142,7 +142,7 @@ class mv_2027_hp_4a_map_uuid__duplicate(QgsProcessingAlgorithm):
         )["OUTPUT"]
 
         # 2. Extract rows with more than 1 occurrence
-        filter_expr = '"map_uuid" IS NOT NULL AND trim("map_uuid") != \'\' AND "n" > 1'
+        filter_expr = '"sf_map_uuid" IS NOT NULL AND trim("sf_map_uuid") != \'\' AND "n" > 1'
         extracted_layer = processing.run(
             "native:extractbyexpression",
             {
@@ -156,7 +156,7 @@ class mv_2027_hp_4a_map_uuid__duplicate(QgsProcessingAlgorithm):
 
         final_output = gmdhelpers.select_mv(
             extracted_layer,
-            ["n", "longitude", "latitude"],
+            ["n", "sf_longitude", "sf_latitude"],
             context=context,
             feedback=feedback,
         )

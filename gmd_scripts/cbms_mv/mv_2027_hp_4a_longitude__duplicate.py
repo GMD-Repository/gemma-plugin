@@ -136,7 +136,7 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
                 "INPUT_2": reprojected_layer,
                 'MAX_DISTANCE' : 1, 
                 'NEIGHBORS' : 10,
-                "PREFIX": "sf_",
+                "PREFIX": "dup_",
                 "OUTPUT": "memory:",
             },
             context=context,
@@ -147,7 +147,7 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
             "native:extractbyexpression",
             {
                 "INPUT": joined_layer,
-                "EXPRESSION": '"distance" < 1',
+                "EXPRESSION": '"distance" < 1 AND "_orig_id" != "dup__orig_id"',
                 "OUTPUT": "memory:",
             },
             context=context,
@@ -167,7 +167,7 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
 
         final_output = gmdhelpers.select_mv(
             final_output_reprojected,
-            ["sf_map_uuid", "sf_longitude", "sf_latitude", "distance"],
+            ["dup_sf_map_uuid", "dup_sf_longitude", "dup_sf_latitude", "distance"],
             context=context,
             feedback=feedback,
         )

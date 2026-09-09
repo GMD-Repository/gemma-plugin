@@ -105,13 +105,13 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
             "native:joinattributestable",
             {
                 "INPUT": geojson_data,
-                "FIELD": "map_uuid",
+                "FIELD": "sf_map_uuid",
                 "INPUT_2": json_data,
-                "FIELD_2": "map_uuid",
+                "FIELD_2": "df_map_uuid",
                 "FIELDS_TO_COPY": [],
                 "METHOD": 1,                      
                 "DISCARD_NONMATCHING": False,     
-                "PREFIX": "df_",
+                "PREFIX": "",
                 "OUTPUT": "memory:",
             },
             context=context,
@@ -131,7 +131,7 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
 
         final_output = gmdhelpers.select_mv(
             filtered_layer,
-            ["remarks"],
+            ["sf_remarks", "df_map_uuid"],
             context=context,
             feedback=feedback,
         )

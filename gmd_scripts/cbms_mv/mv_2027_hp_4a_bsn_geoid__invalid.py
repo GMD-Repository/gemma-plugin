@@ -109,7 +109,7 @@ class mv_2027_hp_4a_bsn_geoid__invalid(QgsProcessingAlgorithm):
             "native:extractbyexpression",
             {
                 "INPUT": geojson_data,
-                "EXPRESSION": 'to_int("bsn") > 0 AND to_int("bsn") < 55555',
+                "EXPRESSION": 'to_int("sf_bsn") > 0 AND to_int("sf_bsn") < 55555',
                 "OUTPUT": "memory:",
             },
             context=context,
@@ -120,13 +120,13 @@ class mv_2027_hp_4a_bsn_geoid__invalid(QgsProcessingAlgorithm):
             "native:joinattributestable",
             {
                 "INPUT": regular_bldg,
-                "FIELD": "bsn_geoid",
+                "FIELD": "sf_bsn_geoid",
                 "INPUT_2": ref_bldg_point,
-                "FIELD_2": "bsn_geoid",
-                "FIELDS_TO_COPY": ["map_uuid","bsn_geoid"],
+                "FIELD_2": "ref_bsn_geoid",
+                "FIELDS_TO_COPY": ["ref_map_uuid", "ref_bsn_geoid"],
                 "METHOD": 1,
                 "DISCARD_NONMATCHING": False,
-                "PREFIX": "ref_",
+                "PREFIX": "",
                 "OUTPUT": "memory:",
             },
             context=context,
@@ -137,14 +137,17 @@ class mv_2027_hp_4a_bsn_geoid__invalid(QgsProcessingAlgorithm):
             "native:extractbyexpression",
             {
                 "INPUT": joined_layer,
-                "EXPRESSION": '"map_uuid" != "ref_map_uuid"',
+                "EXPRESSION": '"sf_map_uuid" != "ref_map_uuid"',
                 "OUTPUT": "memory:",
             },
             context=context,
             feedback=feedback,
         )["OUTPUT"]
 
-        final_output = gmdhelpers.select_mv(extracted_joined, ["ref_map_uuid", "ref_bsn_geoid"])
+        final_output = gmdhelpers.select_mv(
+            extracted_joined, 
+            ["ref_map_uuid", "ref_bsn_geoid"]
+            )
 
         return gmdhelpers.export_features_to_sink(
             self,
