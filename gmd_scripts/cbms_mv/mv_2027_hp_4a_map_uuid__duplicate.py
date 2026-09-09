@@ -154,8 +154,20 @@ class mv_2027_hp_4a_map_uuid__duplicate(QgsProcessingAlgorithm):
             feedback=feedback,
         )["OUTPUT"]
 
+
+        ordered_layer = processing.run(
+            "native:orderbyexpression",
+            { 'ASCENDING' : True, 
+            'EXPRESSION' : '"map_uuid"', 
+            'INPUT' : extracted_layer, 
+            'NULLS_FIRST' : True
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+
         final_output = gmdhelpers.select_mv(
-            extracted_layer,
+            ordered_layer,
             ["n", "sf_longitude", "sf_latitude"],
             context=context,
             feedback=feedback,

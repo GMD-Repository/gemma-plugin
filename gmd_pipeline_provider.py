@@ -43,7 +43,7 @@ from .gmd_scripts.cbms_mv.mv_2027_hp_4a_bsn_geoid__invalid import mv_2027_hp_4a_
 from .gmd_scripts.cbms_mv.mv_2027_hp_4a_geom__invalid import mv_2027_hp_4a_geom__invalid
 from .gmd_scripts.cbms_mv.mv_2027_hp_4a_ea_geocode__invalid import mv_2027_hp_4a_ea_geocode__invalid
 from .gmd_scripts.cbms_mv.mv_2027_hp_1a_longitude__invalid import mv_2027_hp_1a_longitude__invalid
-from .gmd_scripts.cbms_mv.mv_2027_hp_4b_geocode__missing import mv_2027_hp_4b_geocode__missing
+from .gmd_scripts.cbms_mv.mv_2027_hp_4b_ea_geocode__missing import mv_2027_hp_4b_ea_geocode__missing
 
 
 
@@ -100,7 +100,7 @@ class GmdPipelineProvider(QgsProcessingProvider):
         self.addAlgorithm(mv_2027_hp_4a_geom__invalid())
         self.addAlgorithm(mv_2027_hp_4a_ea_geocode__invalid())
         self.addAlgorithm(mv_2027_hp_1a_longitude__invalid())
-        self.addAlgorithm(mv_2027_hp_4b_geocode__missing())
+        self.addAlgorithm(mv_2027_hp_4b_ea_geocode__missing())
 
     def id(self):
         return 'gmd_pipeline'
