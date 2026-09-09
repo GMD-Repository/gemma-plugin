@@ -157,28 +157,19 @@ class mv_2027_hp_4a_map_uuid__duplicate(QgsProcessingAlgorithm):
 
         ordered_layer = processing.run(
             "native:orderbyexpression",
-            { 'ASCENDING' : True, 
-            'EXPRESSION' : '"map_uuid"', 
-            'INPUT' : extracted_layer, 
-            'NULLS_FIRST' : True
-            },
-            context=context,
-            feedback=feedback,
-        )["OUTPUT"]
-
-        filtered_layer_2 = processing.run(
-            "native:extractbyexpression",
             {
-                "INPUT": ordered_layer,
-                "EXPRESSION": 'coalesce(lower("sf_status"), \'\') != \'deleted\'',
+                "INPUT": extracted_layer,
+                "EXPRESSION": '"sf_map_uuid"',
+                "ASCENDING": True,
+                "NULLS_FIRST": True,
                 "OUTPUT": "memory:",
             },
             context=context,
             feedback=feedback,
         )["OUTPUT"]
-        
+
         final_output = gmdhelpers.select_mv(
-            filtered_layer_2,
+            ordered_layer,
             ["n", "sf_longitude", "sf_latitude"],
             context=context,
             feedback=feedback,

@@ -144,18 +144,7 @@ class mv_2027_hp_4a_map_uuid__invalid(QgsProcessingAlgorithm):
             feedback=feedback,
         )["OUTPUT"]
 
-        filtered_layer_2 = processing.run(
-            "native:extractbyexpression",
-            {
-                "INPUT": extracted_joined,
-                "EXPRESSION": 'coalesce(lower("sf_status"), \'\') != \'deleted\'',
-                "OUTPUT": "memory:",
-            },
-            context=context,
-            feedback=feedback,
-        )["OUTPUT"]
-
-        final_output = gmdhelpers.select_mv(filtered_layer_2, ["ref_map_uuid", "ref_bsn_geoid"])
+        final_output = gmdhelpers.select_mv(extracted_joined, ["ref_map_uuid", "ref_bsn_geoid"])
 
         return gmdhelpers.export_features_to_sink(
             self,

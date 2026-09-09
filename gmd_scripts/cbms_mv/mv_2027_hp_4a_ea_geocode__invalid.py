@@ -167,20 +167,9 @@ class mv_2027_hp_4a_ea_geocode__invalid(QgsProcessingAlgorithm):
             source_layer=geojson_data,
         )
 
-        filtered_layer_2 = processing.run(
-            "native:extractbyexpression",
-            {
-                "INPUT": temp_layer,
-                "EXPRESSION": 'coalesce(lower("sf_status"), \'\') != \'deleted\'',
-                "OUTPUT": "memory:",
-            },
-            context=context,
-            feedback=feedback,
-        )["OUTPUT"]
-
         # 5. Select & organize columns using select_mv
         final_output = gmdhelpers.select_mv(
-            filtered_layer_2,
+            temp_layer,
             ["ref_ea_geocode"],
             context=context,
             feedback=feedback,

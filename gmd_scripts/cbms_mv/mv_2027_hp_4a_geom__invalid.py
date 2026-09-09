@@ -197,22 +197,9 @@ class mv_2027_hp_4a_geom__invalid(QgsProcessingAlgorithm):
             feedback=feedback,
         )["OUTPUT"]
 
-        filtered_layer_2 = processing.run(
-            "native:extractbyexpression",
-            {
-                "INPUT": extracted_joined,
-                "EXPRESSION": 'coalesce(lower("sf_status"), \'\') != \'deleted\'',
-                "OUTPUT": "memory:",
-            },
-            context=context,
-            feedback=feedback,
-        )["OUTPUT"]
-
-        
-
         # 6. Select & organize columns using select_mv
         final_output = gmdhelpers.select_mv(
-            filtered_layer_2,
+            extracted_joined,
             ["ref_map_uuid", "ref_bsn_geoid", "distance_m"],
             context=context,
             feedback=feedback,

@@ -12,6 +12,7 @@ import os
 from typing import Optional, List, Dict, Any
 
 from qgis.core import (
+    NULL,
     QgsProject,
     QgsVectorLayer,
     QgsFeature,
@@ -120,8 +121,15 @@ class CbmsMvReviewDock(QDockWidget):
         fid_col = field_names_lower.get("sf_fid") or field_names_lower.get("fid") or field_names_lower.get("df_fid")
         uuid_col = field_names_lower.get("sf_map_uuid") or field_names_lower.get("map_uuid") or field_names_lower.get("df_map_uuid")
 
+        def _is_empty(v):
+            if v is None or v == NULL:
+                return True
+            s = str(v).strip()
+            return not s or s.lower() in ("null", "none")
+
         for feat in self.error_layer.getFeatures():
-            source_fid = feat[fid_col] if fid_col and feat[fid_col] is not None else feat.id()
+            raw_fid = feat[fid_col] if fid_col else None
+            source_fid = raw_fid if (fid_col and not _is_empty(raw_fid)) else feat.id()
             uuid_val = feat[uuid_col] if uuid_col else None
             uuid_str = str(uuid_val).strip() if uuid_val is not None else ""
             self.error_features.append({
@@ -393,34 +401,49 @@ class CbmsMvReviewDock(QDockWidget):
         if not self.main_layer or not self.main_layer.isValid():
             return None
 
-        # 1. Locate by fid attribute if 'fid' field exists in main_layer
-        if fid is not None and "fid" in [f.name().lower() for f in self.main_layer.fields()]:
+        # Clean fid to avoid checking string 'NULL' or None
+        clean_fid = None
+        if fid is not None and fid != NULL:
+            s = str(fid).strip()
+            if s and s.lower() not in ("null", "none"):
+                clean_fid = int(s) if s.isdigit() else fid
+
+        # 1. Primary: Locate by native QGIS internal feature ID ($id)
+        if clean_fid is not None:
             try:
-                if isinstance(fid, int) or (isinstance(fid, str) and str(fid).isdigit()):
-                    expr = f'"fid" = {int(fid)}'
+                feat = self.main_layer.getFeature(int(clean_fid))
+                if feat.isValid():
+                    # If map_uuid is also provided, confirm it matches as a safety check
+                    if not map_uuid:
+                        return feat
+                    clean_u = str(map_uuid).strip()
+                    m_flds = {f.name().lower(): f.name() for f in self.main_layer.fields()}
+                    u_col = m_flds.get("map_uuid") or m_flds.get("sf_map_uuid")
+                    if not u_col or str(feat[u_col] or "").strip() == clean_u:
+                        return feat
+            except Exception:
+                pass
+
+        # 2. Fallback: by map_uuid (if internal feature ID shifted)
+        if map_uuid:
+            clean_uuid = str(map_uuid).strip().replace("'", "''")
+            if clean_uuid and clean_uuid.lower() not in ("null", "none"):
+                req = QgsFeatureRequest().setFilterExpression(f'"map_uuid" = \'{clean_uuid}\'')
+                for feat in self.main_layer.getFeatures(req):
+                    return feat
+
+        # 3. Fallback: Locate by fid attribute if 'fid' field exists in main_layer
+        if clean_fid is not None and "fid" in [f.name().lower() for f in self.main_layer.fields()]:
+            try:
+                if isinstance(clean_fid, int):
+                    expr = f'"fid" = {clean_fid}'
                 else:
-                    expr = f'"fid" = \'{str(fid).replace(chr(39), chr(39)+chr(39))}\''
+                    expr = f'"fid" = \'{str(clean_fid).replace(chr(39), chr(39)+chr(39))}\''
                 req = QgsFeatureRequest().setFilterExpression(expr)
                 for feat in self.main_layer.getFeatures(req):
                     return feat
             except Exception:
                 pass
-
-        # 2. Locate by QGIS internal feature ID
-        if fid is not None:
-            try:
-                feat = self.main_layer.getFeature(int(fid))
-                if feat.isValid():
-                    return feat
-            except Exception:
-                pass
-
-        # 3. Fallback: by map_uuid
-        if map_uuid:
-            clean_uuid = str(map_uuid).strip().replace("'", "''")
-            req = QgsFeatureRequest().setFilterExpression(f'"map_uuid" = \'{clean_uuid}\'')
-            for feat in self.main_layer.getFeatures(req):
-                return feat
 
         return None
 

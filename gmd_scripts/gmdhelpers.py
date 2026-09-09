@@ -145,24 +145,15 @@ def add_prefix_to_layer_fields(layer, prefix="", context=None, feedback=None):
             break
 
     field_mapping = []
-    # Guarantee {prefix}fid is the first field in the refactored layer
-    if fid_col:
-        fld = fields.field(fid_col)
-        field_mapping.append({
-            "expression": f'"{fid_col}"',
-            "length": fld.length(),
-            "name": f"{prefix}fid",
-            "precision": fld.precision(),
-            "type": fld.type(),
-        })
-    else:
-        field_mapping.append({
-            "expression": "$id",
-            "length": 0,
-            "name": f"{prefix}fid",
-            "precision": 0,
-            "type": QVariant.LongLong,
-        })
+    # Guarantee {prefix}fid is the first field in the refactored layer, always strictly enforced as $id.
+    # This prevents duplicate or NULL fid values in the source dataset from corrupting primary key resolution.
+    field_mapping.append({
+        "expression": "$id",
+        "length": 0,
+        "name": f"{prefix}fid",
+        "precision": 0,
+        "type": QVariant.LongLong,
+    })
 
     for f in fields:
         if f.name() == fid_col:
@@ -196,10 +187,15 @@ def add_prefix_to_layer_fields(layer, prefix="", context=None, feedback=None):
     )["OUTPUT"]
 
 
-def load_cbms_geojson(alg, parameters, param_name, context, prefix="sf_"):
+def load_cbms_geojson(alg, parameters, param_name, context, feedback=None, prefix="sf_"):
     """Loads and validates a CBMS GeoJSON vector layer or source from algorithm parameters.
     Automatically prefixes all attribute fields with prefix (default: 'sf_') and ensures 'sf_fid' is present.
+    Filters out features marked with status == 'deleted'.
     """
+    if isinstance(feedback, str):
+        prefix = feedback
+        feedback = None
+
     input_layer_path = alg.parameterAsFile(parameters, param_name, context)
     vlayer = None
 
@@ -218,7 +214,27 @@ def load_cbms_geojson(alg, parameters, param_name, context, prefix="sf_"):
         raise QgsProcessingException(alg.invalidSourceError(parameters, param_name))
 
     if prefix:
-        source = add_prefix_to_layer_fields(source, prefix=prefix, context=context)
+        source = add_prefix_to_layer_fields(source, prefix=prefix, context=context, feedback=feedback)
+
+    # Filter out features marked with status == 'deleted' if status column exists
+    status_field = None
+    for fld in source.fields():
+        name_lower = fld.name().lower()
+        if name_lower in ("status", f"{prefix}status".lower()):
+            status_field = fld.name()
+            break
+
+    if status_field:
+        source = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": source,
+                "EXPRESSION": f'coalesce(lower("{status_field}"), \'\') != \'deleted\'',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
 
     return source
 
@@ -226,6 +242,7 @@ def load_cbms_geojson(alg, parameters, param_name, context, prefix="sf_"):
 def load_cbms_csv(alg, parameters, param_name, context, feedback=None, prefix="df_"):
     """Loads and validates a CBMS CSV table from algorithm parameters.
     Automatically prefixes all attribute fields with prefix (default: 'df_') and ensures 'df_fid' is present.
+    Filters out rows marked with status == 'deleted'.
     """
     csv_path = alg.parameterAsFile(parameters, param_name, context)
     vlayer = None
@@ -248,6 +265,26 @@ def load_cbms_csv(alg, parameters, param_name, context, feedback=None, prefix="d
 
     if prefix:
         source = add_prefix_to_layer_fields(source, prefix=prefix, context=context, feedback=feedback)
+
+    # Filter out rows marked with status == 'deleted' if status column exists
+    status_field = None
+    for fld in source.fields():
+        name_lower = fld.name().lower()
+        if name_lower in ("status", f"{prefix}status".lower()):
+            status_field = fld.name()
+            break
+
+    if status_field:
+        source = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": source,
+                "EXPRESSION": f'coalesce(lower("{status_field}"), \'\') != \'deleted\'',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
 
     return source
 

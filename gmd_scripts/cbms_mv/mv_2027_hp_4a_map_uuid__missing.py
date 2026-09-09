@@ -129,19 +129,8 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
             feedback=feedback,
         )["OUTPUT"]
 
-        filtered_layer_2 = processing.run(
-            "native:extractbyexpression",
-            {
-                "INPUT": filtered_layer,
-                "EXPRESSION": 'coalesce(lower("sf_status"), \'\') != \'deleted\'',
-                "OUTPUT": "memory:",
-            },
-            context=context,
-            feedback=feedback,
-        )["OUTPUT"]
-
         final_output = gmdhelpers.select_mv(
-            filtered_layer_2,
+            filtered_layer,
             ["sf_remarks", "df_map_uuid"],
             context=context,
             feedback=feedback,

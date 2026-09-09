@@ -165,19 +165,8 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
             feedback=feedback,
         )["OUTPUT"]
 
-        filtered_layer_2 = processing.run(
-            "native:extractbyexpression",
-            {
-                "INPUT": final_output_reprojected,
-                "EXPRESSION": 'coalesce(lower("sf_status"), \'\') != \'deleted\'',
-                "OUTPUT": "memory:",
-            },
-            context=context,
-            feedback=feedback,
-        )["OUTPUT"]
-
         final_output = gmdhelpers.select_mv(
-            filtered_layer_2,
+            final_output_reprojected,
             ["dup_sf_map_uuid", "dup_sf_longitude", "dup_sf_latitude", "distance"],
             context=context,
             feedback=feedback,
