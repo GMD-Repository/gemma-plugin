@@ -59,9 +59,9 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterFile(
                 self.INPUT_DATA,
-                "INPUT_DATA (.json file)",
+                "INPUT_DATA (.csv file)",
                 behavior=QgsProcessingParameterFile.File,
-                extension="json",
+                extension="csv",
                 optional=False,
             )
         )
@@ -102,7 +102,7 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
     ) -> Dict[str, Any]:
 
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
-        json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
+        json_data = gmdhelpers.load_cbms_csv(self, parameters, self.INPUT_DATA, context, feedback)
 
         indexed_layer = processing.run(
             "native:addautoincrementalfield",
@@ -165,8 +165,19 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
             feedback=feedback,
         )["OUTPUT"]
 
+        filtered_layer_2 = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": final_output_reprojected,
+                "EXPRESSION": 'coalesce(lower("sf_status"), \'\') != \'deleted\'',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+
         final_output = gmdhelpers.select_mv(
-            final_output_reprojected,
+            filtered_layer_2,
             ["dup_sf_map_uuid", "dup_sf_longitude", "dup_sf_latitude", "distance"],
             context=context,
             feedback=feedback,

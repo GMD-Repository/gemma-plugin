@@ -19,8 +19,9 @@ from qgis.core import (
     QgsGeometry,
     QgsPointXY,
     QgsApplication,
+    QgsField,
 )
-from qgis.PyQt.QtCore import Qt, pyqtSignal
+from qgis.PyQt.QtCore import Qt, pyqtSignal, QVariant
 from qgis.PyQt.QtGui import QFont, QColor, QIcon
 from qgis.PyQt.QtWidgets import (
     QDockWidget,
@@ -149,7 +150,7 @@ class CbmsMvReviewDock(QDockWidget):
 
         lbl_rule_id = QLabel(f"🔴  {self.val_id}")
         lbl_rule_id.setStyleSheet("font-size: 11.5px; font-weight: bold; color: #C53030;")
-        lbl_rule_id.setFont(QFont("Consolas", 9.5, QFont.Bold))
+        lbl_rule_id.setFont(QFont("Consolas", 9, QFont.Bold))
 
         lbl_check_name = QLabel(self.check_name)
         lbl_check_name.setWordWrap(True)
@@ -231,6 +232,12 @@ class CbmsMvReviewDock(QDockWidget):
         self.btn_edit_form.setToolTip("Open QGIS native Edit Feature Form for this building point")
         self.btn_edit_form.clicked.connect(self._on_open_feature_form)
 
+        # Delete Feature Button (sets status to 'deleted')
+        self.btn_delete_feat = QPushButton("Delete")
+        self.btn_delete_feat.setObjectName("btnDeleteFeat")
+        self.btn_delete_feat.setToolTip("Mark this building point as 'deleted' in status column")
+        self.btn_delete_feat.clicked.connect(self._on_delete_feature)
+
         # Save Layer Changes Button
         self.btn_save_layer = QPushButton("Save")
         self.btn_save_layer.setObjectName("btnSaveLayer")
@@ -244,6 +251,7 @@ class CbmsMvReviewDock(QDockWidget):
         self.btn_return.clicked.connect(self.close)
 
         action_layout.addWidget(self.btn_edit_form)
+        action_layout.addWidget(self.btn_delete_feat)
         action_layout.addWidget(self.btn_save_layer)
         action_layout.addWidget(self.btn_return)
         layout.addWidget(action_frame)
@@ -278,15 +286,59 @@ class CbmsMvReviewDock(QDockWidget):
         current_fid = current_item["fid"]
         current_uuid = current_item["map_uuid"]
 
+        # Locate feature on main layer and error layer
+        main_feat = self._find_main_feature(fid=current_fid, map_uuid=current_uuid)
+        err_feat = current_item["feature"]
+
+        # Check if feature is marked deleted
+        target_feat = main_feat if main_feat else err_feat
+        is_del = False
+        if target_feat:
+            for fn in [f.name() for f in target_feat.fields()]:
+                if fn.lower() in ("status", "sf_status"):
+                    v = target_feat[fn]
+                    if v is not None and str(v).strip().lower() == "deleted":
+                        is_del = True
+                        break
+
         # Update display banner prioritizing fid
         info_parts = [f"FID #{current_fid}"]
         if current_uuid:
             info_parts.append(f"UUID: {current_uuid}")
+        if is_del:
+            info_parts.append("🔴 [DELETED]")
+            if hasattr(self, "btn_delete_feat"):
+                self.btn_delete_feat.setText("Deleted")
+                self.btn_delete_feat.setStyleSheet("""
+                    QPushButton {
+                        background-color: #FED7D7;
+                        color: #9B2C2C;
+                        font-weight: 600;
+                        padding: 6px 10px;
+                        border-radius: 4px;
+                        border: 1px solid #FEB2B2;
+                        font-size: 11px;
+                    }
+                """)
+        else:
+            if hasattr(self, "btn_delete_feat"):
+                self.btn_delete_feat.setText("Delete")
+                self.btn_delete_feat.setStyleSheet("""
+                    QPushButton {
+                        background-color: #FFF5F5;
+                        color: #C53030;
+                        font-weight: 600;
+                        padding: 6px 10px;
+                        border-radius: 4px;
+                        border: 1px solid #FEB2B2;
+                        font-size: 11px;
+                    }
+                    QPushButton:hover {
+                        background-color: #FED7D7;
+                        color: #9B2C2C;
+                    }
+                """)
         self.lbl_feat_info.setText(" | ".join(info_parts))
-
-        # Locate feature on main layer and error layer
-        main_feat = self._find_main_feature(fid=current_fid, map_uuid=current_uuid)
-        err_feat = current_item["feature"]
 
         # Synchronize QGIS map canvas
         self._sync_map_canvas(main_feat, err_feat)
@@ -484,6 +536,81 @@ class CbmsMvReviewDock(QDockWidget):
                     f"Failed to commit edits to layer:\n{commit_errors}",
                 )
 
+    def _on_delete_feature(self):
+        """Mark the active building point as 'deleted' in its status column."""
+        if not self.error_features or self.current_index >= len(self.error_features):
+            return
+
+        current_item = self.error_features[self.current_index]
+        current_fid = current_item["fid"]
+        current_uuid = current_item["map_uuid"]
+        err_feat = current_item["feature"]
+        main_feat = self._find_main_feature(fid=current_fid, map_uuid=current_uuid) if self.main_layer else None
+
+        target_feat = main_feat if main_feat else err_feat
+        is_already_deleted = False
+        if target_feat:
+            for fn in [f.name() for f in target_feat.fields()]:
+                if fn.lower() in ("status", "sf_status"):
+                    v = target_feat[fn]
+                    if v is not None and str(v).strip().lower() == "deleted":
+                        is_already_deleted = True
+                        break
+
+        if is_already_deleted:
+            reply = QMessageBox.question(
+                self,
+                "Restore Feature?",
+                f"Feature FID #{current_fid} is currently marked as 'deleted'.\n\nDo you want to restore it?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+            new_status = ""
+        else:
+            new_status = "deleted"
+
+        # Update main_layer
+        if self.main_layer and self.main_layer.isValid() and main_feat:
+            m_idx = -1
+            for f in self.main_layer.fields():
+                if f.name().lower() in ("status", "sf_status"):
+                    m_idx = self.main_layer.fields().indexOf(f.name())
+                    break
+            if m_idx == -1:
+                try:
+                    self.main_layer.dataProvider().addAttributes([QgsField("status", QVariant.String)])
+                    self.main_layer.updateFields()
+                    m_idx = self.main_layer.fields().indexOf("status")
+                except Exception:
+                    pass
+            if m_idx != -1:
+                if not self.main_layer.isEditable():
+                    self.main_layer.startEditing()
+                self.main_layer.changeAttributeValue(main_feat.id(), m_idx, new_status)
+
+        # Update error_layer
+        if self.error_layer and self.error_layer.isValid() and err_feat:
+            e_idx = -1
+            for f in self.error_layer.fields():
+                if f.name().lower() in ("status", "sf_status"):
+                    e_idx = self.error_layer.fields().indexOf(f.name())
+                    break
+            if e_idx != -1:
+                if not self.error_layer.isEditable():
+                    self.error_layer.startEditing()
+                self.error_layer.changeAttributeValue(err_feat.id(), e_idx, new_status)
+
+        # Sync back to parent dialog table if open
+        if self.parent_dialog and hasattr(self.parent_dialog, "_sync_feature_status"):
+            self.parent_dialog._sync_feature_status(self.val_id, current_fid, current_uuid, new_status)
+
+        # Refresh UI
+        self.jump_to_index(self.current_index)
+        if self.iface and self.iface.mapCanvas():
+            self.iface.mapCanvas().refresh()
+
     # -----------------------------------------------------------------------
     # Dock Lifecycle & Close Event
     # -----------------------------------------------------------------------
@@ -567,6 +694,19 @@ class CbmsMvReviewDock(QDockWidget):
             }
             #btnEditForm:hover {
                 background-color: #2C5282;
+            }
+            #btnDeleteFeat {
+                background-color: #FFF5F5;
+                color: #C53030;
+                font-weight: 600;
+                padding: 6px 10px;
+                border-radius: 4px;
+                border: 1px solid #FEB2B2;
+                font-size: 11px;
+            }
+            #btnDeleteFeat:hover {
+                background-color: #FED7D7;
+                color: #9B2C2C;
             }
             #btnSaveLayer {
                 background-color: #27AE60;

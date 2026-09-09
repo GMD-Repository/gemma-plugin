@@ -26,7 +26,7 @@ from PyQt5.QtGui import QIcon
 from .. import gmdhelpers
 
 
-class mv_2027_hp_4b_geocode__missing(QgsProcessingAlgorithm):
+class mv_2027_hp_4b_ea_geocode__missing(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"
     INPUT_LAYER = "INPUT_LAYER"
@@ -34,10 +34,10 @@ class mv_2027_hp_4b_geocode__missing(QgsProcessingAlgorithm):
     OUTPUT = "OUTPUT"
 
     def name(self) -> str:
-        return "mv_2027_hp_4b_geocode__missing"
+        return "mv_2027_hp_4b_ea_geocode__missing"
 
     def displayName(self) -> str:
-        return "mv_2027_hp_4b_geocode__missing"
+        return "mv_2027_hp_4b_ea_geocode__missing"
 
     def group(self) -> str:
         return "2027 CBMS"
@@ -56,9 +56,9 @@ class mv_2027_hp_4b_geocode__missing(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterFile(
                 self.INPUT_DATA,
-                "INPUT_DATA (.json file)",
+                "INPUT_DATA (.csv file)",
                 behavior=QgsProcessingParameterFile.File,
-                extension="json",
+                extension="csv",
                 optional=False,
             )
         )
@@ -86,7 +86,7 @@ class mv_2027_hp_4b_geocode__missing(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterFeatureSink(
                 self.OUTPUT,
-                "mv_2027_hp_4b_geocode__missing",
+                "mv_2027_hp_4b_ea_geocode__missing",
                 QgsProcessing.TypeVectorAnyGeometry,
             )
         )
@@ -99,7 +99,7 @@ class mv_2027_hp_4b_geocode__missing(QgsProcessingAlgorithm):
     ) -> Dict[str, Any]:
 
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
-        json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
+        json_data = gmdhelpers.load_cbms_csv(self, parameters, self.INPUT_DATA, context, feedback)
 
         filtered_layer = processing.run(
             "native:extractbyexpression",
@@ -112,9 +112,20 @@ class mv_2027_hp_4b_geocode__missing(QgsProcessingAlgorithm):
             feedback=feedback,
         )["OUTPUT"]
 
+        filtered_layer_2 = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": filtered_layer,
+                "EXPRESSION": 'coalesce(lower("sf_status"), \'\') != \'deleted\'',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+
 
         final_output = gmdhelpers.select_mv(
-            filtered_layer,
+            filtered_layer_2,
             [],
             context=context,
             feedback=feedback,

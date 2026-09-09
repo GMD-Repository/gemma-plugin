@@ -57,9 +57,9 @@ class mv_2027_hp_4a_ea_geocode__invalid(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterFile(
                 self.INPUT_DATA,
-                "INPUT_DATA (.json file)",
+                "INPUT_DATA (.csv file)",
                 behavior=QgsProcessingParameterFile.File,
-                extension="json",
+                extension="csv",
                 optional=False,
             )
         )
@@ -100,7 +100,7 @@ class mv_2027_hp_4a_ea_geocode__invalid(QgsProcessingAlgorithm):
     ) -> Dict[str, Any]:
 
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
-        json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
+        json_data = gmdhelpers.load_cbms_csv(self, parameters, self.INPUT_DATA, context, feedback)
         ref_ea = gmdhelpers.load_base_layer(self, parameters, self.BASE_LAYER, context, suffix="_ea")
 
         # 1. Map ea_geocode to list of reference EA polygon geometries
@@ -167,9 +167,20 @@ class mv_2027_hp_4a_ea_geocode__invalid(QgsProcessingAlgorithm):
             source_layer=geojson_data,
         )
 
+        filtered_layer_2 = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": temp_layer,
+                "EXPRESSION": 'coalesce(lower("sf_status"), \'\') != \'deleted\'',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+
         # 5. Select & organize columns using select_mv
         final_output = gmdhelpers.select_mv(
-            temp_layer,
+            filtered_layer_2,
             ["ref_ea_geocode"],
             context=context,
             feedback=feedback,

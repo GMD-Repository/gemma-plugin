@@ -75,6 +75,14 @@ class TestGmdhelpers(unittest.TestCase):
         """Verify load_cbms_json helper function is present in gmdhelpers."""
         self.assertTrue(hasattr(self.mod, "load_cbms_json"))
 
+    def test_load_cbms_csv_helper_exists(self):
+        """Verify load_cbms_csv helper function is present in gmdhelpers."""
+        self.assertTrue(hasattr(self.mod, "load_cbms_csv"))
+
+    def test_load_cbms_csv_to_layer_helper_exists(self):
+        """Verify load_cbms_csv_to_layer helper function is present in gmdhelpers."""
+        self.assertTrue(hasattr(self.mod, "load_cbms_csv_to_layer"))
+
 
 if __name__ == "__main__":
     unittest.main()

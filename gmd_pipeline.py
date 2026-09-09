@@ -225,8 +225,8 @@ class GMDPipeline(object):
         #self.others_menu.addAction(self.geometry_legacy_action)
 
         # Gemma Toolbar (Ordered Chronologically: Check and Update -> Create EAs -> Package for QField)
-        #self.toolbar = self.iface.addToolBar("Gemma Toolbar")
-        #self.toolbar.setObjectName("Gemma Toolbar")
+        self.toolbar = self.iface.addToolBar("Gemma Toolbar")
+        self.toolbar.setObjectName("Gemma Toolbar")
 
         # 4. 2027 CBMS Form 2 Map Validation Submenu
         self.cbmsmv_menu = QMenu(u'2027 CBMS Map Validation')
@@ -349,6 +349,20 @@ class GMDPipeline(object):
     def show_cbmsmv_dialog(self):
         """Open the 2027 CBMS Map Validation dialog."""
         from .gmd_scripts.cbms_mv import show_cbmsmv_dialog
+
+        if hasattr(self, 'cbmsmv_dlg') and self.cbmsmv_dlg:
+            try:
+                if getattr(self.cbmsmv_dlg, "_is_docked", False) and getattr(self.cbmsmv_dlg, "_dock_widget", None):
+                    self.cbmsmv_dlg._dock_widget.show()
+                    self.cbmsmv_dlg._dock_widget.raise_()
+                    return
+                else:
+                    self.cbmsmv_dlg.showNormal()
+                    self.cbmsmv_dlg.raise_()
+                    self.cbmsmv_dlg.activateWindow()
+                    return
+            except Exception:
+                pass
 
         self.cbmsmv_dlg = show_cbmsmv_dialog(
                     self.iface,

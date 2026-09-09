@@ -62,9 +62,9 @@ class mv_2027_hp_4a_longitude__invalid(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterFile(
                 self.INPUT_DATA,
-                "INPUT_DATA (.json file)",
+                "INPUT_DATA (.csv file)",
                 behavior=QgsProcessingParameterFile.File,
-                extension="json",
+                extension="csv",
                 optional=False,
             )
         )
@@ -105,7 +105,7 @@ class mv_2027_hp_4a_longitude__invalid(QgsProcessingAlgorithm):
     ) -> Dict[str, Any]:
 
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
-        json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
+        json_data = gmdhelpers.load_cbms_csv(self, parameters, self.INPUT_DATA, context, feedback)
 
         filter_expr = (
             '("sf_longitude" IS NOT NULL AND (to_real("sf_longitude") < 110.0 OR to_real("sf_longitude") > 129.18)) OR '
@@ -123,8 +123,19 @@ class mv_2027_hp_4a_longitude__invalid(QgsProcessingAlgorithm):
             feedback=feedback,
         )["OUTPUT"]
 
+        filtered_layer_2 = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": extracted_layer,
+                "EXPRESSION": 'coalesce(lower("sf_status"), \'\') != \'deleted\'',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+
         final_output = gmdhelpers.select_mv(
-            extracted_layer,
+            filtered_layer_2,
             ["sf_longitude", "sf_latitude"],
             context=context,
             feedback=feedback,

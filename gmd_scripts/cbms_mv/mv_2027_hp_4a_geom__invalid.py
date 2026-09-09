@@ -60,9 +60,9 @@ class mv_2027_hp_4a_geom__invalid(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterFile(
                 self.INPUT_DATA,
-                "INPUT_DATA (.json file)",
+                "INPUT_DATA (.csv file)",
                 behavior=QgsProcessingParameterFile.File,
-                extension="json",
+                extension="csv",
                 optional=False,
             )
         )
@@ -103,7 +103,7 @@ class mv_2027_hp_4a_geom__invalid(QgsProcessingAlgorithm):
     ) -> Dict[str, Any]:
 
         geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
-        json_data = gmdhelpers.load_cbms_json(self, parameters, self.INPUT_DATA, context, feedback)
+        json_data = gmdhelpers.load_cbms_csv(self, parameters, self.INPUT_DATA, context, feedback)
         ref_bldg_point = gmdhelpers.load_base_layer(self, parameters, self.BASE_LAYER, context)
 
         # 1. Build map_uuid lookup dictionary for reference building points
@@ -197,9 +197,22 @@ class mv_2027_hp_4a_geom__invalid(QgsProcessingAlgorithm):
             feedback=feedback,
         )["OUTPUT"]
 
+        filtered_layer_2 = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": extracted_joined,
+                "EXPRESSION": 'coalesce(lower("sf_status"), \'\') != \'deleted\'',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+
+        
+
         # 6. Select & organize columns using select_mv
         final_output = gmdhelpers.select_mv(
-            extracted_joined,
+            filtered_layer_2,
             ["ref_map_uuid", "ref_bsn_geoid", "distance_m"],
             context=context,
             feedback=feedback,
