@@ -149,7 +149,7 @@ class CbmsMvReviewDock(QDockWidget):
 
         lbl_rule_id = QLabel(f"🔴  {self.val_id}")
         lbl_rule_id.setStyleSheet("font-size: 11.5px; font-weight: bold; color: #C53030;")
-        lbl_rule_id.setFont(QFont("Consolas", 9.5, QFont.Bold))
+        lbl_rule_id.setFont(QFont("Consolas", 9, QFont.Bold))
 
         lbl_check_name = QLabel(self.check_name)
         lbl_check_name.setWordWrap(True)

@@ -127,7 +127,7 @@ def export_features_to_sink(alg, parameters, param_name, context, fields, wkb_ty
 
 def add_prefix_to_layer_fields(layer, prefix="", context=None, feedback=None):
     """
-    Renames all attribute fields in a layer or source by prepending prefix (e.g. 'sf_', 'ref_').
+    Renames all attribute fields in a layer or source by prepending prefix (e.g. 'sf_', 'ref_', 'df_').
     Ensures '{prefix}fid' is present as the first attribute (using $id if 'fid' was not an explicit attribute).
     Returns a new memory QgsVectorLayer with renamed fields and unchanged geometry/CRS.
     """
@@ -135,14 +135,27 @@ def add_prefix_to_layer_fields(layer, prefix="", context=None, feedback=None):
         return layer
 
     fields = layer.fields()
-    if fields.count() > 0 and all(f.name().startswith(prefix) for f in fields):
+    if fields.count() > 0 and all(f.name().startswith(prefix) for f in fields) and fields[0].name() == f"{prefix}fid":
         return layer
 
-    field_mapping = []
-    has_fid = any(f.name().lower() == "fid" for f in fields)
+    fid_col = None
+    for fld in fields:
+        if fld.name().lower() in ("fid", f"{prefix}fid".lower()):
+            fid_col = fld.name()
+            break
 
-    # Prepend {prefix}fid via $id if fid attribute does not already exist
-    if not has_fid:
+    field_mapping = []
+    # Guarantee {prefix}fid is the first field in the refactored layer
+    if fid_col:
+        fld = fields.field(fid_col)
+        field_mapping.append({
+            "expression": f'"{fid_col}"',
+            "length": fld.length(),
+            "name": f"{prefix}fid",
+            "precision": fld.precision(),
+            "type": fld.type(),
+        })
+    else:
         field_mapping.append({
             "expression": "$id",
             "length": 0,
@@ -152,6 +165,8 @@ def add_prefix_to_layer_fields(layer, prefix="", context=None, feedback=None):
         })
 
     for f in fields:
+        if f.name() == fid_col:
+            continue
         old_name = f.name()
         new_name = old_name if old_name.startswith(prefix) else f"{prefix}{old_name}"
         field_mapping.append({
@@ -197,6 +212,35 @@ def load_cbms_geojson(alg, parameters, param_name, context, prefix="sf_"):
 
     if prefix:
         source = add_prefix_to_layer_fields(source, prefix=prefix, context=context)
+
+    return source
+
+
+def load_cbms_csv(alg, parameters, param_name, context, feedback=None, prefix="df_"):
+    """Loads and validates a CBMS CSV table from algorithm parameters.
+    Automatically prefixes all attribute fields with prefix (default: 'df_') and ensures 'df_fid' is present.
+    """
+    csv_path = alg.parameterAsFile(parameters, param_name, context)
+    vlayer = None
+
+    if csv_path and os.path.exists(csv_path):
+        vlayer = QgsVectorLayer(csv_path, "input_csv_table", "ogr")
+
+    if not vlayer or not vlayer.isValid():
+        # Fallback to source parameter if passed as layer object/identifier
+        source = alg.parameterAsSource(parameters, param_name, context)
+        if source is None:
+            if csv_path:
+                raise QgsProcessingException(f"Could not load input CSV file from path: '{csv_path}'")
+            raise QgsProcessingException(alg.invalidSourceError(parameters, param_name))
+    else:
+        source = vlayer
+
+    if source is None:
+        raise QgsProcessingException(alg.invalidSourceError(parameters, param_name))
+
+    if prefix:
+        source = add_prefix_to_layer_fields(source, prefix=prefix, context=context, feedback=feedback)
 
     return source
 
@@ -619,4 +663,27 @@ def load_cbms_json_to_layer(json_input: Any, layer_name: str = "cbms_json_table"
         QgsProject.instance().addMapLayer(table_layer)
 
     return table_layer
+
+
+def load_cbms_csv_to_layer(csv_path: str, layer_name: str = "cbms_csv_table", add_to_project: bool = True) -> QgsVectorLayer:
+    """
+    Loads a CBMS CSV file directly as an editable OGR vector layer.
+
+    :param csv_path: Path to CSV file.
+    :param layer_name: Name of the generated QGIS layer.
+    :param add_to_project: If True, adds the layer directly to QgsProject layer tree.
+    :return: QgsVectorLayer (OGR layer backed by the CSV file on disk).
+    """
+    if not csv_path or not os.path.exists(csv_path):
+        raise FileNotFoundError(f"CSV file not found: {csv_path}")
+
+    layer = QgsVectorLayer(csv_path, layer_name, "ogr")
+    if not layer or not layer.isValid():
+        raise QgsProcessingException(f"Failed to open CSV file as vector layer: {csv_path}")
+
+    if add_to_project:
+        QgsProject.instance().addMapLayer(layer)
+
+    return layer
+
 

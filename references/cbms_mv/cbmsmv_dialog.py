@@ -74,22 +74,23 @@ try:
 except ImportError:
     processing = None
 
-SETTINGS_KEY_FORM2 = "gemma/cbmsmv/form2_json_path"
+SETTINGS_KEY_FORM2 = "gemma/cbmsmv/form2_csv_path"
+SETTINGS_KEY_FORM2_LEGACY = "gemma/cbmsmv/form2_json_path"
 SETTINGS_KEY_POINTS = "gemma/cbmsmv/points_geojson_path"
 SETTINGS_KEY_BASE = "gemma/cbmsmv/base_gpkg_path"
 SETTINGS_KEY_LOAD_INPUTS = "gemma/cbmsmv/load_inputs_in_layers"
 SETTINGS_KEY_SELECTED_RULES = "gemma/cbmsmv/selected_rules"
 
 try:
-    from ...gmd_scripts.gmdhelpers import load_cbms_json_to_layer
+    from ...gmd_scripts.gmdhelpers import load_cbms_json_to_layer, load_cbms_csv_to_layer
 except (ImportError, ValueError):
     try:
-        from gmd_scripts.gmdhelpers import load_cbms_json_to_layer
+        from gmd_scripts.gmdhelpers import load_cbms_json_to_layer, load_cbms_csv_to_layer
     except (ImportError, ValueError):
         _plugin_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
         if _plugin_root not in sys.path:
             sys.path.insert(0, _plugin_root)
-        from gmd_scripts.gmdhelpers import load_cbms_json_to_layer
+        from gmd_scripts.gmdhelpers import load_cbms_json_to_layer, load_cbms_csv_to_layer
 
 try:
     from .cbmsmv_review_dock import CbmsMvReviewDock, is_valid_qobject
@@ -239,6 +240,15 @@ class CbmsmvDialog(QDialog):
         self.setWindowTitle("2027 CBMS Form 2 Map Validation")
         self.setMinimumSize(840, 680)
         self.resize(900, 720)
+
+        # Standard desktop window controls: Minimize, Maximize, Close
+        self.setWindowFlags(
+            (self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+            | Qt.Window
+            | Qt.WindowMinimizeButtonHint
+            | Qt.WindowMaximizeButtonHint
+            | Qt.WindowCloseButtonHint
+        )
 
         self._rules: List[Dict[str, Any]] = []
         self._rule_checkboxes: Dict[str, QTableWidgetItem] = {}
@@ -1036,9 +1046,24 @@ class CbmsmvDialog(QDialog):
                     layer.startEditing()
                 layer.changeAttributeValue(err_fid if err_fid is not None else target_fid, f_idx, new_val_str)
 
-        # 2. If it's a df_ column -> buffer into pending JSON edits
+        # 2. If it's a df_ column -> update Form 2 layer and buffer for disk save
         if fn_lower.startswith("df_"):
             clean_prop = field_name[3:]
+            form2_layer = self._get_or_load_form2_layer()
+            if form2_layer and form2_layer.isValid():
+                form2_feat = self._find_form2_feature(form2_layer, fid=df_fid, map_uuid=df_uuid or map_uuid)
+                if form2_feat:
+                    target_f_name = (
+                        clean_prop
+                        if (clean_prop in [f.name() for f in form2_layer.fields()])
+                        else field_name
+                    )
+                    f_idx = form2_layer.fields().indexOf(target_f_name)
+                    if f_idx != -1:
+                        if not form2_layer.isEditable():
+                            form2_layer.startEditing()
+                        form2_layer.changeAttributeValue(form2_feat.id(), f_idx, new_val_str)
+
             rec_k = f"fid_{df_fid}" if df_fid is not None else f"uuid_{df_uuid or map_uuid}"
             if rec_k not in self._pending_json_edits:
                 self._pending_json_edits[rec_k] = {
@@ -1047,7 +1072,7 @@ class CbmsmvDialog(QDialog):
                     "props": {},
                 }
             self._pending_json_edits[rec_k]["props"][clean_prop] = new_val_str
-            self.lbl_footer_status.setText(f"Buffered JSON edit '{clean_prop}' = '{new_val_str}' (Press Ctrl+S to save)")
+            self.lbl_footer_status.setText(f"Updated '{clean_prop}' = '{new_val_str}' for Form 2 record (Press Ctrl+S to save)")
 
         # 3. If it's an sf_ or unprefixed column -> update main building points layer in memory
         else:
@@ -1110,6 +1135,55 @@ class CbmsmvDialog(QDialog):
             clean_uuid = str(map_uuid).strip().replace("'", "''")
             for f in main_layer.getFeatures(QgsFeatureRequest().setFilterExpression(f'"map_uuid" = \'{clean_uuid}\'')):
                 return f
+
+        return None
+
+    def _find_form2_feature(
+        self,
+        form2_layer: QgsVectorLayer,
+        fid: Any = None,
+        map_uuid: Optional[str] = None,
+    ) -> Optional[QgsFeature]:
+        """
+        Locate a feature in form2_layer prioritizing fid, then fallback to map_uuid.
+        """
+        if not form2_layer or not form2_layer.isValid():
+            return None
+
+        f_names_lower = [f.name().lower() for f in form2_layer.fields()]
+
+        # 1. Locate by fid attribute if 'fid' or 'df_fid' exists
+        for fid_name in ("fid", "df_fid"):
+            if fid is not None and fid_name in f_names_lower:
+                try:
+                    if isinstance(fid, int) or (isinstance(fid, str) and str(fid).isdigit()):
+                        expr = f'"{fid_name}" = {int(fid)}'
+                    else:
+                        expr = f'"{fid_name}" = \'{str(fid).replace(chr(39), chr(39)+chr(39))}\''
+                    for f in form2_layer.getFeatures(QgsFeatureRequest().setFilterExpression(expr)):
+                        return f
+                except Exception:
+                    pass
+
+        # 2. Locate by QGIS internal feature ID
+        if fid is not None:
+            try:
+                feat = form2_layer.getFeature(int(fid))
+                if feat.isValid():
+                    return feat
+            except Exception:
+                pass
+
+        # 3. Fallback: Locate by map_uuid
+        if map_uuid:
+            clean_uuid = str(map_uuid).strip().replace("'", "''")
+            for uuid_col in ("map_uuid", "df_map_uuid"):
+                if uuid_col in f_names_lower:
+                    try:
+                        for f in form2_layer.getFeatures(QgsFeatureRequest().setFilterExpression(f'"{uuid_col}" = \'{clean_uuid}\'')):
+                            return f
+                    except Exception:
+                        pass
 
         return None
 
@@ -1307,6 +1381,122 @@ class CbmsmvDialog(QDialog):
         if not self.isActiveWindow():
             return
         self._save_changes()
+
+    def _save_csv_changes(self) -> Tuple[bool, int, str]:
+        """
+        Commit pending attribute edits to the Form 2 CSV file on disk.
+        Returns (success: bool, updated_count: int, message: str).
+        """
+        form2_path = self.file_form2.filePath().strip() if hasattr(self, "file_form2") else ""
+        if not form2_path:
+            return False, 0, "Form 2 CSV Data File path is not specified."
+        if not os.path.exists(form2_path):
+            return False, 0, f"Form 2 CSV Data File does not exist on disk:\n{form2_path}"
+
+        if not self._pending_json_edits:
+            return True, 0, "No pending Form 2 edits."
+
+        try:
+            with open(form2_path, "r", encoding="utf-8-sig", newline="") as f:
+                reader = csv.reader(f)
+                try:
+                    header = next(reader)
+                except StopIteration:
+                    return False, 0, "CSV file is empty."
+                rows = list(reader)
+        except Exception as e:
+            return False, 0, f"Failed to read Form 2 CSV file:\n{e}"
+
+        header_lower = [h.strip().lower() for h in header]
+        fid_idx = None
+        for target in ("fid", "df_fid"):
+            if target in header_lower:
+                fid_idx = header_lower.index(target)
+                break
+
+        uuid_idx = None
+        for target in ("map_uuid", "df_map_uuid"):
+            if target in header_lower:
+                uuid_idx = header_lower.index(target)
+                break
+
+        updated_count = 0
+        for rec_k, record_info in self._pending_json_edits.items():
+            t_fid = record_info.get("df_fid")
+            t_uuid = str(record_info.get("uuid") or "").strip()
+            props = record_info.get("props", {})
+
+            target_row_idx = None
+
+            # 1. Match by fid column if present
+            if fid_idx is not None and t_fid is not None:
+                t_fid_str = str(t_fid).strip()
+                for r_idx, row in enumerate(rows):
+                    if fid_idx < len(row) and str(row[fid_idx]).strip() == t_fid_str:
+                        target_row_idx = r_idx
+                        break
+
+            # 2. Match by 1-based row index if no explicit fid column
+            if target_row_idx is None and fid_idx is None and t_fid is not None:
+                try:
+                    row_num = int(t_fid) - 1
+                    if 0 <= row_num < len(rows):
+                        target_row_idx = row_num
+                except (ValueError, TypeError):
+                    pass
+
+            # 3. Match by map_uuid
+            if target_row_idx is None and uuid_idx is not None and t_uuid:
+                for r_idx, row in enumerate(rows):
+                    if uuid_idx < len(row) and str(row[uuid_idx]).strip() == t_uuid:
+                        target_row_idx = r_idx
+                        break
+
+            if target_row_idx is not None:
+                row = rows[target_row_idx]
+                while len(row) < len(header):
+                    row.append("")
+                for prop_name, new_val in props.items():
+                    clean_p = prop_name.lower()
+                    clean_df_p = f"df_{clean_p}"
+                    col_idx = None
+                    for idx, h in enumerate(header_lower):
+                        if h == clean_p or h == clean_df_p:
+                            col_idx = idx
+                            break
+                    if col_idx is not None:
+                        row[col_idx] = str(new_val) if new_val is not None else ""
+                updated_count += 1
+
+        # Atomic write back to Form 2 CSV file
+        tmp_file = form2_path + ".tmp"
+        try:
+            with open(tmp_file, "w", encoding="utf-8", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(header)
+                writer.writerows(rows)
+            os.replace(tmp_file, form2_path)
+        except Exception as e:
+            if os.path.exists(tmp_file):
+                try:
+                    os.remove(tmp_file)
+                except Exception:
+                    pass
+            return False, 0, f"Error saving Form 2 CSV to disk:\n{e}"
+
+        self._pending_json_edits.clear()
+
+        # If a Form 2 table layer is loaded into QGIS canvas, refresh it
+        if self.project:
+            for lyr in self.project.mapLayers().values():
+                if lyr.name().startswith("Form 2 (") or (hasattr(lyr, "source") and lyr.source() == form2_path):
+                    try:
+                        lyr.dataProvider().forceReload()
+                        lyr.triggerRepaint()
+                    except Exception:
+                        pass
+
+        return True, updated_count, f"Successfully saved {updated_count} record(s) to Form 2 CSV."
 
     def _save_json_changes(self) -> Tuple[bool, int, str]:
         """
@@ -1512,26 +1702,75 @@ class CbmsmvDialog(QDialog):
             )
             return False
 
-        # 2. Commit Form 2 JSON changes if dirty
-        json_saved = False
-        json_updated_count = 0
-        if self._pending_json_edits:
-            ok, json_updated_count, json_msg = self._save_json_changes()
+        # 2. Commit Form 2 Data (CSV or JSON) changes if dirty
+        form2_saved = False
+        form2_updated_count = 0
+        form2_path = self.file_form2.filePath().strip() if hasattr(self, "file_form2") else ""
+        form2_layer = self._get_or_load_form2_layer()
+
+        if form2_path.lower().endswith(".csv"):
+            if form2_layer and form2_layer.isValid() and form2_layer.isEditable() and form2_layer.isModified():
+                try:
+                    success = form2_layer.commitChanges()
+                    if success:
+                        form2_layer.startEditing()
+                        form2_saved = True
+                        form2_updated_count = len(self._pending_json_edits)
+                        self._pending_json_edits.clear()
+                    else:
+                        errors = form2_layer.commitErrors()
+                        form2_err = "\n".join(errors) if errors else "Unknown commit error."
+                        QMessageBox.critical(
+                            self,
+                            "Save Failed",
+                            f"Failed to commit changes to Form 2 CSV layer:\n{form2_err}",
+                        )
+                        return False
+                except Exception as exc:
+                    QMessageBox.critical(
+                        self,
+                        "Save Failed",
+                        f"Error committing Form 2 CSV layer:\n{exc}",
+                    )
+                    return False
+            elif self._pending_json_edits:
+                ok, form2_updated_count, form2_msg = self._save_csv_changes()
+                if not ok:
+                    QMessageBox.critical(
+                        self,
+                        "Save Failed",
+                        f"Failed to commit changes to Form 2 CSV file:\n{form2_msg}",
+                    )
+                    return False
+                form2_saved = True
+        elif form2_path.lower().endswith(".json") and self._pending_json_edits:
+            ok, form2_updated_count, form2_msg = self._save_json_changes()
             if not ok:
                 QMessageBox.critical(
                     self,
                     "Save Failed",
-                    f"Failed to commit changes to Form 2 Data (.json):\n{json_msg}",
+                    f"Failed to commit changes to Form 2 Data (.json):\n{form2_msg}",
                 )
                 return False
-            json_saved = True
+            form2_saved = True
+        elif self._pending_json_edits:
+            ok, form2_updated_count, form2_msg = self._save_csv_changes()
+            if not ok:
+                QMessageBox.critical(
+                    self,
+                    "Save Failed",
+                    f"Failed to commit changes to Form 2 table:\n{form2_msg}",
+                )
+                return False
+            form2_saved = True
 
         # 3. Assemble saved message
         saved_parts = []
         if geojson_saved:
             saved_parts.append("Building Points (.geojson)")
-        if json_saved:
-            saved_parts.append(f"Form 2 Data ({json_updated_count} record(s) in .json)")
+        if form2_saved:
+            fmt = "CSV" if form2_path.lower().endswith(".csv") else "JSON"
+            saved_parts.append(f"Form 2 Data ({form2_updated_count} record(s) in .{fmt.lower()})")
 
         if saved_parts:
             saved_msg = f"Successfully saved edits to: {' and '.join(saved_parts)}."
@@ -1899,6 +2138,45 @@ class CbmsmvDialog(QDialog):
             )
             return None
 
+    def _get_or_load_form2_layer(self) -> Optional[QgsVectorLayer]:
+        """
+        Locate the Form 2 table layer (CSV/JSON) in the QGIS project matching
+        the input file path. If not currently loaded, loads it into the project.
+        """
+        form2_path = self.file_form2.filePath().strip() if hasattr(self, "file_form2") else ""
+        if not form2_path or not os.path.exists(form2_path):
+            return None
+
+        proj = self.project if self.project else QgsProject.instance()
+        norm_path = os.path.normpath(form2_path).lower()
+
+        # 1. Search existing project layers
+        for layer in proj.mapLayers().values():
+            if isinstance(layer, QgsVectorLayer) and layer.isValid():
+                src = os.path.normpath(layer.source().split("|")[0]).lower()
+                if src == norm_path or (layer.name().startswith("Form 2 (") and src == norm_path):
+                    return layer
+
+        # 2. Not loaded in project yet, load it
+        try:
+            layer_name = f"Form 2 ({os.path.basename(form2_path)})"
+            if form2_path.lower().endswith(".csv"):
+                table_layer = QgsVectorLayer(form2_path, layer_name, "ogr")
+            else:
+                table_layer = load_cbms_json_to_layer(form2_path, layer_name=layer_name, add_to_project=False)
+
+            if table_layer and table_layer.isValid():
+                group_name = "2027 CBMS Primary Inputs"
+                grp = self._get_or_create_layer_group(group_name)
+                proj.addMapLayer(table_layer, False)
+                grp.addLayer(table_layer)
+                self._log_info(f"Loaded Form 2 layer into '{group_name}': {layer_name}")
+                return table_layer
+        except Exception as exc:
+            self._log_error(f"Error loading Form 2 layer: {exc}")
+
+        return None
+
     def _launch_review_dock(
         self,
         val_id: str,
@@ -2056,12 +2334,12 @@ class CbmsmvDialog(QDialog):
         grid_sources.setContentsMargins(14, 16, 14, 14)
         grid_sources.setSpacing(12)
 
-        # 1. Form 2 Data File (.json)
-        lbl_form2 = QLabel("Form 2 Data File (.json):")
+        # 1. Form 2 Data File (.csv)
+        lbl_form2 = QLabel("Form 2 Data File (.csv):")
         lbl_form2.setStyleSheet("font-weight: bold; color: #2C3E50;")
         self.file_form2 = QgsFileWidget()
-        self.file_form2.setDialogTitle("Select Form 2 Data File (.json)")
-        self.file_form2.setFilter("CBMS Form 2 JSON Files (*.json);;All Files (*.*)")
+        self.file_form2.setDialogTitle("Select Form 2 Data File (.csv)")
+        self.file_form2.setFilter("CBMS Form 2 CSV Files (*.csv *.CSV);;JSON Files (*.json *.JSON);;All Files (*.*)")
         self.file_form2.setStorageMode(QgsFileWidget.GetFile)
         self.file_form2.fileChanged.connect(self._on_inputs_changed)
 
@@ -2110,7 +2388,7 @@ class CbmsmvDialog(QDialog):
         # Single option for loading primary input data sources into QGIS Layers Panel
         self.chk_load_inputs_canvas = QCheckBox("Load primary input data sources into QGIS Layers Panel")
         self.chk_load_inputs_canvas.setToolTip(
-            "If checked, automatically loads Form 2 JSON (via load_cbms_json_to_layer), Geotagged Building Points, "
+            "If checked, automatically loads Form 2 CSV/table, Geotagged Building Points, "
             "and all sublayers in Base Layers GPKG into QGIS Layers Panel during validation."
         )
         self.chk_load_inputs_canvas.stateChanged.connect(self._on_inputs_changed)
@@ -2210,13 +2488,13 @@ class CbmsmvDialog(QDialog):
             if form2:
                 if os.path.exists(form2):
                     self.lbl_status_form2.setText("<span style='color: #27AE60; font-weight: bold; font-size: 14px;'>✓</span>")
-                    self.lbl_status_form2.setToolTip("Form 2 JSON file exists")
+                    self.lbl_status_form2.setToolTip("Form 2 Data file exists")
                 else:
                     self.lbl_status_form2.setText("<span style='color: #E74C3C; font-weight: bold; font-size: 14px;'>❌</span>")
-                    self.lbl_status_form2.setToolTip("Form 2 JSON file not found")
+                    self.lbl_status_form2.setToolTip("Form 2 Data file not found")
             else:
                 self.lbl_status_form2.setText("<span style='color: #E74C3C; font-weight: bold; font-size: 14px;'>❌</span>")
-                self.lbl_status_form2.setToolTip("Form 2 JSON file required")
+                self.lbl_status_form2.setToolTip("Form 2 Data file required")
 
         if hasattr(self, "lbl_status_points"):
             if points:
@@ -2244,7 +2522,7 @@ class CbmsmvDialog(QDialog):
 
     def _load_saved_settings(self):
         """Load previously saved filepaths and load options from QSettings if available."""
-        saved_form2 = self.settings.value(SETTINGS_KEY_FORM2, "", type=str)
+        saved_form2 = self.settings.value(SETTINGS_KEY_FORM2, "", type=str) or self.settings.value(SETTINGS_KEY_FORM2_LEGACY, "", type=str)
         saved_points = self.settings.value(SETTINGS_KEY_POINTS, "", type=str)
         saved_base = self.settings.value(SETTINGS_KEY_BASE, "", type=str)
         saved_load_inputs = self.settings.value(SETTINGS_KEY_LOAD_INPUTS, False, type=bool)
@@ -2961,20 +3239,25 @@ class CbmsmvDialog(QDialog):
         group_name = "2027 CBMS Primary Inputs"
         inputs_group = self._get_or_create_layer_group(group_name)
 
-        # 1. Form 2 Data File (.json) using load_cbms_json_to_layer from gmdhelpers
+        # 1. Form 2 Data File (.csv / .json)
         if form2_path and os.path.exists(form2_path):
             try:
-                self._log_info(f"Loading Form 2 JSON into QGIS Layers via load_cbms_json_to_layer: {os.path.basename(form2_path)}")
                 layer_name = f"Form 2 ({os.path.basename(form2_path)})"
-                table_layer = load_cbms_json_to_layer(form2_path, layer_name=layer_name, add_to_project=False)
+                if form2_path.lower().endswith(".csv"):
+                    self._log_info(f"Loading Form 2 CSV into QGIS Layers via load_cbms_csv_to_layer: {os.path.basename(form2_path)}")
+                    table_layer = load_cbms_csv_to_layer(form2_path, layer_name=layer_name, add_to_project=False)
+                else:
+                    self._log_info(f"Loading Form 2 JSON into QGIS Layers via load_cbms_json_to_layer: {os.path.basename(form2_path)}")
+                    table_layer = load_cbms_json_to_layer(form2_path, layer_name=layer_name, add_to_project=False)
+
                 if table_layer and table_layer.isValid():
                     proj.addMapLayer(table_layer, False)
                     inputs_group.addLayer(table_layer)
-                    self._log_success(f"Form 2 JSON table layer '{layer_name}' loaded into group '{group_name}'.")
+                    self._log_success(f"Form 2 table layer '{layer_name}' loaded into group '{group_name}'.")
                 else:
-                    self._log_error(f"Form 2 JSON table layer is invalid: {form2_path}")
+                    self._log_error(f"Form 2 table layer is invalid: {form2_path}")
             except Exception as e:
-                self._log_error(f"Failed to load Form 2 JSON into QGIS Layers: {e}")
+                self._log_error(f"Failed to load Form 2 into QGIS Layers: {e}")
 
         # 2. Geotagged Building Points (.geojson)
         if points_path and os.path.exists(points_path):
