@@ -47,8 +47,8 @@ class mv_2027_hp_4b_ea_geocode__missing(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points with NULL Geocodes. \n \n"
-            "Every geotagged point should have a valid geocode in the geocode column.\n"
+            "List of geotagged points with NULL EA Geocodes. \n \n"
+            "Every geotagged point should have a valid geocode in the ea_geocode column.\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):

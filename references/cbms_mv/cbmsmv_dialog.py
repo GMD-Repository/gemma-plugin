@@ -1723,9 +1723,20 @@ class CbmsmvDialog(QDialog):
             feedback = QgsProcessingFeedback()
             try:
                 res = handler(main_layer, target_fids=target_fids, target_uuids=target_uuids, feedback=feedback)
-            except TypeError:
-                res = handler(main_layer, target_uuids or target_fids, feedback=feedback)
+            except TypeError as te:
+                te_msg = str(te).lower()
+                if "keyword argument" in te_msg or "positional argument" in te_msg or "takes" in te_msg:
+                    res = handler(main_layer, target_uuids or target_fids, feedback=feedback)
+                else:
+                    raise te
         except Exception as exc:
+            import traceback
+            err_details = traceback.format_exc()
+            try:
+                from qgis.core import Qgis, QgsMessageLog
+                QgsMessageLog.logMessage(f"Fix execution error for '{val_id}':\n{err_details}", "CBMS MV", Qgis.Critical)
+            except Exception:
+                pass
             QMessageBox.critical(
                 self,
                 "Fix Error",
@@ -1761,12 +1772,29 @@ class CbmsmvDialog(QDialog):
 
                 # Prioritize fid lookup, fallback to uuid
                 col_updates = None
-                if r_fid in updated_values:
-                    col_updates = updated_values[r_fid]
-                elif str(r_fid) in updated_values:
-                    col_updates = updated_values[str(r_fid)]
-                elif r_uuid and r_uuid in updated_values:
-                    col_updates = updated_values[r_uuid]
+                fid_candidates = []
+                if r_fid is not None:
+                    if isinstance(r_fid, dict):
+                        for k in ("fid", "sf_fid", "df_fid", "id", "map_uuid", "uuid"):
+                            v = r_fid.get(k)
+                            if v is not None and not isinstance(v, (dict, list, set, tuple)):
+                                fid_candidates.extend([v, str(v), str(v).lower()])
+                    elif not isinstance(r_fid, (list, set, tuple)):
+                        fid_candidates.extend([r_fid, str(r_fid), str(r_fid).lower()])
+
+                if r_uuid:
+                    fid_candidates.extend([r_uuid, r_uuid.lower()])
+
+                if r_err_fid is not None and not isinstance(r_err_fid, (dict, list, set, tuple)):
+                    fid_candidates.extend([r_err_fid, str(r_err_fid)])
+
+                for cand in fid_candidates:
+                    try:
+                        if cand in updated_values:
+                            col_updates = updated_values[cand]
+                            break
+                    except TypeError:
+                        pass
 
                 if col_updates:
                     for c in range(1, table.columnCount() - 1):
