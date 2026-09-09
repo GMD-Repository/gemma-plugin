@@ -159,9 +159,20 @@ class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
             feedback=feedback,
         )["OUTPUT"]
 
+        filtered_layer = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": mismatched_layer,
+                "EXPRESSION": 'coalesce(lower("sf_status"), \'\') != \'deleted\'',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+
         # 5. Select & organize output columns using select_mv
         final_output = gmdhelpers.select_mv(
-            mismatched_layer,
+            filtered_layer,
             ["df_fid", "df_x_current", "df_y_current", "df_map_uuid", "sf_map_uuid", "sf_longitude", "sf_latitude"],
             context=context,
             feedback=feedback,

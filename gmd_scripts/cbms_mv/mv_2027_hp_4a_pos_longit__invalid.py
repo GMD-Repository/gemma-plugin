@@ -132,9 +132,20 @@ class mv_2027_hp_4a_pos_longit__invalid(QgsProcessingAlgorithm):
             feedback=feedback,
         )["OUTPUT"]
 
+        filtered_layer_2 = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": filtered_layer,
+                "EXPRESSION": 'coalesce(lower("sf_status"), \'\') != \'deleted\'',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+
 
         final_output = gmdhelpers.select_mv(
-            filtered_layer,
+            filtered_layer_2,
             ["sf_longitude", "sf_latitude", "sf_pos_longit", "sf_pos_latitu", "distance_m"],
             context=context,
             feedback=feedback,

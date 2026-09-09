@@ -123,8 +123,19 @@ class mv_2027_hp_4a_longitude__invalid(QgsProcessingAlgorithm):
             feedback=feedback,
         )["OUTPUT"]
 
+        filtered_layer_2 = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": extracted_layer,
+                "EXPRESSION": 'coalesce(lower("sf_status"), \'\') != \'deleted\'',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+
         final_output = gmdhelpers.select_mv(
-            extracted_layer,
+            filtered_layer_2,
             ["sf_longitude", "sf_latitude"],
             context=context,
             feedback=feedback,
