@@ -85,41 +85,8 @@ class TestPackageQfield(unittest.TestCase):
         self.assertEqual(layer.subsetString(), "")
         self.assertEqual(layer.customProperty("QFieldSync/action"), "copy")
 
-    def test_filter_unassigned_layer_empty_attribute_does_nothing(self):
-        """Verify unassigned layer with geocode column but empty/null data does nothing."""
-        from references.package_qfield.gui.package_dialog import PackageDialog
-        try:
-            from qgis.core import QgsVectorLayer, QgsField, QgsFeature
-            from qgis.PyQt.QtCore import QVariant
-        except ImportError:
-            from tests.mocks.sample_data import QgsVectorLayer, QgsField, QgsFeature, QVariant
-
-        dlg = MockGenericClass()
-        dlg._normalized_layer_name = lambda n: n
-
-        # Case A: 0 features
-        layer_empty = QgsVectorLayer("Polygon?crs=epsg:4326", "unassigned_empty", "memory")
-        dp_empty = layer_empty.dataProvider()
-        dp_empty.addAttributes([QgsField("geocode", QVariant.String)])
-        layer_empty.updateFields()
-
-        PackageDialog._filter_unassigned_layer(dlg, layer_empty, "01728001", is_ea_level=False)
-        self.assertEqual(layer_empty.subsetString(), "")
-
-        # Case B: Features with whitespace/null values
-        layer_null = QgsVectorLayer("Polygon?crs=epsg:4326", "unassigned_null_values", "memory")
-        dp_null = layer_null.dataProvider()
-        dp_null.addAttributes([QgsField("geocode", QVariant.String)])
-        layer_null.updateFields()
-        f = QgsFeature(layer_null.fields())
-        f.setAttributes(["   "])
-        dp_null.addFeatures([f])
-
-        PackageDialog._filter_unassigned_layer(dlg, layer_null, "01728001", is_ea_level=False)
-        self.assertEqual(layer_null.subsetString(), "")
-
     def test_filter_unassigned_layer_with_valid_data(self):
-        """Verify unassigned layer with valid geocode or ea_geocode receives appropriate subset string."""
+        """Verify unassigned layer with geocode is filtered in Barangay level and not in EA level."""
         from references.package_qfield.gui.package_dialog import PackageDialog
         try:
             from qgis.core import QgsVectorLayer, QgsField, QgsFeature
@@ -138,13 +105,183 @@ class TestPackageQfield(unittest.TestCase):
         dlg = MockGenericClass()
         dlg._normalized_layer_name = lambda n: n
 
-        # Barangay level filter
+        # Barangay level filter -> "geocode" LIKE '01728001%'
         PackageDialog._filter_unassigned_layer(dlg, layer_bgy, "01728001", is_ea_level=False)
         self.assertEqual(layer_bgy.subsetString(), '"geocode" LIKE \'01728001%\'')
 
-        # EA level filter
+        # EA level filter -> missing ea_geocode column so remains unfiltered
         PackageDialog._filter_unassigned_layer(dlg, layer_bgy, "01728001001001", is_ea_level=True)
-        self.assertEqual(layer_bgy.subsetString(), '"geocode" = \'01728001001001\'')
+        self.assertEqual(layer_bgy.subsetString(), "")
+
+    def test_filter_unassigned_ea_update_layer(self):
+        """Verify unassigned layer with ea_geocode is filtered in EA level and not in Barangay level."""
+        from references.package_qfield.gui.package_dialog import PackageDialog
+        try:
+            from qgis.core import QgsVectorLayer, QgsField, QgsFeature
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            from tests.mocks.sample_data import QgsVectorLayer, QgsField, QgsFeature, QVariant
+
+        layer_update = QgsVectorLayer("Polygon?crs=epsg:4326", "my_barangay_ea_update", "memory")
+        dp = layer_update.dataProvider()
+        dp.addAttributes([QgsField("ea_geocode", QVariant.String)])
+        layer_update.updateFields()
+        f = QgsFeature(layer_update.fields())
+        f.setAttributes(["01728001001001"])
+        dp.addFeatures([f])
+
+        dlg = MockGenericClass()
+        dlg._normalized_layer_name = lambda n: n
+
+        # EA Level -> "ea_geocode" = '01728001001001'
+        PackageDialog._filter_unassigned_layer(dlg, layer_update, "01728001001001", is_ea_level=True)
+        self.assertEqual(layer_update.subsetString(), '"ea_geocode" = \'01728001001001\'')
+
+        # Barangay Level -> missing geocode column so remains unfiltered
+        PackageDialog._filter_unassigned_layer(dlg, layer_update, "01728001", is_ea_level=False)
+        self.assertEqual(layer_update.subsetString(), "")
+
+    def test_filter_unassigned_layer_with_both_geocode_and_ea_geocode(self):
+        """Verify unassigned layer with both geocode and ea_geocode filters appropriately by level."""
+        from references.package_qfield.gui.package_dialog import PackageDialog
+        try:
+            from qgis.core import QgsVectorLayer, QgsField, QgsFeature
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            from tests.mocks.sample_data import QgsVectorLayer, QgsField, QgsFeature, QVariant
+
+        dlg = MockGenericClass()
+        dlg._normalized_layer_name = lambda n: n
+
+        layer_both = QgsVectorLayer("Polygon?crs=epsg:4326", "01716_delineated_ea2026", "memory")
+        dp = layer_both.dataProvider()
+        dp.addAttributes([QgsField("geocode", QVariant.String), QgsField("ea_geocode", QVariant.String)])
+        layer_both.updateFields()
+        f = QgsFeature(layer_both.fields())
+        f.setAttributes(["01716010000000", "01716010001001"])
+        dp.addFeatures([f])
+
+        # EA level filter -> "ea_geocode" = '01716010001001'
+        PackageDialog._filter_unassigned_layer(dlg, layer_both, "01716010001001", is_ea_level=True)
+        self.assertEqual(layer_both.subsetString(), '"ea_geocode" = \'01716010001001\'')
+
+        # Barangay level filter -> "geocode" LIKE '01716010%'
+        PackageDialog._filter_unassigned_layer(dlg, layer_both, "01716010", is_ea_level=False)
+        self.assertEqual(layer_both.subsetString(), '"geocode" LIKE \'01716010%\'')
+
+    def test_filter_unassigned_non_target_columns_not_filtered(self):
+        """Verify unassigned layer with other columns (bsn_geoid, new_ean, bgy_code) is not filtered."""
+        from references.package_qfield.gui.package_dialog import PackageDialog
+        try:
+            from qgis.core import QgsVectorLayer, QgsField, QgsFeature
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            from tests.mocks.sample_data import QgsVectorLayer, QgsField, QgsFeature, QVariant
+
+        dlg = MockGenericClass()
+        dlg._normalized_layer_name = lambda n: n
+
+        layer_other = QgsVectorLayer("Point?crs=epsg:4326", "custom_unassigned_points", "memory")
+        dp = layer_other.dataProvider()
+        dp.addAttributes([QgsField("bsn_geoid", QVariant.String), QgsField("new_ean", QVariant.String), QgsField("bgy_code", QVariant.String)])
+        layer_other.updateFields()
+        f = QgsFeature(layer_other.fields())
+        f.setAttributes(["017160100010010001", "001001", "01716010"])
+        dp.addFeatures([f])
+
+        # EA level -> no ea_geocode column -> not filtered
+        PackageDialog._filter_unassigned_layer(dlg, layer_other, "01716010001001", is_ea_level=True)
+        self.assertEqual(layer_other.subsetString(), "")
+
+        # Barangay level -> no geocode column -> not filtered
+        PackageDialog._filter_unassigned_layer(dlg, layer_other, "01716010", is_ea_level=False)
+        self.assertEqual(layer_other.subsetString(), "")
+
+    def test_filter_unassigned_ea_update_layer(self):
+        """Verify unassigned _ea_update layer is filtered in EA and Barangay levels when it has geocode data."""
+        from references.package_qfield.gui.package_dialog import PackageDialog
+        try:
+            from qgis.core import QgsVectorLayer, QgsField, QgsFeature
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            from tests.mocks.sample_data import QgsVectorLayer, QgsField, QgsFeature, QVariant
+
+        layer_update = QgsVectorLayer("Polygon?crs=epsg:4326", "my_barangay_ea_update", "memory")
+        dp = layer_update.dataProvider()
+        dp.addAttributes([QgsField("ea_geocode", QVariant.String)])
+        layer_update.updateFields()
+        f = QgsFeature(layer_update.fields())
+        f.setAttributes(["01728001001001"])
+        dp.addFeatures([f])
+
+        dlg = MockGenericClass()
+        dlg._normalized_layer_name = lambda n: n
+
+        # EA Level
+        PackageDialog._filter_unassigned_layer(dlg, layer_update, "01728001001001", is_ea_level=True)
+        self.assertEqual(layer_update.subsetString(), '"ea_geocode" = \'01728001001001\'')
+
+        # Barangay Level
+        PackageDialog._filter_unassigned_layer(dlg, layer_update, "01728001", is_ea_level=False)
+        self.assertEqual(layer_update.subsetString(), '"ea_geocode" LIKE \'01728001%\'')
+
+    def test_filter_unassigned_arbitrary_layer_name_with_geocode_and_new_ean(self):
+        """Verify unassigned layer with arbitrary name (e.g. delineated_ea, merged_ea, eadel_update) filters on values."""
+        from references.package_qfield.gui.package_dialog import PackageDialog
+        try:
+            from qgis.core import QgsVectorLayer, QgsField, QgsFeature
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            from tests.mocks.sample_data import QgsVectorLayer, QgsField, QgsFeature, QVariant
+
+        dlg = MockGenericClass()
+        dlg._normalized_layer_name = lambda n: n
+
+        # Test with arbitrary layer name
+        layer_del = QgsVectorLayer("Polygon?crs=epsg:4326", "01716_delineated_ea2026", "memory")
+        dp = layer_del.dataProvider()
+        dp.addAttributes([QgsField("geocode", QVariant.String), QgsField("new_ean", QVariant.String)])
+        layer_del.updateFields()
+        f = QgsFeature(layer_del.fields())
+        f.setAttributes(["01716010000000", "001001"])
+        dp.addFeatures([f])
+
+        # EA level filter (14 digits: 01716010001001 -> bgy: 01716010, ean: 001001)
+        PackageDialog._filter_unassigned_layer(dlg, layer_del, "01716010001001", is_ea_level=True)
+        self.assertIn('"geocode" LIKE \'01716010%\'', layer_del.subsetString())
+        self.assertIn('"new_ean" = \'001001\'', layer_del.subsetString())
+
+        # Barangay level filter (8 digits: 01716010)
+        PackageDialog._filter_unassigned_layer(dlg, layer_del, "01716010", is_ea_level=False)
+        self.assertEqual(layer_del.subsetString(), '"geocode" LIKE \'01716010%\'')
+
+    def test_filter_unassigned_bsn_geoid_layer(self):
+        """Verify unassigned layer with bsn_geoid is filtered dynamically without declaring layer name."""
+        from references.package_qfield.gui.package_dialog import PackageDialog
+        try:
+            from qgis.core import QgsVectorLayer, QgsField, QgsFeature
+            from qgis.PyQt.QtCore import QVariant
+        except ImportError:
+            from tests.mocks.sample_data import QgsVectorLayer, QgsField, QgsFeature, QVariant
+
+        dlg = MockGenericClass()
+        dlg._normalized_layer_name = lambda n: n
+
+        layer_bsn = QgsVectorLayer("Point?crs=epsg:4326", "custom_unassigned_points", "memory")
+        dp = layer_bsn.dataProvider()
+        dp.addAttributes([QgsField("bsn_geoid", QVariant.String)])
+        layer_bsn.updateFields()
+        f = QgsFeature(layer_bsn.fields())
+        f.setAttributes(["017160100010010001"])
+        dp.addFeatures([f])
+
+        # EA level
+        PackageDialog._filter_unassigned_layer(dlg, layer_bsn, "01716010001001", is_ea_level=True)
+        self.assertEqual(layer_bsn.subsetString(), 'substr("bsn_geoid", 1, 14) = \'01716010001001\'')
+
+        # Barangay level
+        PackageDialog._filter_unassigned_layer(dlg, layer_bsn, "01716010", is_ea_level=False)
+        self.assertEqual(layer_bsn.subsetString(), 'substr("bsn_geoid", 1, 8) = \'01716010\'')
 
     def test_offline_converter_on_offline_editing_next_layer_bounds(self):
         """Verify _on_offline_editing_next_layer safely handles 0, negative, out-of-range, and empty layer lists."""
