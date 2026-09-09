@@ -105,9 +105,20 @@ class mv_2027_hp_4c_remarks__invalid(QgsProcessingAlgorithm):
             feedback=feedback,
         )["OUTPUT"]
 
+        filtered_layer_2 = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": filtered_layer,
+                "EXPRESSION": 'coalesce(lower("sf_status"), \'\') != \'deleted\'',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+
 
         final_output = gmdhelpers.select_mv(
-            filtered_layer,
+            filtered_layer_2,
             [],
             context=context,
             feedback=feedback,

@@ -169,8 +169,15 @@ def add_prefix_to_layer_fields(layer, prefix="", context=None, feedback=None):
             continue
         old_name = f.name()
         new_name = old_name if old_name.startswith(prefix) else f"{prefix}{old_name}"
+        
+        # Convert null or empty values in x_current and y_current to 0
+        if new_name.lower().endswith(("_x_current", "_y_current")) or old_name.lower().endswith(("_x_current", "_y_current")):
+            expr = f'coalesce(try(to_real("{old_name}")), 0)'
+        else:
+            expr = f'"{old_name}"'
+
         field_mapping.append({
-            "expression": f'"{old_name}"',
+            "expression": expr,
             "length": f.length(),
             "name": new_name,
             "precision": f.precision(),
