@@ -52,6 +52,7 @@ The **Gemma** menu is added to the top menu bar in QGIS, structured into logical
 |---------|---------------|----------|-------------|
 | **Updating of Boundaries** | [Check and Update](/tools/check-and-update) | — | 3-Phase dialog for georeferencing navigation, error scanning/repair, and PSGC metadata updating |
 | **Updating of Boundaries** | [PSA - LGU Comparison Review](/tools/psa-lgu-comparison#comparison-review-panel) | — | Opens the comparison dock panel to review matched PSA and LGU boundary layers side-by-side |
+| **Updating of Boundaries** | [Know Your Projection!](/tools/know-your-projection) | — | Coordinate diagnosis, Philippine CRS auto-detection, and 2D affine georeferencing |
 | **EA Delineation** | [EA Delineation and Merging](/tools/ea-delineation-and-merging) | — | Launcher dialog for pre-processing, gap filling, delineation, and merging of enumeration areas |
 | **EA Delineation** | [Package for QField](/tools/package-qfield) | `Ctrl+Alt+Q` | Offline project packaging dialog for field data collection with QField |
 | **Others** | [Geometry Repair Toolkit](/tools/geometry-repair-toolkit) | — | Standalone dialog for scanning, canvas highlighting, and in-place polygon geometry repairs |
@@ -85,6 +86,7 @@ Tools designed for LGU boundary management, 1Map data harmonization, topology au
 |------|--------|-------------|
 | [MBI Checker](/tools/mbi-checker) | Processing Toolbox | Detect gaps and overlaps between barangay polygon boundaries with building point validation and reference case exclusion |
 | [MBI Validator](/tools/mbi-validator) | Processing Toolbox | Cross-check Reference MBI layers against Checker GAP/OVERLAP layers to audit status mismatches |
+| [Run Analysis](/tools/run-analysis) | Processing Toolbox | Perform boundary discrepancy detection across polygon layers and building points, generating reference MBI case layers |
 | [Fill Polygon Gaps](/tools/fill-polygon-gaps) | Processing Toolbox | Automatically fill gaps between polygons and assign them to neighboring barangays |
 | [Export Preliminary Polygons](/tools/export-preliminary-polygons) | Processing Toolbox | Merge and export resolved boundary layers into consolidated GeoPackages for 1Map submission |
 | [Update Metadata](/tools/update-metadata) | Processing Toolbox | Standardize LGU boundary layers with PSGC geocodes, cascading administrative filters, and GPKG export |
@@ -93,6 +95,7 @@ Tools designed for LGU boundary management, 1Map data harmonization, topology au
 | [Join Barangay Attributes](/tools/join-barangay-attributes) | Processing Toolbox | Match vector attributes with official PSGC tables via fuzzy matching and Roman numeral normalization |
 | [Check and Update](/tools/check-and-update) | Menu & Toolbar | Interactive 3-Phase dialog workflow for georeferencing, geometry error scanning/repair, and metadata updating |
 | [PSA - LGU Boundary Comparison](/tools/psa-lgu-comparison) | Processing Toolbox | Audit PSA reference boundaries against LGU-submitted polygons using geocodes, alignment models, and building point validation |
+| [Know Your Projection!](/tools/know-your-projection) | Gemma Menu | Diagnose CRS, auto-detect Philippine candidates, and georeference local CAD grids |
 
 ### Geometry & Repair
 

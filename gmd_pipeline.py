@@ -47,6 +47,8 @@ class GMDPipeline(object):
         self.push_dlg = None
         self.check_and_update_action = None
         self.comparison_panel_action = None
+        self.projection_finder_action = None
+        self.projection_finder_dlg = None
         self.create_ea_action = None
         self.ea_dlg = None
         self.offline_editing = None
@@ -185,6 +187,7 @@ class GMDPipeline(object):
         updating_boundaries_icon = QIcon(os.path.dirname(__file__) + "/icons/updating_boundaries.svg")
         check_and_update_icon = QIcon(os.path.dirname(__file__) + "/icons/check_and_update.svg")
         compare_boundaries_icon = QIcon(os.path.dirname(__file__) + "/icons/compare_boundaries.svg")
+        projection_finder_icon = QIcon(os.path.dirname(__file__) + "/icons/projection_finder.svg")
 
         # 1. Updating of Boundaries Submenu
         self.updating_boundaries_menu = QMenu(u'Updating of Boundaries')
@@ -199,6 +202,12 @@ class GMDPipeline(object):
         )
         self.comparison_panel_action.triggered.connect(self.show_comparison_panel)
         self.updating_boundaries_menu.addAction(self.comparison_panel_action)
+
+        self.projection_finder_action = QAction(
+            projection_finder_icon, "Know Your Projection!", self.iface.mainWindow()
+        )
+        self.projection_finder_action.triggered.connect(self.show_projection_finder)
+        self.updating_boundaries_menu.addAction(self.projection_finder_action)
 
         # 2. EA Delineation Submenu
         self.ea_delineation_menu = QMenu(u'EA Delineation')
@@ -261,6 +270,13 @@ class GMDPipeline(object):
 
         if self.gema_menu is not None:
             self.iface.mainWindow().menuBar().removeAction(self.gema_menu.menuAction())
+
+        if self.projection_finder_dlg is not None:
+            try:
+                self.projection_finder_dlg.close()
+            except Exception:
+                pass
+            self.projection_finder_dlg = None
 
         if self.toolbar:
             del self.toolbar
@@ -370,6 +386,24 @@ class GMDPipeline(object):
         self.ea_dlg.show()
         self.ea_dlg.raise_()
         self.ea_dlg.activateWindow()
+
+    def show_projection_finder(self):
+        """Open the Know Your Projection! (Projection Finder) dialog."""
+        from .gmd_scripts.projection_finder import ProjectionToolkit
+
+        try:
+            if self.projection_finder_dlg is not None:
+                self.projection_finder_dlg.isVisible()
+        except RuntimeError:
+            self.projection_finder_dlg = None
+
+        if self.projection_finder_dlg is None:
+            self.projection_finder_dlg = ProjectionToolkit(self.iface)
+
+        self.projection_finder_dlg.showNormal()
+        self.projection_finder_dlg.show()
+        self.projection_finder_dlg.raise_()
+        self.projection_finder_dlg.activateWindow()
 
     def push_dialog_finished(self):
         """
