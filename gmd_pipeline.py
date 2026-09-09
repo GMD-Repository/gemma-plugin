@@ -225,8 +225,8 @@ class GMDPipeline(object):
         #self.others_menu.addAction(self.geometry_legacy_action)
 
         # Gemma Toolbar (Ordered Chronologically: Check and Update -> Create EAs -> Package for QField)
-        #self.toolbar = self.iface.addToolBar("Gemma Toolbar")
-        #self.toolbar.setObjectName("Gemma Toolbar")
+        self.toolbar = self.iface.addToolBar("Gemma Toolbar")
+        self.toolbar.setObjectName("Gemma Toolbar")
 
         # 4. 2027 CBMS Form 2 Map Validation Submenu
         self.cbmsmv_menu = QMenu(u'2027 CBMS Map Validation')
