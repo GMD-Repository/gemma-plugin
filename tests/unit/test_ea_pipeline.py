@@ -16,6 +16,11 @@ from qgis.core import (
 )
 from qgis.PyQt.QtCore import QVariant
 
+from references.create_enumeration_area.helpers.constants import (
+    create_qgs_field,
+)
+QgsField = create_qgs_field
+
 from references.create_enumeration_area.helpers.classification import (
     is_delineation_candidate,
     is_merge_candidate,
@@ -1277,7 +1282,6 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
             MERGED_OUTPUT = "MERGED_OUTPUT"
             SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
             DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
-            MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
             EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
 
         alg = DummyAlg()
@@ -1303,10 +1307,8 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
             "merged_dest_id": "dest_merged",
             "special_ea_dest_id": "dest_special",
             "delin_candidate_dest_id": "dest_delin_cand",
-            "merge_candidate_dest_id": "dest_merge_cand",
             "extracted_buildings_dest_id": "dest_bldg",
             "delin_candidate_feat_count": 0,
-            "merge_candidate_feat_count": 0,
             "extracted_bldg_feat_count": 0,
         }
         p3 = {"road_geoms": {}, "river_geoms": {}}
@@ -1347,7 +1349,6 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
             MERGED_OUTPUT = "MERGED_OUTPUT"
             SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
             DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
-            MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
             EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
 
         alg = DummyAlg()
@@ -1624,7 +1625,6 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
             MERGED_OUTPUT = "MERGED_OUTPUT"
             SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
             DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
-            MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
             EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
 
         alg = DummyAlg()
@@ -1741,7 +1741,6 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
             MERGED_OUTPUT = "MERGED_OUTPUT"
             SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
             DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
-            MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
             EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
 
         fields = QgsFields()
@@ -1813,7 +1812,6 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
             MERGED_OUTPUT = "MERGED_OUTPUT"
             SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
             DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
-            MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
             EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
 
         fields = QgsFields()
@@ -1885,7 +1883,6 @@ class TestEAOutputSchemaAndRenaming(unittest.TestCase):
             MERGED_OUTPUT = "MERGED_OUTPUT"
             SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
             DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
-            MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
             EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
 
         fields = QgsFields()
@@ -2014,7 +2011,6 @@ class TestDelineationMinHouseholdEnforcement(unittest.TestCase):
             MERGED_OUTPUT = "MERGED_OUTPUT"
             SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
             DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
-            MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
             EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
 
         fields = QgsFields()

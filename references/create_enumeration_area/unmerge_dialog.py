@@ -41,6 +41,8 @@ from qgis.core import (
     QgsSpatialIndex,
     NULL,
 )
+
+from .helpers.constants import create_qgs_field
 from qgis.gui import QgsMapLayerComboBox
 
 
@@ -534,13 +536,13 @@ class UnmergeEADialog(QDialog):
             merged_field_names_lower = [merged_fields.at(i).name().lower() for i in range(merged_fields.count())]
             fields_to_add = []
             if "hh_count" not in merged_field_names_lower:
-                fields_to_add.append(QgsField("hh_count", QVariant.Int))
+                fields_to_add.append(create_qgs_field("hh_count", QVariant.Int))
             if "bldg_count" not in merged_field_names_lower:
-                fields_to_add.append(QgsField("bldg_count", QVariant.Int))
+                fields_to_add.append(create_qgs_field("bldg_count", QVariant.Int))
             if "new_ean" not in merged_field_names_lower:
-                fields_to_add.append(QgsField("new_ean", QVariant.String))
+                fields_to_add.append(create_qgs_field("new_ean", QVariant.String))
             if not any(f in merged_field_names_lower for f in ("ea_type", "eatype", "type")):
-                fields_to_add.append(QgsField("ea_type", QVariant.String))
+                fields_to_add.append(create_qgs_field("ea_type", QVariant.String))
 
             if fields_to_add:
                 merged_layer.dataProvider().addAttributes(fields_to_add)

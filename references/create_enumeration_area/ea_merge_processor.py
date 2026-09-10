@@ -61,6 +61,8 @@ from qgis.core import (
 )
 from qgis.PyQt.QtCore import QVariant
 
+from .helpers.constants import create_qgs_field
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -846,9 +848,9 @@ class EAMergeProcessor:
         for fname, default_type in _OUTPUT_FIELD_SPECS:
             existing_field = ea_field_map.get(fname.lower())
             if existing_field is not None:
-                out_fields.append(QgsField(fname, existing_field.type()))
+                out_fields.append(create_qgs_field(fname, existing_field.type()))
             else:
-                out_fields.append(QgsField(fname, default_type))
+                out_fields.append(create_qgs_field(fname, default_type))
 
         return out_fields
 
