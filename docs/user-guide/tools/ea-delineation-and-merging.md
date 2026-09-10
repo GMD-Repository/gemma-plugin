@@ -88,7 +88,7 @@ To provide a clean and focused workflow, Tab 2 is split into two dedicated sub-t
    - **Extract Delineation Candidate**: Generates and loads candidate layers (`<geocode>_delineated_ea2026.gpkg`, `<geocode>_delineation_candidates`, `<geocode>_extracted_bldgpts`, `<geocode>_eadel_update.gpkg`).
    - **Run Delineation**: Opens a dedicated modal pop-up to split EA polygons with proposed cut lines in-place and recalculate building and household counts.
 2. **Proposed Merging Sub-Tab**: Focused on underpopulated EAs (`<= 100 HH`). Features merging threshold settings, under-threshold candidate-to-candidate merging toggles, an isolated **Merge Candidates Preview** table with KPI counter card, a dedicated merging execution log console, and two action buttons:
-   - **Extract Merge Candidate**: Generates and loads candidate layers (`<geocode>_merged_ea2026.gpkg`, `<geocode>_merge_candidates`, `<geocode>_extracted_bldgpts`).
+   - **Extract Merge Candidate**: Generates and loads candidate layers (`<geocode>_merged_ea2026.gpkg`, `<geocode>_extracted_bldgpts`).
    - **Unmerge EA**: Opens a dedicated modal pop-up to unmerge recently merged EA polygons back into their constituent original geometries based on the EA previous layer, updating the merged layer in-place and recalculating `hh_count` (from building points `est_hhcount`) and `bldg_count` for each restored EA.
 3. **Merge Preview Tab (Individual EA Merging & Threshold Gating)**:
    - Dedicated preview tab evaluating candidate EAs from the **Merged EA Layer** against potential contiguous absorptive partners in the **Previous EA Layer**.
@@ -127,7 +127,6 @@ To provide a clean and focused workflow, Tab 2 is split into two dedicated sub-t
 | **Proposed Boundary Cut Lines** | Delineation | Vector (Line) | `eadel_update_lines.qml` | Permanent GeoPackage line layer (`<geocode>_eadel_update.gpkg`) representing proposed boundary cut lines generated from road/river/cluster splits. |
 | **Candidate for Delineation Layer** | Delineation | Vector (Polygon) | `delineation_candidates.qml` | Layer containing EAs identified as candidates for delineation (>300 HH). Styled with amber highlight. |
 | **Merged EAs Layer** | Merging | Vector (Polygon) | `ea_output.qml` | Permanent GeoPackage layer containing EAs generated from merging underpopulated EAs (`<geocode>_merged_ea2026.gpkg`). |
-| **Candidate for Merging Layer** | Merging | Vector (Polygon) | `merge_candidates.qml` | Layer containing under-threshold initiator EAs (<=100 HH) and reference neighbor EAs evaluated for intra-barangay merging. |
 ### Final Output Attribute Schema (`delineated_ea2026`, `merge_ea2026`)
 
 The output layers `<geocode>_delineated_ea2026` and `<geocode>_merged_ea2026` share the following 18 standard attributes:

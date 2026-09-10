@@ -414,9 +414,7 @@ def run_phase_8(
     special_ea_dest_id = p2.get("special_ea_dest_id")
     extracted_buildings_dest_id = p2.get("extracted_buildings_dest_id")
     delin_candidate_dest_id = p2.get("delin_candidate_dest_id")
-    merge_candidate_dest_id = p2.get("merge_candidate_dest_id")
     delin_candidate_feat_count = p2.get("delin_candidate_feat_count", 0)
-    merge_candidate_feat_count = p2.get("merge_candidate_feat_count", 0)
     extracted_bldg_feat_count = p2.get("extracted_bldg_feat_count", 0)
 
     export_fields = p2.get("export_fields")
@@ -522,7 +520,6 @@ def run_phase_8(
     split_by_counts = {}
 
     delin_candidate_feat_count = p2.get("delin_candidate_feat_count", len(delineation_candidate_ids))
-    merge_candidate_feat_count = p2.get("merge_candidate_feat_count", len(merge_candidate_ids | adjacent_ea_ids))
 
     # Post-Processing: Spatial Barangay Sorting & Code Assignment
     feedback.pushInfo("Post-processing: Spatially sorting EAs within parent barangays and assigning new_ea codes...")
@@ -1919,7 +1916,7 @@ def run_phase_8(
     primary_merge_cnt = 2 if len(merge_candidate_ids) >= 2 else len(merge_candidate_ids)
 
     if merged_feat_count == 0:
-        if merge_candidate_feat_count > 0:
+        if len(merge_candidate_ids) > 0:
             merge_remark = f"Found {primary_merge_cnt} small area(s) (under {min_household} households), but could not merge because no suitable neighbor area was available in the same Barangay."
         else:
             merge_remark = f"No small areas (under {min_household} households) needed merging."
@@ -1927,7 +1924,6 @@ def run_phase_8(
         merge_remark = f"Successfully combined small areas to create {merged_feat_count} new merged area(s)."
 
     delin_cand_desc = f"Includes {primary_delin_cnt} primary candidate(s) over {max_household} households + {max(0, delin_candidate_feat_count - primary_delin_cnt)} neighbor reference area(s)"
-    merge_cand_desc = f"Includes {primary_merge_cnt} small area(s) under {min_household} households + {max(0, merge_candidate_feat_count - primary_merge_cnt)} neighboring partner area(s)"
 
     if splitting_lines_count > 0:
         split_lines_remark = f"Generated {splitting_lines_count} proposed boundary cut line(s) along features"
@@ -1993,7 +1989,6 @@ def run_phase_8(
         f"<tr><td><b>Merged EAs</b></td><td align='center'><b>{merged_feat_count:,}</b></td><td>{merge_remark}</td></tr>"
         f"<tr><td><b>Special EAs</b></td><td align='center'><b>{special_ea_feat_count:,}</b></td><td>Areas created to fix boundary gaps and overlaps</td></tr>"
         f"<tr><td><b>Delineation Candidates</b></td><td align='center'><b>{delin_candidate_feat_count:,}</b></td><td>{delin_cand_desc}</td></tr>"
-        f"<tr><td><b>Merge Candidates</b></td><td align='center'><b>{merge_candidate_feat_count:,}</b></td><td>{merge_cand_desc}</td></tr>"
         f"<tr><td><b>Extracted Building Points</b></td><td align='center'>{extracted_bldg_feat_count:,}</td><td>Total houses/buildings counted inside checked areas</td></tr>"
         "</table>"
         + breakdown_table
@@ -2009,8 +2004,6 @@ def run_phase_8(
         final_outputs[getattr(alg, 'SPECIAL_EA_OUTPUT', 'SPECIAL_EA_OUTPUT')] = special_ea_dest_id
     if delin_candidate_feat_count > 0 and delin_candidate_dest_id is not None:
         final_outputs[getattr(alg, 'DELINEATION_CANDIDATE_OUTPUT', 'DELINEATION_CANDIDATE_OUTPUT')] = delin_candidate_dest_id
-    if merge_candidate_feat_count > 0 and merge_candidate_dest_id is not None:
-        final_outputs[getattr(alg, 'MERGE_CANDIDATE_OUTPUT', 'MERGE_CANDIDATE_OUTPUT')] = merge_candidate_dest_id
     if extracted_bldg_feat_count > 0 and extracted_buildings_dest_id is not None:
         final_outputs[getattr(alg, 'EXTRACTED_BUILDINGS_OUTPUT', 'EXTRACTED_BUILDINGS_OUTPUT')] = extracted_buildings_dest_id
 

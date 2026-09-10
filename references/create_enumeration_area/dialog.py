@@ -1746,11 +1746,6 @@ class EALauncherDialog(QDialog):
         merge_temp_title.setWordWrap(True)
         merge_outputs_layout.addWidget(merge_temp_title)
 
-        self.out_merge_cand_lbl = QLabel("• Merge Candidates: <span style='color:#7F8C8D;'>[Scratch]</span>")
-        self.out_merge_cand_lbl.setWordWrap(True)
-        self.out_merge_cand_lbl.setFont(QFont("Segoe UI", 9))
-        merge_outputs_layout.addWidget(self.out_merge_cand_lbl)
-
         self.merge_out_extracted_bldg_lbl = QLabel("• Extracted Buildings: <span style='color:#7F8C8D;'>[Scratch]</span>")
         self.merge_out_extracted_bldg_lbl.setWordWrap(True)
         self.merge_out_extracted_bldg_lbl.setFont(QFont("Segoe UI", 9))
@@ -2667,7 +2662,6 @@ class EALauncherDialog(QDialog):
             getattr(self, 'delineated_edit', None),
             getattr(self, 'merged_edit', None),
             getattr(self, 'delin_cand_edit', None),
-            getattr(self, 'merge_cand_edit', None),
             getattr(self, 'extracted_bldg_edit', None),
             getattr(self, 'search_edit', None),
             getattr(self, 'merge_search_edit', None),
@@ -2912,8 +2906,6 @@ class EALauncherDialog(QDialog):
                 self.merged_edit.setPlaceholderText(f"{geo5}_merged_ea2026")
             if hasattr(self, 'delin_cand_edit'):
                 self.delin_cand_edit.setPlaceholderText(f"{geo5}_delineation_candidates")
-            if hasattr(self, 'merge_cand_edit'):
-                self.merge_cand_edit.setPlaceholderText(f"{geo5}_merge_candidates")
             if hasattr(self, 'extracted_bldg_edit'):
                 self.extracted_bldg_edit.setPlaceholderText(f"{geo5}_extracted_bldgpts")
         else:
@@ -2930,8 +2922,6 @@ class EALauncherDialog(QDialog):
                 self.merged_edit.setPlaceholderText("[Temporary Scratch Layer]")
             if hasattr(self, 'delin_cand_edit'):
                 self.delin_cand_edit.setPlaceholderText("[Temporary Scratch Layer]")
-            if hasattr(self, 'merge_cand_edit'):
-                self.merge_cand_edit.setPlaceholderText("[Temporary Scratch Layer]")
             if hasattr(self, 'extracted_bldg_edit'):
                 self.extracted_bldg_edit.setPlaceholderText("[Temporary Scratch Layer]")
 
@@ -4274,7 +4264,6 @@ class EALauncherDialog(QDialog):
             'DELINEATED_OUTPUT': 'TEMPORARY_OUTPUT',
             'MERGED_OUTPUT': 'TEMPORARY_OUTPUT',
             'DELINEATION_CANDIDATE_OUTPUT': 'TEMPORARY_OUTPUT',
-            'MERGE_CANDIDATE_OUTPUT': 'TEMPORARY_OUTPUT',
             'EXTRACTED_BUILDINGS_OUTPUT': 'TEMPORARY_OUTPUT',
         }
 
@@ -4423,7 +4412,6 @@ class EALauncherDialog(QDialog):
                     ('DELINEATED_OUTPUT', f"{geo5}_delineated_ea2026", eas_group, "ea_output.qml", True, delineated_file, ["delineation", "all"]),
                     ('MERGED_OUTPUT', f"{geo5}_merged_ea2026", eas_group, "ea_output.qml", True, merged_file, ["merging", "all"]),
                     ('DELINEATION_CANDIDATE_OUTPUT', f"{geo5}_delineation_candidates", candidates_group, "delineation_candidates.qml", False, None, ["delineation", "all"]),
-                    ('MERGE_CANDIDATE_OUTPUT', f"{geo5}_merge_candidates", candidates_group, "merge_candidates.qml", False, None, ["merging", "all"]),
                 ]
 
                 from .helpers.style import apply_qml_to_layer
@@ -4570,12 +4558,11 @@ class EALauncherDialog(QDialog):
                 # Completion and Status Banner reporting per active mode
                 delin_cnt = 0
                 merged_cnt = 0
-                merge_cand_cnt = 0
+                merge_cand_cnt = len(getattr(self, 'all_merge_candidates', []))
                 forced_cnt = 0
                 if isinstance(results, dict):
                     d_ref = results.get('DELINEATED_OUTPUT')
                     m_ref = results.get('MERGED_OUTPUT')
-                    mc_ref = results.get('MERGE_CANDIDATE_OUTPUT')
                     d_l = None
                     if isinstance(d_ref, str):
                         d_l = QgsProject.instance().mapLayer(d_ref)
@@ -4598,12 +4585,6 @@ class EALauncherDialog(QDialog):
                         merged_cnt = m_l.featureCount() if m_l else 0
                     elif hasattr(m_ref, 'featureCount') or isinstance(m_ref, QgsMapLayer):
                         merged_cnt = m_ref.featureCount()
-
-                    if isinstance(mc_ref, str):
-                        mc_l = QgsProject.instance().mapLayer(mc_ref)
-                        merge_cand_cnt = mc_l.featureCount() if mc_l else 0
-                    elif hasattr(mc_ref, 'featureCount') or isinstance(mc_ref, QgsMapLayer):
-                        merge_cand_cnt = mc_ref.featureCount()
 
                 split_detail = f" ({forced_cnt} via forced straight cut)" if forced_cnt > 0 else ""
 
