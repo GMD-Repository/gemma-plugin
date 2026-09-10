@@ -68,6 +68,8 @@ _KEYWORD_ALIAS_MAP = {
     "delineated ea line": ["delineated_ea_line", "delineated_line"],
     "delineated ea polygon": ["delineated_ea", "delineated_ea2026", "delineated_polygon"],
     "merged ea polygon": ["merged_ea", "merged_ea2026", "merged_polygon"],
+    "ref_mbi_cases": ["ref_mbi_cases", "mbi_cases", "ref_mbi"],
+    "mbi cases": ["ref_mbi_cases", "mbi_cases", "ref_mbi"],
 }
 
 

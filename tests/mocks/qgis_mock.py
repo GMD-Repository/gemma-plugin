@@ -139,6 +139,68 @@ class QgsPolygon:
         self._points = []
 
 
+class QgsRectangle:
+    def __init__(self, xmin=0.0, ymin=0.0, xmax=0.0, ymax=0.0):
+        if isinstance(xmin, QgsRectangle):
+            other = xmin
+            self._xmin = float(other.xMinimum())
+            self._ymin = float(other.yMinimum())
+            self._xmax = float(other.xMaximum())
+            self._ymax = float(other.yMaximum())
+        elif hasattr(xmin, 'x') and hasattr(ymin, 'x'):
+            p1, p2 = xmin, ymin
+            self._xmin = min(float(p1.x()), float(p2.x()))
+            self._xmax = max(float(p1.x()), float(p2.x()))
+            self._ymin = min(float(p1.y()), float(p2.y()))
+            self._ymax = max(float(p1.y()), float(p2.y()))
+        else:
+            try:
+                self._xmin = float(xmin)
+                self._ymin = float(ymin)
+                self._xmax = float(xmax)
+                self._ymax = float(ymax)
+            except (TypeError, ValueError):
+                self._xmin = 0.0
+                self._ymin = 0.0
+                self._xmax = 0.0
+                self._ymax = 0.0
+
+    def xMinimum(self): return self._xmin
+    def yMinimum(self): return self._ymin
+    def xMaximum(self): return self._xmax
+    def yMaximum(self): return self._ymax
+    def width(self): return max(0.0, self._xmax - self._xmin)
+    def height(self): return max(0.0, self._ymax - self._ymin)
+    def isEmpty(self): return self.width() <= 0.0 or self.height() <= 0.0
+    def isNull(self): return self.isEmpty()
+    def center(self): return QgsPointXY(self._xmin + self.width() / 2.0, self._ymin + self.height() / 2.0)
+    def setMinimal(self):
+        self._xmin = float('inf')
+        self._ymin = float('inf')
+        self._xmax = float('-inf')
+        self._ymax = float('-inf')
+    def combineExtentWith(self, other):
+        if hasattr(other, 'xMinimum'):
+            self._xmin = min(self._xmin, other.xMinimum())
+            self._ymin = min(self._ymin, other.yMinimum())
+            self._xmax = max(self._xmax, other.xMaximum())
+            self._ymax = max(self._ymax, other.yMaximum())
+    def intersects(self, other):
+        if hasattr(other, 'xMinimum'):
+            return not (self._xmax < other.xMinimum() or self._xmin > other.xMaximum() or
+                        self._ymax < other.yMinimum() or self._ymin > other.yMaximum())
+        return False
+    def contains(self, other):
+        if hasattr(other, 'xMinimum'):
+            return (self._xmin <= other.xMinimum() and self._xmax >= other.xMaximum() and
+                    self._ymin <= other.yMinimum() and self._ymax >= other.yMaximum())
+        elif hasattr(other, 'x'):
+            return (self._xmin <= other.x() <= self._xmax and self._ymin <= other.y() <= self._ymax)
+        return False
+    def __repr__(self):
+        return f"QgsRectangle({self._xmin}, {self._ymin}, {self._xmax}, {self._ymax})"
+
+
 class QgsGeometry:
     def __init__(self, geom_type="Polygon", polygons=None):
         if isinstance(geom_type, QgsGeometry):
@@ -782,6 +844,51 @@ class QgsVectorLayer:
                 feat.setAttribute(field_idx, value)
                 return True
         return False
+    def setEditorWidgetSetup(self, field_idx, setup):
+        if not hasattr(self, '_editor_widget_setups'):
+            self._editor_widget_setups = {}
+        self._editor_widget_setups[field_idx] = setup
+    def editorWidgetSetup(self, field_idx):
+        if not hasattr(self, '_editor_widget_setups'):
+            self._editor_widget_setups = {}
+        return self._editor_widget_setups.get(field_idx, QgsEditorWidgetSetup())
+    def editFormConfig(self):
+        if not hasattr(self, '_edit_form_config') or self._edit_form_config is None:
+            self._edit_form_config = QgsEditFormConfig()
+        return self._edit_form_config
+    def setEditFormConfig(self, config):
+        self._edit_form_config = config
+    def loadNamedStyle(self, uri, categories=None):
+        return ("Success", True)
+    def emitStyleChanged(self):
+        pass
+    def setReadOnly(self, readonly=True):
+        self._layer_readonly = readonly
+    def isReadOnly(self):
+        return getattr(self, '_layer_readonly', False)
+
+
+class QgsEditFormConfig:
+    def __init__(self):
+        self._read_only = {}
+
+    def setReadOnly(self, field_idx, read_only=True):
+        self._read_only[field_idx] = read_only
+
+    def readOnly(self, field_idx):
+        return self._read_only.get(field_idx, False)
+
+
+class QgsEditorWidgetSetup:
+    def __init__(self, widget_type="", config=None):
+        self._type = widget_type
+        self._config = config or {}
+
+    def type(self):
+        return self._type
+
+    def config(self):
+        return self._config
 
 
 class QgsProcessingFeedback:
@@ -835,6 +942,8 @@ try:
         QgsProcessingFeedback = qgis.core.QgsProcessingFeedback
     if hasattr(qgis.core, "QgsVectorLayer"):
         QgsVectorLayer = qgis.core.QgsVectorLayer
+    if hasattr(qgis.core, "QgsEditorWidgetSetup"):
+        QgsEditorWidgetSetup = qgis.core.QgsEditorWidgetSetup
 except Exception:
     pass
 
@@ -1316,6 +1425,7 @@ def setup_qgis_mock_if_needed():
 
     # Explicit Core attributes
     core_mod.QgsPointXY = QgsPointXY
+    core_mod.QgsRectangle = QgsRectangle
     core_mod.QgsPolygon = QgsPolygon
     core_mod.QgsGeometry = QgsGeometry
     core_mod.QgsField = QgsField
@@ -1332,6 +1442,8 @@ def setup_qgis_mock_if_needed():
     core_mod.QgsApplication = QgsApplication
     core_mod.QgsWkbTypes = QgsWkbTypes
     core_mod.QgsVectorFileWriter = QgsVectorFileWriter
+    core_mod.QgsEditorWidgetSetup = QgsEditorWidgetSetup
+    core_mod.QgsEditFormConfig = QgsEditFormConfig
 
     # PyQt attributes
     class MockQWidget:

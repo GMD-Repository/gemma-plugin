@@ -28,6 +28,11 @@ features:
     details: Cross-check Reference MBI layers against Checker GAP/OVERLAP layers to flag status mismatches and audit boundary resolutions.
     link: /tools/mbi-validator
   - icon:
+      src: /icons/run_analysis.svg
+    title: Run Analysis
+    details: Perform boundary discrepancy detection across polygon layers and building points, consolidating findings into reference MBI case layers.
+    link: /tools/run-analysis
+  - icon:
       src: /icons/fill.svg
     title: Fill Polygon Gaps
     details: Automatically fill gaps between polygons by assigning them to the correct neighboring barangay with a preview-before-apply workflow.
@@ -82,6 +87,11 @@ features:
     title: PSA - LGU Boundary Comparison
     details: Audit PSA reference boundaries against LGU-submitted polygons using geocodes, global alignment models, and building point validation.
     link: /tools/psa-lgu-comparison
+  - icon:
+      src: /icons/projection_finder.svg
+    title: Know Your Projection!
+    details: Diagnose unknown coordinate systems, auto-detect Philippine CRS candidates, and georeference local CAD grids via 2D affine transformations.
+    link: /tools/know-your-projection
   - icon:
       src: /icons/packager.svg
     title: Package for QField
