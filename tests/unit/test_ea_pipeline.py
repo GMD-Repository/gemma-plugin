@@ -16,6 +16,11 @@ from qgis.core import (
 )
 from qgis.PyQt.QtCore import QVariant
 
+from references.create_enumeration_area.helpers.constants import (
+    create_qgs_field,
+)
+QgsField = create_qgs_field
+
 from references.create_enumeration_area.helpers.classification import (
     is_delineation_candidate,
     is_merge_candidate,

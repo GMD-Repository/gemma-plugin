@@ -16,7 +16,7 @@ from qgis.core import (
 )
 from qgis.PyQt.QtCore import QVariant
 
-from ..helpers.constants import _PHASE_LABELS, yield_to_ui
+from ..helpers.constants import _PHASE_LABELS, yield_to_ui, create_qgs_field
 from ..helpers.spatial import get_parent_barangay, normalize_to_8_digits
 
 
@@ -83,15 +83,25 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     def resolve_ea_parent_barangay(ea_feat):
         parent_feat = get_parent_barangay(ea_feat.geometry())
         if parent_feat:
-            val = parent_feat.attribute(barangay_id_field)
-            res = normalize_to_8_digits(val)
-            if res:
-                return res
+            val = None
+            for f in parent_feat.fields():
+                if f.name().lower() == "geocode":
+                    val = parent_feat.attribute(f.name())
+                    break
+            if val is not None:
+                res = normalize_to_8_digits(val)
+                if res:
+                    return res
         if _dc_geo_idx != -1:
             val = ea_feat.attribute(_dc_geo_idx)
             res = normalize_to_8_digits(val)
             if res:
                 return res
+        for f in ea_feat.fields():
+            if f.name().lower() == "geocode":
+                res = normalize_to_8_digits(ea_feat.attribute(f.name()))
+                if res:
+                    return res
         return "Unknown"
 
     # Create output schema (inherits all fields from previous_ea_source)
@@ -101,7 +111,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     if household_field in [f.name() for f in out_fields]:
         output_hh_field = household_field
     else:
-        out_fields.append(QgsField(output_hh_field, QVariant.Double))
+        out_fields.append(create_qgs_field(output_hh_field, QVariant.Double))
 
     for fname, ftype in (
         ("map_uuid", QVariant.String),
@@ -129,10 +139,10 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         ("min_circle", QVariant.String),
     ):
         if out_fields.indexOf(fname) == -1:
-            out_fields.append(QgsField(fname, ftype))
+            out_fields.append(create_qgs_field(fname, ftype))
 
     if out_fields.indexOf("remarks") == -1:
-        out_fields.append(QgsField("remarks", QVariant.String))
+        out_fields.append(create_qgs_field("remarks", QVariant.String))
 
     # Build export_fields containing ONLY the 18 standard output attributes
     export_field_names = [
@@ -144,7 +154,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     export_fields = QgsFields()
     for fname in export_field_names:
         if fname == "remarks":
-            export_fields.append(QgsField("remarks", QVariant.String))
+            export_fields.append(create_qgs_field("remarks", QVariant.String))
             continue
         idx = out_fields.indexOf(fname)
         if idx != -1:
@@ -157,13 +167,13 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                 ftype = QVariant.Double
             elif fname in ("bldgcount", "bldg_count", "hh_count"):
                 ftype = QVariant.Int
-            export_fields.append(QgsField(fname, ftype))
+            export_fields.append(create_qgs_field(fname, ftype))
 
     # Build merged_export_fields for merge_ea output layer (includes indicator, gps, min_circle)
     merged_export_fields = QgsFields(export_fields)
     for fname in ("indicator", "gps", "min_circle"):
         if merged_export_fields.indexOf(fname) == -1:
-            merged_export_fields.append(QgsField(fname, QVariant.String))
+            merged_export_fields.append(create_qgs_field(fname, QVariant.String))
 
     out_wkb_type = QgsWkbTypes.multiType(previous_ea_source.wkbType())
 
@@ -197,7 +207,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             continue
         special_ea_export_fields.append(f)
     if special_ea_export_fields.indexOf("special_type") == -1:
-        special_ea_export_fields.append(QgsField("special_type", QVariant.String))
+        special_ea_export_fields.append(create_qgs_field("special_type", QVariant.String))
 
     special_ea_sink = None
     special_ea_dest_id = None
@@ -216,19 +226,19 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     if alg.EXTRACTED_BUILDINGS_OUTPUT in parameters and parameters[alg.EXTRACTED_BUILDINGS_OUTPUT] is not None:
         bldg_out_fields = QgsFields(building_source.fields())
         if bldg_out_fields.indexOf("parent_ean") == -1:
-            bldg_out_fields.append(QgsField("parent_ean", QVariant.String))
+            bldg_out_fields.append(create_qgs_field("parent_ean", QVariant.String))
 
         bldgpts_idx = bldg_out_fields.indexOf("bldgpoints_value")
         if bldgpts_idx == -1:
             bldgpts_idx = bldg_out_fields.indexOf("bldgpts_val")
         if bldgpts_idx == -1:
-            bldg_out_fields.append(QgsField("bldgpoints_value", QVariant.Double))
+            bldg_out_fields.append(create_qgs_field("bldgpoints_value", QVariant.Double))
 
         pop_out_idx = bldg_out_fields.indexOf("pop")
         if pop_out_idx == -1:
             pop_out_idx = bldg_out_fields.indexOf(bldg_hh_field)
         if pop_out_idx == -1:
-            bldg_out_fields.append(QgsField("pop", QVariant.Double))
+            bldg_out_fields.append(create_qgs_field("pop", QVariant.Double))
 
         (extracted_buildings_sink, extracted_buildings_dest_id) = alg.parameterAsSink(
             parameters,
@@ -244,11 +254,11 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     if alg.DELINEATION_CANDIDATE_OUTPUT in parameters and parameters[alg.DELINEATION_CANDIDATE_OUTPUT] is not None:
         delin_cand_fields = QgsFields(out_fields)
         if delin_cand_fields.indexOf("hhcount") == -1:
-            delin_cand_fields.append(QgsField("hhcount", QVariant.Double))
+            delin_cand_fields.append(create_qgs_field("hhcount", QVariant.Double))
         if delin_cand_fields.indexOf("bldgcount") == -1:
-            delin_cand_fields.append(QgsField("bldgcount", QVariant.Int))
+            delin_cand_fields.append(create_qgs_field("bldgcount", QVariant.Int))
         if delin_cand_fields.indexOf("indicator") == -1 and delin_cand_fields.indexOf("eadel_indi") == -1:
-            delin_cand_fields.append(QgsField("indicator", QVariant.String))
+            delin_cand_fields.append(create_qgs_field("indicator", QVariant.String))
         (delin_candidate_sink, delin_candidate_dest_id) = alg.parameterAsSink(
             parameters,
             alg.DELINEATION_CANDIDATE_OUTPUT,
@@ -1068,19 +1078,19 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             feedback.pushInfo("Writing matched building points to extracted buildings output layer...")
             bldg_out_fields = QgsFields(building_source.fields())
             if bldg_out_fields.indexOf("parent_ean") == -1:
-                bldg_out_fields.append(QgsField("parent_ean", QVariant.String))
+                bldg_out_fields.append(create_qgs_field("parent_ean", QVariant.String))
 
             bldgpts_idx = bldg_out_fields.indexOf("bldgpoints_value")
             if bldgpts_idx == -1:
                 bldgpts_idx = bldg_out_fields.indexOf("bldgpts_val")
             if bldgpts_idx == -1:
-                bldg_out_fields.append(QgsField("bldgpoints_value", QVariant.Double))
+                bldg_out_fields.append(create_qgs_field("bldgpoints_value", QVariant.Double))
 
             pop_out_idx = bldg_out_fields.indexOf("pop")
             if pop_out_idx == -1:
                 pop_out_idx = bldg_out_fields.indexOf(bldg_hh_field)
             if pop_out_idx == -1:
-                bldg_out_fields.append(QgsField("pop", QVariant.Double))
+                bldg_out_fields.append(create_qgs_field("pop", QVariant.Double))
 
             barangay_to_target = None
             if previous_ea_source.sourceCrs() != target_crs:

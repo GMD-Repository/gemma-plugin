@@ -39,6 +39,8 @@ from qgis.PyQt.QtWidgets import (
 from qgis.PyQt.QtGui import QFont, QPixmap, QColor, QIcon, QTextCursor
 from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication, QThread, QObject, pyqtSignal, QVariant, QTimer
 
+from .helpers.constants import create_qgs_field
+
 # Module-level regex for Tab 3 input validation — compiled once, reused on every
 # combo-box change event instead of being re-compiled inside the hot-path method.
 _EA_MERGE_8DIGIT_RE = re.compile(r"^\d{8}(_|$)")
@@ -2405,7 +2407,7 @@ class EALauncherDialog(QDialog):
 
         # Auto-create bldg_count field if it does not exist on EA layer
         if not bldg_count_field:
-            prev_ea_layer.dataProvider().addAttributes([QgsField("bldg_count", QVariant.Int)])
+            prev_ea_layer.dataProvider().addAttributes([create_qgs_field("bldg_count", QVariant.Int)])
             prev_ea_layer.updateFields()
             prev_fields = prev_ea_layer.fields()
             for i in range(prev_fields.count()):
@@ -3743,7 +3745,7 @@ class EALauncherDialog(QDialog):
             attrs_to_add = []
             for f in prev_fields.toList():
                 if f.name().lower() in ("hh_count", "bldg_count", "bldgcount"):
-                    attrs_to_add.append(QgsField(f.name(), QVariant.Int))
+                    attrs_to_add.append(create_qgs_field(f.name(), QVariant.Int))
                 else:
                     attrs_to_add.append(f)
             pr.addAttributes(attrs_to_add)
@@ -3752,15 +3754,15 @@ class EALauncherDialog(QDialog):
             f_names = [f.name().lower() for f in target_layer.fields()]
             new_attrs = []
             if "hh_count" not in f_names:
-                new_attrs.append(QgsField("hh_count", QVariant.Int))
+                new_attrs.append(create_qgs_field("hh_count", QVariant.Int))
             if "bldg_count" not in f_names and "bldgcount" not in f_names:
-                new_attrs.append(QgsField("bldg_count", QVariant.Int))
+                new_attrs.append(create_qgs_field("bldg_count", QVariant.Int))
             if "new_ean" not in f_names:
-                new_attrs.append(QgsField("new_ean", QVariant.String))
+                new_attrs.append(create_qgs_field("new_ean", QVariant.String))
             if "ea_type" not in f_names:
-                new_attrs.append(QgsField("ea_type", QVariant.String))
+                new_attrs.append(create_qgs_field("ea_type", QVariant.String))
             if "remarks" not in f_names:
-                new_attrs.append(QgsField("remarks", QVariant.String))
+                new_attrs.append(create_qgs_field("remarks", QVariant.String))
             if new_attrs:
                 pr.addAttributes(new_attrs)
                 target_layer.updateFields()
@@ -3864,13 +3866,13 @@ class EALauncherDialog(QDialog):
         t_fnames = [f.name().lower() for f in target_layer.fields()]
         t_missing_attrs = []
         if "hh_count" not in t_fnames:
-            t_missing_attrs.append(QgsField("hh_count", QVariant.Int))
+            t_missing_attrs.append(create_qgs_field("hh_count", QVariant.Int))
         if "new_ean" not in t_fnames:
-            t_missing_attrs.append(QgsField("new_ean", QVariant.String))
+            t_missing_attrs.append(create_qgs_field("new_ean", QVariant.String))
         if not any(f in t_fnames for f in ("ea_type", "eatype", "type")):
-            t_missing_attrs.append(QgsField("ea_type", QVariant.String))
+            t_missing_attrs.append(create_qgs_field("ea_type", QVariant.String))
         if "remarks" not in t_fnames:
-            t_missing_attrs.append(QgsField("remarks", QVariant.String))
+            t_missing_attrs.append(create_qgs_field("remarks", QVariant.String))
         if t_missing_attrs:
             target_layer.dataProvider().addAttributes(t_missing_attrs)
             target_layer.updateFields()

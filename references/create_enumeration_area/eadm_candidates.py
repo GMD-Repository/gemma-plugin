@@ -567,7 +567,13 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
         def resolve_ea_parent_barangay(ea_feat):
             parent_feat = get_parent_barangay(ea_feat.geometry())
             if parent_feat:
-                val = parent_feat.attribute(barangay_id_field)
+                val = None
+                for f in parent_feat.fields():
+                    if f.name().lower() == "geocode":
+                        val = parent_feat.attribute(f.name())
+                        break
+                if val is None and parent_feat.fields().indexOf(barangay_id_field) != -1:
+                    val = parent_feat.attribute(barangay_id_field)
                 if val is not None and not (isinstance(val, QVariant) and val.isNull()):
                     val_str = str(val).strip()
                     if val_str.endswith(".0"):
@@ -583,6 +589,16 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                     if val_str:
                         if len(val_str) > 5 and len(val_str) in (9, 10, 11, 12):
                             return val_str[:5]
+            for f in ea_feat.fields():
+                if f.name().lower() == "geocode":
+                    val = ea_feat.attribute(f.name())
+                    if val is not None and not (isinstance(val, QVariant) and val.isNull()):
+                        val_str = str(val).strip()
+                        if val_str.endswith(".0"):
+                            val_str = val_str[:-2]
+                        if val_str:
+                            if len(val_str) > 5 and len(val_str) in (9, 10, 11, 12):
+                                return val_str[:5]
                         return val_str
             return "Unknown"
 

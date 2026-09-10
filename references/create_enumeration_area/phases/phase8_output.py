@@ -25,7 +25,7 @@ from qgis.core import (
     NULL,
 )
 
-from ..helpers.constants import _PHASE_LABELS, yield_to_ui
+from ..helpers.constants import _PHASE_LABELS, yield_to_ui, create_qgs_field
 from ..helpers.geometry import get_polygons_from_geom, allocate_gaps_to_parts
 from ..helpers.style import apply_qml_to_layer
 from ..helpers.spatial import get_parent_barangay
@@ -428,7 +428,7 @@ def run_phase_8(
         export_fields = QgsFields()
         for fname in export_field_names:
             if fname == "remarks":
-                export_fields.append(QgsField("remarks", QVariant.String))
+                export_fields.append(create_qgs_field("remarks", QVariant.String))
                 continue
             idx = out_fields.indexOf(fname)
             if idx != -1:
@@ -441,14 +441,14 @@ def run_phase_8(
                     ftype = QVariant.Double
                 elif fname in ("bldgcount", "bldg_count", "hh_count"):
                     ftype = QVariant.Int
-                export_fields.append(QgsField(fname, ftype))
+                export_fields.append(create_qgs_field(fname, ftype))
 
     merged_export_fields = p2.get("merged_export_fields")
     if not merged_export_fields:
         merged_export_fields = QgsFields(export_fields)
         for fname in ("indicator", "gps", "min_circle"):
             if merged_export_fields.indexOf(fname) == -1:
-                merged_export_fields.append(QgsField(fname, QVariant.String))
+                merged_export_fields.append(create_qgs_field(fname, QVariant.String))
 
     special_ea_export_fields = p2.get("special_ea_export_fields")
     if not special_ea_export_fields:
@@ -458,7 +458,7 @@ def run_phase_8(
                 continue
             special_ea_export_fields.append(f)
     if special_ea_export_fields.indexOf("special_type") == -1:
-        special_ea_export_fields.append(QgsField("special_type", QVariant.String))
+        special_ea_export_fields.append(create_qgs_field("special_type", QVariant.String))
 
     def make_export_feature(src_feat: QgsFeature, exp_fields: QgsFields) -> QgsFeature:
         exp_feat = QgsFeature(exp_fields)
@@ -565,7 +565,7 @@ def run_phase_8(
             parent_bgy_feat = barangay_by_id[bar]
 
         _bar_geocode = (
-            get_text_attr(parent_bgy_feat, ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code", "psgc"], prefer_text=False)
+            get_text_attr(parent_bgy_feat, ["geocode"], prefer_text=False)
             or bar_str
         )
         if _bar_geocode.endswith(".0"):
@@ -1006,8 +1006,8 @@ def run_phase_8(
         if geocode_idx != -1:
             cur_gc = out_feat.attribute(geocode_idx)
             inh_gc = (
-                get_text_attr(parent_feat, ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code", "psgc"], prefer_text=False)
-                or get_text_attr(parent_bgy_feat, ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code", "psgc"], prefer_text=False)
+                get_text_attr(parent_feat, ["geocode"], prefer_text=False)
+                or get_text_attr(parent_bgy_feat, ["geocode"], prefer_text=False)
                 or ea.get('parent_barangay')
             )
             if cur_gc is None or cur_gc == NULL or str(cur_gc).strip() in ('', 'NULL', 'None'):
@@ -1412,20 +1412,20 @@ def run_phase_8(
         if extracted_buildings_sink is not None:
             bldg_out_fields = QgsFields(building_source.fields())
             if bldg_out_fields.indexOf("parent_ean") == -1:
-                bldg_out_fields.append(QgsField("parent_ean", QVariant.String))
+                bldg_out_fields.append(create_qgs_field("parent_ean", QVariant.String))
 
             bldgpts_idx = bldg_out_fields.indexOf("bldgpoints_value")
             if bldgpts_idx == -1:
                 bldgpts_idx = bldg_out_fields.indexOf("bldgpts_val")
             if bldgpts_idx == -1:
-                bldg_out_fields.append(QgsField("bldgpoints_value", QVariant.Double))
+                bldg_out_fields.append(create_qgs_field("bldgpoints_value", QVariant.Double))
                 bldgpts_idx = bldg_out_fields.count() - 1
 
             pop_out_idx = bldg_out_fields.indexOf("pop")
             if pop_out_idx == -1:
                 pop_out_idx = bldg_out_fields.indexOf(bldg_hh_field)
             if pop_out_idx == -1:
-                bldg_out_fields.append(QgsField("pop", QVariant.Double))
+                bldg_out_fields.append(create_qgs_field("pop", QVariant.Double))
                 pop_out_idx = bldg_out_fields.count() - 1
 
             parent_ean_idx = bldg_out_fields.indexOf("parent_ean")
@@ -1845,7 +1845,7 @@ def run_phase_8(
                     break
         if geo5 == "00000":
             for feat in p1.get("all_ea_features", []):
-                for fname in ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code"]:
+                for fname in ["geocode"]:
                     idx = feat.fields().indexOf(fname)
                     if idx != -1:
                         val = str(feat.attribute(idx) or "").strip()
