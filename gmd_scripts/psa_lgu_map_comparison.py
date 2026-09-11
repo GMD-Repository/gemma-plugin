@@ -897,15 +897,34 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
         # headless (qgis_process / standalone PyQGIS) where no iface exists.
         MATCH_ID_FIELD_NAME = "match_id"
 
+        # Custom property key the review panel reads back (see
+        # GEOCODE_FIELD_PROPERTY in psa_lgu_comparison_panel.py -- same
+        # duplicated-literal convention as MATCH_ID_FIELD_NAME above) to
+        # find the field appended just below, whatever name it actually
+        # landed under. A blind case-insensitive search for a field named
+        # "geocode" is NOT reliable here the way it is for match_id: unlike
+        # match_id, "geocode" routinely already exists on the source PSA/LGU
+        # layer (Geocode Field auto-detection looks for exactly that name),
+        # so the appended column silently renames to "geocode_2" and a name
+        # search keeps finding the ORIGINAL, untruncated source attribute
+        # instead of this run's first8-truncated one. That wrong value
+        # previously only fed a cosmetic dropdown label; it now also feeds
+        # the review panel's ref_mbi_cases filter, where a mismatched
+        # geocode means the filter matches nothing even though the barangay
+        # genuinely has cases.
+        GEOCODE_FIELD_PROPERTY = "psalgu_geocode_field"
+
         fields_matched_psa = QgsFields(layer_psa.fields())
         match_id_field_psa = _unique_field_name(MATCH_ID_FIELD_NAME, fields_matched_psa)
         fields_matched_psa.append(QgsField(match_id_field_psa, QVariant.Int))
-        fields_matched_psa.append(QgsField(_unique_field_name("geocode", fields_matched_psa), QVariant.String))
+        geocode_field_psa_out = _unique_field_name("geocode", fields_matched_psa)
+        fields_matched_psa.append(QgsField(geocode_field_psa_out, QVariant.String))
 
         fields_matched_lgu = QgsFields(layer_lgu.fields())
         match_id_field_lgu = _unique_field_name(MATCH_ID_FIELD_NAME, fields_matched_lgu)
         fields_matched_lgu.append(QgsField(match_id_field_lgu, QVariant.Int))
-        fields_matched_lgu.append(QgsField(_unique_field_name("geocode", fields_matched_lgu), QVariant.String))
+        geocode_field_lgu_out = _unique_field_name("geocode", fields_matched_lgu)
+        fields_matched_lgu.append(QgsField(geocode_field_lgu_out, QVariant.String))
 
         for label, resolved in (("PSA", match_id_field_psa), ("LGU", match_id_field_lgu)):
             if resolved != MATCH_ID_FIELD_NAME:
@@ -913,6 +932,14 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
                     f"Warning: the {label} layer already has a '{MATCH_ID_FIELD_NAME}' field, so "
                     f"this run's grouping field was added as '{resolved}' instead -- the review "
                     f"panel's per-barangay filter will not work on this output."
+                ))
+        for label, resolved in (("PSA", geocode_field_psa_out), ("LGU", geocode_field_lgu_out)):
+            if resolved != "geocode":
+                feedback.pushInfo(self.tr(
+                    f"Note: the {label} layer already has a 'geocode' field, so this run's "
+                    f"first-8-digit barangay code was added as '{resolved}' instead. The review "
+                    f"panel is tagged to find it there, so its labels and ref_mbi_cases filtering "
+                    f"still use the correct value rather than the original field."
                 ))
 
         fields_unmatched_psa = QgsFields(layer_psa.fields())
@@ -937,6 +964,8 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
         matched_psa.updateFields()
         matched_lgu.dataProvider().addAttributes(fields_matched_lgu)
         matched_lgu.updateFields()
+        matched_psa.setCustomProperty(GEOCODE_FIELD_PROPERTY, geocode_field_psa_out)
+        matched_lgu.setCustomProperty(GEOCODE_FIELD_PROPERTY, geocode_field_lgu_out)
 
         # Label matched PSA and LGU shapes with the barangay name from
         # each layer's own "barangay" column -- these are just map

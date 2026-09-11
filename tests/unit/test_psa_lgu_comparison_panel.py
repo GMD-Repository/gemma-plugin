@@ -11,6 +11,12 @@ from tests.mocks.sample_data import create_sample_polygon_layer, create_sample_p
 
 setup_qgis_mock_if_needed()
 
+try:
+    from qgis.core import QgsVectorLayer, QgsFields, QgsField, QgsFeature
+    from qgis.PyQt.QtCore import QVariant
+except ImportError:
+    from tests.mocks.qgis_mock import QgsVectorLayer, QgsFields, QgsField, QgsFeature, MockQVariant as QVariant
+
 
 class TestPsaLguComparisonPanel(unittest.TestCase):
     """Test suite for psa_lgu_comparison_panel.py."""
@@ -28,6 +34,100 @@ class TestPsaLguComparisonPanel(unittest.TestCase):
         """Test module functionality using sample vector layer fixtures."""
         self.assertTrue(self.sample_polygon.isValid(), "Sample polygon layer should be valid.")
         self.assertGreaterEqual(self.sample_polygon.featureCount(), 3)
+
+
+def _layer_with_fields(name, field_specs):
+    """Build a memory layer named *name* with fields from
+    field_specs = [(field_name, QVariant type), ...] and no features."""
+    fields = QgsFields()
+    for fname, ftype in field_specs:
+        fields.append(QgsField(fname, ftype))
+    layer = QgsVectorLayer("Polygon?crs=EPSG:4326", name, "memory")
+    layer.dataProvider().addAttributes(fields)
+    layer.updateFields()
+    return layer
+
+
+class TestGeocodeFieldResolution(unittest.TestCase):
+    """Regression tests for the bug where the review panel's ref_mbi_cases
+    filter matched nothing for a barangay that genuinely had cases.
+
+    Root cause: the algorithm appends the matched barangay's first8-
+    truncated geocode under the name "geocode", but PSA/LGU source layers
+    routinely already carry their OWN "geocode" field (that's exactly what
+    Geocode Field auto-detection looks for), so the appended column
+    silently lands under a different name ("geocode_2", ...) to avoid a
+    collision. The panel was doing a blind case-insensitive "geocode" name
+    search, which -- whenever that collision happened -- kept finding the
+    ORIGINAL, untruncated source field instead of the correct one. That
+    wrong value fed the ref_mbi_cases filter expression, which then never
+    matched any case even though the barangay had real ones.
+
+    _geocode_field() fixes this by preferring the GEOCODE_FIELD_PROPERTY
+    tag the algorithm now stamps onto its Matched PSA/LGU outputs, which
+    names the exact resolved field regardless of collision."""
+
+    def setUp(self):
+        self.mod = importlib.import_module("gmd_scripts.psa_lgu_comparison_panel")
+
+    def test_prefers_tagged_property_over_colliding_original_field(self):
+        """The regression case itself: both the stale original "geocode"
+        field and the algorithm's correctly-tagged "geocode_2" are present
+        -- the tag must win."""
+        layer = _layer_with_fields("PSA_Matched", [
+            ("geocode", QVariant.String),
+            ("geocode_2", QVariant.String),
+        ])
+        layer.setCustomProperty(self.mod.GEOCODE_FIELD_PROPERTY, "geocode_2")
+        self.assertEqual(self.mod._geocode_field(layer), "geocode_2")
+
+    def test_falls_back_to_plain_name_when_untagged(self):
+        """A layer with no tag at all -- e.g. ref_mbi_cases, which is never
+        one of this algorithm's own outputs -- still resolves via a plain
+        "geocode" name search, same as before this fix."""
+        layer = _layer_with_fields("ref_mbi_cases", [("geocode", QVariant.String)])
+        self.assertEqual(self.mod._geocode_field(layer), "geocode")
+
+    def test_ignores_stale_tag_naming_a_field_that_does_not_exist(self):
+        """A tag pointing at a field the layer doesn't actually have (e.g.
+        left over some other way) falls back to the plain search rather
+        than returning nothing."""
+        layer = _layer_with_fields("PSA_Matched", [("geocode", QVariant.String)])
+        layer.setCustomProperty(self.mod.GEOCODE_FIELD_PROPERTY, "geocode_2")
+        self.assertEqual(self.mod._geocode_field(layer), "geocode")
+
+    def test_returns_none_without_any_geocode_field(self):
+        layer = _layer_with_fields("Other", [("name", QVariant.String)])
+        self.assertIsNone(self.mod._geocode_field(layer))
+
+
+class TestMbiCasesFilterExpression(unittest.TestCase):
+    """Tests for _mbi_cases_filter_expression's None-handling branches --
+    the panel must not raise, and must leave the layer unfiltered, when it
+    doesn't have enough information to build a safe filter."""
+
+    def setUp(self):
+        self.mod = importlib.import_module("gmd_scripts.psa_lgu_comparison_panel")
+
+    def _fake_panel(self, barangay_geocodes):
+        panel = object.__new__(self.mod.PsaLguComparisonPanel)
+        panel._barangay_geocodes = barangay_geocodes
+        return panel
+
+    def test_none_when_barangay_has_no_known_geocode(self):
+        layer = _layer_with_fields("ref_mbi_cases", [("geocode", QVariant.String)])
+        panel = self._fake_panel({})
+        self.assertIsNone(panel._mbi_cases_filter_expression(layer, key=1))
+
+    def test_none_when_layer_has_no_geocode_field(self):
+        layer = _layer_with_fields("ref_mbi_cases", [("case_id", QVariant.String)])
+        panel = self._fake_panel({1: "00010201"})
+        self.assertIsNone(panel._mbi_cases_filter_expression(layer, key=1))
+
+    def test_builds_an_expression_when_both_are_present(self):
+        layer = _layer_with_fields("ref_mbi_cases", [("geocode", QVariant.String)])
+        panel = self._fake_panel({1: "00010201"})
+        self.assertIsNotNone(panel._mbi_cases_filter_expression(layer, key=1))
 
 
 if __name__ == "__main__":

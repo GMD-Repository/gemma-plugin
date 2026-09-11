@@ -29,13 +29,30 @@ DOCK_OBJECT_NAME = "GemmaPsaLguComparisonPanel"
 
 # The comparison algorithm appends these fields to its Matched outputs (and
 # match_id/in_match_id to the Unmatched Building output -- see below).
-# match_id is the grouping key used here in preference to geocode: QgsFields
-# refuses to append a field whose name already exists, and source layers very
-# often already carry a field literally named "geocode" (the algorithm's own
-# auto-detection looks for exactly that), in which case the appended geocode
-# column is silently dropped. match_id practically never collides.
+# match_id is the grouping key used here in preference to geocode: source
+# layers very often already carry a field literally named "geocode" (the
+# algorithm's own auto-detection looks for exactly that), and the appended
+# column then lands under a different name ("geocode_2", ...) to avoid
+# clobbering it -- see GEOCODE_FIELD_PROPERTY below for how the correct one
+# is still found. match_id practically never collides this way.
 MATCH_ID_FIELD = "match_id"
 GEOCODE_FIELD = "geocode"
+
+# Custom property the algorithm tags a Matched PSA/LGU layer with, naming
+# the exact field that holds ITS first8-truncated barangay geocode (see
+# GEOCODE_FIELD_PROPERTY in psa_lgu_map_comparison.py -- duplicated here by
+# the same convention as MATCH_ID_FIELD/GEOCODE_FIELD above, so this module
+# stays importable without pulling in the algorithm module).
+#
+# A plain case-insensitive search for a field named "geocode" is NOT
+# reliable for this: when the source PSA/LGU layer already had its own
+# "geocode" field, the algorithm's appended column silently renames to
+# "geocode_2", and a name search keeps finding the ORIGINAL, untruncated
+# source attribute instead. That wrong value used to only feed a cosmetic
+# dropdown label; it now also feeds the ref_mbi_cases filter below, where a
+# mismatched geocode means the filter matches nothing even though the
+# barangay genuinely has cases -- this is what the property lookup fixes.
+GEOCODE_FIELD_PROPERTY = "psalgu_geocode_field"
 
 # On the Unmatched Building output only: the match_id of the barangay the
 # point was actually found sitting inside (independent of what its own
@@ -75,6 +92,21 @@ def _field_lookup(layer, name):
         if field.name().lower() == name.lower():
             return field.name()
     return None
+
+
+def _geocode_field(layer):
+    """Return the field on *layer* holding the algorithm's first8-truncated
+    barangay geocode -- the field the algorithm tagged via
+    GEOCODE_FIELD_PROPERTY when it's present, falling back to a plain
+    "geocode" name search for layers that predate the tag (or aren't one of
+    this algorithm's own outputs, e.g. a manually added layer). See
+    GEOCODE_FIELD_PROPERTY above for why the tag matters."""
+    tagged = layer.customProperty(GEOCODE_FIELD_PROPERTY)
+    if tagged:
+        found = _field_lookup(layer, tagged)
+        if found:
+            return found
+    return _field_lookup(layer, GEOCODE_FIELD)
 
 
 def _barangay_field(layer):
@@ -334,9 +366,9 @@ class PsaLguComparisonPanel(QDockWidget):
 
         self._clear_filter()
 
-        key_field = _field_lookup(layer, MATCH_ID_FIELD) or _field_lookup(layer, GEOCODE_FIELD)
+        key_field = _field_lookup(layer, MATCH_ID_FIELD) or _geocode_field(layer)
         name_field = _barangay_field(layer)
-        geocode_field = _field_lookup(layer, GEOCODE_FIELD)
+        geocode_field = _geocode_field(layer)
 
         seen = set()
         entries = []
@@ -395,7 +427,7 @@ class PsaLguComparisonPanel(QDockWidget):
     def _filter_expression(self, layer, key):
         """Return the "key_field = key" expression string used to isolate
         one barangay on *layer*, or None when it has no usable key field."""
-        key_field = _field_lookup(layer, MATCH_ID_FIELD) or _field_lookup(layer, GEOCODE_FIELD)
+        key_field = _field_lookup(layer, MATCH_ID_FIELD) or _geocode_field(layer)
         if not key_field:
             return None
         return QgsExpression.createFieldEqualityExpression(key_field, key)
