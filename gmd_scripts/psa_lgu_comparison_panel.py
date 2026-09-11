@@ -94,6 +94,19 @@ def _field_lookup(layer, name):
     return None
 
 
+def _first8(value):
+    """First 8 characters of a value's string form -- mirrors first8() in
+    psa_lgu_map_comparison.py exactly (duplicated rather than imported,
+    same headless-safety convention as GEOCODE_FIELD/MATCH_ID_FIELD
+    above). Used to compare a barangay's own 8-character code against a
+    ref_mbi_cases record's longer, case-level geocode (e.g. barangay
+    "05012010" vs a case geocode like "0501201000000") -- see
+    _mbi_cases_filter_expression()."""
+    if value is None:
+        return ""
+    return str(value).strip()[:8]
+
+
 def _geocode_field(layer):
     """Return the field on *layer* holding the algorithm's first8-truncated
     barangay geocode -- the field the algorithm tagged via
@@ -456,24 +469,46 @@ class PsaLguComparisonPanel(QDockWidget):
         return " OR ".join("({})".format(p) for p in parts)
 
     def _mbi_cases_filter_expression(self, layer, key):
-        """Return the expression that isolates barangay *key* on the
-        ref_mbi_cases layer, or None when it can't be built.
+        """Return the "$id IN (...)" expression that isolates barangay
+        *key* on the ref_mbi_cases layer, or None when it can't be built.
 
         ref_mbi_cases is not an output of this algorithm and carries no
         match_id of its own, so it can't be filtered by the same field-
         equality expression as the PSA/LGU/Building layers. Its geocode
         values are also typically case-level (longer than a barangay's 8
-        characters), so barangay membership is a prefix match against the
-        first 8 characters -- the same first8() rule the comparison
-        algorithm itself uses to match PSA and LGU barangays."""
+        characters, e.g. a case geocode like "0501201000000" for barangay
+        "05012010"), so barangay membership is decided by the first 8
+        characters -- the same first8() rule the comparison algorithm
+        itself uses to match PSA and LGU barangays.
+
+        That comparison is done here in Python (via _first8(), feature by
+        feature) and expressed as "$id IN (...)" rather than as a QGIS
+        expression doing the equivalent left(to_string(field), 8) = 'xxx'
+        -- a provider that reports this field as numeric can render it via
+        to_string() differently than Python's str() does (a trailing
+        ".0", or a leading zero already lost further upstream), silently
+        breaking a field-comparison expression. Comparing in Python keeps
+        this exactly consistent with how every other geocode comparison
+        in this tool already works, regardless of the field's declared
+        type.
+
+        Returns "$id IN (-1)" (matches nothing -- no real feature has that
+        id) rather than None when nothing in ref_mbi_cases belongs to this
+        barangay, so the layer explicitly shows no cases instead of
+        keeping whatever filter was left over from the barangay reviewed
+        before it."""
         geocode_field = _field_lookup(layer, GEOCODE_FIELD)
         code = self._barangay_geocodes.get(key)
         if not geocode_field or not code:
             return None
-        return "left(to_string({}), 8) = {}".format(
-            QgsExpression.quotedColumnRef(geocode_field),
-            QgsExpression.quotedString(code[:8]),
-        )
+        target = _first8(code)
+        matching_ids = [
+            feat.id() for feat in layer.getFeatures()
+            if _first8(feat[geocode_field]) == target
+        ]
+        if not matching_ids:
+            return "$id IN (-1)"
+        return "$id IN ({})".format(", ".join(str(fid) for fid in matching_ids))
 
     def _apply_filter(self, key):
         """Restrict the Matched PSA, Matched LGU, Matched Building,
