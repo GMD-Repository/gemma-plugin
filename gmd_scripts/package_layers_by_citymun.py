@@ -53,6 +53,8 @@ def _get_packaged_top_group():
     group = root.findGroup(TOP_GROUP_NAME)
     if group is None:
         group = root.insertGroup(0, TOP_GROUP_NAME)
+    # Explicit: a run must never leave the user staring at a collapsed tree.
+    group.setExpanded(True)
     return group
 
 
@@ -84,8 +86,11 @@ def _get_citymun_group(group_id, replace=False):
             if still_there is not None:
                 top.removeChildNode(still_there)
         else:
+            existing.setExpanded(True)
             return existing
-    return top.addGroup(group_id)
+    group = top.addGroup(group_id)
+    group.setExpanded(True)
+    return group
 
 
 def _clean_layer_display_name(layer, fallback):
@@ -233,6 +238,49 @@ QgsProject.instance().layersAdded.connect(_auto_organize_layers)
 setattr(qgis.utils, _HANDLER_KEY, _auto_organize_layers)
 
 
+# -----------------------------------------------------------------------------
+# Styling for the packaged layers. Applied only when the dialog's "Load
+# packaged layers" option puts them into the project — deliberately NOT in
+# _auto_organize_layers() above, so manually browsing to a .gpkg still gets
+# the grouping/renaming without having its symbology overwritten.
+# -----------------------------------------------------------------------------
+
+QML_STYLE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "qml styles")
+
+# Matched against the end of the output layer name, so the "{citymun}" part
+# of the templates below is irrelevant: ref_Iriga_lgu -> ref_province_lgu.qml.
+PACKAGED_LAYER_STYLES = [
+    ("_bldg_point", "1. Base Layer Building Points.qml"),
+    ("_lgu", "ref_province_lgu.qml"),
+    ("_psa", "ref_province_psa.qml"),
+    ("ref_mbi_cases", "ref_mbi_cases.qml"),
+]
+
+
+def _apply_packaged_layer_style(layer):
+    """Load the QML matching this layer's name from the plugin's "qml styles"
+    folder. Returns the filename applied, or None if nothing matched, the
+    file is missing, or QGIS rejected it."""
+    name = layer.name().lower()
+    for suffix, qml_file in PACKAGED_LAYER_STYLES:
+        if not name.endswith(suffix):
+            continue
+        path = os.path.join(QML_STYLE_DIR, qml_file)
+        if not os.path.isfile(path):
+            return None
+        # Symbology + labeling only: several of these QMLs also carry field
+        # aliases, form layouts and absolute editform paths from the project
+        # they were saved out of, which have no business on a packaged layer.
+        _, ok = layer.loadNamedStyle(
+            path, QgsMapLayer.Symbology | QgsMapLayer.Labeling
+        )
+        if not ok:
+            return None
+        layer.triggerRepaint()
+        return qml_file
+    return None
+
+
 class PackageLayersDialog(QDialog):
 
     # Output layer-name templates. "{citymun}" is replaced with the
@@ -243,6 +291,10 @@ class PackageLayersDialog(QDialog):
         "ref_province_psa": "ref_{citymun}_psa",
         "ref_provincename_bldg_point": "ref_{citymun}_bldg_point",
     }
+
+    # Attribute names stripped from every output table on write, matched
+    # case-insensitively. See the write call for why each one goes.
+    DROPPED_FIELDS = {"fid", "layer", "path"}
 
     # Best-guess field names, checked in order, used to prefill the
     # editable field dropdowns once the selected layers' fields are known.
@@ -342,6 +394,19 @@ class PackageLayersDialog(QDialog):
         self.chk_load_layers.setChecked(False)
         left.addWidget(self.chk_load_layers)
 
+        self.chk_basemap = QCheckBox("Add Google Satellite basemap below the layers")
+        self.chk_basemap.setChecked(False)
+        self.chk_basemap.setEnabled(False)
+        self.chk_basemap.setToolTip(
+            "Adds the same XYZ basemap as HCMGIS > Basemaps > Google Satellite, "
+            "placed at the bottom of the layer tree so it sits underneath "
+            "everything else. Requires the HCMGIS plugin."
+        )
+        self.chk_basemap.setStyleSheet("margin-left: 18px;")
+        # Only meaningful when there are freshly loaded layers to sit under.
+        self.chk_load_layers.toggled.connect(self.chk_basemap.setEnabled)
+        left.addWidget(self.chk_basemap)
+
         self.progress = QProgressBar()
         self.progress.setValue(0)
         left.addWidget(self.progress)
@@ -391,9 +456,12 @@ class PackageLayersDialog(QDialog):
             "<code>ref_CITYMUN_lgu</code><br>"
             "<code>ref_CITYMUN_psa</code><br>"
             "<code>ref_CITYMUN_bldg_point</code></p>"
-            "<p>Any source \"fid\" attribute field is dropped on write, "
-            "so GeoPackage assigns a fresh, unique fid per output table "
-            "(prevents \"UNIQUE constraint failed: fid\" errors).</p>"
+            "<p>The source \"fid\", \"layer\" and \"path\" attribute fields "
+            "are dropped on write. Dropping \"fid\" lets GeoPackage assign a "
+            "fresh, unique one per output table (prevents \"UNIQUE "
+            "constraint failed: fid\" errors); \"layer\" and \"path\" are "
+            "merge leftovers naming the source file, which have no place in "
+            "a packaged deliverable.</p>"
             "<p>The list of city/mun codes and names is always built from "
             "all four selected layers combined, so nothing is missed.</p>"
             "<p>Once this script has run in the session, ANY layer you add "
@@ -420,6 +488,10 @@ class PackageLayersDialog(QDialog):
             "Layers\" group. Best used for spot-checking a few city/mun — "
             "leave it off for a large, national-scale run, since adding "
             "hundreds of groups/layers can slow QGIS down.</li>"
+            "<li>With that ticked, you can also tick \"Add Google Satellite "
+            "basemap below the layers\" to drop the HCMGIS Google Satellite "
+            "imagery at the bottom of the layer tree, underneath everything "
+            "loaded. Needs the HCMGIS plugin installed.</li>"
             "</ol>"
             "<p><i>Tip: if province codes start with 0 (e.g. 013), make "
             "sure the geocode field is stored as text, not a number — "
@@ -567,7 +639,60 @@ class PackageLayersDialog(QDialog):
             if not vlayer.isValid():
                 self._log(f"    WARNING: could not load '{name}' into the project")
                 continue
+            # Styled before the layer is added, so it never renders unstyled.
+            applied = _apply_packaged_layer_style(vlayer)
+            if applied:
+                self._log(f"    styled '{name}' with {applied}")
             QgsProject.instance().addMapLayer(vlayer, False)
+
+    def _expand_packaged_groups(self):
+        """Expand the Packaged Layers tree in the Layers panel itself.
+
+        node.setExpanded(True) alone only sets state that gets saved to the
+        project — the live panel is a QgsLayerTreeView whose expansion is
+        driven by its own (proxy) model, and our group nodes get created and
+        re-parented after the view has already built its items. So the view
+        has to be told directly, through a proxy-mapped index."""
+        view = self.iface.layerTreeView()
+        if view is None:
+            return
+        top = QgsProject.instance().layerTreeRoot().findGroup(TOP_GROUP_NAME)
+        if top is None:
+            return
+
+        groups = [top] + [c for c in top.children() if isinstance(c, QgsLayerTreeGroup)]
+        for node in groups:
+            node.setExpanded(True)
+            # QgsLayerTreeView.node2index(), not the model's: the view's own
+            # returns an index already mapped through its proxy, which is
+            # what setExpanded() needs.
+            index = view.node2index(node)
+            if index.isValid():
+                view.setExpanded(index, True)
+
+    def _add_basemap(self):
+        """Put the Google Satellite XYZ basemap at the bottom of the layer
+        tree, underneath everything just loaded. Reuses the implementation
+        the PSA/LGU comparison tool already ships rather than repeating it."""
+        from .psa_lgu_map_comparison import (
+            GOOGLE_SATELLITE_BASEMAP_NAME,
+            ensure_google_satellite_basemap,
+        )
+
+        # Silent on every failure path (HCMGIS missing, basemap already
+        # there), so check the project rather than trusting a return value.
+        ensure_google_satellite_basemap()
+        present = any(
+            lyr.name().lower() == GOOGLE_SATELLITE_BASEMAP_NAME.lower()
+            for lyr in QgsProject.instance().mapLayers().values()
+        )
+        if present:
+            self._log(f"\nBasemap: '{GOOGLE_SATELLITE_BASEMAP_NAME}' is at the bottom of the layer tree.")
+        else:
+            self._log(
+                "\nWARNING: could not add the Google Satellite basemap — "
+                "the HCMGIS plugin does not appear to be installed."
+            )
 
     def _run(self):
         self.log.clear()
@@ -684,16 +809,21 @@ class PackageLayersDialog(QDialog):
                     else QgsVectorFileWriter.CreateOrOverwriteLayer
                 )
 
-                # GPKG reserves the "fid" column as the table's integer
-                # primary key. If the source layer already carries its own
-                # "fid" attribute (common when it was itself merged from
-                # several source datasets), those values are often not
-                # unique within the filtered subset, which raises
-                # "UNIQUE constraint failed: <table>.fid". Dropping that
-                # attribute here lets GDAL renumber the fid from scratch
-                # for each output table.
+                # "fid": GPKG reserves it as the table's integer primary
+                # key. A source layer carrying its own "fid" attribute
+                # (common when it was itself merged from several datasets)
+                # often has values that are not unique within the filtered
+                # subset, raising "UNIQUE constraint failed: <table>.fid".
+                # Dropping it lets GDAL renumber from scratch per table.
+                #
+                # "layer"/"path": provenance columns Merge Vector Layers
+                # appends, naming the source file each feature came from.
+                # They are noise in a packaged deliverable.
                 fields = lyr.fields()
-                keep_indices = [idx for idx in range(len(fields)) if fields[idx].name().lower() != "fid"]
+                keep_indices = [
+                    idx for idx in range(len(fields))
+                    if fields[idx].name().lower() not in self.DROPPED_FIELDS
+                ]
                 if len(keep_indices) != len(fields):
                     options.attributes = keep_indices
 
@@ -714,6 +844,17 @@ class PackageLayersDialog(QDialog):
                 self._add_group_to_project(gpkg_path, group_id, written_layers)
 
             self.progress.setValue(n)
+
+        # After every group, so the basemap lands beneath all of them.
+        if self.chk_load_layers.isChecked() and self.chk_basemap.isChecked():
+            self._add_basemap()
+
+        if self.chk_load_layers.isChecked():
+            # Queued, not called directly: _auto_organize_layers defers its
+            # own work onto singleShot(0) too, so the layers are not in their
+            # final groups yet. Same-delay timers fire in order, and this one
+            # is queued last, so it runs once the tree has settled.
+            QTimer.singleShot(0, self._expand_packaged_groups)
 
         self._log("\nDone.")
         QMessageBox.information(self, "Finished", f"Packaged {total} city/mun GeoPackage(s) to:\n{output_root}")
