@@ -1,224 +1,18 @@
-# -*- coding: utf-8 -*-
-"""
-Know Your Projection! (Interactive Dialog)
-
-A standalone interactive QGIS tool for diagnosing, identifying and repairing the
-coordinate reference system of Philippine boundary layers - including layers that
-match no CRS at all because they were never georeferenced.
-
-Overview:
-    This module provides a tabbed GUI dialog (ProjectionToolkit) built from a
-    working tab (ProjectionFinderTab) and an embedded documentation tab
-    (HelpInfoTab). It inspects a vector layer's raw extent and attribute table,
-    classifies the coordinate system, tests known Philippine CRS candidates, and
-    where no CRS applies, solves a least-squares affine transform from paired
-    local X/Y and Longitude/Latitude columns.
-
-Cases Handled:
-    - Geographic (decimal degrees): .prj missing; the datum needs identifying
-      among WGS 84, PRS92 and Luzon 1911.
-    - Projected metres: identified by assigning each candidate in turn and
-      reprojecting the extent to EPSG:4326 to see which land in-country.
-    - Web Mercator: recognised from the easting magnitude.
-    - Local / non-georeferenced grid: no EPSG code can apply. Resolved by fitting
-      a 6-parameter affine from control points held in the attribute table, then
-      writing a new georeferenced file. This is the only path that works for
-      arbitrary digitizer, plotter or CAD sheet units.
-
-Architecture:
-    - diagnose_extent: Classifies a raw extent and returns an explanatory report.
-    - detect_control_fields: Locates paired local-X/Y and Longitude/Latitude columns.
-    - fit_affine / _solve3: Least-squares 6-parameter affine solver (no numpy).
-    - scan_candidates: Tries every candidate CRS against an extent, without
-      modifying anything, and reports which place the layer in-country.
-    - ProjectionFinderTab: Main UI containing the layer selector, basemap control,
-      CRS candidate list, affine georeferencing controls and the log pane.
-    - HelpInfoTab: Embedded rich-text documentation presenting the workflow,
-      diagnosis verdicts, a Philippine CRS reference and operational limitations.
-    - ProjectionToolkit: Tabbed container dialog.
-
-Timestamp: 2026-09-09
-Version: 4.6.0
-
-Changelog:
-v4.6.0 (2026-09-09) - Added PRS92 / UTM zones 50N, 51N and 52N (ESRI:102456,
-                       102457, 102458). With the Luzon 1911 UTM zones added in
-                       4.5.0 the candidate list now carries all 18 Philippine
-                       CRS definitions that exist in the PROJ database, plus
-                       WGS 84 and Web Mercator - 23 in total.
-                       + These were missed for the same reason as the Luzon UTM
-                         zones: no EPSG code exists for either datum on a UTM
-                         grid. A prior database search also missed them because
-                         it matched on "PRS92" while the definitions are named
-                         "PRS_1992".
-                       + ESRI:102457 (PRS92 / UTM 51N) added to the Option B
-                         output list, so PRS92 can be used with metres and
-                         national coverage rather than only the PTM zone grid.
-                       + Help: answers directly why the recommended output is
-                         EPSG:32651 and not EPSG:4326, with a worked area
-                         measurement showing square metres against square
-                         degrees. Accuracy is identical; usability is not.
-v4.5.0 (2026-09-09) - Added Luzon 1911 / UTM zones 50N, 51N and 52N
-                       (ESRI:102453, 102454, 102455), taking the candidate list
-                       from 17 to 20.
-                       + These were missed because the list was built from EPSG
-                         codes only, and Luzon 1911 on a UTM grid has no EPSG
-                         code - it exists solely as an ESRI definition. The
-                         combination is common in provincial data digitized in
-                         ArcGIS, so the gap was a real one, not a technicality.
-                       + Help tab: the projected reference table now pairs each
-                         UTM zone with its Luzon 1911 counterpart, and explains
-                         why those codes carry an ESRI prefix.
-v4.4.0 (2026-09-09) - Streamlined all log pane outputs: concise, structured, and
-                       straight to the point without narrative explanations.
-v4.3.0 (2026-09-08) - Detect Known CRS output cut to the essentials: a one-line
-                       tally, the candidate table, the guess, and three lines of
-                       guidance. The explanation of why zone grids cannot be told
-                       apart moved to the Help tab, where it can be read once
-                       rather than after every run.
-                       + Best first guess restored, with its basis stated on the
-                         line beneath it. Where the project already holds
-                         correctly placed layers for the same area, the guess is
-                         the candidate that puts this layer nearest them - real
-                         evidence. With nothing to compare against it falls back
-                         to zone 51N, which covers more of the country than any
-                         other single candidate, and labels itself as a common
-                         default rather than a finding.
-                       + Ties between the datum variants of one zone are broken
-                         by candidate-list order, not by floating-point noise in
-                         the projection maths.
-                       + The chosen row is marked with -> in the table.
-v4.2.0 (2026-09-08) - Detect Known CRS now reports, for every surviving
-                       candidate, the longitude it would place the layer at,
-                       listed west to east. That column is what lets a mapper
-                       who knows the municipality pick the right line at a
-                       glance.
-                       + No automatic "best guess" is offered, and none can be.
-                         These grids differ only in where they start counting,
-                         so re-reading the same numbers under a different zone
-                         slides the layer along with the zone: every candidate
-                         lands in the country AND inside its own declared area
-                         of use, each exactly 2 degrees from the next. Any
-                         ranking built on those tests is self-fulfilling. An
-                         area-of-use ranking was written and discarded for this
-                         reason - it named zone 1 for every layer in the
-                         country. The information needed to choose is not in the
-                         file; it is knowledge of where the town is.
-                       + scan_candidates returns dicts and sorts by implied
-                         longitude; the extent-width ranking is gone.
-v4.1.0 (2026-09-08) - Check Coordinates no longer repeats the candidate
-                       shortlist for a metre grid; that belongs to Detect Known
-                       CRS. It now says plainly that the system cannot be named
-                       from the numbers alone and hands off.
-                       + Dropped the "best first guess" line with it. Ranking
-                         candidates by extent width is not a sound way to choose
-                         between grids that all fit: on a Camalig (Albay, ~123.6E)
-                         layer it nominated PTM zone 5 where zone 4 is the
-                         plausible one. Better to name nothing than to name the
-                         wrong thing confidently.
-                       + Rewrote the "metres on a Philippine map grid" result: it
-                         now explains what a map grid is, gives the two reasons
-                         for the conclusion, and separates what is known (it has
-                         a real system) from what is not (which one).
-                       + Shortened the "can only rule systems out" caveat and
-                         moved it under a plainer heading in Detect Known CRS.
-v4.0.0 (2026-09-08) - Renamed to "Know Your Projection!". Log wording reworked so
-                       it reads for someone who has never met a CRS: the mapper's
-                       terms are kept, but each is explained in plain words where
-                       it appears rather than assumed.
-                       + Check Coordinates (was Diagnose Coordinates) now ends
-                         with a RECOMMENDED COORDINATE SYSTEM section, so a
-                         separate detect run is not needed first. It names one
-                         outright for Web Mercator, gives a safe starting point
-                         for degrees, and for a metre grid shortlists candidates
-                         while stating plainly that the test can only rule
-                         systems out, never confirm one.
-                       + Detect Known CRS (was Auto-Detect) lists only the system
-                         names. The centre coordinates and extent widths were
-                         noise for most readers and invited false confidence.
-                       + Option B result reports "typical miss" and "largest
-                         miss" in metres instead of RMS and residuals; scale,
-                         anisotropy and rotation moved into a technical footer.
-                       + Help: new "Why EPSG:32651 is the Recommended Output"
-                         section; the two fit-report tables replaced with one
-                         plain-language table keyed to the actual log lines.
-                       + Output CRS list gains UTM 50N and 52N, so Palawan and
-                         far-eastern data are covered rather than being written
-                         far outside zone 51N.
-                       + Diagnostic Report renamed Logs; Clear Report to Clear Logs.
-                       + scan_candidates() factored out and shared by the check
-                         and detect paths.
-v3.1.0 (2026-09-08) - Renamed Steps 3 and 4 to Options A and B. They are
-                       alternative routes, not sequential stages: A identifies a
-                       CRS the data already has, B builds one for data that never
-                       had any. Numbering them as consecutive steps implied you
-                       had to pass through both.
-                       + The former "Step 5 - Apply" is gone as a separate stage.
-                         Confirm & Assign CRS and Revert CRS act only on a CRS
-                         previewed in Option A (they are gated on _pending_crs,
-                         which nothing else sets), so they now sit inside the
-                         Option A box where they belong. Option B needs no apply
-                         stage - it writes its own output file.
-                       + Each option carries a one-line note saying which
-                         diagnosis verdict sends you to it.
-                       + Clear Report moved to a plain button under the report.
-v3.0.0 (2026-09-08) - Reworked into the Geometry Repair Toolkit UI convention:
-                       tabbed QDialog with a title bar and separator, shared
-                       GRP_STYLE / LOG_STYLE / BTN_* constants, fixed-width left
-                       control column beside a stretching report pane, and
-                       standard 32 px action buttons.
-                       + New "Help and Information" tab (HelpInfoTab): workflow,
-                         diagnosis verdict reference, Philippine CRS reference
-                         with central meridians and false eastings, a guide to
-                         reading the fit report, and known limitations.
-                       + Dialog is now modeless (show(), as the toolkit does), so
-                         the canvas can be panned and zoomed while comparing a
-                         previewed CRS against imagery. This was the main
-                         practical limitation of the previous exec_() dialog.
-                       + Layer combo now stores layer IDs and resolves through
-                         QgsProject, and refreshes on layersAdded/layersRemoved.
-                         Holding layer pointers in a modeless dialog risked
-                         acting on a deleted layer.
-v2.2.0 (2026-09-08) - Reports re-pitched for a working mapper: standard GIS
-                       terms used directly (CRS, datum, false easting, control
-                       point, affine, RMS), with only the statistics glossed.
-                       Verdicts now show the evidence behind them.
-                       + Axis labels follow the verdict (longitude/latitude vs
-                         easting/northing).
-                       + Fit report adds X/Y scale anisotropy.
-                       + Preview distinguishes a datum offset from a wrong grid.
-v2.1.0 (2026-09-08) - All on-screen messages rewritten for readability; accuracy
-                       figures always reported in metres, including when the
-                       output CRS is in degrees, where the quality thresholds
-                       could not previously trigger correctly.
-v2.0.0 (2026-09-08) - Handles layers that match NO CRS candidate (e.g. Piddig).
-                       + Diagnose step classifies coordinates before guessing.
-                       + Candidate list expanded from 5 to 17 (Luzon 1911 and
-                         PRS92 zones I-V, extra UTM zones).
-                       + Auto-Detect tests every candidate and ranks the hits.
-                       + Local-grid georeferencing via least-squares affine.
-                       + Basemap inserted at the BOTTOM of the layer tree (v1
-                         added it on top, hiding the layer being checked), fixed
-                         the malformed crs= parameter, added Google Hybrid.
-                       + Assign offers to write the .prj sidecar to disk.
-v1.0.0 (2026-09-08) - Initial release. Shortlist of 5 Philippine CRS candidates,
-                       Google Satellite basemap, manual assign (no reprojection).
-"""
-
 import math
 import os
 import traceback
 
+from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QTransform, QIcon
 from qgis.PyQt.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton,
-    QListWidget, QMessageBox, QFileDialog, QGroupBox, QCheckBox,
+    QListWidget, QMessageBox, QGroupBox, QCheckBox, QScrollArea,
     QPlainTextEdit, QTextBrowser, QTabWidget, QFrame
 )
 from qgis.core import (
     QgsProject, QgsVectorLayer, QgsRasterLayer, QgsCoordinateReferenceSystem,
     QgsCoordinateTransform, QgsWkbTypes, QgsFeature, QgsGeometry, QgsPoint,
-    QgsVectorFileWriter, QgsRectangle, QgsProcessingAlgorithm, QgsProcessing,
+    QgsRectangle, QgsProcessingAlgorithm, QgsProcessing,
     QgsProcessingParameterFeatureSource, QgsProcessingOutputString,
     QgsProcessingFeedback, QgsProcessingContext, QgsApplication
 )
@@ -529,7 +323,6 @@ class ProjectionFinderTab(QWidget):
 
         # -- LEFT: CONTROLS ------------------------------------------------
         left = QWidget()
-        left.setFixedWidth(360)
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
         ll.setSpacing(6)
@@ -564,8 +357,9 @@ class ProjectionFinderTab(QWidget):
         ll.addWidget(grp_base)
 
         # Options A and B are alternative routes, not sequential steps: A resolves
-        # a CRS that exists, B builds one that never did. Assigning a CRS belongs
-        # to A alone - B writes a new file and never touches the source layer.
+        # a CRS that exists, B builds one that never did. Both act on the selected
+        # layer through its own edit session - nothing reaches disk until the user
+        # commits via QGIS's own Toggle Editing (Save Edits / Discard Edits).
         grp_crs = QGroupBox("Option A - Identify a Known CRS")
         grp_crs.setStyleSheet(GRP_STYLE)
         cl = QVBoxLayout(grp_crs)
@@ -631,8 +425,9 @@ class ProjectionFinderTab(QWidget):
         fl = QVBoxLayout(grp_fit)
         hint = QLabel("Use when Check Coordinates says the layer was never placed on\n"
                       "the map. Works out where it belongs from longitude/latitude\n"
-                      "columns in the attribute table, then writes a new, corrected\n"
-                      "file. Your original file is never changed.")
+                      "columns in the attribute table, then edits this layer's geometry\n"
+                      "directly in an edit session. Nothing reaches disk until you\n"
+                      "Save Edits (or Discard Edits) via Toggle Editing.")
         hint.setStyleSheet("color:#455a64; font-size:11px;")
         fl.addWidget(hint)
         frow = QHBoxLayout()
@@ -649,16 +444,28 @@ class ProjectionFinderTab(QWidget):
             "Read-only: fits the transform and reports its RMS error. Writes nothing.")
         self.check_fit_btn.clicked.connect(self.check_fit)
         fl.addWidget(self.check_fit_btn)
-        self.georef_btn = QPushButton("Georeference && Save As...")
+        self.georef_btn = QPushButton("Georeference This Layer")
         self.georef_btn.setFixedHeight(32)
         self.georef_btn.setStyleSheet(BTN_EXPORT)
         self.georef_btn.setToolTip(
-            "Apply the fitted transform and write a new georeferenced file.")
+            "Apply the fitted transform to this layer's geometry in an edit "
+            "session. Use Toggle Editing's Save Edits / Discard Edits to keep "
+            "or undo it.")
         self.georef_btn.clicked.connect(self.georeference)
         fl.addWidget(self.georef_btn)
         ll.addWidget(grp_fit)
 
-        root.addWidget(left)
+        # The left column packs two full option groups plus the layer/basemap
+        # controls - taller than it looks, and taller than many laptop screens
+        # once the dialog is shrunk. A scroll area lets the window itself go
+        # short without clipping Option B's buttons off the bottom.
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        left_scroll.setFixedWidth(376)
+        root.addWidget(left_scroll)
 
         # -- RIGHT: REPORT -------------------------------------------------
         right = QWidget()
@@ -1054,11 +861,11 @@ class ProjectionFinderTab(QWidget):
         if rms_m < 5.0:
             grade = "EXCELLENT"
             eval_text = "EXCELLENT (< 5 m error) - High accuracy fit."
-            next_action = "Click 'Georeference & Save As...' to write georeferenced layer."
+            next_action = "Click 'Georeference This Layer', then Save Edits via Toggle Editing."
         elif rms_m < 50.0:
             grade = "ACCEPTABLE"
             eval_text = "ACCEPTABLE (< 50 m error) - Suitable for general mapping; verify against basemap."
-            next_action = "Click 'Georeference & Save As...' to write georeferenced layer."
+            next_action = "Click 'Georeference This Layer', then Save Edits via Toggle Editing."
         else:
             grade = "POOR"
             eval_text = "POOR (>= 50 m error) - Large residuals. Check if columns match identical features."
@@ -1115,27 +922,21 @@ class ProjectionFinderTab(QWidget):
                       "%s  -  no transform available" % layer.name())
             return
 
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save georeferenced layer",
-            os.path.join(os.path.expanduser("~"), layer.name() + "_georef.shp"),
-            "ESRI Shapefile (*.shp);;GeoPackage (*.gpkg)")
-        if not path:
+        if not layer.startEditing():
+            QMessageBox.critical(
+                self, "Cannot Edit Layer",
+                "'%s' could not be put into edit mode. The data source may be "
+                "read-only or locked by another editor." % layer.name())
             return
 
         # QTransform(m11, m12, m21, m22, dx, dy) maps
         #   x' = m11*x + m21*y + dx        y' = m12*x + m22*y + dy
         qt = QTransform(fx[0], fy[0], fx[1], fy[1], fx[2], fy[2])
 
-        geom_type = QgsWkbTypes.displayString(layer.wkbType())
-        mem = QgsVectorLayer("%s?crs=%s" % (geom_type, target.authid()),
-                             layer.name() + "_georef", "memory")
-        mem_dp = mem.dataProvider()
-        mem_dp.addAttributes(layer.fields())
-        mem.updateFields()
-
-        out_feats = []
+        layer.beginEditCommand("Georeference (Option B)")
+        changed = 0
         skipped = 0
-        for feat in layer.getFeatures():
+        for feat in list(layer.getFeatures()):
             g = QgsGeometry(feat.geometry())
             if g.isNull() or g.isEmpty():
                 skipped += 1
@@ -1146,44 +947,31 @@ class ProjectionFinderTab(QWidget):
                 g.transformVertices(
                     lambda p: QgsPoint(fx[0] * p.x() + fx[1] * p.y() + fx[2],
                                        fy[0] * p.x() + fy[1] * p.y() + fy[2]))
-            nf = QgsFeature(mem.fields())
-            nf.setGeometry(g)
-            nf.setAttributes(feat.attributes())
-            out_feats.append(nf)
-        mem_dp.addFeatures(out_feats)
-        mem.updateExtents()
+            layer.changeGeometry(feat.id(), g)
+            changed += 1
+        layer.setCrs(target)
+        layer.endEditCommand()
 
-        opts = QgsVectorFileWriter.SaveVectorOptions()
-        opts.driverName = "GPKG" if path.lower().endswith(".gpkg") else "ESRI Shapefile"
-        opts.fileEncoding = "UTF-8"
-        res = QgsVectorFileWriter.writeAsVectorFormatV3(
-            mem, path, QgsProject.instance().transformContext(), opts)
-        if res[0] != QgsVectorFileWriter.NoError:
-            QMessageBox.critical(
-                self, "Could Not Save",
-                "Failed to write:\n%s\n\n"
-                "Usual causes: the target is locked by another process (the layer "
-                "is already open in QGIS or ArcGIS), or the folder is not writable. "
-                "Try a different output path.\n\n"
-                "Driver message: %s" % (path, res[1]))
-            return
-
-        written = QgsVectorLayer(path, os.path.splitext(os.path.basename(path))[0], "ogr")
-        if written.isValid():
-            QgsProject.instance().addMapLayer(written)
-            self._ensure_basemap()
-            self._zoom_to(written)
+        layer.triggerRepaint()
+        self._ensure_basemap()
+        self._zoom_to(layer)
 
         self._log(
-            "GEOREFERENCE COMPLETE:\n"
-            "  Saved File       : %s\n"
-            "  Features Written : %d\n"
+            "GEOREFERENCE APPLIED (edit session - not yet saved):\n"
+            "  Layer            : %s\n"
+            "  Features Changed : %d\n"
             "  Features Skipped : %d (null/empty geometry)\n"
             "  Output CRS       : %s\n"
-            "  Status           : Added to project and canvas zoomed to extent.\n\n"
+            "  Status           : Layer is now in edit mode. Use Toggle Editing's\n"
+            "                     Save Edits to keep this, or Discard Edits to put\n"
+            "                     the original coordinates back.\n"
+            "  Note             : The CRS label itself is not part of the edit\n"
+            "                     session - Discard Edits restores the geometry but\n"
+            "                     not the CRS. If you discard, also click 'Revert\n"
+            "                     CRS' in Option A to restore the original label.\n\n"
             "-------------------------------------------------------------\n\n%s"
-            % (path, len(out_feats), skipped, target.authid(), txt),
-            "%s  -  written to %s" % (layer.name(), os.path.basename(path)))
+            % (layer.name(), changed, skipped, target.authid(), txt),
+            "%s  -  georeferenced, edit session open" % layer.name())
 
     # ---------------- Option A: apply / undo ----------------
     def assign_crs(self):
@@ -1285,9 +1073,9 @@ class HelpInfoTab(QWidget):
 
           <!-- Non-destructive callout -->
           <div style="background-color: #f9fafb; border: 1px solid #e5e7eb; border-left: 4px solid #4b5563; padding: 10px 14px; margin-bottom: 16px;">
-            <b style="color: #111827;">Non-Destructive by Default:</b>
+            <b style="color: #111827;">Nothing Reaches Disk Without Your Say-So:</b>
             <span style="color: #374151;">
-              Diagnosis and preview only read the layer. Assigning a CRS <b>re-labels</b> the existing coordinates in the current session; it never moves geometry. Nothing reaches disk unless you accept the <i>.prj</i> prompt or use <i>Georeference &amp; Save As</i>, which writes a <b>new</b> file and leaves the source untouched. Use <b>Revert CRS</b> to undo an in-session assignment.
+              Diagnosis and preview only read the layer. Assigning a CRS in Option A <b>re-labels</b> the existing coordinates in the current session; it never moves geometry, and nothing reaches disk unless you accept the <i>.prj</i> prompt. <i>Georeference This Layer</i> in Option B edits the layer's geometry directly, but only inside an ordinary QGIS edit session - it stays there until you use Toggle Editing's <b>Save Edits</b> or <b>Discard Edits</b>. Use <b>Revert CRS</b> to undo an in-session CRS assignment (from either option).
             </span>
           </div>
 
@@ -1310,7 +1098,7 @@ class HelpInfoTab(QWidget):
             </tr>
             <tr style="background-color: #f9fafb;">
               <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Option B</td>
-              <td style="border-bottom: 1px solid #f3f4f6;"><b>Georeference a Local Grid.</b> Click <i>Check Control Points</i> (read-only) to fit the transform and see its RMS error, then <i>Georeference &amp; Save As</i> to write a corrected copy. There is no assign stage here - the output file carries its CRS already, and the source layer is left untouched.</td>
+              <td style="border-bottom: 1px solid #f3f4f6;"><b>Georeference a Local Grid.</b> Click <i>Check Control Points</i> (read-only) to fit the transform and see its RMS error, then <i>Georeference This Layer</i> to apply it. This edits the layer's geometry in an edit session - use Toggle Editing's Save Edits to keep it, or Discard Edits to put the original coordinates back.</td>
             </tr>
             <tr style="background-color: #ffffff;">
               <td style="font-weight: bold; vertical-align: top; color: #111827;">Verify</td>
@@ -1463,7 +1251,7 @@ class HelpInfoTab(QWidget):
             Why EPSG:32651 is the Recommended Output
           </h3>
           <div style="color: #374151; font-size: 11px; margin-bottom: 10px;">
-            Option B has to write the corrected file in <i>some</i> coordinate system, and that choice is yours in the <b>Output CRS</b> box. EPSG:32651 (WGS 84 / UTM Zone 51N) is the default for four reasons:
+            Option B has to place the corrected geometry in <i>some</i> coordinate system, and that choice is yours in the <b>Output CRS</b> box. EPSG:32651 (WGS 84 / UTM Zone 51N) is the default for four reasons:
           </div>
           <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 10px; border: 1px solid #e5e7eb; font-size: 11px;">
             <tr style="background-color: #ffffff;">
@@ -1551,6 +1339,13 @@ class ProjectionToolkit(QDialog):
         icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', 'projection_finder.svg')
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
+        # QDialog hides the minimize/maximize buttons by default; add them
+        # back so the window can be maximized, not just edge-dragged, on
+        # screens much smaller or larger than the design size below.
+        self.setWindowFlags(self.windowFlags()
+                             | Qt.WindowMinimizeButtonHint
+                             | Qt.WindowMaximizeButtonHint)
+        self.setMinimumSize(820, 520)
         self.resize(1100, 720)
         self._build()
 
