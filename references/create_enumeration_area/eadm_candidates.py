@@ -686,6 +686,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
             from .helpers.style import apply_qml_to_layer
 
             styles_map = {
+                self.EXTRACTED_BUILDINGS_OUTPUT: "extracted_bldgpts.qml",
                 self.DELINEATED_OUTPUT: "ea_output.qml",
                 self.MERGED_OUTPUT: "ea_output.qml",
                 self.DELINEATION_CANDIDATE_OUTPUT: "delineation_candidates.qml",

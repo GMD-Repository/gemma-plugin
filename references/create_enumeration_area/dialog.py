@@ -4410,7 +4410,7 @@ class EALauncherDialog(QDialog):
                 # Output layers in exact top-to-bottom order for each group with allowed execution modes
                 # tuple: (out_key, target_name, target_group, qml_filename, is_permanent, file_path, allowed_modes)
                 output_mapping_all = [
-                    ('EXTRACTED_BUILDINGS_OUTPUT', f"{geo5}_extracted_bldgpts", reference_group, "1. Base Layer Building Points.qml", False, None, ["delineation", "merging", "all"]),
+                    ('EXTRACTED_BUILDINGS_OUTPUT', f"{geo5}_extracted_bldgpts", reference_group, "extracted_bldgpts.qml", False, None, ["delineation", "merging", "all"]),
                     ('DELINEATED_OUTPUT', f"{geo5}_delineated_ea2026", eas_group, "ea_output.qml", True, delineated_file, ["delineation", "all"]),
                     ('MERGED_OUTPUT', f"{geo5}_merged_ea2026", eas_group, "ea_output.qml", True, merged_file, ["merging", "all"]),
                     ('DELINEATION_CANDIDATE_OUTPUT', f"{geo5}_delineation_candidates", candidates_group, "delineation_candidates.qml", False, None, ["delineation", "all"]),
