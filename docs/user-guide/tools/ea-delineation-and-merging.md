@@ -122,7 +122,7 @@ To provide a clean and focused workflow, Tab 2 is split into two dedicated sub-t
 
 | Output Layer | Sub-Tab Mode | Type | Style File (.qml) | Description |
 |--------------|--------------|------|-------------------|-------------|
-| **Extracted Building Points** | Delineation & Merging | Vector (Point) | `1. Base Layer Building Points.qml` | Extracted building points with aggregated household counts (`<geocode>_extracted_bldgpts`). |
+| **Extracted Building Points** | Delineation & Merging | Vector (Point) | `extracted_bldgpts.qml` | Extracted building points with aggregated household counts (`<geocode>_extracted_bldgpts`). Styled with brown symbology for distinct visibility during feature selection. |
 | **Delineated EAs Layer** | Delineation | Vector (Polygon) | `ea_output.qml` | Permanent GeoPackage layer containing candidate EAs evaluated for delineation (`<geocode>_delineated_ea2026.gpkg`). |
 | **Proposed Boundary Cut Lines** | Delineation | Vector (Line) | `eadel_update_lines.qml` | Permanent GeoPackage line layer (`<geocode>_eadel_update.gpkg`) representing proposed boundary cut lines generated from road/river/cluster splits. |
 | **Candidate for Delineation Layer** | Delineation | Vector (Polygon) | `delineation_candidates.qml` | Layer containing EAs identified as candidates for delineation (>300 HH). Styled with amber highlight. |

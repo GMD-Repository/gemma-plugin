@@ -29,6 +29,7 @@ class TestAutoArrange(unittest.TestCase):
 
     def test_find_qml_style_for_layer(self):
         """Test base layer QML style matching for official style files."""
+        self.assertEqual(self.mod.find_qml_style_for_layer("01716_extracted_bldgpts"), "extracted_bldgpts.qml")
         self.assertEqual(self.mod.find_qml_style_for_layer("01716_bldg_point"), "1. Base Layer Building Points.qml")
         self.assertEqual(self.mod.find_qml_style_for_layer("01716_sf_landmark"), "2. Base Layer Landmark.qml")
         self.assertEqual(self.mod.find_qml_style_for_layer("01716_old_landmark"), "2. Base Layer Landmark.qml")
