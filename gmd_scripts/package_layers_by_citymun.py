@@ -774,10 +774,13 @@ class PackageLayersAlgorithm(QgsProcessingAlgorithm):
             from qgis.PyQt.QtWidgets import QApplication as _QApplication
             app = _QApplication.instance()
             if app is not None and app.property("appType") != "headless":
+                # exec_(), not show(): dlg is a local, so once this method
+                # returns the only thing keeping the dialog alive is its Qt
+                # parent. exec_() holds it in a proper modal event loop for
+                # as long as it is open. Safe on the main thread via
+                # FlagNoThreading.
                 dlg = PackageLayersDialog(qgis.utils.iface)
-                dlg.show()
-                dlg.raise_()
-                dlg.activateWindow()
+                dlg.exec_()
             else:
                 message = "No GUI available: Package Layers by City/Mun requires QGIS Desktop."
         except Exception as e:
