@@ -12,10 +12,10 @@ from tests.mocks.sample_data import create_sample_polygon_layer, create_sample_p
 setup_qgis_mock_if_needed()
 
 try:
-    from qgis.core import QgsVectorLayer, QgsFields, QgsField, QgsFeature
+    from qgis.core import QgsVectorLayer, QgsFields, QgsField
     from qgis.PyQt.QtCore import QVariant
 except ImportError:
-    from tests.mocks.qgis_mock import QgsVectorLayer, QgsFields, QgsField, QgsFeature, MockQVariant as QVariant
+    from tests.mocks.qgis_mock import QgsVectorLayer, QgsFields, QgsField, MockQVariant as QVariant
 
 
 class TestPsaLguComparisonPanel(unittest.TestCase):
@@ -48,22 +48,9 @@ def _layer_with_fields(name, field_specs):
     return layer
 
 
-def _layer_with_features(name, field_specs, rows):
-    """Like _layer_with_fields(), but also adds one feature per row in
-    *rows* (a list of attribute-value lists, same order as field_specs)."""
-    layer = _layer_with_fields(name, field_specs)
-    feats = []
-    for row in rows:
-        feat = QgsFeature(layer.fields())
-        feat.setAttributes(list(row))
-        feats.append(feat)
-    layer.dataProvider().addFeatures(feats)
-    return layer
-
-
 class TestGeocodeFieldResolution(unittest.TestCase):
-    """Regression tests for the bug where the review panel's ref_mbi_cases
-    filter matched nothing for a barangay that genuinely had cases.
+    """Regression tests for the bug where the review panel's barangay
+    dropdown could show the wrong geocode in its label.
 
     Root cause: the algorithm appends the matched barangay's first8-
     truncated geocode under the name "geocode", but PSA/LGU source layers
@@ -72,9 +59,7 @@ class TestGeocodeFieldResolution(unittest.TestCase):
     silently lands under a different name ("geocode_2", ...) to avoid a
     collision. The panel was doing a blind case-insensitive "geocode" name
     search, which -- whenever that collision happened -- kept finding the
-    ORIGINAL, untruncated source field instead of the correct one. That
-    wrong value fed the ref_mbi_cases filter expression, which then never
-    matched any case even though the barangay had real ones.
+    ORIGINAL, untruncated source field instead of the correct one.
 
     _geocode_field() fixes this by preferring the GEOCODE_FIELD_PROPERTY
     tag the algorithm now stamps onto its Matched PSA/LGU outputs, which
@@ -112,75 +97,6 @@ class TestGeocodeFieldResolution(unittest.TestCase):
     def test_returns_none_without_any_geocode_field(self):
         layer = _layer_with_fields("Other", [("name", QVariant.String)])
         self.assertIsNone(self.mod._geocode_field(layer))
-
-
-class TestMbiCasesFilterExpression(unittest.TestCase):
-    """Tests for _mbi_cases_filter_expression, including the exact real-
-    world scenario reported after the GEOCODE_FIELD_PROPERTY fix: a
-    barangay code like "05012010" (8 characters: pppmmbbb) failing to
-    match ref_mbi_cases records whose own geocode is the longer, case-
-    level form "0501201000000" (pppmmbbb + a case/EA suffix).
-
-    _mbi_cases_filter_expression compares in Python via _first8() and
-    returns a "$id IN (...)" expression instead of a QGIS field-comparison
-    expression, so this can assert on exact returned content -- unlike a
-    QgsExpression.quotedColumnRef()/quotedString()-built expression, which
-    the mock can't render faithfully."""
-
-    def setUp(self):
-        self.mod = importlib.import_module("gmd_scripts.psa_lgu_comparison_panel")
-
-    def _fake_panel(self, barangay_geocodes):
-        panel = object.__new__(self.mod.PsaLguComparisonPanel)
-        panel._barangay_geocodes = barangay_geocodes
-        return panel
-
-    def test_none_when_barangay_has_no_known_geocode(self):
-        layer = _layer_with_fields("ref_mbi_cases", [("geocode", QVariant.String)])
-        panel = self._fake_panel({})
-        self.assertIsNone(panel._mbi_cases_filter_expression(layer, key=1))
-
-    def test_none_when_layer_has_no_geocode_field(self):
-        layer = _layer_with_fields("ref_mbi_cases", [("case_id", QVariant.String)])
-        panel = self._fake_panel({1: "00010201"})
-        self.assertIsNone(panel._mbi_cases_filter_expression(layer, key=1))
-
-    def test_matches_a_case_level_geocode_by_its_barangay_prefix(self):
-        """The exact reported scenario: PSA's own appended geocode is the
-        short barangay form "05012010", ref_mbi_cases stores the longer
-        case-level form "0501201000000" -- these must still match, and a
-        case from a DIFFERENT barangay must not. Features are added in
-        this order, so the mock assigns them ids 1, 2, 3 in turn."""
-        layer = _layer_with_features("ref_mbi_cases", [("geocode", QVariant.String)], [
-            ["0501201000000"],  # id 1, same barangay -- matches
-            ["0501201099999"],  # id 2, same barangay, different case suffix -- matches
-            ["0501202000000"],  # id 3, different barangay -- must not match
-        ])
-        panel = self._fake_panel({1: "05012010"})
-        self.assertEqual(panel._mbi_cases_filter_expression(layer, key=1), "$id IN (1, 2)")
-
-    def test_returns_always_false_expression_when_barangay_has_no_cases(self):
-        """A barangay with zero matching ref_mbi_cases records must show
-        none, not silently keep whatever filter the previous barangay
-        left behind."""
-        layer = _layer_with_features("ref_mbi_cases", [("geocode", QVariant.String)], [
-            ["0501202000000"],  # a different barangay entirely
-        ])
-        panel = self._fake_panel({1: "05012010"})
-        self.assertEqual(panel._mbi_cases_filter_expression(layer, key=1), "$id IN (-1)")
-
-    def test_first8_stringifies_non_string_values_before_comparing(self):
-        """_first8() applies str() before truncating, so a case geocode
-        that happens to come back as a plain Python int/float (rather
-        than text) is still compared correctly -- this is what makes the
-        comparison consistent regardless of how a particular provider
-        happens to type the column, unlike letting a QGIS expression's own
-        to_string() decide the rendering at query time."""
-        layer = _layer_with_features("ref_mbi_cases", [("geocode", QVariant.String)], [
-            [501201000000],  # id 1, stored as a plain Python int, not text
-        ])
-        panel = self._fake_panel({1: "50120100"})
-        self.assertEqual(panel._mbi_cases_filter_expression(layer, key=1), "$id IN (1)")
 
 
 if __name__ == "__main__":

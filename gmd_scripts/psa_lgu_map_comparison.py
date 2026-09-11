@@ -907,11 +907,8 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
         # layer (Geocode Field auto-detection looks for exactly that name),
         # so the appended column silently renames to "geocode_2" and a name
         # search keeps finding the ORIGINAL, untruncated source attribute
-        # instead of this run's first8-truncated one. That wrong value
-        # previously only fed a cosmetic dropdown label; it now also feeds
-        # the review panel's ref_mbi_cases filter, where a mismatched
-        # geocode means the filter matches nothing even though the barangay
-        # genuinely has cases.
+        # instead of this run's first8-truncated one -- which shows up as
+        # the wrong code in the review panel's barangay dropdown label.
         GEOCODE_FIELD_PROPERTY = "psalgu_geocode_field"
 
         fields_matched_psa = QgsFields(layer_psa.fields())
@@ -938,8 +935,8 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
                 feedback.pushInfo(self.tr(
                     f"Note: the {label} layer already has a 'geocode' field, so this run's "
                     f"first-8-digit barangay code was added as '{resolved}' instead. The review "
-                    f"panel is tagged to find it there, so its labels and ref_mbi_cases filtering "
-                    f"still use the correct value rather than the original field."
+                    f"panel is tagged to find it there, so its barangay dropdown label still uses "
+                    f"the correct value rather than the original field."
                 ))
 
         fields_unmatched_psa = QgsFields(layer_psa.fields())

@@ -48,10 +48,10 @@ GEOCODE_FIELD = "geocode"
 # reliable for this: when the source PSA/LGU layer already had its own
 # "geocode" field, the algorithm's appended column silently renames to
 # "geocode_2", and a name search keeps finding the ORIGINAL, untruncated
-# source attribute instead. That wrong value used to only feed a cosmetic
-# dropdown label; it now also feeds the ref_mbi_cases filter below, where a
-# mismatched geocode means the filter matches nothing even though the
-# barangay genuinely has cases -- this is what the property lookup fixes.
+# source attribute instead -- which shows up as the wrong code in the
+# barangay dropdown label, and would also feed any future geocode-prefix
+# filter (like the fallback path in _filter_expression below) the wrong
+# value. This is what the property lookup fixes.
 GEOCODE_FIELD_PROPERTY = "psalgu_geocode_field"
 
 # On the Unmatched Building output only: the match_id of the barangay the
@@ -71,13 +71,6 @@ LGU_MATCHED_SUFFIX = "_lgu_matched"
 BUILDING_MATCHED_LAYER_NAME = "building points inside lgu boundary"
 BUILDING_UNMATCHED_LAYER_NAME = "building points outside lgu boundary"
 
-# Fixed name Package Layers by City/Mun always writes the cases table under
-# (see package_layers_by_citymun.py's LAYER_NAME_TEMPLATES) -- not an output
-# of this algorithm, so unlike the layers above it is never passed in by id;
-# it is looked up by name in the project each time it's needed, which also
-# means the panel keeps filtering it correctly if it's reloaded mid-session.
-MBI_CASES_LAYER_NAME = "ref_mbi_cases"
-
 # Grow the zoom extent by this fraction so the barangay is not flush against
 # the canvas edge -- same framing factor the Check and Update dialog uses.
 ZOOM_PADDING_RATIO = 0.15
@@ -92,19 +85,6 @@ def _field_lookup(layer, name):
         if field.name().lower() == name.lower():
             return field.name()
     return None
-
-
-def _first8(value):
-    """First 8 characters of a value's string form -- mirrors first8() in
-    psa_lgu_map_comparison.py exactly (duplicated rather than imported,
-    same headless-safety convention as GEOCODE_FIELD/MATCH_ID_FIELD
-    above). Used to compare a barangay's own 8-character code against a
-    ref_mbi_cases record's longer, case-level geocode (e.g. barangay
-    "05012010" vs a case geocode like "0501201000000") -- see
-    _mbi_cases_filter_expression()."""
-    if value is None:
-        return ""
-    return str(value).strip()[:8]
 
 
 def _geocode_field(layer):
@@ -199,10 +179,6 @@ class PsaLguComparisonPanel(QDockWidget):
         self.lgu_layer_id = lgu_layer_id
         self.building_layer_id = building_layer_id
         self.unmatched_building_layer_id = unmatched_building_layer_id
-        # key (match_id/geocode from the PSA layer) -> that barangay's own
-        # geocode value, rebuilt by populate(). Used to filter ref_mbi_cases,
-        # which carries no match_id of its own -- see _mbi_cases_filter_expression.
-        self._barangay_geocodes = {}
         self.setAllowedAreas(
             Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea
             | Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea
@@ -330,24 +306,12 @@ class PsaLguComparisonPanel(QDockWidget):
         return (QgsProject.instance().mapLayer(self.unmatched_building_layer_id)
                 if self.unmatched_building_layer_id else None)
 
-    def mbi_cases_layer(self):
-        """The ref_mbi_cases layer, if one is loaded in the project. Found
-        by name rather than id: it is not one of this algorithm's own
-        outputs, so nothing hands the panel its id -- it may equally have
-        been loaded via Package Layers by City/Mun or added by hand, before
-        or after this comparison run."""
-        for layer in QgsProject.instance().mapLayers().values():
-            if isinstance(layer, QgsVectorLayer) and layer.name().lower() == MBI_CASES_LAYER_NAME:
-                return layer
-        return None
-
     def _filterable_layers(self):
         """PSA/LGU Matched and the Matched Building layer, when present --
         every layer that should be isolated to one barangay by simple field
-        equality. The Unmatched Building layer and ref_mbi_cases are scoped
-        separately (see _apply_filter/_clear_filter): the former needs an OR
-        of two fields instead of one, and the latter has no match_id of its
-        own and is matched by geocode prefix instead."""
+        equality. The Unmatched Building layer is scoped separately (see
+        _apply_filter/_clear_filter) since it needs an OR of two fields
+        instead of one."""
         return (self.psa_layer(), self.lgu_layer(), self.building_layer())
 
     def set_layers(self, psa_layer_id, lgu_layer_id, building_layer_id=None,
@@ -385,7 +349,6 @@ class PsaLguComparisonPanel(QDockWidget):
 
         seen = set()
         entries = []
-        self._barangay_geocodes = {}
         for feat in layer.getFeatures():
             key = feat[key_field] if key_field else feat.id()
             if key is None or key in seen:
@@ -394,8 +357,6 @@ class PsaLguComparisonPanel(QDockWidget):
 
             name = str(feat[name_field]).strip() if name_field and feat[name_field] is not None else ""
             code = str(feat[geocode_field]).strip() if geocode_field and feat[geocode_field] is not None else ""
-            if code:
-                self._barangay_geocodes[key] = code
             if name and code:
                 label = "{} - {}".format(name, code)
             else:
@@ -468,54 +429,12 @@ class PsaLguComparisonPanel(QDockWidget):
             return None
         return " OR ".join("({})".format(p) for p in parts)
 
-    def _mbi_cases_filter_expression(self, layer, key):
-        """Return the "$id IN (...)" expression that isolates barangay
-        *key* on the ref_mbi_cases layer, or None when it can't be built.
-
-        ref_mbi_cases is not an output of this algorithm and carries no
-        match_id of its own, so it can't be filtered by the same field-
-        equality expression as the PSA/LGU/Building layers. Its geocode
-        values are also typically case-level (longer than a barangay's 8
-        characters, e.g. a case geocode like "0501201000000" for barangay
-        "05012010"), so barangay membership is decided by the first 8
-        characters -- the same first8() rule the comparison algorithm
-        itself uses to match PSA and LGU barangays.
-
-        That comparison is done here in Python (via _first8(), feature by
-        feature) and expressed as "$id IN (...)" rather than as a QGIS
-        expression doing the equivalent left(to_string(field), 8) = 'xxx'
-        -- a provider that reports this field as numeric can render it via
-        to_string() differently than Python's str() does (a trailing
-        ".0", or a leading zero already lost further upstream), silently
-        breaking a field-comparison expression. Comparing in Python keeps
-        this exactly consistent with how every other geocode comparison
-        in this tool already works, regardless of the field's declared
-        type.
-
-        Returns "$id IN (-1)" (matches nothing -- no real feature has that
-        id) rather than None when nothing in ref_mbi_cases belongs to this
-        barangay, so the layer explicitly shows no cases instead of
-        keeping whatever filter was left over from the barangay reviewed
-        before it."""
-        geocode_field = _field_lookup(layer, GEOCODE_FIELD)
-        code = self._barangay_geocodes.get(key)
-        if not geocode_field or not code:
-            return None
-        target = _first8(code)
-        matching_ids = [
-            feat.id() for feat in layer.getFeatures()
-            if _first8(feat[geocode_field]) == target
-        ]
-        if not matching_ids:
-            return "$id IN (-1)"
-        return "$id IN ({})".format(", ".join(str(fid) for fid in matching_ids))
-
     def _apply_filter(self, key):
-        """Restrict the Matched PSA, Matched LGU, Matched Building,
-        Unmatched Building and ref_mbi_cases layers to just barangay *key*,
-        via setSubsetString, so nothing from the rest of the barangays --
-        polygons, building points or cases -- is drawn underneath the one
-        being reviewed."""
+        """Restrict the Matched PSA, Matched LGU, Matched Building and
+        Unmatched Building layers to just barangay *key*, via
+        setSubsetString, so nothing from the rest of the barangays --
+        polygons or building points, inside or outside the boundary -- is
+        drawn underneath the one being reviewed."""
         for layer in self._filterable_layers():
             if layer is None or not layer.isValid():
                 continue
@@ -529,17 +448,11 @@ class PsaLguComparisonPanel(QDockWidget):
             if expression:
                 unmatched_building.setSubsetString(expression)
 
-        mbi_cases = self.mbi_cases_layer()
-        if mbi_cases is not None and mbi_cases.isValid():
-            expression = self._mbi_cases_filter_expression(mbi_cases, key)
-            if expression:
-                mbi_cases.setSubsetString(expression)
-
     def _clear_filter(self):
-        """Remove any barangay filter from the Matched PSA/LGU/Building,
-        Unmatched Building and ref_mbi_cases layers, restoring the full set
-        of features to view."""
-        layers = self._filterable_layers() + (self.unmatched_building_layer(), self.mbi_cases_layer())
+        """Remove any barangay filter from the Matched PSA/LGU/Building and
+        Unmatched Building layers, restoring the full set of features to
+        view."""
+        layers = self._filterable_layers() + (self.unmatched_building_layer(),)
         for layer in layers:
             if layer is not None and layer.isValid() and layer.subsetString():
                 layer.setSubsetString("")

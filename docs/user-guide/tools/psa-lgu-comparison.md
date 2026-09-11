@@ -66,7 +66,6 @@ When the algorithm finishes execution, the **PSA - LGU Comparison Review** dock 
 1. **Barangay Navigation**: Select any matched barangay from the dropdown or use the **Previous** and **Next** buttons to inspect boundaries sequentially.
 2. **Synchronized Canvas Zoom**: The map canvas automatically centers and zooms to the combined extent of both PSA and LGU boundary polygons with a 15% margin padding.
 3. **Dynamic Point Scoping**: Building points inside and outside the boundary are automatically filtered to show only features associated with the currently active barangay.
-4. **Cases Layer Scoping**: If a `ref_mbi_cases` layer is loaded in the project (e.g. from **Package Layers by City/Mun**), it is filtered to the active barangay too, matched on the first 8 characters of its own geocode field — no separate setup needed, the panel finds it by name.
 
 ## Supported Geometry Types
 
