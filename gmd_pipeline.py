@@ -43,6 +43,7 @@ class GMDPipeline(object):
         self.toolbar = None
         self.geometry_toolkit_dlg = None
         self.geometry_legacy_dlg = None
+        self.package_layers_dlg = None
         self.check_update_dlg = None
         self.push_dlg = None
         self.check_and_update_action = None
@@ -188,6 +189,7 @@ class GMDPipeline(object):
         check_and_update_icon = QIcon(os.path.dirname(__file__) + "/icons/check_and_update.svg")
         compare_boundaries_icon = QIcon(os.path.dirname(__file__) + "/icons/compare_boundaries.svg")
         projection_finder_icon = QIcon(os.path.dirname(__file__) + "/icons/projection_finder.svg")
+        package_layers_icon = QIcon(os.path.dirname(__file__) + "/icons/package_layers.svg")
 
         # 1. Updating of Boundaries Submenu
         self.updating_boundaries_menu = QMenu(u'Updating of Boundaries')
@@ -229,6 +231,10 @@ class GMDPipeline(object):
         self.geometry_legacy_action = QAction(geom_toolkit_icon, "Geometry Check & Repair (Legacy)", self.iface.mainWindow())
         self.geometry_legacy_action.triggered.connect(self.show_geometry_legacy)
         self.others_menu.addAction(self.geometry_legacy_action)
+
+        self.package_layers_action = QAction(package_layers_icon, "Package Layers by City/Mun", self.iface.mainWindow())
+        self.package_layers_action.triggered.connect(self.show_package_layers_dialog)
+        self.others_menu.addAction(self.package_layers_action)
 
         # Gemma Toolbar (Ordered Chronologically: Check and Update -> Create EAs -> Package for QField)
         self.toolbar = self.iface.addToolBar("Gemma Toolbar")
@@ -303,6 +309,24 @@ class GMDPipeline(object):
         self.geometry_legacy_dlg.show()
         self.geometry_legacy_dlg.raise_()
         self.geometry_legacy_dlg.activateWindow()
+
+    def show_package_layers_dialog(self):
+        """Open the Package Layers by City/Mun dialog."""
+        from .gmd_scripts.package_layers_by_citymun import PackageLayersDialog
+
+        # Guard against a stale C++ wrapper from a previously closed dialog
+        try:
+            if self.package_layers_dlg is not None:
+                self.package_layers_dlg.isVisible()
+        except RuntimeError:
+            self.package_layers_dlg = None
+
+        if self.package_layers_dlg is None:
+            self.package_layers_dlg = PackageLayersDialog(self.iface)
+
+        self.package_layers_dlg.show()
+        self.package_layers_dlg.raise_()
+        self.package_layers_dlg.activateWindow()
 
     def show_package_dialog(self):
         """

@@ -1,6 +1,6 @@
 # <img src="/icons/compare_boundaries.svg" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> PSA - LGU Boundary Comparison
 
-The **PSA - LGU Boundary Comparison** tool provides an automated auditing workflow that compares official PSA reference boundaries against LGU-submitted boundary polygons and geotagged building point layers. It combines geocode-based polygon matching, whole-map Procrustes alignment transformations, and spatial containment checks to audit boundary discrepancies and identify mis-allocated building points.
+The **PSA - LGU Boundary Comparison** tool provides an automated auditing workflow that compares official PSA reference boundaries against LGU-submitted boundary polygons and geotagged building point layers. It combines geocode-based polygon matching with spatial containment checks to audit boundary discrepancies and identify mis-allocated building points.
 
 ## Access
 
@@ -13,7 +13,6 @@ The **PSA - LGU Boundary Comparison** tool provides an automated auditing workfl
 Use this tool when:
 
 - Auditing administrative boundaries submitted by Local Government Units (LGUs) against official PSA reference boundaries.
-- Distinguishing between genuine boundary disagreements and digitization artifacts caused by poorly georeferenced raster basemaps.
 - Validating whether geotagged building points physically fall inside the barangay declared in their geocode attributes.
 - Inspecting matched barangays side-by-side using an interactive review dock panel in QGIS.
 
@@ -30,30 +29,6 @@ Use this tool when:
 | **Building Point Layer** | Vector Layer (Point) | Geotagged building point layer to evaluate against barangay boundaries (auto-detects layers containing `bldgpts`, `bldg`, etc.) |
 | **Geocode Field (Building Point)** | Table Field | Geocode attribute field on the building point layer |
 
-### Alignment Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| **Align LGU boundary onto PSA boundary** | Boolean | `True` | Applies a global best-fit mathematical transformation to reposition the entire LGU boundary onto the PSA boundary before evaluating building points |
-| **Alignment transform** | Enum | `Similarity` | Mathematical transformation model used for the global alignment: `Similarity`, `Rigid`, or `Affine` |
-
-## Transformation Models
-
-LGU boundaries are frequently digitized from older satellite imagery or scanned maps with slight ground-resolution or rotational drift. Rather than altering individual barangays independently (which would introduce artificial gaps or overlaps along shared edges), the tool applies a single **global 2D transformation** across all matched polygons:
-
-1. **Similarity (Recommended / Default)**:
-   - 4 parameters: Shift ($t_x, t_y$), rotation angle ($\theta$), and uniform scale factor ($s$).
-   - Preserves angles and polygon proportions exactly while absorbing scale variations caused by ground resolution differences:
-     $$\begin{pmatrix} x' \\ y' \end{pmatrix} = s \begin{pmatrix} \cos\theta & -\sin\theta \\ \sin\theta & \cos\theta \end{pmatrix} \begin{pmatrix} x \\ y \end{pmatrix} + \begin{pmatrix} t_x \\ t_y \end{pmatrix}$$
-2. **Rigid**:
-   - 3 parameters: Shift ($t_x, t_y$) and rotation angle ($\theta$) only.
-   - Preserves exact ground distances without resizing. Useful when LGU boundaries must not be scaled.
-3. **Affine**:
-   - 6 parameters: Shift, rotation, independent X/Y scaling, and shear.
-   - Absorbs maximum distortion when base imagery exhibits non-uniform stretching across axes.
-
-Whatever discrepancy remains after alignment represents genuine cartographic disagreement between PSA and LGU boundaries, rather than a georeferencing artifact.
-
 ## How It Works
 
 1. **Geocode Prefix Matching**:
@@ -61,17 +36,12 @@ Whatever discrepancy remains after alignment represents genuine cartographic dis
    - Ignores name spellings and trailing digits, preventing mismatches caused by orthographic variations.
    - Preserves multipart polygons (such as barangays with islands).
 
-2. **Global Alignment & Iterative Closest Point (ICP)**:
-   - Computes centroid-based Procrustes transformation across all matched barangay pairs.
-   - Refines alignment through boundary-contour Iterative Closest Point (ICP) optimization.
-   - Reports residual discrepancy in meters across the municipality and flags the maximum error.
-
-3. **Building Point Containment Audit**:
+2. **Building Point Containment Audit**:
    - Evaluates each point against the specific polygon matching its own 8-character geocode.
-   - When alignment is active, containment is satisfied if the point falls inside the aligned LGU polygon **or** the corresponding PSA polygon.
+   - Containment is satisfied when the point falls inside the LGU polygon for that barangay.
    - Assigns `match_id` and `in_match_id` to allow building points to be scoped per barangay during review.
 
-4. **Automated Grouping & Basemap**:
+3. **Automated Grouping & Basemap**:
    - Bundles all generated output layers into a dedicated `<code> PSA - LGU Comparison` Layer Tree group.
    - Unchecks the original input layers to focus the map canvas on comparison results.
    - Automatically loads a `Google Satellite` XYZ basemap at the bottom of the layer stack if the HCMGIS plugin is available.
@@ -82,8 +52,6 @@ Whatever discrepancy remains after alignment represents genuine cartographic dis
 |--------------|----------|------------------|
 | `<code>_PSA_Matched` | Polygon | Blue outline (`#1E88E5`), labeled with PSA barangay name |
 | `<code>_LGU_Matched` | Polygon | Yellow outline (`#FBC02D`), labeled with LGU barangay name |
-| `<code>_LGU_Aligned_Barangay` | Polygon | White dashed outline (`#FFFFFF`) showing aligned LGU geometry |
-| `<code>_LGU_Aligned_Barangay_Contested` | Polygon | Red dashed outline (`#E53935`) for unconfirmed or contested boundary polygons |
 | `<code>_PSA_Unmatched` | Polygon | Gray outline for PSA barangays with no matching LGU geocode |
 | `<code>_LGU_Unmatched` | Polygon | Gray outline for LGU barangays with no matching PSA geocode |
 | `Building Points inside LGU Boundary` | Point | Green circles (`#43A047`) for points correctly located inside their assigned barangay |

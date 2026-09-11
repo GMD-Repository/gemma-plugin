@@ -25,6 +25,7 @@ from .gmd_scripts.apply_qml_styles import ApplyQmlStylesAlgorithm
 from .gmd_scripts.mbi_validator import MbiValidatorAlgorithm
 from .gmd_scripts.mbi_run_analysis import RunAnalysisAlgorithm
 from .gmd_scripts.psa_lgu_map_comparison import PsaLguComparisonAlgorithm
+from .gmd_scripts.package_layers_by_citymun import PackageLayersAlgorithm
 from .references.create_enumeration_area.algorithm import CreateEAAlgorithm
 #from .gmd_scripts.gsheet_csv import
 
@@ -57,6 +58,7 @@ class GmdPipelineProvider(QgsProcessingProvider):
         self.addAlgorithm(MbiValidatorAlgorithm())
         self.addAlgorithm(RunAnalysisAlgorithm())
         self.addAlgorithm(PsaLguComparisonAlgorithm())
+        self.addAlgorithm(PackageLayersAlgorithm())
         self.addAlgorithm(CreateEAAlgorithm())
         self.addAlgorithm(ScanGeometryErrorsAlgorithm())
         self.addAlgorithm(RepairGeometryErrorsAlgorithm())
