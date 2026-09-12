@@ -25,7 +25,10 @@ Use this tool when:
 |-----------|------|-------------|
 | **Select Polygon Layer(s)** | Multiple Layers (Polygon) | One or more vector polygon layers representing barangay boundaries from LGU and PSA datasets. Required. |
 | **Select Building Point Layer(s)** | Multiple Layers (Point) | One or more point layers representing structures/buildings used to count intersecting points within each finding. Required. |
-| **Analysis to Run** | Enum | The detection mode to execute: **Overlaps, Gaps, and Disputed Areas** (default), **Overlaps Only**, **Gaps Only**, or **Disputed Areas Only**. |
+
+::: info Fixed Analysis Execution
+All three boundary analyses (**Gaps**, **Overlaps**, and **Disputed Areas**) execute automatically as mandatory procedures. No manual analysis mode parameter is required.
+:::
 
 ### Outputs
 

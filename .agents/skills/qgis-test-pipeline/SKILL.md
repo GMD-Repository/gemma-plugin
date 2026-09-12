@@ -32,6 +32,7 @@ gemma-plugin/
 │   │   ├── test_ea_pipeline.py               # 39 tests — Full EA delineation pipeline
 │   │   ├── test_ea_split_modes.py            # 6 tests — EA split mode strategies
 │   │   ├── test_export_preliminary_polygons.py# 3 tests — Preliminary polygon export
+│   │   ├── test_extracted_bldgpts_symbology.py# 5 tests — Automated unit test module
 │   │   ├── test_fill_polygon_gaps.py         # 3 tests — Gap filling
 │   │   ├── test_gaps_overlaps_checker.py     # 3 tests — Gap & overlap detection
 │   │   ├── test_geom_check_repair_legacy.py  # 2 tests — Legacy geometry repair
@@ -40,15 +41,17 @@ gemma-plugin/
 │   │   ├── test_gsheet.py                    # 1 test — Google Sheets integration
 │   │   ├── test_join_barangay_attributes.py  # 11 tests — Barangay attribute joining
 │   │   ├── test_lgu_fix_processing.py        # 4 tests — LGU fix processing
-│   │   ├── test_mbi_run_analysis.py          # 6 tests — Run Analysis MBI reference cases engine
+│   │   ├── test_mbi_run_analysis.py          # 7 tests — Run Analysis MBI reference cases engine
 │   │   ├── test_mbi_validator.py             # 14 tests — MBI validation engine
 │   │   ├── test_merge_preview_threshold_and_individual_merge.py# 11 tests — Automated unit test module
+│   │   ├── test_package_layers_by_citymun.py # 2 tests — Automated unit test module
 │   │   ├── test_package_qfield.py            # 11 tests — QField packaging
+│   │   ├── test_package_style_loader.py      # 5 tests — Automated unit test module
 │   │   ├── test_pre_ea_detector.py           # 10 tests — Automated unit test module
 │   │   ├── test_pre_ea_processor.py          # 7 tests — Pre-EA processor
 │   │   ├── test_projection_finder.py         # 10 tests — Automated unit test module
-│   │   ├── test_psa_lgu_comparison_panel.py  # 2 tests — Automated unit test module
-│   │   ├── test_psa_lgu_map_comparison.py    # 35 tests — Automated unit test module
+│   │   ├── test_psa_lgu_comparison_panel.py  # 6 tests — Automated unit test module
+│   │   ├── test_psa_lgu_map_comparison.py    # 25 tests — Automated unit test module
 │   │   ├── test_repair_geometry_errors.py    # 4 tests — Geometry error repair
 │   │   ├── test_scan_geometry_errors.py      # 3 tests — Geometry error scanning
 │   │   ├── test_split_ea_dialog.py           # 11 tests — Automated unit test module
@@ -68,7 +71,7 @@ gemma-plugin/
         └── test-pr.yml             # QGIS Docker container GitHub Actions PR Gate + Dynamic Comment Bot
 ```
 
-**Current Suite Totals**: **289 tests** across **37 test modules** (91 Passed · 2 Skipped · 0 Failures · 0 Errors)
+**Current Suite Totals**: **296 tests** across **40 test modules** (91 Passed · 2 Skipped · 0 Failures · 0 Errors)
 
 ---
 

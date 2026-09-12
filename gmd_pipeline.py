@@ -54,6 +54,8 @@ class GMDPipeline(object):
         self.ea_dlg = None
         self.offline_editing = None
         self.ea_provider = None
+        self.package_style_loader_action = None
+        self.package_style_loader_dlg = None
 
     def gema_add_submenu(self, submenu, icon):
         if self.gema_menu != None:
@@ -211,6 +213,13 @@ class GMDPipeline(object):
         self.projection_finder_action.triggered.connect(self.show_projection_finder)
         self.updating_boundaries_menu.addAction(self.projection_finder_action)
 
+        package_style_loader_icon = QIcon(os.path.dirname(__file__) + "/icons/package_style_loader.svg")
+        self.package_style_loader_action = QAction(
+            package_style_loader_icon, "Package Style Loader", self.iface.mainWindow()
+        )
+        self.package_style_loader_action.triggered.connect(self.show_package_style_loader_dialog)
+        self.updating_boundaries_menu.addAction(self.package_style_loader_action)
+
         # 2. EA Delineation Submenu
         self.ea_delineation_menu = QMenu(u'EA Delineation')
         self.gema_add_submenu(self.ea_delineation_menu, create_ea_icon)
@@ -283,6 +292,13 @@ class GMDPipeline(object):
             except Exception:
                 pass
             self.projection_finder_dlg = None
+
+        if self.package_style_loader_dlg is not None:
+            try:
+                self.package_style_loader_dlg.close()
+            except Exception:
+                pass
+            self.package_style_loader_dlg = None
 
         if self.toolbar:
             del self.toolbar
@@ -438,3 +454,24 @@ class GMDPipeline(object):
             self.push_dlg.setEnabled(False)
         except RuntimeError:
             pass
+
+    def show_package_style_loader_dialog(self):
+        """Open the Package Style Loader dialog."""
+        from .gmd_scripts.package_style_loader import show_package_style_loader_dialog
+
+        try:
+            if self.package_style_loader_dlg is not None:
+                self.package_style_loader_dlg.isVisible()
+        except RuntimeError:
+            self.package_style_loader_dlg = None
+
+        if self.package_style_loader_dlg is None:
+            self.package_style_loader_dlg = show_package_style_loader_dialog(self.iface)
+        else:
+            self.package_style_loader_dlg.showNormal()
+            self.package_style_loader_dlg.show()
+            self.package_style_loader_dlg.raise_()
+            self.package_style_loader_dlg.activateWindow()
+
+    # Alias for backward compatibility
+    show_layer_groups_styles_dialog = show_package_style_loader_dialog

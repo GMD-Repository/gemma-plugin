@@ -59,7 +59,7 @@ def get_available_qml_display_names():
 _KEYWORD_ALIAS_MAP = {
     "barangay": ["bgy", "brgy", "barangay"],
     "ea": ["_ea", "ea2024"],
-    "building points": ["bldgpts", "bldg_points", "bldg"],
+    "building points": ["bldgpts", "bldg_points", "bldg_point", "bldg"],
     "landmark": ["landmark", "landmarks"],
     "road": ["road"],
     "river": ["river"],
@@ -70,6 +70,8 @@ _KEYWORD_ALIAS_MAP = {
     "merged ea polygon": ["merged_ea", "merged_ea2026", "merged_polygon"],
     "ref_mbi_cases": ["ref_mbi_cases", "mbi_cases", "ref_mbi"],
     "mbi cases": ["ref_mbi_cases", "mbi_cases", "ref_mbi"],
+    "ref_province_lgu": ["_lgu", "ref_province_lgu", "province_lgu", "lgu"],
+    "ref_province_psa": ["_psa", "ref_province_psa", "province_psa", "psa"],
 }
 
 

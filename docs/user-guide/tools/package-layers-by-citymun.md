@@ -1,6 +1,6 @@
 # <img src="/icons/package_layers.svg" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Package Layers by City/Mun
 
-The **Package Layers by City/Mun** tool splits four reference layers — MBI cases, building points, province PSA boundaries, and province LGU boundaries — into one GeoPackage per city/municipality, each written to its own folder. It is built for producing LGU presentation packages: instead of handing a province-wide file to every recipient, each city/mun gets a small, self-contained `.gpkg` with just its own features.
+The **Package Layers by City/Mun** tool splits four reference layers — MBI cases, building points, province PSA boundaries, and province LGU boundaries — into one self-contained GeoPackage (`.gpkg`) per city or municipality, each placed in its own dedicated directory. It is engineered for generating local government presentation packages: instead of distributing a single large, province-wide dataset to every recipient, each LGU receives a clean, compact package containing exclusively its own administrative features.
 
 ## Access
 
@@ -8,73 +8,100 @@ The **Package Layers by City/Mun** tool splits four reference layers — MBI cas
 - **Processing Toolbox:** GMD Pipeline → 1Map → Package Layers by City/Mun
 - **Algorithm ID:** `gmd_pipeline:package_layers_by_citymun`
 
-The tool is inherently interactive (pick layers, confirm field names, browse an output folder), so running it from either entry point opens the same dialog.
+The tool is inherently interactive (allowing layer selection, field confirmation, and output folder browsing), so launching it from either entry point opens the same dialog.
 
 ## When to Use
 
 Use this tool when:
-
-- Preparing per-city/municipality deliverables for LGU presentations or handoffs, instead of a single province-wide dataset.
-- You need the same four reference layers (cases, building points, PSA boundary, LGU boundary) split and packaged consistently, city/mun by city/mun.
-- You want the packaged layers organized into per-city/mun groups in the Layers panel for quick spot-checking, with styling already applied.
+- Preparing municipal-level deliverables for LGU presentations, local boundary harmonization meetings, or data handoffs.
+- Splitting province-wide reference datasets (cases, building points, PSA boundaries, and LGU boundaries) into standardized per-city/mun packages.
+- Automatically loading and grouping packaged layers in the QGIS Layers panel for immediate quality inspection with official QML styles applied.
+- Cleaning duplicate layers or standardized display names across repeated packaging sessions.
 
 ## Naming Convention
 
 | Item | Pattern | Example |
 |------|---------|---------|
-| Output folder | `pppmm_CITYMUN/` | `01317_Iriga/` |
-| GeoPackage | `pppmm_CITYMUN/pppmm_CITYMUN.gpkg` | `01317_Iriga/01317_Iriga.gpkg` |
+| **Output Folder** | `pppmm_CITYMUN/` | `01317_Iriga/` |
+| **GeoPackage** | `pppmm_CITYMUN/pppmm_CITYMUN.gpkg` | `01317_Iriga/01317_Iriga.gpkg` |
 
-- `ppp` = 3-digit province code, `mm` = 2-digit city/mun code — together, the first 5 characters of the geocode field.
-- `CITYMUN` is the city/municipality name (from the City/Mun name field), sanitized to remove characters that aren't safe in a folder/file name.
+- `ppp` = 3-digit province code, `mm` = 2-digit city/mun code — combined, the first 5 characters of the geocode field.
+- `CITYMUN` is the city/municipality name sanitized for filesystem compatibility (spaces replaced with underscores, special characters stripped).
 
-Inside each GeoPackage, the four inputs are written as:
+Inside each GeoPackage, the four reference datasets are written into dedicated tables:
 
-| Role | Output table name |
-|------|--------------------|
-| Cases layer | `ref_mbi_cases` |
-| Building points layer | `ref_{citymun}_bldg_point` |
-| Province PSA layer | `ref_{citymun}_psa` |
-| Province LGU layer | `ref_{citymun}_lgu` |
+| Role | Output Table Name | Geometry Type |
+|------|-------------------|---------------|
+| **Cases Layer** | `ref_mbi_cases` | Polygon / MultiPolygon |
+| **Building Points Layer** | `ref_{citymun}_bldg_point` | Point / MultiPoint |
+| **Province PSA Layer** | `ref_{citymun}_psa` | Polygon / MultiPolygon |
+| **Province LGU Layer** | `ref_{citymun}_lgu` | Polygon / MultiPolygon |
 
 ## Parameters
 
-| Field | Description |
-|-------|-------------|
-| **Cases layer** | The MBI cases layer to split. |
-| **Building points layer** | The province-wide building points layer to split. |
-| **Province PSA layer** | The province-wide PSA boundary layer to split. |
-| **Province LGU layer** | The province-wide LGU boundary layer to split. |
-| **Geocode field name** | Field (on all four layers) whose first 5 characters identify the city/mun. Auto-prefilled from `geocode` / `sa_geocode` when present. |
-| **City/Mun name field** | Field supplying the human-readable city/mun name used to build the output folder/file name. Auto-prefilled from `city_mun` / `citymun`. |
-| **Output folder** | Destination folder under which every `pppmm_CITYMUN/` folder is created. |
-| **Load packaged layers into QGIS after Run** | When checked, adds the freshly written layers back into the project, grouped per city/mun under a top-level **Packaged Layers** group. Off by default — best for spot-checking a handful of city/mun; leave it off for a large, national-scale run, since loading hundreds of groups/layers can slow QGIS down. |
-| **Add Google Satellite basemap below the layers** | Only enabled once "Load packaged layers" is checked. Adds the same HCMGIS Google Satellite XYZ basemap the PSA - LGU Boundary Comparison tool uses, placed at the bottom of the layer tree. Requires the HCMGIS plugin. |
+### Inputs
 
-The four layer dropdowns and the two field boxes are pre-filled with a best-effort guess from the layers already loaded in the project (matched by name keywords such as `mbi_cases`, `bldg_point`, `province_psa`, `province_lgu`), but any of them can be changed before running.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| **Cases layer** | Vector Layer (Polygon) | The reference MBI cases layer (`ref_mbi_cases`) to split. Auto-detected from project layers matching `mbi_cases`. |
+| **Building points layer** | Vector Layer (Point) | Province-wide building points layer to split. Auto-detected from project layers matching `bldg_point` or `bldgpts`. |
+| **Province PSA layer** | Vector Layer (Polygon) | Province-wide PSA boundary polygon layer to split. Auto-detected from layers matching `province_psa` or `_psa`. |
+| **Province LGU layer** | Vector Layer (Polygon) | Province-wide LGU boundary polygon layer to split. Auto-detected from layers matching `province_lgu` or `_lgu`. |
+| **Geocode field name** | Field Name | Attribute field on all four layers whose first 5 characters identify the city/mun code (`pppmm`). Auto-detected from `geocode` or `sa_geocode`. |
+| **City/Mun name field** | Field Name | Attribute field providing the human-readable city/mun name used to generate folder and table names. Auto-detected from `city_mun` or `citymun`. |
+| **Output folder** | Directory Path | Destination root directory where municipal subfolders (`pppmm_CITYMUN/`) will be generated. |
+| **Load packaged layers into QGIS after Run** | Boolean | When enabled, automatically loads exported layers into QGIS under the `Packaged Layers` group upon completion. Default is disabled for large national runs to preserve performance. |
+| **Add Google Satellite basemap below the layers** | Boolean | Enabled when *Load packaged layers* is checked. Automatically adds the Google Satellite XYZ tile layer at the base of the layer tree. Requires the HCMGIS plugin. |
+
+### Outputs
+
+| Output | Type | Description |
+|--------|------|-------------|
+| **Municipal GeoPackages** | Directory & `.gpkg` Files | Individual GeoPackage databases written to `pppmm_CITYMUN/pppmm_CITYMUN.gpkg` containing filtered subsets of all four reference layers. |
+| **Packaged Layers Group** | Layer Tree Group | (Optional) Auto-expanded group hierarchy in the QGIS Layers panel containing municipal subgroups and styled vector layers. |
 
 ## How It Works
 
-1. **City/mun code list**: The tool scans the geocode and city/mun-name fields across *all four* selected layers combined, so a city/mun present in only one of the inputs is still packaged — nothing is missed.
-2. **Per-city/mun export**: For each city/mun code, the matching features from all four layers (`left(to_string(geocode_field), 5) = 'pppmm'`) are written into that city/mun's own GeoPackage, one output table per role.
-3. **Field cleanup on write**: `fid`, `layer` and `path` attributes are dropped from every output table. Dropping `fid` lets GeoPackage assign a fresh, unique primary key per table (avoiding `UNIQUE constraint failed: fid` errors on a filtered subset); `layer`/`path` are merge-leftover provenance columns with no place in a packaged deliverable.
-4. **Optional load-back**: With "Load packaged layers" checked, each city/mun's written tables are added to the project under `Packaged Layers → {pppmm_CITYMUN}`, styled from the plugin's bundled QML files where a matching one exists (`_bldg_point`, `_lgu`, `_psa`, `ref_mbi_cases` suffixes/names), and the group tree is expanded automatically.
-5. **Session-wide auto-organize**: Once this tool has run once in a session, any layer added afterwards from one of its packaged GeoPackages — including manually via *Add Vector Layer* or the Browser panel — is automatically filed into its city/mun group and has the `<file> — <table>` name QGIS's Add Layer dialog applies by default stripped back to just the table name. Adding the same table a second time replaces the existing copy instead of duplicating it.
-6. **Clean up duplicates**: A dedicated button sweeps the existing **Packaged Layers** groups and removes any duplicate copies left over from earlier loads, keeping one of each.
+1. **City/Municipality Code Scanning**:
+   - The tool extracts unique combinations of the 5-digit city/mun code and name across all four input layers combined.
+   - Scanning all four layers guarantees that a municipality present in only one input (e.g. LGU boundary without building points) is still packaged without data omission.
 
-## Output
+2. **Attribute Query & Geometric Export**:
+   - Iterates through each detected municipal code and executes an attribute filter:
+     $$\text{left}(\text{to\_string}(\text{geocode}), 5) = \text{'pppmm'}$$
+   - Matching features from all four reference layers are written into the corresponding tables inside `pppmm_CITYMUN.gpkg`.
 
-- One folder per city/mun under the chosen output folder, each containing that city/mun's `.gpkg`.
-- The run log lists how many features matched each layer, per city/mun.
+3. **Field Cleanup on Export**:
+   - System and temporary attributes (`fid`, `layer`, `path`) are automatically omitted during vector export.
+   - Removing existing `fid` values allows GeoPackage to assign clean, contiguous primary keys per table, preventing unique constraint violations.
+   - Leftover merge provenance fields (`layer`, `path`) are stripped to produce pristine deliverables.
 
-::: tip Geocode Text Format
-If province codes start with `0` (e.g. `013`), make sure the geocode field is stored as text, not a number — otherwise the leading zero may already be lost, breaking the 5-character city/mun prefix.
+4. **Automated Layer Tree Organization**:
+   - When *Load packaged layers* is checked, tables are loaded into the project under `Packaged Layers → {pppmm_CITYMUN}`.
+   - Applies matching QML styles from the plugin's bundled style library (`ref_mbi_cases.qml`, `ref_province_psa.qml`, `ref_province_lgu.qml`, `1. Base Layer Building Points.qml`).
+   - Automatically expands the group tree so results are immediately visible for verification.
+
+5. **Session-Wide Auto-Organize**:
+   - Once the tool runs during a QGIS session, a project listener automatically organizes any layer subsequently added from a packaged GeoPackage (via *Add Vector Layer* or the Browser panel) into its municipal group.
+   - Cleans the default `<file> — <table>` prefix applied by QGIS back to the clean table name.
+   - Replacing identical tables automatically avoids cluttering the project with duplicate layers.
+
+6. **Duplicate Cleanup Utility**:
+   - Provides a dedicated **Clean Up Duplicates** button that scans the `Packaged Layers` hierarchy, identifies duplicate layers referencing identical GeoPackage tables, and removes redundant instances while preserving the newest copy.
+
+## Supported Geometry Types
+
+- **Polygon** and **MultiPolygon** (MBI cases, PSA boundaries, LGU boundaries)
+- **Point** and **MultiPoint** (Building points)
+
+::: tip Geocode Attribute Data Type
+Ensure the geocode attribute field is formatted as **String/Text** rather than an Integer. Numeric fields strip leading zeros (e.g. `01317` becomes `1317`), which corrupts the 5-character municipal prefix extraction.
 :::
 
-::: tip Reading the log
-If the matched-feature count for a layer looks the same as that layer's whole feature count for *every* city/mun group, the geocode field picked for that layer doesn't actually vary by city/mun — double-check the field selected for that role.
+::: tip Verification via Run Log
+The interactive execution log reports the exact feature count exported for each layer per municipality. If the feature count for a layer remains identical across all municipalities, verify that the selected geocode field actually differentiates municipal units.
 :::
 
 ::: info Headless Execution
-The dialog is inherently interactive, so running the algorithm (`gmd_pipeline:package_layers_by_citymun`) without a QGIS Desktop GUI (`qgis_process`, headless) simply reports that a GUI is required rather than opening the dialog.
+The algorithm (`gmd_pipeline:package_layers_by_citymun`) is interactive. Running headlessly (e.g. via `qgis_process`) logs an informational notice that QGIS Desktop GUI is required rather than halting with an unhandled exception.
 :::
