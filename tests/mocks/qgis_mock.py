@@ -1045,6 +1045,50 @@ class QgsVectorFileWriter:
 
 
 
+class QgsProcessingParameterDefinition:
+    def __init__(self, name="", description="", *args, **kwargs):
+        self._name = str(name)
+        self._description = str(description)
+
+    def name(self):
+        return self._name
+
+    def description(self):
+        return self._description
+
+
+class QgsProcessingParameterMultipleLayers(QgsProcessingParameterDefinition):
+    pass
+
+
+class QgsProcessingParameterEnum(QgsProcessingParameterDefinition):
+    pass
+
+
+class QgsProcessingParameterVectorLayer(QgsProcessingParameterDefinition):
+    pass
+
+
+class QgsProcessingParameterFeatureSink(QgsProcessingParameterDefinition):
+    pass
+
+
+class QgsProcessingParameterFile(QgsProcessingParameterDefinition):
+    pass
+
+
+class QgsProcessingParameterString(QgsProcessingParameterDefinition):
+    pass
+
+
+class QgsProcessingParameterBoolean(QgsProcessingParameterDefinition):
+    pass
+
+
+class QgsProcessingParameterNumber(QgsProcessingParameterDefinition):
+    pass
+
+
 class QgsProcessingAlgorithm:
     def __init__(self, *args, **kwargs):
         self._parameters = {}
@@ -1071,7 +1115,7 @@ class QgsProcessingAlgorithm:
     def parameterDefinition(self, name):
         if not hasattr(self, "_parameters"):
             self._parameters = {}
-        return self._parameters.get(name, MockGenericClass())
+        return self._parameters.get(name, None)
 
 
     def parameterAsLayerList(self, parameters, name, context):
@@ -1444,6 +1488,15 @@ def setup_qgis_mock_if_needed():
     core_mod.QgsVectorFileWriter = QgsVectorFileWriter
     core_mod.QgsEditorWidgetSetup = QgsEditorWidgetSetup
     core_mod.QgsEditFormConfig = QgsEditFormConfig
+    core_mod.QgsProcessingParameterDefinition = QgsProcessingParameterDefinition
+    core_mod.QgsProcessingParameterMultipleLayers = QgsProcessingParameterMultipleLayers
+    core_mod.QgsProcessingParameterEnum = QgsProcessingParameterEnum
+    core_mod.QgsProcessingParameterVectorLayer = QgsProcessingParameterVectorLayer
+    core_mod.QgsProcessingParameterFeatureSink = QgsProcessingParameterFeatureSink
+    core_mod.QgsProcessingParameterFile = QgsProcessingParameterFile
+    core_mod.QgsProcessingParameterString = QgsProcessingParameterString
+    core_mod.QgsProcessingParameterBoolean = QgsProcessingParameterBoolean
+    core_mod.QgsProcessingParameterNumber = QgsProcessingParameterNumber
 
     # PyQt attributes
     class MockQWidget:

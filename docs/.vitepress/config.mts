@@ -45,6 +45,7 @@ export default defineConfig({
               { text: 'PSA - LGU Boundary Comparison', link: '/tools/psa-lgu-comparison' },
               { text: 'Know Your Projection!', link: '/tools/know-your-projection' },
               { text: 'Package Layers by City/Mun', link: '/tools/package-layers-by-citymun' },
+              { text: 'Package Style Loader', link: '/tools/package-style-loader' },
             ]
           },
           {
@@ -100,6 +101,7 @@ export default defineConfig({
           { text: 'PSA - LGU Boundary Comparison', link: '/tools/psa-lgu-comparison' },
           { text: 'Know Your Projection!', link: '/tools/know-your-projection' },
           { text: 'Package Layers by City/Mun', link: '/tools/package-layers-by-citymun' },
+          { text: 'Package Style Loader', link: '/tools/package-style-loader' },
         ]
       },
       {

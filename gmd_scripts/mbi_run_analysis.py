@@ -36,6 +36,9 @@
 #        (by_feature=True) so each polygon counts separately; Gap detection
 #        keeps the original per-barangay grouping. Also corrected the
 #        stale version string in the closing log message.
+#   v10 - Fixed 'Analysis to Run' to 'Gaps, Overlaps, and Disputed'.
+#         Removed selection choices (Overlaps Only, Gaps Only, Disputed
+#         Areas Only); running all three analyses is now mandatory.
 # ----------------------------------------------------------------------
 
 __author__ = 'Geospatial Management Division'
@@ -54,7 +57,6 @@ from qgis.core import (
     QgsProcessingContext,
     QgsProcessingLayerPostProcessorInterface,
     QgsProcessingParameterMultipleLayers,
-    QgsProcessingParameterEnum,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsProject,
@@ -282,19 +284,6 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                 QgsProcessing.TypeVectorPoint
             )
         )
-        self.addParameter(
-            QgsProcessingParameterEnum(
-                self.RUN_MODE,
-                'Analysis to Run',
-                options=[
-                    'Overlaps, Gaps, and Disputed Areas',
-                    'Overlaps Only',
-                    'Gaps Only',
-                    'Disputed Areas Only',
-                ],
-                defaultValue=0
-            )
-        )
 
     def processAlgorithm(self, parameters, context, feedback: QgsProcessingFeedback):
         self._keep_alive = []
@@ -306,29 +295,22 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
 
         polygon_layers = self.parameterAsLayerList(parameters, self.INPUT1, context)
         building_layers = self.parameterAsLayerList(parameters, self.INPUT2, context)
-        run_mode = self.parameterAsEnum(parameters, self.RUN_MODE, context)
 
         if not polygon_layers:
             raise QgsProcessingException("PSA and LGU polygon layer(s) must be selected.")
         if not building_layers:
             raise QgsProcessingException("Building point layer(s) must be selected.")
 
-        run_overlaps = run_mode in (0, 1)
-        run_gaps     = run_mode in (0, 2)
-        run_disputed = run_mode in (0, 3)
+        # Mandatory analysis: Gaps, Overlaps, and Disputed always run
+        run_overlaps = True
+        run_gaps     = True
+        run_disputed = True
 
         target_crs       = QgsCoordinateReferenceSystem("EPSG:3857")
         output_crs       = QgsCoordinateReferenceSystem("EPSG:4326")
         transform_to_out = QgsCoordinateTransform(target_crs, output_crs, QgsProject.instance())
 
-        feedback.pushInfo(
-            "Processing... Mode: " + [
-                'Overlaps, Gaps, and Disputed Areas',
-                'Overlaps Only',
-                'Gaps Only',
-                'Disputed Areas Only',
-            ][run_mode]
-        )
+        feedback.pushInfo("Processing... Mode: Gaps, Overlaps, and Disputed")
 
         # ------------------------------------------------------------------
         # Shared editor widget configs applied to every output layer

@@ -49,7 +49,8 @@ class TestMbiRunAnalysis(unittest.TestCase):
         self.alg.initAlgorithm()
         self.assertIsNotNone(self.alg.parameterDefinition(self.alg.INPUT1))
         self.assertIsNotNone(self.alg.parameterDefinition(self.alg.INPUT2))
-        self.assertIsNotNone(self.alg.parameterDefinition(self.alg.RUN_MODE))
+        # RUN_MODE is no longer registered as a user-facing parameter because all 3 analyses are mandatory
+        self.assertIsNone(self.alg.parameterDefinition(self.alg.RUN_MODE))
 
     def test_widget_setups(self):
         """Test ValueMap dropdown and TextEdit helper functions."""
@@ -167,7 +168,6 @@ class TestMbiRunAnalysis(unittest.TestCase):
         params = {
             self.alg.INPUT1: [self.sample_polygons],
             self.alg.INPUT2: [self.sample_points],
-            self.alg.RUN_MODE: 0,
         }
         context = QgsProcessingContext()
         feedback = QgsProcessingFeedback()

@@ -107,5 +107,15 @@ features:
     title: Clip Project Layers by Extent
     details: Batch clip multiple vector layers to administrative boundary polygons with optional buffer margins.
     link: /tools/clip-project-layers
+  - icon:
+      src: /icons/package_style_loader.svg
+    title: Package Style Loader
+    details: Interactive dialog to organize layer hierarchies, assign functional roles, and apply QML symbology and labeling.
+    link: /tools/package-style-loader
+  - icon:
+      src: /icons/package_layers.svg
+    title: Package Layers by City/Mun
+    details: Split reference boundary layers and building points into clean, self-contained GeoPackage deliverables per city or municipality.
+    link: /tools/package-layers-by-citymun
 ---
 
