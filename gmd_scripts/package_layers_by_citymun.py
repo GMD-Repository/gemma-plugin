@@ -291,7 +291,7 @@ class PackageLayersDialog(QDialog):
         "ref_mbi_cases": "ref_mbi_cases",
         "ref_province_lgu": "ref_{citymun}_lgu",
         "ref_province_psa": "ref_{citymun}_psa",
-        "ref_province_boundary": "ref_{citymun}_boundary",
+        "ref_province_boundary": "2026_{citymun}_boundary",
         "ref_provincename_bldg_point": "ref_{citymun}_bldg_point",
     }
 
@@ -465,7 +465,7 @@ class PackageLayersDialog(QDialog):
             "<p><code>ref_mbi_cases</code><br>"
             "<code>ref_CITYMUN_lgu</code><br>"
             "<code>ref_CITYMUN_psa</code><br>"
-            "<code>ref_CITYMUN_boundary</code><br>"
+            "<code>2026_CITYMUN_boundary</code><br>"
             "<code>ref_CITYMUN_bldg_point</code></p>"
             "<p>The source \"fid\", \"layer\" and \"path\" attribute fields "
             "are dropped on write. Dropping \"fid\" lets GeoPackage assign a "

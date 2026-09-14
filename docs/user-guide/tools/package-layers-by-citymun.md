@@ -36,7 +36,7 @@ Inside each GeoPackage, the five reference datasets are written into dedicated t
 | **Building Points Layer** | `ref_{citymun}_bldg_point` | Point / MultiPoint |
 | **Province PSA Layer** | `ref_{citymun}_psa` | Polygon / MultiPolygon |
 | **Province LGU Layer** | `ref_{citymun}_lgu` | Polygon / MultiPolygon |
-| **Province Boundary Layer** | `ref_{citymun}_boundary` | Polygon / MultiPolygon |
+| **Province Boundary Layer** | `2026_{citymun}_boundary` | Polygon / MultiPolygon |
 
 ## Parameters
 
