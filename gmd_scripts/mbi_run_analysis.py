@@ -1,7 +1,7 @@
 # ----------------------------------------------------------------------
 # MBI Gaps / Overlaps / Disputed Areas Checker
 # Last updated: 2026-09-14
-# Version: v17
+# Version: v18
 #
 # Changelog:
 #   v1 - Initial Gaps/Overlaps detection between LGU and PSA polygons.
@@ -116,6 +116,19 @@
 #         (previously the gap loop reported nothing and jumped straight to
 #         100), and 100 is reached only after ref_mbi_cases is written.
 #         Gap detection also honours Cancel now, as overlap detection did.
+#   v18 - Bug fix: both outputs could contain invalid geometries, because
+#         nothing repaired them after the operations that create them.
+#         2026_province_boundary was published straight out of
+#         merge_by_geocode()'s unions, and every ref_mbi_cases finding comes
+#         from a raw intersection() / difference() result — none of which
+#         were passed through a validity check.
+#         The resolved boundary is now repaired (fix_geoms(), extracted
+#         from singleparts()) before it is published AND before it is
+#         exploded for detection, and build_feature() repairs any finding
+#         whose geometry is not GEOS-valid before writing it. A repair that
+#         returns anything non-polygonal is discarded rather than written,
+#         so the output layer's geometry type never changes. The number of
+#         repaired findings is reported in the log.
 # ----------------------------------------------------------------------
 
 __author__ = 'Geospatial Management Division'
@@ -548,17 +561,20 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                 context=context, feedback=child_fb
             )['OUTPUT'])
 
+        def fix_geoms(layer):
+            return keep_layer(processing.run(
+                'native:fixgeometries',
+                {'INPUT': layer, 'METHOD': 1, 'OUTPUT': 'memory:'},
+                context=context, feedback=child_fb
+            )['OUTPUT'])
+
         def singleparts(layer):
             single = keep_layer(processing.run(
                 'native:multiparttosingleparts',
                 {'INPUT': layer, 'OUTPUT': 'memory:'},
                 context=context, feedback=child_fb
             )['OUTPUT'])
-            return keep_layer(processing.run(
-                'native:fixgeometries',
-                {'INPUT': single, 'METHOD': 1, 'OUTPUT': 'memory:'},
-                context=context, feedback=child_fb
-            )['OUTPUT'])
+            return fix_geoms(single)
 
         def boundary_memory_layer(src_layer, name):
             """
@@ -804,6 +820,13 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
         feedback.setProgress(7)
         boundary_layer = normalize_source_labels(boundary_layer)
 
+        # merge_by_geocode() unions rows together, which can leave a
+        # self-intersection or other invalid ring behind. Repair before the
+        # boundary is published and before it is exploded for detection, so
+        # neither output carries invalid geometry.
+        feedback.pushInfo("Repairing boundary geometries...")
+        boundary_layer = fix_geoms(boundary_layer)
+
         boundary_display = keep_layer(processing.run(
             'native:reprojectlayer',
             {'INPUT': boundary_layer, 'TARGET_CRS': output_crs,
@@ -971,6 +994,8 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                 for x in involved
             )
 
+        repaired_count = 0
+
         def build_feature(geom_3857, involved, kind, out_fields,
                           reference_info=None, map_uuid=None,
                           lgu_bgy_name=None, extra_attrs=None):
@@ -983,6 +1008,8 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                 'Gap'      -> mbi_type 1_Gap
                 'Disputed' -> mbi_type 3_Disputed
             """
+            nonlocal repaired_count
+
             if not involved:
                 return None
 
@@ -991,6 +1018,22 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                 geom_out.transform(transform_to_out)
             except Exception:
                 pass
+
+            # Findings come straight out of raw intersection/difference
+            # results, which can be self-intersecting or otherwise invalid.
+            # Repair here so nothing invalid ever reaches ref_mbi_cases.
+            # A repair that returns anything non-polygonal (GEOS can hand
+            # back a collection) is discarded rather than written.
+            if not geom_out.isGeosValid():
+                try:
+                    fixed = geom_out.makeValid()
+                    if (fixed is not None and not fixed.isEmpty()
+                            and QgsWkbTypes.geometryType(fixed.wkbType())
+                            == QgsWkbTypes.PolygonGeometry):
+                        geom_out = fixed
+                        repaired_count += 1
+                except Exception:
+                    pass
 
             ref = (reference_info if reference_info is not None
                    else max(involved, key=lambda x: x['covered_area'])['info'])
@@ -1305,6 +1348,11 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
         # Gaps, Overlaps, and Disputed Areas are written into a single
         # output layer/table (distinguished by the mbi_type field).
         # ==================================================================
+        if repaired_count:
+            feedback.pushInfo(
+                f"  {repaired_count} finding geometry(ies) repaired before output."
+            )
+
         if all_feats:
             out_layer.dataProvider().addFeatures(all_feats)
             out_layer.updateExtents()
@@ -1315,7 +1363,7 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             results['OUTPUT'] = None
 
         feedback.setProgress(100)
-        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v17.")
+        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v18.")
         return results
 
 

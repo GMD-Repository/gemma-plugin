@@ -78,6 +78,7 @@ The resulting `ref_mbi_cases` layer contains the following standardized attribut
    - The LGU layer is treated as the latest submission. For every `city_mun` where at least one polygon's `source` contains `LGU`, that city_mun's PSA polygon(s) are excluded and only the LGU polygon(s) are kept.
    - A `city_mun` with no LGU submission at all falls back to using its PSA polygon(s) unchanged.
    - Every non-LGU polygon that survives this step then has its `source` attribute explicitly set to `PSA` (overwriting a blank/`NULL`/other value), so downstream findings never carry an ambiguous source label.
+   - The resolved boundary is repaired with `native:fixgeometries` before anything else happens to it, since merging rows by geocode unions geometries together and can leave a self-intersection behind. Both the published layer and the detection working copy inherit the repaired version.
    - The resulting authoritative set is reprojected to `EPSG:4326` and published as **2026_province_boundary** with multipart barangays intact — one row per geocode per source, so de-duplicating the table by geocode can never delete an islet.
 
 4. **Spatial Indexing & Attribute Extraction**:
@@ -103,6 +104,7 @@ The resulting `ref_mbi_cases` layer contains the following standardized attribut
 
 8. **Output Layer Generation, Styling & Editor Widget Application**:
    - All findings are transformed to WGS 84 (`EPSG:4326`) and added to the consolidated `ref_mbi_cases` layer.
+   - Each finding is checked with `isGeosValid()` first and repaired with `makeValid()` if needed, since gap and overlap geometries come straight out of raw intersection and difference results and can be self-intersecting. A repair returning anything non-polygonal is discarded rather than written, so the layer's geometry type never changes; the number of repaired findings is reported in the execution log.
    - The layer post-processor (`FieldWidgetPostProcessor`) automatically loads and applies the embedded categorized QML style (`ref_mbi_cases.qml`), displaying distinct symbology and labeling for `1_Gap`, `2_Overlap`, and `3_Disputed` cases.
    - Attaches `ValueMap` editor widgets to `mbi_status` (`1_Updated`, `2_Pending`) and text input setups to remarks fields directly upon loading into QGIS.
    - Sets computed reference attributes to **Read-Only** (`case_uuid`, `region`, `province`, `source`, `mbi_level`, `involved_areas`, `involved_bgys`, `count_involved_areas`, `mbi_type`, `num_bldg_pts`, and `mbi_remarks`) to prevent accidental edits while keeping reviewer fields (`geocode`, `city_mun`, `barangay`, `mbi_status`, `pso_remarks`, and `lgu_bgy_name`) fully **Editable**.
