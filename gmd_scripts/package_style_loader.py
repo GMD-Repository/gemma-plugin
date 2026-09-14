@@ -298,7 +298,7 @@ class PackageStyleLoaderDialog(QDialog):
     """
     Dedicated style loading dialog for municipal packaged layers.
     Features:
-      - Scope selector (Packaged Layers, municipal groups, or all layers)
+      - Scope selector (municipal groups or all project layers)
       - Structured layer-to-style mapping table with geometry icons & role tags
       - Pre-selected QML styles with live map preview capability
       - Custom QML external file picker
@@ -578,24 +578,18 @@ class PackageStyleLoaderDialog(QDialog):
         self.scope_combo.addItem("All Project Layers", "all")
 
         root = QgsProject.instance().layerTreeRoot()
-        packaged_idx = -1
 
         def collect_groups(parent_group, prefix=""):
-            nonlocal packaged_idx
             for child in parent_group.children():
                 if isinstance(child, QgsLayerTreeGroup):
                     display_text = f"{prefix}{child.name()}"
                     self.scope_combo.addItem(display_text, child.name())
-                    if child.name() == "Packaged Layers" and packaged_idx == -1:
-                        packaged_idx = self.scope_combo.count() - 1
                     collect_groups(child, prefix=prefix + "  ↳ ")
 
         collect_groups(root)
 
-        # Default to "Packaged Layers" if present, else first child group or all
-        if packaged_idx != -1:
-            self.scope_combo.setCurrentIndex(packaged_idx)
-        elif self.scope_combo.count() > 1:
+        # Default to first child group if present, else all layers
+        if self.scope_combo.count() > 1:
             self.scope_combo.setCurrentIndex(1)
         else:
             self.scope_combo.setCurrentIndex(0)

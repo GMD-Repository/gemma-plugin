@@ -1,7 +1,7 @@
 # -----------------------------------------------------------------------------
 # Package Layers by City/Mun
 #
-# Groups features from four reference layers into one GeoPackage (.gpkg) per
+# Groups features from five reference layers into one GeoPackage (.gpkg) per
 # city/mun, each placed in its own folder, named:
 #
 #       folder:  pppmm_CITYMUN/
@@ -13,7 +13,7 @@
 #
 # Available from the QGIS menu bar under Gemma > Others > Package Layers by
 # City/Mun, and from the Processing Toolbox under 1Map > Package Layers by
-# City/Mun. Pick the four reference layers, confirm the field names, choose
+# City/Mun. Pick the five reference layers, confirm the field names, choose
 # an output folder, and click Run.
 # -----------------------------------------------------------------------------
 
@@ -36,28 +36,6 @@ from qgis.PyQt.QtWidgets import (
 )
 
 
-# -----------------------------------------------------------------------------
-# Session-wide auto-organize: whenever a layer from one of our packaged
-# GeoPackages gets added to the project — whether by this dialog's own
-# "Load packaged layers" option, or by the user manually browsing to the
-# .gpkg through Add Vector Layer / the Browser panel — file it into its
-# city/mun group and strip the "<file> — <table>" name QGIS's Add Layer
-# dialog applies by default, so both paths end up looking identical.
-# -----------------------------------------------------------------------------
-
-TOP_GROUP_NAME = "Packaged Layers"
-
-
-def _get_packaged_top_group():
-    root = QgsProject.instance().layerTreeRoot()
-    group = root.findGroup(TOP_GROUP_NAME)
-    if group is None:
-        group = root.insertGroup(0, TOP_GROUP_NAME)
-    # Explicit: a run must never leave the user staring at a collapsed tree.
-    group.setExpanded(True)
-    return group
-
-
 def _collect_group_layer_ids(group):
     """Recursively collect the ids of every layer nested under this group."""
     ids = []
@@ -72,8 +50,8 @@ def _collect_group_layer_ids(group):
 
 
 def _get_citymun_group(group_id, replace=False):
-    top = _get_packaged_top_group()
-    existing = top.findGroup(group_id)
+    root = QgsProject.instance().layerTreeRoot()
+    existing = root.findGroup(group_id)
     if existing is not None:
         if replace:
             # Fully unregister the old group's layers (not just detach
@@ -82,80 +60,25 @@ def _get_citymun_group(group_id, replace=False):
             layer_ids = _collect_group_layer_ids(existing)
             if layer_ids:
                 QgsProject.instance().removeMapLayers(layer_ids)
-            still_there = top.findGroup(group_id)
+            still_there = root.findGroup(group_id)
             if still_there is not None:
-                top.removeChildNode(still_there)
+                root.removeChildNode(still_there)
         else:
             existing.setExpanded(True)
             return existing
-    group = top.addGroup(group_id)
+    group = root.addGroup(group_id)
     group.setExpanded(True)
     return group
 
 
-def _clean_layer_display_name(layer, fallback):
-    name = layer.name()
-    if " — " in name:
-        name = name.rpartition(" — ")[2] or fallback
-    if not name:
-        name = fallback
-    if layer.name() != name:
-        layer.setName(name)
-
-
-def _remove_duplicate_layers(group, new_layer):
-    """Drop any other layer already in this group that points at exactly the
-    same GeoPackage table (e.g. the same file added a second time), so the
-    newest one replaces it instead of sitting next to it as a duplicate."""
-    new_source = new_layer.source()
-    doomed = []
-    # Collect first, remove second — removing a layer also destroys its tree
-    # node, so mutating while walking children() is not safe.
-    for child in group.children():
-        if isinstance(child, QgsLayerTreeLayer):
-            lyr = child.layer()
-            if lyr is not None and lyr.id() != new_layer.id() and lyr.source() == new_source:
-                doomed.append(lyr.id())
-    if doomed:
-        QgsProject.instance().removeMapLayers(doomed)
-
-
-def _place_layer_in_group(layer, group_id, table_name):
+def _cleanup_duplicate_packaged_layers():
+    """Remove duplicate layers sitting in municipal groups, keeping
+    the first of each source. Returns the number of layers removed."""
     project = QgsProject.instance()
     root = project.layerTreeRoot()
 
-    _clean_layer_display_name(layer, table_name)
-    group = _get_citymun_group(group_id)
-    _remove_duplicate_layers(group, layer)
-
-    # Collapse every tree node referencing this layer down to exactly one
-    # node inside the target group. A manual add can leave more than one
-    # behind, because QGIS inserts its own node for the layer as well.
-    #
-    # Order matters: the node is added to the group FIRST and the old nodes
-    # are removed after. QGIS's layer-tree bridge unregisters a layer from
-    # the project the moment its last remaining tree node goes away, so the
-    # layer must never be left without one, even briefly.
-    stale_nodes = [n for n in root.findLayers() if n.layerId() == layer.id()]
-
-    group.addLayer(layer)
-
-    for node in stale_nodes:
-        parent = node.parent()
-        if parent is not None:
-            parent.removeChildNode(node)
-
-
-def _cleanup_duplicate_packaged_layers():
-    """Remove duplicate layers sitting in the Packaged Layers groups, keeping
-    the first of each source. Returns the number of layers removed."""
-    project = QgsProject.instance()
-    top = project.layerTreeRoot().findGroup(TOP_GROUP_NAME)
-    if top is None:
-        return 0
-
     removed = 0
-    for citymun_group in [c for c in top.children() if isinstance(c, QgsLayerTreeGroup)]:
+    for citymun_group in [c for c in root.children() if isinstance(c, QgsLayerTreeGroup)]:
         seen_sources = set()
         doomed = []
         for child in citymun_group.children():
@@ -175,67 +98,16 @@ def _cleanup_duplicate_packaged_layers():
     return removed
 
 
-def _group_id_and_table_from_source(layer):
-    """Return (group_id, table_name) if this layer's source looks like one
-    of our packaged GeoPackage tables, else (None, None)."""
-    try:
-        source = layer.source()
-    except Exception:
-        return None, None
-    if "|layername=" not in source:
-        return None, None
-    gpkg_path, _, remainder = source.partition("|layername=")
-    table_name = remainder.split("|")[0]
-    if not gpkg_path.lower().endswith(".gpkg"):
-        return None, None
-    group_id = os.path.splitext(os.path.basename(gpkg_path))[0]
-    return group_id, table_name
-
-
-def _organize_layer_ids(layer_ids):
-    project = QgsProject.instance()
-    for layer_id in layer_ids:
-        try:
-            layer = project.mapLayer(layer_id)
-            if layer is None:
-                continue  # removed again before we got to it
-            group_id, table_name = _group_id_and_table_from_source(layer)
-            if group_id is None:
-                continue
-            _place_layer_in_group(layer, group_id, table_name)
-        except Exception:
-            pass
-
-
-def _auto_organize_layers(layers):
-    # Deferred to the next event-loop pass on purpose. When a layer is added
-    # manually, QGIS inserts its own tree node for it right after this signal
-    # fires — doing the grouping inline races with that and leaves a second,
-    # duplicate node behind. Waiting until QGIS has finished lets us collapse
-    # whatever nodes exist down to exactly one. Layer *ids* are captured
-    # rather than the layer objects, so a layer removed in the meantime is
-    # simply skipped instead of crashing.
-    layer_ids = [lyr.id() for lyr in layers]
-    QTimer.singleShot(0, lambda: _organize_layer_ids(layer_ids))
-
-
 _HANDLER_KEY = "_package_layers_by_citymun_autogroup_handler"
 
-# Re-running this script must REPLACE the handler an earlier run connected,
-# not stack another one on top of it. The previous run's function object is
-# stashed on the always-loaded qgis.utils module, which survives between
-# script runs in the same QGIS session, so it can be found and disconnected
-# here. (Calling layersAdded.disconnect() with no argument is deliberately
-# avoided — that would also tear down QGIS's own internal connections.)
+# Cleanup any stale handler from earlier runs in the session so it no longer intercepts layers.
 _previous_handler = getattr(qgis.utils, _HANDLER_KEY, None)
 if _previous_handler is not None:
     try:
         QgsProject.instance().layersAdded.disconnect(_previous_handler)
     except Exception:
         pass
-
-QgsProject.instance().layersAdded.connect(_auto_organize_layers)
-setattr(qgis.utils, _HANDLER_KEY, _auto_organize_layers)
+    setattr(qgis.utils, _HANDLER_KEY, None)
 
 
 # -----------------------------------------------------------------------------
@@ -255,6 +127,8 @@ PACKAGED_LAYER_STYLES = [
     ("_psa", "ref_province_psa.qml"),
     ("ref_mbi_cases", "ref_mbi_cases.qml"),
 ]
+# "_boundary" has no dedicated QML yet — it is left with QGIS's default
+# symbology when loaded, same as any other unmatched suffix.
 
 
 def _apply_packaged_layer_style(layer):
@@ -289,6 +163,7 @@ class PackageLayersDialog(QDialog):
         "ref_mbi_cases": "ref_mbi_cases",
         "ref_province_lgu": "ref_{citymun}_lgu",
         "ref_province_psa": "ref_{citymun}_psa",
+        "ref_province_boundary": "2026_{citymun}_boundary",
         "ref_provincename_bldg_point": "ref_{citymun}_bldg_point",
     }
 
@@ -310,6 +185,9 @@ class PackageLayersDialog(QDialog):
         "ref_provincename_bldg_point": ["bldg_point", "bldg point", "building_point", "bldgpoint"],
         "ref_province_psa": ["province_psa", "psa"],
         "ref_province_lgu": ["province_lgu", "lgu"],
+        # Matches the "2026_province_boundary" (or any year-prefixed
+        # variant) layer produced by Run Analysis.
+        "ref_province_boundary": ["province_boundary", "boundary"],
     }
 
     def __init__(self, iface, parent=None):
@@ -355,11 +233,15 @@ class PackageLayersDialog(QDialog):
         self.cbo_lgu = self._make_layer_combo()
         form.addRow("Province LGU layer:", self.cbo_lgu)
 
+        self.cbo_boundary = self._make_layer_combo()
+        form.addRow("Province Boundary layer (2026_province_boundary):", self.cbo_boundary)
+
         # Best-effort preselect based on the layer names used in this project
         self._try_preselect(self.cbo_cases, "ref_mbi_cases")
         self._try_preselect(self.cbo_bldg, "ref_provincename_bldg_point")
         self._try_preselect(self.cbo_psa, "ref_province_psa")
         self._try_preselect(self.cbo_lgu, "ref_province_lgu")
+        self._try_preselect(self.cbo_boundary, "ref_province_boundary")
 
         # Editable dropdowns: populated from the fields common to the
         # selected layers, and auto-prefilled with the best-guess match.
@@ -374,7 +256,7 @@ class PackageLayersDialog(QDialog):
         left.addLayout(form)
 
         # Keep the field dropdowns in sync with whichever layers are picked
-        for combo in (self.cbo_cases, self.cbo_bldg, self.cbo_psa, self.cbo_lgu):
+        for combo in (self.cbo_cases, self.cbo_bldg, self.cbo_psa, self.cbo_lgu, self.cbo_boundary):
             combo.layerChanged.connect(self._refresh_field_options)
         self._refresh_field_options()
 
@@ -414,7 +296,7 @@ class PackageLayersDialog(QDialog):
         btn_row = QHBoxLayout()
         self.btn_cleanup = QPushButton("Clean up duplicates")
         self.btn_cleanup.setToolTip(
-            "Remove duplicate layers already sitting in the Packaged Layers "
+            "Remove duplicate layers already sitting in municipal "
             "groups, keeping one copy of each."
         )
         self.btn_cleanup.clicked.connect(self._cleanup_duplicates)
@@ -449,12 +331,13 @@ class PackageLayersDialog(QDialog):
             "<p><b>ppp</b> = 3-digit province code<br>"
             "<b>mm</b> = 2-digit city/mun code<br>"
             "(together, the first 5 characters of the geocode field)</p>"
-            "<p>Each output GeoPackage contains all four selected layers, "
+            "<p>Each output GeoPackage contains all five selected layers, "
             "filtered to only the features belonging to that city/mun. "
             "Layers inside the GeoPackage are renamed as:</p>"
             "<p><code>ref_mbi_cases</code><br>"
             "<code>ref_CITYMUN_lgu</code><br>"
             "<code>ref_CITYMUN_psa</code><br>"
+            "<code>2026_CITYMUN_boundary</code><br>"
             "<code>ref_CITYMUN_bldg_point</code></p>"
             "<p>The source \"fid\", \"layer\" and \"path\" attribute fields "
             "are dropped on write. Dropping \"fid\" lets GeoPackage assign a "
@@ -463,31 +346,22 @@ class PackageLayersDialog(QDialog):
             "merge leftovers naming the source file, which have no place in "
             "a packaged deliverable.</p>"
             "<p>The list of city/mun codes and names is always built from "
-            "all four selected layers combined, so nothing is missed.</p>"
-            "<p>Once this script has run in the session, ANY layer you add "
-            "afterwards from a packaged GeoPackage — including manually via "
-            "Add Vector Layer or the Browser panel — is automatically "
-            "placed in its city/mun group and has the \"&lt;file&gt; — "
-            "&lt;table&gt;\" name QGIS's Add Layer dialog applies by "
-            "default stripped back down to just the table name. Adding the "
-            "same table again replaces the existing copy rather than "
-            "duplicating it.</p>"
-            "<p><b>Clean up duplicates</b> sweeps the existing \"Packaged "
-            "Layers\" groups and removes any duplicate copies already "
-            "sitting there from earlier loads, keeping one of each.</p>"
+            "all five selected layers combined, so nothing is missed.</p>"
+            "<p><b>Clean up duplicates</b> sweeps existing municipal "
+            "groups and removes duplicate copies, keeping one of each.</p>"
             "<p><b>How to use</b></p>"
             "<ol>"
-            "<li>Pick the layer for each of the four roles.</li>"
+            "<li>Pick the layer for each of the five roles.</li>"
             "<li>Confirm the geocode and city/mun field names.</li>"
             "<li>Choose an output folder.</li>"
             "<li>Click <b>Run</b>. Nothing is added to the Layers panel "
             "automatically — the run only writes files to disk.</li>"
             "<li>Optionally tick \"Load packaged layers into QGIS\" first "
             "if you want the results added straight to the Layers panel, "
-            "each city/mun in its own group under a top-level \"Packaged "
-            "Layers\" group. Best used for spot-checking a few city/mun — "
-            "leave it off for a large, national-scale run, since adding "
-            "hundreds of groups/layers can slow QGIS down.</li>"
+            "each city/mun in its own group directly in the layer tree. "
+            "Best used for spot-checking a few city/mun — leave it off for "
+            "a large, national-scale run, since adding hundreds of "
+            "groups/layers can slow QGIS down.</li>"
             "<li>With that ticked, you can also tick \"Add Google Satellite "
             "basemap below the layers\" to drop the HCMGIS Google Satellite "
             "imagery at the bottom of the layer tree, underneath everything "
@@ -552,6 +426,7 @@ class PackageLayersDialog(QDialog):
             self.cbo_bldg.currentLayer(),
             self.cbo_psa.currentLayer(),
             self.cbo_lgu.currentLayer(),
+            self.cbo_boundary.currentLayer(),
         ]
         field_names = []
         seen = set()
@@ -596,8 +471,7 @@ class PackageLayersDialog(QDialog):
         self._log(f"Cleaned up {removed} duplicate layer(s).")
         QMessageBox.information(
             self, "Clean up duplicates",
-            f"Removed {removed} duplicate layer(s) from the "
-            f"\"{TOP_GROUP_NAME}\" groups."
+            f"Removed {removed} duplicate layer(s) from municipal groups."
         )
 
     def _log(self, msg):
@@ -625,13 +499,10 @@ class PackageLayersDialog(QDialog):
 
     def _add_group_to_project(self, gpkg_path, group_id, layer_names):
         """Load the just-written layers back into QGIS under their own
-        city/mun group. Placement and naming are handled by the session-wide
-        _auto_organize_layers() handler (connected near the top of this
-        script) as soon as each layer is added, so this does exactly what a
-        manual "Add Vector Layer" would do — just triggered from code."""
+        city/mun group directly in the project root."""
         # Clear any previous run's group for this city/mun first, so
         # re-running doesn't pile up duplicate layers inside it.
-        _get_citymun_group(group_id, replace=True)
+        citymun_group = _get_citymun_group(group_id, replace=True)
 
         for name in layer_names:
             uri = f"{gpkg_path}|layername={name}"
@@ -644,28 +515,17 @@ class PackageLayersDialog(QDialog):
             if applied:
                 self._log(f"    styled '{name}' with {applied}")
             QgsProject.instance().addMapLayer(vlayer, False)
+            citymun_group.addLayer(vlayer)
 
     def _expand_packaged_groups(self):
-        """Expand the Packaged Layers tree in the Layers panel itself.
-
-        node.setExpanded(True) alone only sets state that gets saved to the
-        project — the live panel is a QgsLayerTreeView whose expansion is
-        driven by its own (proxy) model, and our group nodes get created and
-        re-parented after the view has already built its items. So the view
-        has to be told directly, through a proxy-mapped index."""
+        """Expand the municipal groups in the Layers panel."""
         view = self.iface.layerTreeView()
         if view is None:
             return
-        top = QgsProject.instance().layerTreeRoot().findGroup(TOP_GROUP_NAME)
-        if top is None:
-            return
-
-        groups = [top] + [c for c in top.children() if isinstance(c, QgsLayerTreeGroup)]
+        root = QgsProject.instance().layerTreeRoot()
+        groups = [c for c in root.children() if isinstance(c, QgsLayerTreeGroup)]
         for node in groups:
             node.setExpanded(True)
-            # QgsLayerTreeView.node2index(), not the model's: the view's own
-            # returns an index already mapped through its proxy, which is
-            # what setExpanded() needs.
             index = view.node2index(node)
             if index.isValid():
                 view.setExpanded(index, True)
@@ -704,6 +564,7 @@ class PackageLayersDialog(QDialog):
             "ref_provincename_bldg_point": self.cbo_bldg.currentLayer(),
             "ref_province_psa": self.cbo_psa.currentLayer(),
             "ref_province_lgu": self.cbo_lgu.currentLayer(),
+            "ref_province_boundary": self.cbo_boundary.currentLayer(),
         }
         missing = [role for role, lyr in role_layers.items() if lyr is None]
         if missing:
@@ -738,7 +599,7 @@ class PackageLayersDialog(QDialog):
             self.btn_run.setEnabled(True)
 
     def _do_package(self, role_layers, geocode_fields, citymun_fields, output_root):
-        # City/mun codes and names are built from all four selected layers,
+        # City/mun codes and names are built from all five selected layers,
         # so no city/mun combination present in any of them is missed.
         self._log("Building city/mun code list from all 4 layers...")
         citymun_lookup = {}
@@ -850,11 +711,7 @@ class PackageLayersDialog(QDialog):
             self._add_basemap()
 
         if self.chk_load_layers.isChecked():
-            # Queued, not called directly: _auto_organize_layers defers its
-            # own work onto singleShot(0) too, so the layers are not in their
-            # final groups yet. Same-delay timers fire in order, and this one
-            # is queued last, so it runs once the tree has settled.
-            QTimer.singleShot(0, self._expand_packaged_groups)
+            self._expand_packaged_groups()
 
         self._log("\nDone.")
         QMessageBox.information(self, "Finished", f"Packaged {total} city/mun GeoPackage(s) to:\n{output_root}")
@@ -899,10 +756,10 @@ class PackageLayersAlgorithm(QgsProcessingAlgorithm):
 
     def shortHelpString(self):
         return self.tr(
-            "Splits four reference layers into one GeoPackage per city/mun, each "
+            "Splits five reference layers into one GeoPackage per city/mun, each "
             "in its own folder, for LGU presentation packaging.\n\n"
             "Opens the interactive Package Layers by City/Mun dialog, where you pick "
-            "the four layers, confirm the geocode and city/mun field names, choose "
+            "the five layers, confirm the geocode and city/mun field names, choose "
             "an output folder, and click Run."
         )
 
