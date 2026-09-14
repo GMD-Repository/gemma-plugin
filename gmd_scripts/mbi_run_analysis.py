@@ -1,7 +1,7 @@
 # ----------------------------------------------------------------------
 # MBI Gaps / Overlaps / Disputed Areas Checker
 # Last updated: 2026-09-14
-# Version: v16
+# Version: v17
 #
 # Changelog:
 #   v1 - Initial Gaps/Overlaps detection between LGU and PSA polygons.
@@ -103,6 +103,19 @@
 #         source in the published boundary, with no area lost.
 #         Intermediate boundary layers are now declared MultiPolygon
 #         (boundary_memory_layer()), since they carry multipart features.
+#   v17 - Progress bar fix: the bar restarted from 0 once per sub-process
+#         instead of filling once. Cause: every nested processing.run() was
+#         handed this algorithm's own feedback, and each sub-algorithm
+#         (refactorfields, mergevectorlayers, reprojectlayer, fixgeometries,
+#         multiparttosingleparts, dissolve, deleteholes, difference) reports
+#         its own 0-100% on it. Nested calls now get ChildFeedback, which
+#         forwards log messages and cancellation but swallows setProgress,
+#         so only this algorithm drives the bar. The sweep is also now
+#         continuous end to end: boundary resolution reports 2-8, building
+#         points/indexes 10-12, Disputed 15, Overlaps 20-55, Gaps 60-95
+#         (previously the gap loop reported nothing and jumped straight to
+#         100), and 100 is reached only after ref_mbi_cases is written.
+#         Gap detection also honours Cancel now, as overlap detection did.
 # ----------------------------------------------------------------------
 
 __author__ = 'Geospatial Management Division'
@@ -255,6 +268,46 @@ def make_text_setup():
     return QgsEditorWidgetSetup('TextEdit', {'IsMultiline': False, 'UseHtml': False})
 
 
+class ChildFeedback(QgsProcessingFeedback):
+    """
+    Feedback handed to the nested processing.run() calls.
+
+    Log messages and cancellation still reach the real feedback, but
+    setProgress() is swallowed. Each nested algorithm (refactorfields,
+    dissolve, difference, ...) reports its own 0-100%, so passing the real
+    feedback down made the progress bar restart once per sub-process.
+    Only this algorithm drives the bar now, as a single 0-100 run.
+    """
+
+    def __init__(self, parent):
+        super().__init__()
+        self._parent = parent
+
+    def setProgress(self, progress):
+        pass
+
+    def isCanceled(self):
+        return self._parent.isCanceled()
+
+    def pushInfo(self, info):
+        self._parent.pushInfo(info)
+
+    def pushDebugInfo(self, info):
+        self._parent.pushDebugInfo(info)
+
+    def pushCommandInfo(self, info):
+        self._parent.pushCommandInfo(info)
+
+    def pushConsoleInfo(self, info):
+        self._parent.pushConsoleInfo(info)
+
+    def pushWarning(self, warning):
+        self._parent.pushWarning(warning)
+
+    def reportError(self, error, fatalError=False):
+        self._parent.reportError(error, fatalError)
+
+
 class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
 
     INPUT1   = 'INPUT1'
@@ -370,6 +423,13 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
     def processAlgorithm(self, parameters, context, feedback: QgsProcessingFeedback):
         self._keep_alive = []
 
+        # Every nested processing.run() gets this instead of `feedback`, so
+        # the progress bar is driven only by this algorithm — one 0-100 run
+        # instead of restarting for each sub-process. Keep a reference: the
+        # C++ side does not own it, so a local would be collected mid-run.
+        child_fb = ChildFeedback(feedback)
+        self._child_feedback = child_fb
+
         def keep_layer(layer):
             if layer is not None:
                 self._keep_alive.append(layer)
@@ -457,7 +517,7 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             return keep_layer(processing.run(
                 'native:refactorfields',
                 {'INPUT': layer, 'FIELDS_MAPPING': mapping, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
 
         def merge_layers(layers, crs):
@@ -472,7 +532,7 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             return keep_layer(processing.run(
                 'native:mergevectorlayers',
                 {'LAYERS': refs, 'CRS': crs, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
 
         def reproject_fix(layer):
@@ -480,24 +540,24 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                 'native:reprojectlayer',
                 {'INPUT': layer, 'TARGET_CRS': target_crs,
                  'CONVERT_CURVED_GEOMETRIES': False, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
             return keep_layer(processing.run(
                 'native:fixgeometries',
                 {'INPUT': reproj, 'METHOD': 1, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
 
         def singleparts(layer):
             single = keep_layer(processing.run(
                 'native:multiparttosingleparts',
                 {'INPUT': layer, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
             return keep_layer(processing.run(
                 'native:fixgeometries',
                 {'INPUT': single, 'METHOD': 1, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
 
         def boundary_memory_layer(src_layer, name):
@@ -733,29 +793,33 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
         # sharing a geocode, which read as duplicates and cost the barangay
         # half its boundary when de-duplicated by hand.
         feedback.pushInfo("Merging rows that share a geocode...")
+        feedback.setProgress(4)
         boundary_layer = merge_by_geocode(fixed_poly)
 
         feedback.pushInfo("Resolving LGU vs PSA boundary precedence by city_mun...")
+        feedback.setProgress(6)
         boundary_layer = resolve_boundary_precedence(boundary_layer)
 
         feedback.pushInfo("Labeling PSA-sourced polygons...")
+        feedback.setProgress(7)
         boundary_layer = normalize_source_labels(boundary_layer)
 
         boundary_display = keep_layer(processing.run(
             'native:reprojectlayer',
             {'INPUT': boundary_layer, 'TARGET_CRS': output_crs,
              'CONVERT_CURVED_GEOMETRIES': False, 'OUTPUT': 'memory:'},
-            context=context, feedback=feedback
+            context=context, feedback=child_fb
         )['OUTPUT'])
         results['OUTPUT_BOUNDARY'] = load_plain_layer(boundary_display, '2026_province_boundary')
 
         # Detection needs one geometry per polygon, so the exploded copy is
         # derived from the resolved boundary and used ONLY from here down —
         # it never reaches the published layer above.
+        feedback.setProgress(8)
         poly_layer = singleparts(boundary_layer)
 
         feedback.pushInfo("Merging and fixing building point layers...")
-        feedback.setProgress(8)
+        feedback.setProgress(10)
         merged_bldg = merge_layers(building_layers, building_layers[0].crs())
         bldg_layer  = reproject_fix(merged_bldg)
 
@@ -1106,7 +1170,7 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                     feedback.setProgress(20 + int((i / total) * 35))
 
             feedback.pushInfo(f"  {ovl_count} overlap feature(s) prepared.")
-            feedback.setProgress(55 if run_gaps else 100)
+            feedback.setProgress(55)
 
         # ==================================================================
         # GAP DETECTION
@@ -1138,39 +1202,39 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                 'native:dissolve',
                 {'INPUT': non_disp_layer, 'FIELD': [],
                  'SEPARATE_DISJOINT': False, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
 
             no_holes = keep_layer(processing.run(
                 'native:deleteholes',
                 {'INPUT': dissolved, 'MIN_AREA': 0, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
 
             cleaned = keep_layer(processing.run(
                 'native:dissolve',
                 {'INPUT': no_holes, 'FIELD': [],
                  'SEPARATE_DISJOINT': False, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
 
             gap_diff = keep_layer(processing.run(
                 'native:difference',
                 {'INPUT': cleaned, 'OVERLAY': dissolved,
                  'GRID_SIZE': None, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
 
             gap_single = keep_layer(processing.run(
                 'native:multiparttosingleparts',
                 {'INPUT': gap_diff, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
 
             gap_fixed = keep_layer(processing.run(
                 'native:fixgeometries',
                 {'INPUT': gap_single, 'METHOD': 1, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
 
             gap_count = 0
@@ -1192,7 +1256,13 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                 else:
                     disputed_geom_union = disputed_geom_union.combine(d_geom_3857)
 
-            for feat in gap_fixed.getFeatures():
+            gap_total = gap_fixed.featureCount()
+            for g_i, feat in enumerate(gap_fixed.getFeatures()):
+                if feedback.isCanceled():
+                    return {}
+                if gap_total:
+                    feedback.setProgress(60 + int((g_i / gap_total) * 35))
+
                 geom = feat.geometry()
                 if geom is None or geom.isEmpty():
                     continue
@@ -1228,7 +1298,7 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                         gap_count += 1
 
             feedback.pushInfo(f"  {gap_count} gap feature(s) prepared.")
-            feedback.setProgress(100)
+            feedback.setProgress(95)
 
         # ==================================================================
         # WRITE COMBINED OUTPUT — 'ref_mbi_cases'
@@ -1244,7 +1314,8 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             feedback.pushInfo("No Gap/Overlap/Disputed features found.")
             results['OUTPUT'] = None
 
-        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v16.")
+        feedback.setProgress(100)
+        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v17.")
         return results
 
 
