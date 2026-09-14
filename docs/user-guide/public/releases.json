@@ -1,6 +1,41 @@
 {
   "releases": [
     {
+      "version": "1.0.6",
+      "date": "2026-09-14",
+      "tag": "v1.0.6",
+      "prerelease": false,
+      "contributors": [
+        "ftating19",
+        "psacjperez"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.6/gemma-plugin-v1.0.6.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.6",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "Updated PSA-LGU Boundary Comparison and Run Analysis Plugin ([@ftating19](https://github.com/ftating19)) ([#263](https://github.com/GMD-Repository/gemma-plugin/pull/263))"
+        ],
+        "improvements": [
+          "Separated building points outside LGU and PSA boundaries ([@psacjperez](https://github.com/psacjperez))"
+        ],
+        "changes": [],
+        "fixes": [
+          "Key deduplication on geocode and prevented cutting islands off barangays ([@psacjperez](https://github.com/psacjperez))",
+          "Published boundary before exploding multiparts and merged rows by geocode ([@psacjperez](https://github.com/psacjperez))",
+          "Repaired geometries before writing either output ([@psacjperez](https://github.com/psacjperez))",
+          "Optimized progress bar to update once instead of per sub-process ([@psacjperez](https://github.com/psacjperez))"
+        ],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
+    {
       "version": "1.0.5",
       "date": "2026-09-14",
       "tag": "v1.0.5",
@@ -182,5 +217,5 @@
       }
     }
   ],
-  "latest": "1.0.5"
+  "latest": "1.0.6"
 }

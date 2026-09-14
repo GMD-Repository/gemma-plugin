@@ -5,6 +5,20 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6] - 2026-09-14
+
+### Added
+- Updated PSA-LGU Boundary Comparison and Run Analysis Plugin ([@ftating19](https://github.com/ftating19)) ([#263](https://github.com/GMD-Repository/gemma-plugin/pull/263))
+
+### Changed
+- Separated building points outside LGU and PSA boundaries ([@psacjperez](https://github.com/psacjperez))
+
+### Fixed
+- Key deduplication on geocode and prevented cutting islands off barangays ([@psacjperez](https://github.com/psacjperez))
+- Published boundary before exploding multiparts and merged rows by geocode ([@psacjperez](https://github.com/psacjperez))
+- Repaired geometries before writing either output ([@psacjperez](https://github.com/psacjperez))
+- Optimized progress bar to update once instead of per sub-process ([@psacjperez](https://github.com/psacjperez))
+
 ## [1.0.5] - 2026-09-14
 
 ### Added

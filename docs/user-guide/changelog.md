@@ -2,6 +2,23 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.6
+<time>Sep 14, 2026</time>
+
+### ✨ New Features
+- Updated PSA-LGU Boundary Comparison and Run Analysis Plugin ([@ftating19](https://github.com/ftating19)) ([#263](https://github.com/GMD-Repository/gemma-plugin/pull/263))
+
+### ⚡ Improvements & Fixes
+- Separated building points outside LGU and PSA boundaries ([@psacjperez](https://github.com/psacjperez))
+
+### 🐛 Bug Fixes
+- Key deduplication on geocode and prevented cutting islands off barangays ([@psacjperez](https://github.com/psacjperez))
+- Published boundary before exploding multiparts and merged rows by geocode ([@psacjperez](https://github.com/psacjperez))
+- Repaired geometries before writing either output ([@psacjperez](https://github.com/psacjperez))
+- Optimized progress bar to update once instead of per sub-process ([@psacjperez](https://github.com/psacjperez))
+
+<Contributors :contributors="['ftating19', 'psacjperez']" />
+
 ## 1.0.5
 <time>Sep 14, 2026</time>
 
