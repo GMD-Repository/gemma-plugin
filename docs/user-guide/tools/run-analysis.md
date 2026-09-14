@@ -36,7 +36,7 @@ All three boundary analyses (**Gaps**, **Overlaps**, and **Disputed Areas**) exe
 
 | Output | Type | Description |
 |--------|------|-------------|
-| **2026_province_boundary** | Vector Layer (Polygon, In-Memory) | The resolved authoritative boundary set in EPSG:4326: exact duplicate polygons removed, LGU polygons kept wherever an LGU submission exists for a city_mun (its PSA counterpart excluded), and every remaining non-LGU polygon explicitly labeled `source = PSA`. This is the sole input to Gaps/Overlaps/Disputed detection below, loaded for reviewers to inspect which polygons were kept, superseded, or relabeled. |
+| **2026_province_boundary** | Vector Layer (MultiPolygon, In-Memory) | The resolved authoritative boundary set in EPSG:4326: rows sharing a geocode merged into one multipart feature, LGU polygons kept wherever an LGU submission exists for a city_mun (its PSA counterpart excluded), and every remaining non-LGU polygon explicitly labeled `source = PSA`. One row per `geocode` per `source`, with islets retained as parts of their barangay. Detection below runs on a single-part working copy of this same boundary. |
 | **ref_mbi_cases** | Feature Sink (Polygon) | A consolidated polygon layer in EPSG:4326 containing all detected boundary findings categorized by `mbi_type`. Formatted with pre-configured attribute table editor widgets. |
 
 ## Output Layer Schema
@@ -67,20 +67,22 @@ The resulting `ref_mbi_cases` layer contains the following standardized attribut
 
 1. **Layer Pre-Processing and Coordinate Normalization**:
    - Multiple input polygon and building point layers are refactored, merged, and projected to Web Mercator (`EPSG:3857`) for accurate metric area calculations and geometric topological operations.
-   - Geometries are validated and repaired using geometry fixing algorithms, and multipart geometries are exploded into single parts.
+   - Geometries are validated and repaired using geometry fixing algorithms. Multipart geometries are deliberately **not** exploded at this stage — the boundary is resolved and published first, so a barangay with an islet stays a single feature.
 
-2. **Duplicate Removal**:
-   - Polygons are keyed by `geocode` + `source` — the PSGC geocode is the unique identifier per barangay within a given source (LGU or PSA). A repeated `geocode` + `source` pair is dropped only when its geometry is identical to one already kept, so the same barangay submitted twice (duplicate rows in a file, or the same area present in more than one selected input layer) collapses to a single feature.
-   - The identical-geometry requirement protects barangays with islands or other disjoint pieces: `multiparttosingleparts` explodes them into several features that all share one geocode but have different geometry, so each genuine piece is retained rather than discarded as a duplicate of the mainland piece.
+2. **Merging Rows That Share a Geocode**:
+   - Every feature sharing a `geocode` + `source` is merged into one multipart feature, so `geocode` is unique per source in the published boundary.
+   - Rows share a geocode for two different reasons, and the union handles both: a barangay submitted twice produces overlapping rows, whose union is that same area (nothing is double-counted even if the two submissions were digitized slightly differently); a barangay whose islet was stored as its own row produces disjoint rows, whose union keeps the islet as a second part instead of discarding it.
+   - `source` stays in the key because LGU and PSA carry the same geocode for the same barangay — merging them here would pre-empt the precedence rule below.
 
 3. **Boundary Precedence Resolution**:
    - The LGU layer is treated as the latest submission. For every `city_mun` where at least one polygon's `source` contains `LGU`, that city_mun's PSA polygon(s) are excluded and only the LGU polygon(s) are kept.
    - A `city_mun` with no LGU submission at all falls back to using its PSA polygon(s) unchanged.
    - Every non-LGU polygon that survives this step then has its `source` attribute explicitly set to `PSA` (overwriting a blank/`NULL`/other value), so downstream findings never carry an ambiguous source label.
-   - The resulting authoritative set is reprojected to `EPSG:4326` and loaded into the project as **2026_province_boundary**, and is also the sole input to spatial indexing and detection below.
+   - The resulting authoritative set is reprojected to `EPSG:4326` and published as **2026_province_boundary** with multipart barangays intact — one row per geocode per source, so de-duplicating the table by geocode can never delete an islet.
 
 4. **Spatial Indexing & Attribute Extraction**:
-   - Spatial bounding box indexes (`QgsSpatialIndex`) and cached feature lookups are constructed for both the resolved polygon boundaries and building points.
+   - A separate single-part working copy of the resolved boundary is produced with `multiparttosingleparts`, used only by the detection steps below — it never reaches the published layer.
+   - Spatial bounding box indexes (`QgsSpatialIndex`) and cached feature lookups are constructed for both that working copy and the building points.
    - Core administrative attributes (`geocode`, `region`, `province`, `city_mun`, `barangay`, `boundary`, `source`) are normalized into structured lookup records.
 
 5. **Disputed Territory Identification**:

@@ -1,7 +1,7 @@
 # ----------------------------------------------------------------------
 # MBI Gaps / Overlaps / Disputed Areas Checker
 # Last updated: 2026-09-14
-# Version: v15
+# Version: v16
 #
 # Changelog:
 #   v1 - Initial Gaps/Overlaps detection between LGU and PSA polygons.
@@ -83,6 +83,26 @@
 #         whose geometry is IDENTICAL to one already kept, so genuinely
 #         distinct pieces always survive while true duplicate submissions
 #         are still removed.
+#   v16 - Bug fix: geocode repeated across several rows of
+#         2026_province_boundary for any barangay with an islet, so the
+#         output looked duplicated and de-duplicating it by hand deleted
+#         half of that barangay's boundary. Cause: the pipeline ran
+#         singleparts() FIRST, so every multipart barangay was already
+#         exploded into one row per piece by the time the boundary was
+#         resolved and published.
+#         The boundary is now resolved on multipart data and published
+#         before anything is exploded; singleparts() is applied afterwards
+#         to a separate working copy that only Gaps/Overlaps/Disputed
+#         detection sees, so detection behaviour is unchanged.
+#         dedupe_same_source() is replaced by merge_by_geocode(), which
+#         UNIONS every row sharing a geocode + source into one multipart
+#         feature instead of dropping all but one. That is lossless in both
+#         directions: duplicate submissions of the same area union back to
+#         that area, and a barangay whose islet was stored as its own row
+#         keeps the islet as a second part. geocode is therefore unique per
+#         source in the published boundary, with no area lost.
+#         Intermediate boundary layers are now declared MultiPolygon
+#         (boundary_memory_layer()), since they carry multipart features.
 # ----------------------------------------------------------------------
 
 __author__ = 'Geospatial Management Division'
@@ -272,19 +292,23 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             "of LGU polygon layers, written into a single combined output layer "
             "named <b>ref_mbi_cases</b>, distinguished by <i>mbi_type</i>.</p>"
             "<h3>Output: 2026_province_boundary</h3>"
-            "<p>Before any detection runs: (1) exact duplicate polygons — same geocode, "
-            "same source, identical geometry, e.g. a barangay submitted twice or the "
-            "same area present in more than one selected input layer — are removed; "
-            "a barangay with an island or other disjoint piece is unaffected, since "
-            "each piece carries the same geocode but different geometry. "
+            "<p>Before any detection runs: (1) every row sharing a <i>geocode</i> and "
+            "<i>source</i> is merged into one multipart feature, so geocode is unique "
+            "per source in the output. This covers both a barangay submitted twice "
+            "(the rows overlap, so the union is that same area) and a barangay whose "
+            "islet was stored as its own row (the rows are disjoint, so the islet is "
+            "kept as a second part rather than discarded). "
             "(2) LGU vs PSA precedence is then resolved per <i>city_mun</i>: the LGU "
             "layer is treated as the latest submission, so wherever at least one LGU "
             "polygon exists for a city_mun, that city_mun's PSA polygon(s) are excluded "
             "and only the LGU polygon(s) are used. A city_mun with no LGU submission at "
-            "all falls back to PSA. The resulting authoritative boundary set is the sole "
-            "input to Gaps/Overlaps/Disputed detection below, and is also loaded as its "
-            "own layer, <b>2026_province_boundary</b>, so reviewers can inspect exactly "
-            "which polygons were kept or superseded.</p>"
+            "all falls back to PSA.</p>"
+            "<p>The resulting authoritative boundary is published as "
+            "<b>2026_province_boundary</b> with multipart barangays intact — one row "
+            "per geocode per source — so reviewers can inspect which polygons were "
+            "kept or superseded, and so de-duplicating the table by geocode can never "
+            "delete an islet. Gaps/Overlaps/Disputed detection below runs on a separate "
+            "single-part working copy of that same boundary.</p>"
             "<h3>Output: ref_mbi_cases</h3>"
             "<ul>"
             "<li><b>Gaps</b> — Empty slivers between polygons. Disputed polygons are "
@@ -476,63 +500,89 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                 context=context, feedback=feedback
             )['OUTPUT'])
 
-        def dedupe_same_source(layer):
+        def boundary_memory_layer(src_layer, name):
             """
-            Removes duplicate polygons before boundary precedence is
-            resolved. Key: geocode + source — the PSGC geocode is unique per
-            barangay within a given source (LGU or PSA). A repeated
-            geocode+source pair is only treated as a duplicate when its
-            geometry is IDENTICAL to one already kept — the first occurrence
-            is kept and later exact-duplicate rows dropped (e.g. a barangay
-            submitted twice in a file, or the same area present in more than
-            one selected input layer).
+            Empty memory layer mirroring src_layer's CRS and fields.
 
-            The identical-geometry requirement is deliberate: a barangay
-            with an island or other disjoint piece is exploded by
-            singleparts() into several single-part features that all share
-            the same geocode but have DIFFERENT geometry. Dropping on a bare
-            geocode/map_uuid match (as an earlier version of this function
-            did) silently discarded those disjoint pieces as "duplicates" of
-            the mainland piece — cutting real islands off the boundary.
-            Requiring exact geometry equality keeps every genuinely distinct
-            piece while still catching true duplicate submissions.
+            Declared MultiPolygon on purpose: the boundary pipeline runs
+            BEFORE multiparttosingleparts, so a barangay with an islet is
+            still one feature holding several parts. A 'Polygon' layer risks
+            losing those extra parts on the way through.
             """
-            seen        = {}
-            kept_feats  = []
-            dropped_cnt = 0
+            layer = QgsVectorLayer(
+                f'MultiPolygon?crs={src_layer.crs().authid()}', name, 'memory'
+            )
+            layer.dataProvider().addAttributes(src_layer.fields().toList())
+            layer.updateFields()
+            return layer
+
+        def merge_by_geocode(layer):
+            """
+            Collapses every feature sharing a geocode+source into ONE
+            multipart feature, so geocode is unique in the published
+            boundary and a manual de-duplication can never cost a barangay
+            part of its area.
+
+            Rows share a geocode+source for two very different reasons, and
+            unioning them is correct for both:
+              - the same barangay submitted twice (the rows overlap) — the
+                union is that same area, so nothing is double-counted, even
+                when the two submissions were digitized slightly
+                differently;
+              - a barangay whose islet was stored as its own row (the rows
+                are disjoint) — the union keeps both as parts of one
+                multipolygon, instead of discarding the islet as a
+                "duplicate".
+
+            source stays in the key because LGU and PSA both carry the same
+            geocode for the same barangay; merging those here would pre-empt
+            resolve_boundary_precedence(), which is what decides which of
+            the two actually wins.
+            """
+            order       = []
+            grouped     = {}
+            passthrough = []
 
             for feat in layer.getFeatures():
                 geocode = txt(get_attr(feat, ['geocode', 'GEOCODE']))
                 source  = txt(get_attr(feat, ['source', 'SOURCE', 'Source'])).upper()
-                geom    = feat.geometry()
-                key     = (geocode, source)
-                bucket  = seen.setdefault(key, [])
+                if not geocode:
+                    # Nothing to key on — keep the row exactly as it is.
+                    passthrough.append(feat)
+                    continue
+                key = (geocode, source)
+                if key not in grouped:
+                    grouped[key] = {'feat': feat, 'geoms': []}
+                    order.append(key)
+                grouped[key]['geoms'].append(QgsGeometry(feat.geometry()))
 
-                is_dup = False
-                if geocode:
-                    for existing in bucket:
+            out_feats  = []
+            merged_cnt = 0
+            for key in order:
+                entry = grouped[key]
+                geoms = entry['geoms']
+                feat  = QgsFeature(entry['feat'])
+                if len(geoms) > 1:
+                    combined = geoms[0]
+                    for g in geoms[1:]:
                         try:
-                            if existing.isGeosEqual(geom):
-                                is_dup = True
-                                break
+                            combined = combined.combine(g)
                         except Exception:
                             pass
+                    if combined is not None and not combined.isEmpty():
+                        feat.setGeometry(combined)
+                    merged_cnt += len(geoms) - 1
+                out_feats.append(feat)
+            out_feats.extend(passthrough)
 
-                if is_dup:
-                    dropped_cnt += 1
-                    continue
-                bucket.append(QgsGeometry(geom))
-                kept_feats.append(feat)
-
-            result = QgsVectorLayer(f'Polygon?crs={layer.crs().authid()}', 'deduped', 'memory')
-            result.dataProvider().addAttributes(layer.fields().toList())
-            result.updateFields()
-            result.dataProvider().addFeatures(kept_feats)
+            result = boundary_memory_layer(layer, 'merged_by_geocode')
+            result.dataProvider().addFeatures(out_feats)
             result.updateExtents()
 
             feedback.pushInfo(
-                f"  {dropped_cnt} duplicate polygon(s) removed "
-                f"(same geocode + source + identical geometry)."
+                f"  {merged_cnt} extra row(s) merged into their geocode; "
+                f"{len(out_feats)} barangay feature(s) remain, one per "
+                f"geocode + source."
             )
             return keep_layer(result)
 
@@ -561,9 +611,7 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                     continue
                 kept_feats.append(feat)
 
-            result = QgsVectorLayer(f'Polygon?crs={layer.crs().authid()}', '2026_province_boundary', 'memory')
-            result.dataProvider().addAttributes(layer.fields().toList())
-            result.updateFields()
+            result = boundary_memory_layer(layer, 'precedence_resolved')
             result.dataProvider().addFeatures(kept_feats)
             result.updateExtents()
 
@@ -592,9 +640,7 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                     if src_idx >= 0:
                         break
 
-            result = QgsVectorLayer(f'Polygon?crs={layer.crs().authid()}', 'normalized', 'memory')
-            result.dataProvider().addAttributes(layer.fields().toList())
-            result.updateFields()
+            result = boundary_memory_layer(layer, 'normalized')
 
             out_feats  = []
             filled_cnt = 0
@@ -679,24 +725,34 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
         feedback.setProgress(2)
         merged_poly = merge_layers(polygon_layers, polygon_layers[0].crs())
         fixed_poly  = reproject_fix(merged_poly)
-        poly_layer  = singleparts(fixed_poly)
 
-        feedback.pushInfo("Removing duplicate same-source polygons...")
-        poly_layer = dedupe_same_source(poly_layer)
+        # The boundary is resolved on MULTIPART data, before anything is
+        # exploded into single parts. A barangay with an islet therefore
+        # stays ONE feature with several parts, so geocode remains unique in
+        # 2026_province_boundary — exploding first produced several rows
+        # sharing a geocode, which read as duplicates and cost the barangay
+        # half its boundary when de-duplicated by hand.
+        feedback.pushInfo("Merging rows that share a geocode...")
+        boundary_layer = merge_by_geocode(fixed_poly)
 
         feedback.pushInfo("Resolving LGU vs PSA boundary precedence by city_mun...")
-        poly_layer = resolve_boundary_precedence(poly_layer)
+        boundary_layer = resolve_boundary_precedence(boundary_layer)
 
         feedback.pushInfo("Labeling PSA-sourced polygons...")
-        poly_layer = normalize_source_labels(poly_layer)
+        boundary_layer = normalize_source_labels(boundary_layer)
 
         boundary_display = keep_layer(processing.run(
             'native:reprojectlayer',
-            {'INPUT': poly_layer, 'TARGET_CRS': output_crs,
+            {'INPUT': boundary_layer, 'TARGET_CRS': output_crs,
              'CONVERT_CURVED_GEOMETRIES': False, 'OUTPUT': 'memory:'},
             context=context, feedback=feedback
         )['OUTPUT'])
         results['OUTPUT_BOUNDARY'] = load_plain_layer(boundary_display, '2026_province_boundary')
+
+        # Detection needs one geometry per polygon, so the exploded copy is
+        # derived from the resolved boundary and used ONLY from here down —
+        # it never reaches the published layer above.
+        poly_layer = singleparts(boundary_layer)
 
         feedback.pushInfo("Merging and fixing building point layers...")
         feedback.setProgress(8)
@@ -1188,7 +1244,7 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             feedback.pushInfo("No Gap/Overlap/Disputed features found.")
             results['OUTPUT'] = None
 
-        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v15.")
+        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v16.")
         return results
 
 
