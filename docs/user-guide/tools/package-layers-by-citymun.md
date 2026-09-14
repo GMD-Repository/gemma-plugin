@@ -50,7 +50,7 @@ Inside each GeoPackage, the four reference datasets are written into dedicated t
 | **Geocode field name** | Field Name | Attribute field on all four layers whose first 5 characters identify the city/mun code (`pppmm`). Auto-detected from `geocode` or `sa_geocode`. |
 | **City/Mun name field** | Field Name | Attribute field providing the human-readable city/mun name used to generate folder and table names. Auto-detected from `city_mun` or `citymun`. |
 | **Output folder** | Directory Path | Destination root directory where municipal subfolders (`pppmm_CITYMUN/`) will be generated. |
-| **Load packaged layers into QGIS after Run** | Boolean | When enabled, automatically loads exported layers into QGIS under the `Packaged Layers` group upon completion. Default is disabled for large national runs to preserve performance. |
+| **Load packaged layers into QGIS after Run** | Boolean | When enabled, automatically loads exported layers into QGIS under individual municipal groups (`pppmm_CITYMUN`) upon completion. Default is disabled for large national runs to preserve performance. |
 | **Add Google Satellite basemap below the layers** | Boolean | Enabled when *Load packaged layers* is checked. Automatically adds the Google Satellite XYZ tile layer at the base of the layer tree. Requires the HCMGIS plugin. |
 
 ### Outputs
@@ -58,7 +58,7 @@ Inside each GeoPackage, the four reference datasets are written into dedicated t
 | Output | Type | Description |
 |--------|------|-------------|
 | **Municipal GeoPackages** | Directory & `.gpkg` Files | Individual GeoPackage databases written to `pppmm_CITYMUN/pppmm_CITYMUN.gpkg` containing filtered subsets of all four reference layers. |
-| **Packaged Layers Group** | Layer Tree Group | (Optional) Auto-expanded group hierarchy in the QGIS Layers panel containing municipal subgroups and styled vector layers. |
+| **Municipal Layer Groups** | Layer Tree Group | (Optional) Auto-expanded group hierarchy in the QGIS Layers panel containing municipal groups (`pppmm_CITYMUN`) and styled vector layers. |
 
 ## How It Works
 
@@ -76,18 +76,13 @@ Inside each GeoPackage, the four reference datasets are written into dedicated t
    - Removing existing `fid` values allows GeoPackage to assign clean, contiguous primary keys per table, preventing unique constraint violations.
    - Leftover merge provenance fields (`layer`, `path`) are stripped to produce pristine deliverables.
 
-4. **Automated Layer Tree Organization**:
-   - When *Load packaged layers* is checked, tables are loaded into the project under `Packaged Layers → {pppmm_CITYMUN}`.
+4. **Direct Layer Tree Loading & Styling**:
+   - When *Load packaged layers* is checked, tables are loaded into the project under direct municipal groups: `{pppmm_CITYMUN}`.
    - Applies matching QML styles from the plugin's bundled style library (`ref_mbi_cases.qml`, `ref_province_psa.qml`, `ref_province_lgu.qml`, `1. Base Layer Building Points.qml`).
    - Automatically expands the group tree so results are immediately visible for verification.
 
-5. **Session-Wide Auto-Organize**:
-   - Once the tool runs during a QGIS session, a project listener automatically organizes any layer subsequently added from a packaged GeoPackage (via *Add Vector Layer* or the Browser panel) into its municipal group.
-   - Cleans the default `<file> — <table>` prefix applied by QGIS back to the clean table name.
-   - Replacing identical tables automatically avoids cluttering the project with duplicate layers.
-
-6. **Duplicate Cleanup Utility**:
-   - Provides a dedicated **Clean Up Duplicates** button that scans the `Packaged Layers` hierarchy, identifies duplicate layers referencing identical GeoPackage tables, and removes redundant instances while preserving the newest copy.
+5. **Duplicate Cleanup Utility**:
+   - Provides a dedicated **Clean Up Duplicates** button that scans municipal groups, identifies duplicate layers referencing identical GeoPackage tables, and removes redundant instances while preserving the newest copy.
 
 ## Supported Geometry Types
 
