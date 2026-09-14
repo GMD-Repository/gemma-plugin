@@ -70,8 +70,8 @@ The resulting `ref_mbi_cases` layer contains the following standardized attribut
    - Geometries are validated and repaired using geometry fixing algorithms, and multipart geometries are exploded into single parts.
 
 2. **Duplicate Removal**:
-   - Polygons are keyed primarily by `map_uuid` — a barangay's PSGC-matched identifier, unique per barangay and `NULL` only for Contested features. A repeated `map_uuid` means the same barangay was submitted more than once (duplicate rows in a file, or the same area present in more than one selected input layer); the first occurrence is kept and the rest are dropped, even if their geometry differs slightly between submissions.
-   - Features with no `map_uuid` fall back to a `geocode` + `source` + identical-geometry check, so a barangay legitimately split into multiple disjoint parts is unaffected — each part has different geometry even though the geocode repeats.
+   - Polygons are keyed by `geocode` + `source` — the PSGC geocode is the unique identifier per barangay within a given source (LGU or PSA). A repeated `geocode` + `source` pair is dropped only when its geometry is identical to one already kept, so the same barangay submitted twice (duplicate rows in a file, or the same area present in more than one selected input layer) collapses to a single feature.
+   - The identical-geometry requirement protects barangays with islands or other disjoint pieces: `multiparttosingleparts` explodes them into several features that all share one geocode but have different geometry, so each genuine piece is retained rather than discarded as a duplicate of the mainland piece.
 
 3. **Boundary Precedence Resolution**:
    - The LGU layer is treated as the latest submission. For every `city_mun` where at least one polygon's `source` contains `LGU`, that city_mun's PSA polygon(s) are excluded and only the LGU polygon(s) are kept.

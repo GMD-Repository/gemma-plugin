@@ -1,7 +1,7 @@
 # ----------------------------------------------------------------------
 # MBI Gaps / Overlaps / Disputed Areas Checker
 # Last updated: 2026-09-14
-# Version: v14
+# Version: v15
 #
 # Changelog:
 #   v1 - Initial Gaps/Overlaps detection between LGU and PSA polygons.
@@ -71,6 +71,18 @@
 #         Runs on the same poly_layer that feeds both 2026_province_boundary
 #         and polygon_infos, so ref_mbi_cases' source field picks up the
 #         same explicit 'PSA' label wherever it applies.
+#   v15 - Bug fix: barangays with an island or other disjoint piece were
+#         losing that piece from the boundary. Cause: v13's dedup keyed on
+#         map_uuid and dropped ANY repeat of an already-seen map_uuid with
+#         no geometry check — but singleparts() explodes a multipart
+#         barangay into several features that all carry the SAME map_uuid,
+#         so every piece after the first was discarded as a "duplicate",
+#         cutting real islands off the boundary. dedupe_same_source() now
+#         keys on geocode + source (the PSGC geocode is the unique
+#         identifier per barangay within a source) and only drops a feature
+#         whose geometry is IDENTICAL to one already kept, so genuinely
+#         distinct pieces always survive while true duplicate submissions
+#         are still removed.
 # ----------------------------------------------------------------------
 
 __author__ = 'Geospatial Management Division'
@@ -263,7 +275,8 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             "<p>Before any detection runs: (1) exact duplicate polygons — same geocode, "
             "same source, identical geometry, e.g. a barangay submitted twice or the "
             "same area present in more than one selected input layer — are removed; "
-            "a barangay legitimately split into multiple disjoint parts is unaffected. "
+            "a barangay with an island or other disjoint piece is unaffected, since "
+            "each piece carries the same geocode but different geometry. "
             "(2) LGU vs PSA precedence is then resolved per <i>city_mun</i>: the LGU "
             "layer is treated as the latest submission, so wherever at least one LGU "
             "polygon exists for a city_mun, that city_mun's PSA polygon(s) are excluded "
@@ -466,42 +479,34 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
         def dedupe_same_source(layer):
             """
             Removes duplicate polygons before boundary precedence is
-            resolved. Primary key: map_uuid — a barangay's PSGC-matched
-            identifier (see update_metadata.py), which must be unique per
-            barangay feature and is only ever NULL for Contested features.
-            A repeated map_uuid means the same barangay was submitted more
-            than once (e.g. duplicate rows in a file, or the same area
-            present in more than one selected input layer) — the first
-            occurrence is kept and the rest are dropped, even if their
-            geometry differs slightly between submissions.
+            resolved. Key: geocode + source — the PSGC geocode is unique per
+            barangay within a given source (LGU or PSA). A repeated
+            geocode+source pair is only treated as a duplicate when its
+            geometry is IDENTICAL to one already kept — the first occurrence
+            is kept and later exact-duplicate rows dropped (e.g. a barangay
+            submitted twice in a file, or the same area present in more than
+            one selected input layer).
 
-            Features with no map_uuid (blank/NULL, e.g. Contested) fall back
-            to a geocode + source + identical-geometry check, so a barangay
-            legitimately split into multiple disjoint parts is unaffected —
-            each part has different geometry even though the geocode repeats.
+            The identical-geometry requirement is deliberate: a barangay
+            with an island or other disjoint piece is exploded by
+            singleparts() into several single-part features that all share
+            the same geocode but have DIFFERENT geometry. Dropping on a bare
+            geocode/map_uuid match (as an earlier version of this function
+            did) silently discarded those disjoint pieces as "duplicates" of
+            the mainland piece — cutting real islands off the boundary.
+            Requiring exact geometry equality keeps every genuinely distinct
+            piece while still catching true duplicate submissions.
             """
-            uuid_names  = ['map_uuid', 'mapuuid', 'uuid', 'map_id']
-            seen_uuids  = set()
-            seen_geoms  = {}
+            seen        = {}
             kept_feats  = []
             dropped_cnt = 0
 
             for feat in layer.getFeatures():
-                map_uuid = txt(get_attr(feat, uuid_names))
-
-                if map_uuid:
-                    if map_uuid in seen_uuids:
-                        dropped_cnt += 1
-                        continue
-                    seen_uuids.add(map_uuid)
-                    kept_feats.append(feat)
-                    continue
-
                 geocode = txt(get_attr(feat, ['geocode', 'GEOCODE']))
                 source  = txt(get_attr(feat, ['source', 'SOURCE', 'Source'])).upper()
                 geom    = feat.geometry()
                 key     = (geocode, source)
-                bucket  = seen_geoms.setdefault(key, [])
+                bucket  = seen.setdefault(key, [])
 
                 is_dup = False
                 if geocode:
@@ -527,7 +532,7 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
 
             feedback.pushInfo(
                 f"  {dropped_cnt} duplicate polygon(s) removed "
-                f"(repeated map_uuid, or same geocode + source + identical geometry)."
+                f"(same geocode + source + identical geometry)."
             )
             return keep_layer(result)
 
@@ -1183,7 +1188,7 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             feedback.pushInfo("No Gap/Overlap/Disputed features found.")
             results['OUTPUT'] = None
 
-        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v14.")
+        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v15.")
         return results
 
 
