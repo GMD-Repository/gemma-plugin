@@ -346,7 +346,7 @@ class PackageLayersDialog(QDialog):
             "merge leftovers naming the source file, which have no place in "
             "a packaged deliverable.</p>"
             "<p>The list of city/mun codes and names is always built from "
-            "all four selected layers combined, so nothing is missed.</p>"
+            "all five selected layers combined, so nothing is missed.</p>"
             "<p><b>Clean up duplicates</b> sweeps existing municipal "
             "groups and removes duplicate copies, keeping one of each.</p>"
             "<p><b>How to use</b></p>"
