@@ -70,6 +70,7 @@ LGU_MATCHED_SUFFIX = "_lgu_matched"
 # only ever has one Building Point comparison result at a time.
 BUILDING_MATCHED_LAYER_NAME = "building points inside lgu boundary"
 BUILDING_UNMATCHED_LAYER_NAME = "building points outside lgu boundary"
+BUILDING_UNMATCHED_PSA_LAYER_NAME = "building points outside psa boundary"
 
 # Grow the zoom extent by this fraction so the barangay is not flush against
 # the canvas edge -- same framing factor the Check and Update dialog uses.
@@ -114,32 +115,34 @@ def _barangay_field(layer):
 
 def find_matched_layers():
     """Locate a PSA_Matched / LGU_Matched / Matched Building / Unmatched
-    Building output set already in the project.
+    Building (LGU and PSA) output set already in the project.
 
     Walks the layer tree in display order and takes the first
     "<code>_PSA_Matched" layer found, then pairs it with the
     "<code>_LGU_Matched" layer carrying the same code prefix so that
-    outputs from different municipalities are never mixed. The two
-    Building layers carry no code prefix, so they are matched by their
-    fixed names alone.
-    Returns (psa_id, lgu_id, building_id, unmatched_building_id), any of
-    which may be None.
+    outputs from different municipalities are never mixed. The Building
+    layers carry no code prefix, so they are matched by their fixed names
+    alone.
+    Returns (psa_id, lgu_id, building_id, unmatched_building_id,
+    unmatched_psa_building_id), any of which may be None.
     """
     project = QgsProject.instance()
     layers = [n.layer() for n in project.layerTreeRoot().findLayers()]
 
-    building_layer = None
-    unmatched_building_layer = None
+    building_ids = {
+        BUILDING_MATCHED_LAYER_NAME: None,
+        BUILDING_UNMATCHED_LAYER_NAME: None,
+        BUILDING_UNMATCHED_PSA_LAYER_NAME: None,
+    }
     for layer in layers:
         if not isinstance(layer, QgsVectorLayer):
             continue
         name_lower = layer.name().lower()
-        if building_layer is None and name_lower == BUILDING_MATCHED_LAYER_NAME:
-            building_layer = layer
-        elif unmatched_building_layer is None and name_lower == BUILDING_UNMATCHED_LAYER_NAME:
-            unmatched_building_layer = layer
-    building_id = building_layer.id() if building_layer else None
-    unmatched_building_id = unmatched_building_layer.id() if unmatched_building_layer else None
+        if name_lower in building_ids and building_ids[name_lower] is None:
+            building_ids[name_lower] = layer.id()
+    building_id = building_ids[BUILDING_MATCHED_LAYER_NAME]
+    unmatched_building_id = building_ids[BUILDING_UNMATCHED_LAYER_NAME]
+    unmatched_psa_building_id = building_ids[BUILDING_UNMATCHED_PSA_LAYER_NAME]
 
     psa_layer = None
     for layer in layers:
@@ -147,7 +150,7 @@ def find_matched_layers():
             psa_layer = layer
             break
     if psa_layer is None:
-        return None, None, building_id, unmatched_building_id
+        return None, None, building_id, unmatched_building_id, unmatched_psa_building_id
 
     prefix = psa_layer.name()[:-len(PSA_MATCHED_SUFFIX)]
     expected_lgu = (prefix + LGU_MATCHED_SUFFIX).lower()
@@ -159,7 +162,7 @@ def find_matched_layers():
             lgu_id = layer.id()
             break
 
-    return psa_layer.id(), lgu_id, building_id, unmatched_building_id
+    return psa_layer.id(), lgu_id, building_id, unmatched_building_id, unmatched_psa_building_id
 
 
 class PsaLguComparisonPanel(QDockWidget):
@@ -167,7 +170,7 @@ class PsaLguComparisonPanel(QDockWidget):
     navigation that zooms the canvas to the selected barangay."""
 
     def __init__(self, iface, psa_layer_id, lgu_layer_id, building_layer_id=None,
-                 unmatched_building_layer_id=None):
+                 unmatched_building_layer_id=None, unmatched_psa_building_layer_id=None):
         super().__init__("PSA - LGU Comparison Review", iface.mainWindow())
         self.setObjectName(DOCK_OBJECT_NAME)
         self.iface = iface
@@ -179,6 +182,7 @@ class PsaLguComparisonPanel(QDockWidget):
         self.lgu_layer_id = lgu_layer_id
         self.building_layer_id = building_layer_id
         self.unmatched_building_layer_id = unmatched_building_layer_id
+        self.unmatched_psa_building_layer_id = unmatched_psa_building_layer_id
         self.setAllowedAreas(
             Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea
             | Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea
@@ -306,22 +310,32 @@ class PsaLguComparisonPanel(QDockWidget):
         return (QgsProject.instance().mapLayer(self.unmatched_building_layer_id)
                 if self.unmatched_building_layer_id else None)
 
+    def unmatched_psa_building_layer(self):
+        return (QgsProject.instance().mapLayer(self.unmatched_psa_building_layer_id)
+                if self.unmatched_psa_building_layer_id else None)
+
+    def _unmatched_building_layers(self):
+        """Both Outside layers (LGU and PSA), each scoped separately (see
+        _apply_filter/_clear_filter) since they need an OR of two fields."""
+        return (self.unmatched_building_layer(), self.unmatched_psa_building_layer())
+
     def _filterable_layers(self):
         """PSA/LGU Matched and the Matched Building layer, when present --
         every layer that should be isolated to one barangay by simple field
-        equality. The Unmatched Building layer is scoped separately (see
-        _apply_filter/_clear_filter) since it needs an OR of two fields
+        equality. The Unmatched Building layers are scoped separately (see
+        _unmatched_building_layers) since they need an OR of two fields
         instead of one."""
         return (self.psa_layer(), self.lgu_layer(), self.building_layer())
 
     def set_layers(self, psa_layer_id, lgu_layer_id, building_layer_id=None,
-                    unmatched_building_layer_id=None):
+                    unmatched_building_layer_id=None, unmatched_psa_building_layer_id=None):
         """Point the panel at a different output set and rebuild the list."""
         self._clear_filter()
         self.psa_layer_id = psa_layer_id
         self.lgu_layer_id = lgu_layer_id
         self.building_layer_id = building_layer_id
         self.unmatched_building_layer_id = unmatched_building_layer_id
+        self.unmatched_psa_building_layer_id = unmatched_psa_building_layer_id
         self.populate()
 
     # ── Population ──────────────────────────────────────────────────────
@@ -442,17 +456,18 @@ class PsaLguComparisonPanel(QDockWidget):
             if expression:
                 layer.setSubsetString(expression)
 
-        unmatched_building = self.unmatched_building_layer()
-        if unmatched_building is not None and unmatched_building.isValid():
+        for unmatched_building in self._unmatched_building_layers():
+            if unmatched_building is None or not unmatched_building.isValid():
+                continue
             expression = self._unmatched_building_filter_expression(unmatched_building, key)
             if expression:
                 unmatched_building.setSubsetString(expression)
 
     def _clear_filter(self):
         """Remove any barangay filter from the Matched PSA/LGU/Building and
-        Unmatched Building layers, restoring the full set of features to
-        view."""
-        layers = self._filterable_layers() + (self.unmatched_building_layer(),)
+        both Unmatched Building layers, restoring the full set of features
+        to view."""
+        layers = self._filterable_layers() + self._unmatched_building_layers()
         for layer in layers:
             if layer is not None and layer.isValid() and layer.subsetString():
                 layer.setSubsetString("")
@@ -572,7 +587,7 @@ class PsaLguComparisonPanel(QDockWidget):
 
 
 def show_comparison_panel(iface, psa_layer_id=None, lgu_layer_id=None, building_layer_id=None,
-                           unmatched_building_layer_id=None):
+                           unmatched_building_layer_id=None, unmatched_psa_building_layer_id=None):
     """Create, re-dock or refresh the singleton review panel.
 
     When no layer ids are given the set is auto-discovered from the project,
@@ -583,7 +598,7 @@ def show_comparison_panel(iface, psa_layer_id=None, lgu_layer_id=None, building_
 
     if psa_layer_id is None and lgu_layer_id is None and building_layer_id is None:
         (psa_layer_id, lgu_layer_id, building_layer_id,
-         unmatched_building_layer_id) = find_matched_layers()
+         unmatched_building_layer_id, unmatched_psa_building_layer_id) = find_matched_layers()
     if psa_layer_id is None:
         return None
 
@@ -591,12 +606,12 @@ def show_comparison_panel(iface, psa_layer_id=None, lgu_layer_id=None, building_
     if panel is None:
         panel = PsaLguComparisonPanel(
             iface, psa_layer_id, lgu_layer_id, building_layer_id,
-            unmatched_building_layer_id)
+            unmatched_building_layer_id, unmatched_psa_building_layer_id)
         iface.addDockWidget(Qt.LeftDockWidgetArea, panel)
         _PANEL_INSTANCE = panel
     else:
         panel.set_layers(psa_layer_id, lgu_layer_id, building_layer_id,
-                          unmatched_building_layer_id)
+                          unmatched_building_layer_id, unmatched_psa_building_layer_id)
 
     panel.show()
     panel.raise_()
