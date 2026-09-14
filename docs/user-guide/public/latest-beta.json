@@ -1,9 +1,9 @@
 {
-  "version": "1.0.2-r888",
-  "tag": "r888",
+  "version": "1.0.2-r895",
+  "tag": "r895",
   "releaseDate": "2026-09-14",
   "repositoryUrl": "https://gemma-plugin.vercel.app/gemma-beta.xml",
-  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r888/gemma-plugin-r888.zip",
-  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r888",
-  "changelogUrl": "https://gemma-plugin.vercel.app/changelog/r888"
+  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/download/r895/gemma-plugin-r895.zip",
+  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-preview/releases/tag/r895",
+  "changelogUrl": "https://gemma-plugin.vercel.app/changelog/r895"
 }
