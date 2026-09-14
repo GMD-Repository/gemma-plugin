@@ -2,6 +2,26 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.5
+<time>Sep 14, 2026</time>
+
+### ✨ New Features
+- Added 2026_province_boundary as a 5th packaging role ([@psacjperez](https://github.com/psacjperez))
+
+### ⚡ Improvements & Fixes
+- Reconciled Packaged Layers documentation with the latest development merge ([@psacjperez](https://github.com/psacjperez))
+
+### 🐛 Bug Fixes
+- Resolved LGU/PSA boundary precedence and deduplication before MBI detection ([@ftating19](https://github.com/ftating19)) ([#257](https://github.com/GMD-Repository/gemma-plugin/pull/257))
+- Fixed the generation of the 2026_province_boundary layer ([@ftating19](https://github.com/ftating19)) ([#259](https://github.com/GMD-Repository/gemma-plugin/pull/259))
+- Output 2026_CITYMUN_boundary instead of ref_CITYMUN_boundary ([@psacjperez](https://github.com/psacjperez))
+
+### 💥 Breaking Changes
+- Eliminated the Packaged Layers group and enforced clean grouping across EA tabs ([@pacoleslaw](https://github.com/pacoleslaw)) ([#258](https://github.com/GMD-Repository/gemma-plugin/pull/258))
+- Masked dynamically fetched emails in GitHub Actions logs to enhance security ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#254](https://github.com/GMD-Repository/gemma-plugin/pull/254))
+
+<Contributors :contributors="['psacjperez', 'ftating19', 'pacoleslaw', 'kentemman-gmd']" />
+
 ## 1.0.4
 <time>Sep 13, 2026</time>
 

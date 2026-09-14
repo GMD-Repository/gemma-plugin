@@ -5,6 +5,23 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] - 2026-09-14
+
+### Added
+- Added 2026_province_boundary as a 5th packaging role ([@psacjperez](https://github.com/psacjperez))
+
+### Changed
+- Reconciled Packaged Layers documentation with the latest development merge ([@psacjperez](https://github.com/psacjperez))
+
+### Fixed
+- Resolved LGU/PSA boundary precedence and deduplication before MBI detection ([@ftating19](https://github.com/ftating19)) ([#257](https://github.com/GMD-Repository/gemma-plugin/pull/257))
+- Fixed the generation of the 2026_province_boundary layer ([@ftating19](https://github.com/ftating19)) ([#259](https://github.com/GMD-Repository/gemma-plugin/pull/259))
+- Output 2026_CITYMUN_boundary instead of ref_CITYMUN_boundary ([@psacjperez](https://github.com/psacjperez))
+
+### Removed
+- Eliminated the Packaged Layers group and enforced clean grouping across EA tabs ([@pacoleslaw](https://github.com/pacoleslaw)) ([#258](https://github.com/GMD-Repository/gemma-plugin/pull/258))
+- Masked dynamically fetched emails in GitHub Actions logs to enhance security ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#254](https://github.com/GMD-Repository/gemma-plugin/pull/254))
+
 ## [1.0.4] - 2026-09-13
 
 ### Added
