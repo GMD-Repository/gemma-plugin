@@ -163,7 +163,7 @@ class PackageLayersDialog(QDialog):
         "ref_mbi_cases": "ref_mbi_cases",
         "ref_province_lgu": "ref_{citymun}_lgu",
         "ref_province_psa": "ref_{citymun}_psa",
-        "ref_province_boundary": "ref_{citymun}_boundary",
+        "ref_province_boundary": "2026_{citymun}_boundary",
         "ref_provincename_bldg_point": "ref_{citymun}_bldg_point",
     }
 
@@ -337,7 +337,7 @@ class PackageLayersDialog(QDialog):
             "<p><code>ref_mbi_cases</code><br>"
             "<code>ref_CITYMUN_lgu</code><br>"
             "<code>ref_CITYMUN_psa</code><br>"
-            "<code>ref_CITYMUN_boundary</code><br>"
+            "<code>2026_CITYMUN_boundary</code><br>"
             "<code>ref_CITYMUN_bldg_point</code></p>"
             "<p>The source \"fid\", \"layer\" and \"path\" attribute fields "
             "are dropped on write. Dropping \"fid\" lets GeoPackage assign a "
@@ -346,7 +346,7 @@ class PackageLayersDialog(QDialog):
             "merge leftovers naming the source file, which have no place in "
             "a packaged deliverable.</p>"
             "<p>The list of city/mun codes and names is always built from "
-            "all four selected layers combined, so nothing is missed.</p>"
+            "all five selected layers combined, so nothing is missed.</p>"
             "<p><b>Clean up duplicates</b> sweeps existing municipal "
             "groups and removes duplicate copies, keeping one of each.</p>"
             "<p><b>How to use</b></p>"

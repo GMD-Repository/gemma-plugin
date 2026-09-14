@@ -36,7 +36,7 @@ Inside each GeoPackage, the five reference datasets are written into dedicated t
 | **Building Points Layer** | `ref_{citymun}_bldg_point` | Point / MultiPoint |
 | **Province PSA Layer** | `ref_{citymun}_psa` | Polygon / MultiPolygon |
 | **Province LGU Layer** | `ref_{citymun}_lgu` | Polygon / MultiPolygon |
-| **Province Boundary Layer** | `ref_{citymun}_boundary` | Polygon / MultiPolygon |
+| **Province Boundary Layer** | `2026_{citymun}_boundary` | Polygon / MultiPolygon |
 
 ## Parameters
 
@@ -59,7 +59,7 @@ Inside each GeoPackage, the five reference datasets are written into dedicated t
 
 | Output | Type | Description |
 |--------|------|-------------|
-| **Municipal GeoPackages** | Directory & `.gpkg` Files | Individual GeoPackage databases written to `pppmm_CITYMUN/pppmm_CITYMUN.gpkg` containing filtered subsets of all four reference layers. |
+| **Municipal GeoPackages** | Directory & `.gpkg` Files | Individual GeoPackage databases written to `pppmm_CITYMUN/pppmm_CITYMUN.gpkg` containing filtered subsets of all five reference layers. |
 | **Municipal Layer Groups** | Layer Tree Group | (Optional) Auto-expanded group hierarchy in the QGIS Layers panel containing municipal groups (`pppmm_CITYMUN`) and styled vector layers. |
 
 ## How It Works
@@ -95,8 +95,8 @@ Inside each GeoPackage, the five reference datasets are written into dedicated t
 Ensure the geocode attribute field is formatted as **String/Text** rather than an Integer. Numeric fields strip leading zeros (e.g. `01317` becomes `1317`), which corrupts the 5-character municipal prefix extraction.
 :::
 
-::: tip Packaged Layers Grouping Is Owned by This Tool
-The `Packaged Layers` group, its per-city/mun subgroups, and the session-wide auto-organize listener are created and managed exclusively by this script (`package_layers_by_citymun.py`). The [Package Style Loader](/tools/package-style-loader) tool only reads the group by name to offer it as a styling scope — it never creates, populates, or reorganizes it.
+::: tip Municipal Grouping Is Owned by This Tool
+This script (`package_layers_by_citymun.py`) is the only one that creates `pppmm_CITYMUN` layer groups at the project root, and the only one running the session-wide auto-organize listener that files newly-added packaged layers into their matching group. The [Package Style Loader](/tools/package-style-loader) tool only lists existing top-level groups as scope options in its dropdown — it never creates, populates, or reorganizes them.
 :::
 
 ::: tip Verification via Run Log
