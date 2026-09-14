@@ -15,6 +15,7 @@ The comparison algorithm executes as a standard processing tool and generates st
 Use this tool when:
 - Auditing local government boundary submissions against official PSA reference boundaries for municipal harmonization.
 - Validating whether geotagged building points physically reside inside the barangay declared in their administrative geocode attributes.
+- Telling apart building points that fall outside the LGU-submitted boundary from those that fall outside the official PSA boundary.
 - Inspecting matched barangay pairs sequentially with automated zoom framing and dynamic building point filtering.
 - Isolating unmatched barangays (declared by either the LGU or PSA but missing in the counterpart dataset) for field review.
 
@@ -40,9 +41,33 @@ Use this tool when:
 | **`<code>_PSA_Unmatched`** | Polygon | Gray outline. Contains PSA barangays with no corresponding LGU geocode match. |
 | **`<code>_LGU_Unmatched`** | Polygon | Gray outline. Contains LGU barangays with no corresponding PSA geocode match. |
 | **`building points inside lgu boundary`** | Point | Green circles (`#43A047`). Building points that physically fall inside the LGU polygon matching their declared barangay geocode. |
-| **`building points outside lgu boundary`** | Point | Red circles (`#E53935`). Building points positioned outside the LGU polygon of their declared barangay. |
+| **`building points outside lgu boundary`** | Point | Red circles (`#E31A1C`). Building points positioned outside the LGU polygon of their declared barangay. |
+| **`building points outside psa boundary`** | Point | Purple squares (`#9C27B0`), drawn slightly larger so a point outside both boundaries still shows both markers. Building points positioned outside the PSA polygon of their declared barangay. |
 
 *(Note: `<code>` represents the municipal prefix extracted from the input layer names, e.g. `000102`).*
+
+All three building point layers are always created, even when empty. An empty Outside layer means no building point fell outside that boundary, not that the check was skipped.
+
+### Reading the Outside Layers
+
+Both Outside layers share the same attribute columns, each evaluated against its own boundary source:
+
+| Column | Description |
+|--------|-------------|
+| **`geocode_first8`** | The first 8 characters of the building point's own geocode (the barangay it claims to belong to). |
+| **`in_geocode`** | The barangay the point actually sits inside, taken from the same boundary source as the layer (LGU for the LGU layer, PSA for the PSA layer). Empty when the point falls outside every barangay of that boundary. |
+| **`match_id`** | Matched-pair ID of the barangay named by the point's own geocode. |
+| **`in_match_id`** | Matched-pair ID of the barangay the point physically sits inside. |
+
+Comparing the two layers shows where the discrepancy lies:
+
+| Point appears in | Interpretation |
+|------------------|----------------|
+| Outside LGU only | The point is inside the official PSA barangay but outside the LGU-submitted polygon, which suggests the LGU boundary needs review. |
+| Outside PSA only | The point is inside the LGU-submitted polygon but outside the official PSA barangay, which suggests the LGU boundary extends beyond the PSA reference. |
+| Both layers | The point is outside the declared barangay in both sources, which usually indicates a mis-coded geocode (check `in_geocode`) or a point captured outside the municipality. |
+
+On the map, a point in both layers shows a red circle drawn on top of a larger purple square.
 
 ## How It Works
 
@@ -52,9 +77,11 @@ Use this tool when:
    - Preserves multipart geometries, ensuring that multi-island barangays remain unified under a single matching key.
 
 2. **Spatial Indexing & Containment Engine**:
-   - Constructs a spatial bounding box index (`QgsSpatialIndex`) over all LGU boundary polygons.
-   - Evaluates each building point against the specific LGU polygon matching its own 8-character geocode.
-   - Points falling inside or intersecting the shared polygon boundary are categorized as **Inside**; points falling outside are classified as **Outside**.
+   - Constructs a spatial bounding box index (`QgsSpatialIndex`) over the LGU boundary polygons, and a second one over the PSA boundary polygons.
+   - Evaluates each building point against the specific LGU polygon, and separately the specific PSA polygon, matching its own 8-character geocode.
+   - Points falling inside or intersecting the shared polygon boundary are categorized as **Inside**; points falling outside go to that boundary's own **Outside** layer (LGU or PSA). A point outside both appears in both.
+   - Building points are reprojected to each boundary layer's CRS before testing when the CRSs differ; output geometries stay in the building layer's original CRS.
+   - Points whose geocode names a barangay from a different city or municipality entirely, and that do not physically fall inside the boundary being checked, are excluded from that Outside layer as unrelated to the comparison.
 
 3. **Field Collision Prevention**:
    - If an input layer already contains an attribute named `geocode`, QGIS appends duplicate columns as `geocode_2`.
@@ -80,7 +107,7 @@ The **PSA - LGU Comparison Review** dock panel (`GemmaPsaLguComparisonPanel`) do
    - A 15% framing margin (`ZOOM_PADDING_RATIO = 0.15`) is applied so boundaries are not flush against canvas edges.
 
 3. **Dynamic Point Scoping**:
-   - When stepping through barangays, subset filter strings are dynamically updated on both building point layers:
+   - When stepping through barangays, subset filter strings are dynamically updated on all building point layers:
      - Inside points are filtered by `match_id`.
      - Outside points are filtered by either `match_id` (declared barangay) or `in_match_id` (the physical barangay the point sits inside).
    - This ensures the reviewer only sees building points relevant to the currently inspected barangay.
