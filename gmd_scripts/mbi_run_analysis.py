@@ -1,7 +1,7 @@
 # ----------------------------------------------------------------------
 # MBI Gaps / Overlaps / Disputed Areas Checker
-# Last updated: 2026-09-03
-# Version: v9
+# Last updated: 2026-09-14
+# Version: v14
 #
 # Changelog:
 #   v1 - Initial Gaps/Overlaps detection between LGU and PSA polygons.
@@ -39,6 +39,38 @@
 #   v10 - Fixed 'Analysis to Run' to 'Gaps, Overlaps, and Disputed'.
 #         Removed selection choices (Overlaps Only, Gaps Only, Disputed
 #         Areas Only); running all three analyses is now mandatory.
+#   v11 - Added LGU-vs-PSA boundary precedence resolution, applied before
+#         Gaps/Overlaps/Disputed detection: the LGU layer is treated as the
+#         latest submission, so for any city_mun where at least one LGU
+#         polygon exists, that city_mun's PSA polygon(s) are excluded and
+#         only the LGU polygon(s) are used; city_mun with no LGU submission
+#         at all still fall back to PSA. The resulting authoritative
+#         boundary set is the sole input to the rest of the analysis, and
+#         is also loaded into the project as its own layer, '2026_province_boundary',
+#         so reviewers can inspect exactly which polygons were kept/dropped.
+#   v12 - Bug fix: duplicate barangay polygons (same geocode, same source,
+#         identical geometry — e.g. a barangay submitted twice, or the same
+#         area present in more than one selected input layer) were passing
+#         straight through into the boundary output. dedupe_same_source()
+#         now removes them before precedence resolution runs; a barangay
+#         legitimately split into multiple disjoint parts is unaffected
+#         since each part has different geometry. Also renamed the boundary
+#         output layer from 'ref_mbi_boundary' to '2026_province_boundary'.
+#   v13 - Bug fix: v12's geometry-equality dedup missed duplicates whose
+#         geometry differed slightly between submissions (e.g. re-digitized
+#         vertices), so map_uuid still repeated in 2026_province_boundary.
+#         dedupe_same_source() now keys primarily on map_uuid — a barangay's
+#         PSGC-matched identifier (see update_metadata.py), unique per
+#         barangay and NULL only for Contested features — dropping any
+#         later feature that repeats an already-seen map_uuid regardless of
+#         geometry. Features with no map_uuid still fall back to the v12
+#         geocode + source + identical-geometry check.
+#   v14 - normalize_source_labels() added, run right after boundary
+#         precedence is resolved: any surviving polygon whose source is not
+#         LGU (blank/NULL/other) is explicitly stamped 'source' = 'PSA'.
+#         Runs on the same poly_layer that feeds both 2026_province_boundary
+#         and polygon_infos, so ref_mbi_cases' source field picks up the
+#         same explicit 'PSA' label wherever it applies.
 # ----------------------------------------------------------------------
 
 __author__ = 'Geospatial Management Division'
@@ -227,6 +259,19 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             "<p>Detects boundary findings (gaps, overlaps, and disputed boundaries) "
             "of LGU polygon layers, written into a single combined output layer "
             "named <b>ref_mbi_cases</b>, distinguished by <i>mbi_type</i>.</p>"
+            "<h3>Output: 2026_province_boundary</h3>"
+            "<p>Before any detection runs: (1) exact duplicate polygons — same geocode, "
+            "same source, identical geometry, e.g. a barangay submitted twice or the "
+            "same area present in more than one selected input layer — are removed; "
+            "a barangay legitimately split into multiple disjoint parts is unaffected. "
+            "(2) LGU vs PSA precedence is then resolved per <i>city_mun</i>: the LGU "
+            "layer is treated as the latest submission, so wherever at least one LGU "
+            "polygon exists for a city_mun, that city_mun's PSA polygon(s) are excluded "
+            "and only the LGU polygon(s) are used. A city_mun with no LGU submission at "
+            "all falls back to PSA. The resulting authoritative boundary set is the sole "
+            "input to Gaps/Overlaps/Disputed detection below, and is also loaded as its "
+            "own layer, <b>2026_province_boundary</b>, so reviewers can inspect exactly "
+            "which polygons were kept or superseded.</p>"
             "<h3>Output: ref_mbi_cases</h3>"
             "<ul>"
             "<li><b>Gaps</b> — Empty slivers between polygons. Disputed polygons are "
@@ -418,6 +463,160 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                 context=context, feedback=feedback
             )['OUTPUT'])
 
+        def dedupe_same_source(layer):
+            """
+            Removes duplicate polygons before boundary precedence is
+            resolved. Primary key: map_uuid — a barangay's PSGC-matched
+            identifier (see update_metadata.py), which must be unique per
+            barangay feature and is only ever NULL for Contested features.
+            A repeated map_uuid means the same barangay was submitted more
+            than once (e.g. duplicate rows in a file, or the same area
+            present in more than one selected input layer) — the first
+            occurrence is kept and the rest are dropped, even if their
+            geometry differs slightly between submissions.
+
+            Features with no map_uuid (blank/NULL, e.g. Contested) fall back
+            to a geocode + source + identical-geometry check, so a barangay
+            legitimately split into multiple disjoint parts is unaffected —
+            each part has different geometry even though the geocode repeats.
+            """
+            uuid_names  = ['map_uuid', 'mapuuid', 'uuid', 'map_id']
+            seen_uuids  = set()
+            seen_geoms  = {}
+            kept_feats  = []
+            dropped_cnt = 0
+
+            for feat in layer.getFeatures():
+                map_uuid = txt(get_attr(feat, uuid_names))
+
+                if map_uuid:
+                    if map_uuid in seen_uuids:
+                        dropped_cnt += 1
+                        continue
+                    seen_uuids.add(map_uuid)
+                    kept_feats.append(feat)
+                    continue
+
+                geocode = txt(get_attr(feat, ['geocode', 'GEOCODE']))
+                source  = txt(get_attr(feat, ['source', 'SOURCE', 'Source'])).upper()
+                geom    = feat.geometry()
+                key     = (geocode, source)
+                bucket  = seen_geoms.setdefault(key, [])
+
+                is_dup = False
+                if geocode:
+                    for existing in bucket:
+                        try:
+                            if existing.isGeosEqual(geom):
+                                is_dup = True
+                                break
+                        except Exception:
+                            pass
+
+                if is_dup:
+                    dropped_cnt += 1
+                    continue
+                bucket.append(QgsGeometry(geom))
+                kept_feats.append(feat)
+
+            result = QgsVectorLayer(f'Polygon?crs={layer.crs().authid()}', 'deduped', 'memory')
+            result.dataProvider().addAttributes(layer.fields().toList())
+            result.updateFields()
+            result.dataProvider().addFeatures(kept_feats)
+            result.updateExtents()
+
+            feedback.pushInfo(
+                f"  {dropped_cnt} duplicate polygon(s) removed "
+                f"(repeated map_uuid, or same geocode + source + identical geometry)."
+            )
+            return keep_layer(result)
+
+        def resolve_boundary_precedence(layer):
+            """
+            Keeps one authoritative boundary per city_mun before any
+            Gap/Overlap/Disputed detection runs. The LGU layer is treated as
+            the latest submission: wherever at least one LGU polygon exists
+            for a city_mun, that city_mun's PSA polygon(s) are excluded and
+            only the LGU polygon(s) are kept; a city_mun with no LGU
+            submission at all falls back to PSA.
+            """
+            def feat_city_mun(feat):
+                return txt(get_attr(feat, ['city_mun', 'CITY_MUN', 'city/mun']))
+
+            def feat_is_lgu(feat):
+                return 'LGU' in txt(get_attr(feat, ['source', 'SOURCE', 'Source'])).upper()
+
+            lgu_city_muns = {feat_city_mun(f) for f in layer.getFeatures() if feat_is_lgu(f)}
+
+            kept_feats  = []
+            dropped_cnt = 0
+            for feat in layer.getFeatures():
+                if feat_city_mun(feat) in lgu_city_muns and not feat_is_lgu(feat):
+                    dropped_cnt += 1
+                    continue
+                kept_feats.append(feat)
+
+            result = QgsVectorLayer(f'Polygon?crs={layer.crs().authid()}', '2026_province_boundary', 'memory')
+            result.dataProvider().addAttributes(layer.fields().toList())
+            result.updateFields()
+            result.dataProvider().addFeatures(kept_feats)
+            result.updateExtents()
+
+            feedback.pushInfo(
+                f"  {len(lgu_city_muns)} city_mun(s) have an LGU submission; "
+                f"{dropped_cnt} superseded PSA polygon(s) excluded; "
+                f"{len(kept_feats)} polygon(s) retained as the authoritative boundary."
+            )
+            return keep_layer(result)
+
+        def normalize_source_labels(layer):
+            """
+            Explicitly labels every non-LGU polygon's source as 'PSA' — this
+            runs after resolve_boundary_precedence, so it only touches
+            polygons that survived: either from a city_mun with no LGU
+            submission (falls back to PSA), or an LGU-covered city_mun's
+            own LGU polygon (left untouched, since it already contains
+            'LGU'). Any blank/NULL/other source value on a non-LGU feature
+            is overwritten with 'PSA' so downstream case_uuid records
+            (ref_mbi_cases) inherit a clean, explicit label too.
+            """
+            src_idx = layer.fields().indexOf('source')
+            if src_idx < 0:
+                for name in ('SOURCE', 'Source'):
+                    src_idx = layer.fields().indexOf(name)
+                    if src_idx >= 0:
+                        break
+
+            result = QgsVectorLayer(f'Polygon?crs={layer.crs().authid()}', 'normalized', 'memory')
+            result.dataProvider().addAttributes(layer.fields().toList())
+            result.updateFields()
+
+            out_feats  = []
+            filled_cnt = 0
+            for feat in layer.getFeatures():
+                is_lgu = 'LGU' in txt(get_attr(feat, ['source', 'SOURCE', 'Source'])).upper()
+                new_feat = QgsFeature(feat)
+                if src_idx >= 0 and not is_lgu:
+                    if txt(new_feat.attribute(src_idx)).upper() != 'PSA':
+                        filled_cnt += 1
+                    new_feat.setAttribute(src_idx, 'PSA')
+                out_feats.append(new_feat)
+
+            result.dataProvider().addFeatures(out_feats)
+            result.updateExtents()
+
+            feedback.pushInfo(f"  {filled_cnt} non-LGU polygon(s) labeled source='PSA'.")
+            return keep_layer(result)
+
+        def load_plain_layer(layer, name):
+            if layer is None:
+                return None
+            layer.setName(name)
+            details = QgsProcessingContext.LayerDetails(name, context.project(), 'OUTPUT')
+            context.temporaryLayerStore().addMapLayer(layer)
+            context.addLayerToLoadOnCompletion(layer.id(), details)
+            return layer.id()
+
         # ------------------------------------------------------------------
         # Output layer schema
         # Fields: case_uuid, geocode, region, province, city_mun, barangay,
@@ -466,6 +665,8 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             context.addLayerToLoadOnCompletion(layer.id(), details)
             return layer.id()
 
+        results = {}
+
         # ------------------------------------------------------------------
         # Prepare input layers
         # ------------------------------------------------------------------
@@ -474,6 +675,23 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
         merged_poly = merge_layers(polygon_layers, polygon_layers[0].crs())
         fixed_poly  = reproject_fix(merged_poly)
         poly_layer  = singleparts(fixed_poly)
+
+        feedback.pushInfo("Removing duplicate same-source polygons...")
+        poly_layer = dedupe_same_source(poly_layer)
+
+        feedback.pushInfo("Resolving LGU vs PSA boundary precedence by city_mun...")
+        poly_layer = resolve_boundary_precedence(poly_layer)
+
+        feedback.pushInfo("Labeling PSA-sourced polygons...")
+        poly_layer = normalize_source_labels(poly_layer)
+
+        boundary_display = keep_layer(processing.run(
+            'native:reprojectlayer',
+            {'INPUT': poly_layer, 'TARGET_CRS': output_crs,
+             'CONVERT_CURVED_GEOMETRIES': False, 'OUTPUT': 'memory:'},
+            context=context, feedback=feedback
+        )['OUTPUT'])
+        results['OUTPUT_BOUNDARY'] = load_plain_layer(boundary_display, '2026_province_boundary')
 
         feedback.pushInfo("Merging and fixing building point layers...")
         feedback.setProgress(8)
@@ -706,7 +924,6 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             ] + list(extra_attrs or []))
             return feat
 
-        results   = {}
         all_feats = []
 
         out_layer  = output_layer('ref_mbi_cases')
@@ -966,7 +1183,7 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             feedback.pushInfo("No Gap/Overlap/Disputed features found.")
             results['OUTPUT'] = None
 
-        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v9.")
+        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v14.")
         return results
 
 

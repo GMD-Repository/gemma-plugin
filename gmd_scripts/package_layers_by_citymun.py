@@ -1,7 +1,7 @@
 # -----------------------------------------------------------------------------
 # Package Layers by City/Mun
 #
-# Groups features from four reference layers into one GeoPackage (.gpkg) per
+# Groups features from five reference layers into one GeoPackage (.gpkg) per
 # city/mun, each placed in its own folder, named:
 #
 #       folder:  pppmm_CITYMUN/
@@ -13,7 +13,7 @@
 #
 # Available from the QGIS menu bar under Gemma > Others > Package Layers by
 # City/Mun, and from the Processing Toolbox under 1Map > Package Layers by
-# City/Mun. Pick the four reference layers, confirm the field names, choose
+# City/Mun. Pick the five reference layers, confirm the field names, choose
 # an output folder, and click Run.
 # -----------------------------------------------------------------------------
 
@@ -127,6 +127,8 @@ PACKAGED_LAYER_STYLES = [
     ("_psa", "ref_province_psa.qml"),
     ("ref_mbi_cases", "ref_mbi_cases.qml"),
 ]
+# "_boundary" has no dedicated QML yet — it is left with QGIS's default
+# symbology when loaded, same as any other unmatched suffix.
 
 
 def _apply_packaged_layer_style(layer):
@@ -161,6 +163,7 @@ class PackageLayersDialog(QDialog):
         "ref_mbi_cases": "ref_mbi_cases",
         "ref_province_lgu": "ref_{citymun}_lgu",
         "ref_province_psa": "ref_{citymun}_psa",
+        "ref_province_boundary": "ref_{citymun}_boundary",
         "ref_provincename_bldg_point": "ref_{citymun}_bldg_point",
     }
 
@@ -182,6 +185,9 @@ class PackageLayersDialog(QDialog):
         "ref_provincename_bldg_point": ["bldg_point", "bldg point", "building_point", "bldgpoint"],
         "ref_province_psa": ["province_psa", "psa"],
         "ref_province_lgu": ["province_lgu", "lgu"],
+        # Matches the "2026_province_boundary" (or any year-prefixed
+        # variant) layer produced by Run Analysis.
+        "ref_province_boundary": ["province_boundary", "boundary"],
     }
 
     def __init__(self, iface, parent=None):
@@ -227,11 +233,15 @@ class PackageLayersDialog(QDialog):
         self.cbo_lgu = self._make_layer_combo()
         form.addRow("Province LGU layer:", self.cbo_lgu)
 
+        self.cbo_boundary = self._make_layer_combo()
+        form.addRow("Province Boundary layer (2026_province_boundary):", self.cbo_boundary)
+
         # Best-effort preselect based on the layer names used in this project
         self._try_preselect(self.cbo_cases, "ref_mbi_cases")
         self._try_preselect(self.cbo_bldg, "ref_provincename_bldg_point")
         self._try_preselect(self.cbo_psa, "ref_province_psa")
         self._try_preselect(self.cbo_lgu, "ref_province_lgu")
+        self._try_preselect(self.cbo_boundary, "ref_province_boundary")
 
         # Editable dropdowns: populated from the fields common to the
         # selected layers, and auto-prefilled with the best-guess match.
@@ -246,7 +256,7 @@ class PackageLayersDialog(QDialog):
         left.addLayout(form)
 
         # Keep the field dropdowns in sync with whichever layers are picked
-        for combo in (self.cbo_cases, self.cbo_bldg, self.cbo_psa, self.cbo_lgu):
+        for combo in (self.cbo_cases, self.cbo_bldg, self.cbo_psa, self.cbo_lgu, self.cbo_boundary):
             combo.layerChanged.connect(self._refresh_field_options)
         self._refresh_field_options()
 
@@ -321,12 +331,13 @@ class PackageLayersDialog(QDialog):
             "<p><b>ppp</b> = 3-digit province code<br>"
             "<b>mm</b> = 2-digit city/mun code<br>"
             "(together, the first 5 characters of the geocode field)</p>"
-            "<p>Each output GeoPackage contains all four selected layers, "
+            "<p>Each output GeoPackage contains all five selected layers, "
             "filtered to only the features belonging to that city/mun. "
             "Layers inside the GeoPackage are renamed as:</p>"
             "<p><code>ref_mbi_cases</code><br>"
             "<code>ref_CITYMUN_lgu</code><br>"
             "<code>ref_CITYMUN_psa</code><br>"
+            "<code>ref_CITYMUN_boundary</code><br>"
             "<code>ref_CITYMUN_bldg_point</code></p>"
             "<p>The source \"fid\", \"layer\" and \"path\" attribute fields "
             "are dropped on write. Dropping \"fid\" lets GeoPackage assign a "
@@ -340,7 +351,7 @@ class PackageLayersDialog(QDialog):
             "groups and removes duplicate copies, keeping one of each.</p>"
             "<p><b>How to use</b></p>"
             "<ol>"
-            "<li>Pick the layer for each of the four roles.</li>"
+            "<li>Pick the layer for each of the five roles.</li>"
             "<li>Confirm the geocode and city/mun field names.</li>"
             "<li>Choose an output folder.</li>"
             "<li>Click <b>Run</b>. Nothing is added to the Layers panel "
@@ -415,6 +426,7 @@ class PackageLayersDialog(QDialog):
             self.cbo_bldg.currentLayer(),
             self.cbo_psa.currentLayer(),
             self.cbo_lgu.currentLayer(),
+            self.cbo_boundary.currentLayer(),
         ]
         field_names = []
         seen = set()
@@ -552,6 +564,7 @@ class PackageLayersDialog(QDialog):
             "ref_provincename_bldg_point": self.cbo_bldg.currentLayer(),
             "ref_province_psa": self.cbo_psa.currentLayer(),
             "ref_province_lgu": self.cbo_lgu.currentLayer(),
+            "ref_province_boundary": self.cbo_boundary.currentLayer(),
         }
         missing = [role for role, lyr in role_layers.items() if lyr is None]
         if missing:
@@ -586,7 +599,7 @@ class PackageLayersDialog(QDialog):
             self.btn_run.setEnabled(True)
 
     def _do_package(self, role_layers, geocode_fields, citymun_fields, output_root):
-        # City/mun codes and names are built from all four selected layers,
+        # City/mun codes and names are built from all five selected layers,
         # so no city/mun combination present in any of them is missed.
         self._log("Building city/mun code list from all 4 layers...")
         citymun_lookup = {}
@@ -743,10 +756,10 @@ class PackageLayersAlgorithm(QgsProcessingAlgorithm):
 
     def shortHelpString(self):
         return self.tr(
-            "Splits four reference layers into one GeoPackage per city/mun, each "
+            "Splits five reference layers into one GeoPackage per city/mun, each "
             "in its own folder, for LGU presentation packaging.\n\n"
             "Opens the interactive Package Layers by City/Mun dialog, where you pick "
-            "the four layers, confirm the geocode and city/mun field names, choose "
+            "the five layers, confirm the geocode and city/mun field names, choose "
             "an output folder, and click Run."
         )
 
