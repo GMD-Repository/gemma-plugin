@@ -246,9 +246,9 @@ class TestMergePreviewThresholdAndIndividualMerge(unittest.TestCase):
             mock_dlg, 0, "01701001099", "EA 99", "Poblacion", 40.0, partner_combo, table, btn_merge
         )
 
-        # Verify UI state updates
-        self.assertFalse(btn_merge.isEnabled())
-        self.assertEqual(btn_merge.text(), "Merged")
+        # Verify UI state updates: button becomes an active Unmerge button
+        self.assertTrue(btn_merge.isEnabled())
+        self.assertEqual(btn_merge.text(), "Unmerge")
         self.assertEqual(table.item(0, 4).text(), "Merged ✓")
         self.assertFalse(partner_combo.isEnabled())
 
@@ -1262,12 +1262,11 @@ class TestMergePreviewThresholdAndIndividualMerge(unittest.TestCase):
         self.assertFalse(partner_combo.isEnabled())
         self.assertEqual(partner_combo.count(), 0)
 
-        # Verify action button is disabled, styled light gray with text 'Merged'
+        # Verify action button is enabled Unmerge button, styled amber with text 'Unmerge'
         btn_merge = table.cellWidget(0, 7)
-        self.assertFalse(btn_merge.isEnabled())
-        self.assertEqual(btn_merge.text(), "Merged")
-        self.assertIn("#e1e4e8", btn_merge.styleSheet())
-        self.assertIn("#6a737d", btn_merge.styleSheet())
+        self.assertTrue(btn_merge.isEnabled())
+        self.assertEqual(btn_merge.text(), "Unmerge")
+        self.assertIn("#d97706", btn_merge.styleSheet())
 
     def test_merge_preview_excludes_unmerged_candidate_above_min_hh(self):
         """Verify that in Merge Preview, unmerged EAs with household count > min_hh do not appear."""
@@ -1413,6 +1412,263 @@ class TestMergePreviewThresholdAndIndividualMerge(unittest.TestCase):
         self.assertEqual(row[3], 180.0)
         self.assertEqual(row[4], "Merged ✓")
 
+    def test_generate_preview_filters_already_merged_partners(self):
+        """Verify that an EA already merged is excluded from the partner dropdowns of other candidates."""
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.delineation_table = MagicMock()
+        mock_dlg.merge_table = MagicMock()
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.merge_prev_ea_combo = MagicMock()
+        mock_dlg.merge_ea_combo = MagicMock()
+        mock_dlg.all_delineation_candidates = []
+        mock_dlg.all_merge_candidates = []
+        mock_dlg.all_merged_ea_candidates = []
+        mock_dlg.min_hh_spin = MagicMock()
+        mock_dlg.min_hh_spin.value.return_value = 99
+        mock_dlg.max_hh_spin = MagicMock()
+        mock_dlg.max_hh_spin.value.return_value = 350
+        mock_dlg.merge_max_hh_spin = MagicMock()
+        mock_dlg.merge_max_hh_spin.value.return_value = 350
+        mock_dlg.merge_min_hh_spin = MagicMock()
+        mock_dlg.merge_min_hh_spin.value.return_value = 99
+        mock_dlg.kpi_delin_val = MagicMock()
+        mock_dlg.kpi_merge_val = MagicMock()
+        mock_dlg.kpi_merged_ea_val = MagicMock()
+        mock_dlg.filter_previews = MagicMock()
+        mock_dlg._get_ea_name = lambda feat, ean, fields: f"EA {ean}"
+        mock_dlg._extract_5digit_geocode = lambda: "01701"
+
+        # Previous EA layer with Partner 1 (touches both Candidate A and Candidate B)
+        prev_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Prev_EAs", "memory")
+        pr = prev_ea_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        prev_ea_layer.updateFields()
+
+        # Partner 1: x: [0, 1]
+        p1 = QgsFeature(prev_ea_layer.fields())
+        p1.setAttributes(["01701001001", "01701001", "Poblacion", 50.0])
+        p1.setGeometry(QgsGeometry.fromRect(QgsRectangle(0, 0, 1, 1)))
+
+        # Candidate A: x: [1, 2] (touches Partner 1)
+        ca = QgsFeature(prev_ea_layer.fields())
+        ca.setAttributes(["01701001002", "01701001", "Poblacion", 30.0])
+        ca.setGeometry(QgsGeometry.fromRect(QgsRectangle(1, 0, 2, 1)))
+
+        # Candidate B: x: [-1, 0] (touches Partner 1)
+        cb = QgsFeature(prev_ea_layer.fields())
+        cb.setAttributes(["01701001003", "01701001", "Poblacion", 40.0])
+        cb.setGeometry(QgsGeometry.fromRect(QgsRectangle(-1, 0, 0, 1)))
+
+        pr.addFeatures([p1, ca, cb])
+
+        # Candidate layer in merge_ea_layer
+        merge_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Merge_EA", "memory")
+        mpr = merge_ea_layer.dataProvider()
+        mpr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double),
+            QgsField("ea_type", QVariant.String),
+            QgsField("remarks", QVariant.String)
+        ])
+        merge_ea_layer.updateFields()
+
+        feat_ca = QgsFeature(merge_ea_layer.fields())
+        feat_ca.setAttributes(["01701001002", "01701001", "Poblacion", 30.0, "RETAINED", ""])
+        feat_ca.setGeometry(QgsGeometry.fromRect(QgsRectangle(1, 0, 2, 1)))
+
+        feat_cb = QgsFeature(merge_ea_layer.fields())
+        feat_cb.setAttributes(["01701001003", "01701001", "Poblacion", 40.0, "RETAINED", ""])
+        feat_cb.setGeometry(QgsGeometry.fromRect(QgsRectangle(-1, 0, 0, 1)))
+
+        mpr.addFeatures([feat_ca, feat_cb])
+
+        mock_dlg._safe_get_layer.side_effect = lambda combo: (
+            prev_ea_layer if combo in (mock_dlg.prev_ea_combo, getattr(mock_dlg, 'merge_prev_ea_combo', None))
+            else merge_ea_layer
+        )
+
+        # 1. When Partner 1 is NOT merged, both Candidate A and Candidate B see Partner 1
+        mock_dlg._session_merged_eans = set()
+        EALauncherDialog.generate_preview(mock_dlg)
+        self.assertEqual(len(mock_dlg.all_merged_ea_candidates), 2)
+        cand_a_entry = next(c for c in mock_dlg.all_merged_ea_candidates if c[0] == "01701001002")
+        cand_b_entry = next(c for c in mock_dlg.all_merged_ea_candidates if c[0] == "01701001003")
+        self.assertIn("01701001001", [n[0] for n in cand_a_entry[5]])
+        self.assertIn("01701001001", [n[0] for n in cand_b_entry[5]])
+
+        # 2. When Partner 1 IS merged (e.g. into Candidate A), Partner 1 MUST NOT appear for Candidate B!
+        mock_dlg.all_merged_ea_candidates.clear()
+        mock_dlg._session_merged_eans = {"01701001001", "01701001002"}
+        EALauncherDialog.generate_preview(mock_dlg)
+
+        cand_b_after = next(c for c in mock_dlg.all_merged_ea_candidates if c[0] == "01701001003")
+        # Partner 1 must be filtered out!
+        self.assertNotIn("01701001001", [n[0] for n in cand_b_after[5]])
+        self.assertEqual(len(cand_b_after[5]), 0)
+
+    def test_merge_individual_row_rejects_already_merged_candidate(self):
+        """Verify that _merge_individual_row rejects merging if candidate is already merged."""
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg._session_merged_eans = {"01701001099"}
+        mock_dlg.merge_log_console = MagicMock()
+
+        table = QTableWidget(1, 8)
+        partner_combo = QComboBox()
+        partner_combo.addItem("01701001001")
+        btn_merge = QPushButton("Merge")
+
+        with patch("references.create_enumeration_area.dialog.QMessageBox.warning") as mock_warn:
+            EALauncherDialog._merge_individual_row(
+                mock_dlg, 0, "01701001099", "EA 99", "Poblacion", 40.0, partner_combo, table, btn_merge
+            )
+            mock_warn.assert_called_once()
+            self.assertIn("already been merged", mock_warn.call_args[0][2])
+
+    def test_merge_individual_row_rejects_already_merged_partner(self):
+        """Verify that _merge_individual_row rejects merging if chosen partner is already merged."""
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg._session_merged_eans = {"01701001001"}
+        mock_dlg.merge_log_console = MagicMock()
+
+        table = QTableWidget(1, 8)
+        partner_combo = QComboBox()
+        partner_combo.addItem("01701001001")
+        btn_merge = QPushButton("Merge")
+
+        with patch("references.create_enumeration_area.dialog.QMessageBox.warning") as mock_warn:
+            EALauncherDialog._merge_individual_row(
+                mock_dlg, 0, "01701001099", "EA 99", "Poblacion", 40.0, partner_combo, table, btn_merge
+            )
+            mock_warn.assert_called_once()
+            self.assertIn("already been merged", mock_warn.call_args[0][2])
+
+    def test_unmerge_individual_row_restores_features_and_enables_remerge(self):
+        """Verify that _unmerge_individual_row restores constituent EA features and clears session merged tracking."""
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.merge_log_console = MagicMock()
+        mock_dlg._session_merged_eans = set()
+        mock_dlg._merge_history = {}
+        mock_dlg.refresh_merge_preview = MagicMock()
+        mock_dlg._extract_5digit_geocode = lambda: "01701"
+        mock_dlg.output_folder_widget = MagicMock()
+        mock_dlg.output_folder_widget.filePath.return_value = ""
+        mock_dlg.merge_output_folder_widget = MagicMock()
+        mock_dlg.merge_output_folder_widget.filePath.return_value = ""
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.merge_prev_ea_combo = MagicMock()
+        mock_dlg.merge_ea_combo = MagicMock()
+        mock_dlg.bldg_combo = None
+        mock_dlg.merge_bldg_combo = None
+        mock_dlg.iface = None
+
+        # 1. Setup Previous EA layer with two features
+        prev_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Prev_EAs", "memory")
+        pr = prev_ea_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double),
+            QgsField("bldg_count", QVariant.Int),
+            QgsField("new_ean", QVariant.String),
+            QgsField("ea_type", QVariant.String),
+            QgsField("remarks", QVariant.String),
+        ])
+        prev_ea_layer.updateFields()
+
+        f_cand = QgsFeature(prev_ea_layer.fields())
+        f_cand.setAttributes(["01701001099", "01701001", "Poblacion", 40.0, 30, "01701001099", "RETAINED", ""])
+        f_cand.setGeometry(QgsGeometry.fromRect(QgsRectangle(0, 0, 1, 1)))
+
+        f_partner = QgsFeature(prev_ea_layer.fields())
+        f_partner.setAttributes(["01701001001", "01701001", "Poblacion", 80.0, 60, "01701001001", "RETAINED", ""])
+        f_partner.setGeometry(QgsGeometry.fromRect(QgsRectangle(1, 0, 2, 1)))
+
+        pr.addFeatures([f_cand, f_partner])
+
+        # 2. Setup Merge EA layer
+        merge_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "01701_merge_ea", "memory")
+        mpr = merge_ea_layer.dataProvider()
+        mpr.addAttributes(prev_ea_layer.fields().toList())
+        merge_ea_layer.updateFields()
+        mpr.addFeatures([f_cand, f_partner])
+
+        mock_dlg._safe_get_layer.side_effect = lambda combo: (
+            prev_ea_layer if combo in (mock_dlg.prev_ea_combo, getattr(mock_dlg, 'merge_prev_ea_combo', None))
+            else merge_ea_layer
+        )
+        mock_dlg._find_feature_in_layer = lambda lyr, target: EALauncherDialog._find_feature_in_layer(lyr, target)
+
+        # 3. Perform merge first
+        table = QTableWidget(1, 8)
+        partner_combo = QComboBox()
+        partner_combo.addItem("01701001001")
+        btn_merge = QPushButton("Merge")
+        table.setCellWidget(0, 5, partner_combo)
+        table.setCellWidget(0, 7, btn_merge)
+
+        EALauncherDialog._merge_individual_row(
+            mock_dlg, 0, "01701001099", "EA 99", "Poblacion", 40.0, partner_combo, table, btn_merge
+        )
+
+        merged_layers = QgsProject.instance().mapLayersByName("01701_merged_ea2026")
+        self.assertTrue(len(merged_layers) >= 1)
+        merged_lyr = merged_layers[0]
+        self.assertEqual(merged_lyr.featureCount(), 1)
+        self.assertIn("01701001099", mock_dlg._session_merged_eans)
+        self.assertIn("01701001001", mock_dlg._session_merged_eans)
+
+        # 4. Now perform unmerge on candidate
+        EALauncherDialog._unmerge_individual_row(mock_dlg, 0, "01701001099")
+
+        # Merged layer should now have 2 restored features instead of 1 merged feature
+        self.assertEqual(merged_lyr.featureCount(), 2)
+        eans_in_layer = [f["ean"] for f in merged_lyr.getFeatures()]
+        self.assertIn("01701001099", eans_in_layer)
+        self.assertIn("01701001001", eans_in_layer)
+
+        # All restored features must have ea_type RETAINED
+        for f in merged_lyr.getFeatures():
+            self.assertEqual(f["ea_type"], "RETAINED")
+
+        # Session tracking should no longer contain candidate or partner
+        self.assertNotIn("01701001099", mock_dlg._session_merged_eans)
+        self.assertNotIn("01701001001", mock_dlg._session_merged_eans)
+        mock_dlg.refresh_merge_preview.assert_called()
+
+    def test_reconcile_session_merged_eans(self):
+        """Verify that _reconcile_session_merged_eans prunes stale EANs not in target layer."""
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg._session_merged_eans = {"01701001001", "01701001099", "01701001888"}
+
+        target_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "01701_merged_ea2026", "memory")
+        pr = target_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("ea_type", QVariant.String),
+            QgsField("remarks", QVariant.String)
+        ])
+        target_layer.updateFields()
+
+        # Only 01701001001 and 01701001099 are merged in layer; 01701001888 is stale
+        f = QgsFeature(target_layer.fields())
+        f.setAttributes(["01701001001", "MERGED", "Merged: 01701001099 + 01701001001"])
+        pr.addFeatures([f])
+
+        EALauncherDialog._reconcile_session_merged_eans(mock_dlg, target_layer)
+
+        self.assertIn("01701001001", mock_dlg._session_merged_eans)
+        self.assertIn("01701001099", mock_dlg._session_merged_eans)
+        self.assertNotIn("01701001888", mock_dlg._session_merged_eans)
+
 
 if __name__ == "__main__":
     unittest.main()
+
