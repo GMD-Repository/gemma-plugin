@@ -60,7 +60,7 @@ class TestMergePreviewThresholdAndIndividualMerge(unittest.TestCase):
         mock_dlg.all_merge_candidates = []
         mock_dlg.all_merged_ea_candidates = []
         mock_dlg.min_hh_spin = MagicMock()
-        mock_dlg.min_hh_spin.value.return_value = 99
+        mock_dlg.min_hh_spin.value.return_value = 200
         mock_dlg.max_hh_spin = MagicMock()
         mock_dlg.max_hh_spin.value.return_value = 300
         mock_dlg.merge_max_hh_spin = MagicMock()
@@ -792,6 +792,626 @@ class TestMergePreviewThresholdAndIndividualMerge(unittest.TestCase):
         self.assertEqual(updated_feat["hh_count"], 80)
         # Verify ea_type was updated from RETAINED to MERGED
         self.assertEqual(updated_feat["ea_type"], "MERGED")
+
+    def test_merge_preview_strictly_contiguous_partners_only(self):
+        """Verify that only contiguous EAs are added to the partner dropdown, excluding non-contiguous same-barangay EAs."""
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.delineation_table = MagicMock()
+        mock_dlg.merge_table = MagicMock()
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.merge_prev_ea_combo = MagicMock()
+        mock_dlg.merge_ea_combo = MagicMock()
+        mock_dlg.all_delineation_candidates = []
+        mock_dlg.all_merge_candidates = []
+        mock_dlg.all_merged_ea_candidates = []
+        mock_dlg.min_hh_spin = MagicMock()
+        mock_dlg.min_hh_spin.value.return_value = 99
+        mock_dlg.max_hh_spin = MagicMock()
+        mock_dlg.max_hh_spin.value.return_value = 300
+        mock_dlg.merge_max_hh_spin = MagicMock()
+        mock_dlg.merge_max_hh_spin.value.return_value = 300
+        mock_dlg.kpi_delin_val = MagicMock()
+        mock_dlg.kpi_merge_val = MagicMock()
+        mock_dlg.kpi_merged_ea_val = MagicMock()
+        mock_dlg.filter_previews = MagicMock()
+        mock_dlg.output_folder_widget = MagicMock()
+        mock_dlg.output_folder_widget.filePath.return_value = "C:/test"
+        mock_dlg.merge_output_folder_widget = MagicMock()
+        mock_dlg.merge_output_folder_widget.filePath.return_value = ""
+        mock_dlg._get_ea_name = lambda feat, ean, fields: f"EA {ean}"
+
+        # 1. Previous EA layer with:
+        # - Contiguous partner 001 (at x=1..2, sharing boundary at x=1 with candidate at x=0..1, 100 HH)
+        # - Distant / Non-contiguous partner 002 (at x=10..11, 50 HH, same barangay Poblacion)
+        prev_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Prev_EAs", "memory")
+        pr = prev_ea_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        prev_ea_layer.updateFields()
+
+        f_contig = QgsFeature(prev_ea_layer.fields())
+        f_contig.setAttributes(["01701001001", "01701001", "Poblacion", 100.0])
+        f_contig.setGeometry(QgsGeometry.fromRect(QgsRectangle(1, 0, 2, 1)))
+
+        f_distant = QgsFeature(prev_ea_layer.fields())
+        f_distant.setAttributes(["01701001002", "01701001", "Poblacion", 50.0])
+        f_distant.setGeometry(QgsGeometry.fromRect(QgsRectangle(10, 10, 11, 11)))
+        pr.addFeatures([f_contig, f_distant])
+
+        # 2. Merged EA layer with candidate (80 HH) at x=0..1, y=0..1
+        merge_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Merge_EA", "memory")
+        mpr = merge_ea_layer.dataProvider()
+        mpr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        merge_ea_layer.updateFields()
+
+        fcand = QgsFeature(merge_ea_layer.fields())
+        fcand.setAttributes(["01701001099", "01701001", "Poblacion", 80.0])
+        fcand.setGeometry(QgsGeometry.fromRect(QgsRectangle(0, 0, 1, 1)))
+        mpr.addFeatures([fcand])
+
+        mock_dlg._safe_get_layer.side_effect = lambda combo: (
+            prev_ea_layer if combo in (mock_dlg.prev_ea_combo, getattr(mock_dlg, 'merge_prev_ea_combo', None))
+            else merge_ea_layer
+        )
+
+        EALauncherDialog.generate_preview(mock_dlg)
+
+        self.assertEqual(len(mock_dlg.all_merged_ea_candidates), 1)
+        cand_row = mock_dlg.all_merged_ea_candidates[0]
+        neighbors = cand_row[5]
+        # Only contiguous partner 001 should be present; non-contiguous 002 must NOT be included
+        self.assertEqual(len(neighbors), 1)
+        self.assertEqual(neighbors[0][0], "01701001001")
+        self.assertNotIn("01701001002", [n[0] for n in neighbors])
+
+    def test_merge_preview_no_contiguous_neighbor_under_threshold_disables_dropdown(self):
+        """Verify that when contiguous neighbors exceed threshold, non-contiguous same-barangay EAs are NOT used as fallback."""
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.delineation_table = MagicMock()
+        mock_dlg.merge_table = MagicMock()
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.merge_prev_ea_combo = MagicMock()
+        mock_dlg.merge_ea_combo = MagicMock()
+        mock_dlg.all_delineation_candidates = []
+        mock_dlg.all_merge_candidates = []
+        mock_dlg.all_merged_ea_candidates = []
+        mock_dlg.min_hh_spin = MagicMock()
+        mock_dlg.min_hh_spin.value.return_value = 300
+        mock_dlg.max_hh_spin = MagicMock()
+        mock_dlg.max_hh_spin.value.return_value = 300
+        mock_dlg.merge_max_hh_spin = MagicMock()
+        mock_dlg.merge_max_hh_spin.value.return_value = 300
+        mock_dlg.kpi_delin_val = MagicMock()
+        mock_dlg.kpi_merge_val = MagicMock()
+        mock_dlg.kpi_merged_ea_val = MagicMock()
+        mock_dlg.filter_previews = MagicMock()
+        mock_dlg.output_folder_widget = MagicMock()
+        mock_dlg.output_folder_widget.filePath.return_value = "C:/test"
+        mock_dlg.merge_output_folder_widget = MagicMock()
+        mock_dlg.merge_output_folder_widget.filePath.return_value = ""
+        mock_dlg._get_ea_name = lambda feat, ean, fields: f"EA {ean}"
+
+        # 1. Previous EA layer:
+        # - Contiguous partner 001 (100 HH + candidate 250 HH = 350 > 300 threshold -> EXCLUDED)
+        # - Distant partner 002 (40 HH + candidate 250 HH = 290 <= 300 threshold -> must NOT be used as fallback)
+        prev_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Prev_EAs", "memory")
+        pr = prev_ea_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        prev_ea_layer.updateFields()
+
+        f_contig = QgsFeature(prev_ea_layer.fields())
+        f_contig.setAttributes(["01701001001", "01701001", "Poblacion", 100.0])
+        f_contig.setGeometry(QgsGeometry.fromRect(QgsRectangle(1, 0, 2, 1)))
+
+        f_distant = QgsFeature(prev_ea_layer.fields())
+        f_distant.setAttributes(["01701001002", "01701001", "Poblacion", 40.0])
+        f_distant.setGeometry(QgsGeometry.fromRect(QgsRectangle(20, 20, 21, 21)))
+        pr.addFeatures([f_contig, f_distant])
+
+        # Candidate with 250 HH at (0, 0, 1, 1)
+        merge_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Merge_EA", "memory")
+        mpr = merge_ea_layer.dataProvider()
+        mpr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        merge_ea_layer.updateFields()
+
+        fcand = QgsFeature(merge_ea_layer.fields())
+        fcand.setAttributes(["01701001099", "01701001", "Poblacion", 250.0])
+        fcand.setGeometry(QgsGeometry.fromRect(QgsRectangle(0, 0, 1, 1)))
+        mpr.addFeatures([fcand])
+
+        mock_dlg._safe_get_layer.side_effect = lambda combo: (
+            prev_ea_layer if combo in (mock_dlg.prev_ea_combo, getattr(mock_dlg, 'merge_prev_ea_combo', None))
+            else merge_ea_layer
+        )
+
+        EALauncherDialog.generate_preview(mock_dlg)
+
+        self.assertEqual(len(mock_dlg.all_merged_ea_candidates), 1)
+        cand_row = mock_dlg.all_merged_ea_candidates[0]
+        self.assertEqual(cand_row[5], [])  # No eligible contiguous partners!
+
+        # Render into preview table
+        mock_dlg.current_theme = "light"
+        table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=True)
+        EALauncherDialog._populate_table_rows(mock_dlg, table, mock_dlg.all_merged_ea_candidates, is_delineation=False)
+
+        combo = table.cellWidget(0, 5)
+        self.assertEqual(combo.count(), 0)
+        self.assertFalse(combo.isEnabled())
+        self.assertEqual(table.item(0, 6).text(), "—")
+        btn = table.cellWidget(0, 7)
+        self.assertFalse(btn.isEnabled())
+
+    def test_merge_individual_row_rejects_non_contiguous(self):
+        """Verify that _merge_individual_row prevents merging if features are non-contiguous."""
+        prev_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Prev_EA", "memory")
+        pr = prev_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        prev_layer.updateFields()
+
+        # Partner EA at distant location (10, 10, 11, 11)
+        p_feat = QgsFeature(prev_layer.fields())
+        p_feat.setAttributes(["01701001002", "01701001", "Poblacion", 50.0])
+        p_feat.setGeometry(QgsGeometry.fromRect(QgsRectangle(10, 10, 11, 11)))
+
+        # Candidate EA at (0, 0, 1, 1)
+        c_feat = QgsFeature(prev_layer.fields())
+        c_feat.setAttributes(["01701001099", "01701001", "Poblacion", 45.0])
+        c_feat.setGeometry(QgsGeometry.fromRect(QgsRectangle(0, 0, 1, 1)))
+        pr.addFeatures([p_feat, c_feat])
+
+        mock_dlg = MagicMock()
+        mock_dlg.merge_ea_combo = MagicMock()
+        mock_dlg.merge_prev_ea_combo = MagicMock()
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.bldg_combo = MagicMock()
+        mock_dlg.merge_bldg_combo = MagicMock()
+        mock_dlg.merge_log_console = QTextEdit()
+        mock_dlg._find_feature_in_layer = EALauncherDialog._find_feature_in_layer
+        mock_dlg._safe_get_layer = lambda combo: prev_layer
+
+        table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=True)
+        candidates = [
+            ("01701001099", "EA 99", "Poblacion", 45.0, "Initiator", [("01701001002", 50.0)])
+        ]
+        EALauncherDialog._populate_table_rows(mock_dlg, table, candidates, is_delineation=False)
+        partner_combo = table.cellWidget(0, 5)
+        btn_merge = table.cellWidget(0, 7)
+
+        with patch("references.create_enumeration_area.dialog.QMessageBox.warning") as mock_warn:
+            EALauncherDialog._merge_individual_row(
+                mock_dlg, 0, "01701001099", "EA 99", "Poblacion", 45.0, partner_combo, table, btn_merge
+            )
+            mock_warn.assert_called_once()
+            self.assertIn("not contiguous", mock_warn.call_args[0][2])
+
+    def test_merge_preview_dropdown_displays_geocode_instead_of_6digit_ean(self):
+        """Verify that the merge partner dropdown displays the full geocode value instead of 6-digit EAN code."""
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.delineation_table = MagicMock()
+        mock_dlg.merge_table = MagicMock()
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.merge_prev_ea_combo = MagicMock()
+        mock_dlg.merge_ea_combo = MagicMock()
+        mock_dlg.all_delineation_candidates = []
+        mock_dlg.all_merge_candidates = []
+        mock_dlg.all_merged_ea_candidates = []
+        mock_dlg.min_hh_spin = MagicMock()
+        mock_dlg.min_hh_spin.value.return_value = 99
+        mock_dlg.max_hh_spin = MagicMock()
+        mock_dlg.max_hh_spin.value.return_value = 300
+        mock_dlg.merge_max_hh_spin = MagicMock()
+        mock_dlg.merge_max_hh_spin.value.return_value = 300
+        mock_dlg.kpi_delin_val = MagicMock()
+        mock_dlg.kpi_merge_val = MagicMock()
+        mock_dlg.kpi_merged_ea_val = MagicMock()
+        mock_dlg.filter_previews = MagicMock()
+        mock_dlg.output_folder_widget = MagicMock()
+        mock_dlg.output_folder_widget.filePath.return_value = "C:/test"
+        mock_dlg.merge_output_folder_widget = MagicMock()
+        mock_dlg.merge_output_folder_widget.filePath.return_value = ""
+        mock_dlg._get_ea_name = lambda feat, ean, fields: f"EA {ean}"
+
+        prev_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Prev_EAs", "memory")
+        pr = prev_ea_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        prev_ea_layer.updateFields()
+
+        # Partner EA with 6-digit EAN 002000 and 14-digit geocode 01728001002000
+        f_partner = QgsFeature(prev_ea_layer.fields())
+        f_partner.setAttributes(["002000", "01728001002000", "San Pedro", 75.0])
+        f_partner.setGeometry(QgsGeometry.fromRect(QgsRectangle(1, 0, 2, 1)))
+        pr.addFeatures([f_partner])
+
+        # Candidate EA in Merge EA layer
+        merge_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Merge_EA", "memory")
+        mpr = merge_ea_layer.dataProvider()
+        mpr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        merge_ea_layer.updateFields()
+
+        f_cand = QgsFeature(merge_ea_layer.fields())
+        f_cand.setAttributes(["001000", "01728001001000", "San Pedro", 50.0])
+        f_cand.setGeometry(QgsGeometry.fromRect(QgsRectangle(0, 0, 1, 1)))
+        mpr.addFeatures([f_cand])
+
+        mock_dlg._safe_get_layer.side_effect = lambda combo: (
+            prev_ea_layer if combo in (mock_dlg.prev_ea_combo, getattr(mock_dlg, 'merge_prev_ea_combo', None))
+            else merge_ea_layer
+        )
+
+        EALauncherDialog.generate_preview(mock_dlg)
+
+        self.assertEqual(len(mock_dlg.all_merged_ea_candidates), 1)
+        cand_row = mock_dlg.all_merged_ea_candidates[0]
+        neighbors = cand_row[5]
+        self.assertEqual(len(neighbors), 1)
+        # Verify partner geocode value is stored rather than 6-digit EAN
+        self.assertEqual(neighbors[0][0], "01728001002000")
+        self.assertNotEqual(neighbors[0][0], "002000")
+
+        # Verify populated dropdown shows geocode value
+        mock_dlg.current_theme = "light"
+        table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=True)
+        EALauncherDialog._populate_table_rows(mock_dlg, table, mock_dlg.all_merged_ea_candidates, is_delineation=False)
+        combo = table.cellWidget(0, 5)
+        self.assertEqual(combo.currentText(), "01728001002000")
+        self.assertNotEqual(combo.currentText(), "002000")
+
+    def test_merge_preview_strictly_excludes_nearby_non_touching_eas(self):
+        """Verify that polygons separated by micro-gap (e.g. across a road) are strictly excluded because they do not touch."""
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.delineation_table = MagicMock()
+        mock_dlg.merge_table = MagicMock()
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.merge_prev_ea_combo = MagicMock()
+        mock_dlg.merge_ea_combo = MagicMock()
+        mock_dlg.all_delineation_candidates = []
+        mock_dlg.all_merge_candidates = []
+        mock_dlg.all_merged_ea_candidates = []
+        mock_dlg.min_hh_spin = MagicMock()
+        mock_dlg.min_hh_spin.value.return_value = 99
+        mock_dlg.max_hh_spin = MagicMock()
+        mock_dlg.max_hh_spin.value.return_value = 300
+        mock_dlg.merge_max_hh_spin = MagicMock()
+        mock_dlg.merge_max_hh_spin.value.return_value = 300
+        mock_dlg.kpi_delin_val = MagicMock()
+        mock_dlg.kpi_merge_val = MagicMock()
+        mock_dlg.kpi_merged_ea_val = MagicMock()
+        mock_dlg.filter_previews = MagicMock()
+        mock_dlg.output_folder_widget = MagicMock()
+        mock_dlg.output_folder_widget.filePath.return_value = "C:/test"
+        mock_dlg.merge_output_folder_widget = MagicMock()
+        mock_dlg.merge_output_folder_widget.filePath.return_value = ""
+        mock_dlg._get_ea_name = lambda feat, ean, fields: f"EA {ean}"
+
+        prev_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Prev_EAs", "memory")
+        pr = prev_ea_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        prev_ea_layer.updateFields()
+
+        # Partner 1: strictly touching candidate at boundary x=1 (x from 1 to 2)
+        f_touching = QgsFeature(prev_ea_layer.fields())
+        f_touching.setAttributes(["002", "017280010002", "Poblacion", 60.0])
+        f_touching.setGeometry(QgsGeometry.fromRect(QgsRectangle(1.0, 0.0, 2.0, 1.0)))
+
+        # Partner 2: across street / separated by 0.00005 deg gap (x from 1.00005 to 2.00005), does NOT touch
+        f_non_touching = QgsFeature(prev_ea_layer.fields())
+        f_non_touching.setAttributes(["003", "017280010003", "Poblacion", 60.0])
+        f_non_touching.setGeometry(QgsGeometry.fromRect(QgsRectangle(1.00005, 0.0, 2.00005, 1.0)))
+
+        pr.addFeatures([f_touching, f_non_touching])
+
+        # Candidate at x=0..1
+        merge_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Merge_EA", "memory")
+        mpr = merge_ea_layer.dataProvider()
+        mpr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        merge_ea_layer.updateFields()
+
+        fcand = QgsFeature(merge_ea_layer.fields())
+        fcand.setAttributes(["001", "017280010001", "Poblacion", 50.0])
+        fcand.setGeometry(QgsGeometry.fromRect(QgsRectangle(0.0, 0.0, 1.0, 1.0)))
+        mpr.addFeatures([fcand])
+
+        mock_dlg._safe_get_layer.side_effect = lambda combo: (
+            prev_ea_layer if combo in (mock_dlg.prev_ea_combo, getattr(mock_dlg, 'merge_prev_ea_combo', None))
+            else merge_ea_layer
+        )
+
+        EALauncherDialog.generate_preview(mock_dlg)
+
+        self.assertEqual(len(mock_dlg.all_merged_ea_candidates), 1)
+        cand_row = mock_dlg.all_merged_ea_candidates[0]
+        neighbors = cand_row[5]
+        # Only strictly touching partner 002 should be in dropdown; non-touching 003 must be excluded
+        self.assertEqual(len(neighbors), 1)
+        self.assertEqual(neighbors[0][0], "017280010002")
+        self.assertNotIn("017280010003", [n[0] for n in neighbors])
+
+    def test_individual_merge_row_triggers_refresh_merge_preview(self):
+        """Verify clicking Merge invokes refresh_merge_preview to update Merge Preview table and candidates."""
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.merge_prev_ea_combo = MagicMock()
+        mock_dlg.merge_ea_combo = MagicMock()
+        mock_dlg._find_feature_in_layer = EALauncherDialog._find_feature_in_layer
+        mock_dlg._extract_5digit_geocode.return_value = "01701"
+        mock_dlg.merge_output_folder_widget = MagicMock()
+        mock_dlg.merge_output_folder_widget.filePath.return_value = ""
+        mock_dlg.output_folder_widget = MagicMock()
+        mock_dlg.output_folder_widget.filePath.return_value = ""
+        mock_dlg.merge_log_console = QTextEdit()
+        mock_dlg.refresh_merge_preview = MagicMock()
+
+        prev_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Prev_EAs_Refresh", "memory")
+        pr = prev_ea_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        prev_ea_layer.updateFields()
+
+        f_partner = QgsFeature(prev_ea_layer.fields())
+        f_partner.setAttributes(["01701001001", "01701001", "Poblacion", 80.0])
+        f_partner.setGeometry(QgsGeometry.fromRect(QgsRectangle(0, 0, 1, 1)))
+        pr.addFeatures([f_partner])
+
+        merge_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Merge_EA_Refresh", "memory")
+        mpr = merge_ea_layer.dataProvider()
+        mpr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        merge_ea_layer.updateFields()
+
+        f_cand = QgsFeature(merge_ea_layer.fields())
+        f_cand.setAttributes(["01701001099", "01701001", "Poblacion", 40.0])
+        f_cand.setGeometry(QgsGeometry.fromRect(QgsRectangle(1, 0, 2, 1)))
+        mpr.addFeatures([f_cand])
+
+        mock_dlg._safe_get_layer.side_effect = lambda combo: (
+            prev_ea_layer if combo in (mock_dlg.prev_ea_combo, getattr(mock_dlg, 'merge_prev_ea_combo', None))
+            else merge_ea_layer
+        )
+
+        table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=True)
+        candidates = [
+            ("01701001099", "EA 99", "Poblacion", 40.0, "Initiator (<= 99 HH)", [("01701001001", 80.0)])
+        ]
+        EALauncherDialog._populate_table_rows(mock_dlg, table, candidates, is_delineation=False)
+
+        partner_combo = table.cellWidget(0, 5)
+        btn_merge = table.cellWidget(0, 7)
+
+        # Trigger merge
+        EALauncherDialog._merge_individual_row(
+            mock_dlg, 0, "01701001099", "EA 99", "Poblacion", 40.0, partner_combo, table, btn_merge
+        )
+
+        # Ensure refresh_merge_preview was invoked
+        mock_dlg.refresh_merge_preview.assert_called_once()
+
+    def test_populate_table_rows_merged_status_grayed_out(self):
+        """Verify that rows with role 'Merged ✓' are grayed out with light gray styling."""
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.current_theme = "light"
+
+        table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=True)
+        candidates = [
+            ("01715009003000", "EA 003000", "Digdigon", 179.0, "Merged ✓", [])
+        ]
+        EALauncherDialog._populate_table_rows(mock_dlg, table, candidates, is_delineation=False)
+
+        self.assertEqual(table.rowCount(), 1)
+        role_item = table.item(0, 4)
+        self.assertEqual(role_item.text(), "Merged ✓")
+
+        # Verify cell background is light gray (#f2f4f7)
+        bg = role_item.background().color().name().lower()
+        self.assertEqual(bg, "#f2f4f7")
+
+        # Verify partner combo is disabled and grayed out
+        partner_combo = table.cellWidget(0, 5)
+        self.assertFalse(partner_combo.isEnabled())
+        self.assertEqual(partner_combo.count(), 0)
+
+        # Verify action button is disabled, styled light gray with text 'Merged'
+        btn_merge = table.cellWidget(0, 7)
+        self.assertFalse(btn_merge.isEnabled())
+        self.assertEqual(btn_merge.text(), "Merged")
+        self.assertIn("#e1e4e8", btn_merge.styleSheet())
+        self.assertIn("#6a737d", btn_merge.styleSheet())
+
+    def test_merge_preview_excludes_unmerged_candidate_above_min_hh(self):
+        """Verify that in Merge Preview, unmerged EAs with household count > min_hh do not appear."""
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.delineation_table = MagicMock()
+        mock_dlg.merge_table = MagicMock()
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.merge_prev_ea_combo = MagicMock()
+        mock_dlg.merge_ea_combo = MagicMock()
+        mock_dlg.all_delineation_candidates = []
+        mock_dlg.all_merge_candidates = []
+        mock_dlg.all_merged_ea_candidates = []
+        mock_dlg.min_hh_spin = MagicMock()
+        mock_dlg.min_hh_spin.value.return_value = 99
+        mock_dlg.merge_min_hh_spin = MagicMock()
+        mock_dlg.merge_min_hh_spin.value.return_value = 99
+        mock_dlg.max_hh_spin = MagicMock()
+        mock_dlg.max_hh_spin.value.return_value = 300
+        mock_dlg.merge_max_hh_spin = MagicMock()
+        mock_dlg.merge_max_hh_spin.value.return_value = 300
+        mock_dlg.kpi_delin_val = MagicMock()
+        mock_dlg.kpi_merge_val = MagicMock()
+        mock_dlg.kpi_merged_ea_val = MagicMock()
+        mock_dlg.filter_previews = MagicMock()
+        mock_dlg.output_folder_widget = MagicMock()
+        mock_dlg.output_folder_widget.filePath.return_value = "C:/test"
+        mock_dlg.merge_output_folder_widget = MagicMock()
+        mock_dlg.merge_output_folder_widget.filePath.return_value = ""
+        mock_dlg._get_ea_name = lambda feat, ean, fields: f"EA {ean}"
+
+        prev_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Prev_EAs", "memory")
+        pr = prev_ea_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        prev_ea_layer.updateFields()
+
+        # Merge EA layer with 2 features:
+        # 1) Unmerged candidate with 150 HH (> 99 min_hh threshold) -> must NOT appear!
+        # 2) Unmerged candidate with 50 HH (<= 99 min_hh threshold) -> MUST appear!
+        merge_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Merge_EA", "memory")
+        mpr = merge_ea_layer.dataProvider()
+        mpr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        merge_ea_layer.updateFields()
+
+        f_over = QgsFeature(merge_ea_layer.fields())
+        f_over.setAttributes(["01701001001", "01701001", "Poblacion", 150.0])
+        f_over.setGeometry(QgsGeometry.fromRect(QgsRectangle(0, 0, 1, 1)))
+
+        f_under = QgsFeature(merge_ea_layer.fields())
+        f_under.setAttributes(["01701001002", "01701001", "Poblacion", 50.0])
+        f_under.setGeometry(QgsGeometry.fromRect(QgsRectangle(1, 0, 2, 1)))
+        mpr.addFeatures([f_over, f_under])
+
+        mock_dlg._safe_get_layer.side_effect = lambda combo: (
+            prev_ea_layer if combo in (mock_dlg.prev_ea_combo, getattr(mock_dlg, 'merge_prev_ea_combo', None))
+            else merge_ea_layer
+        )
+
+        EALauncherDialog.generate_preview(mock_dlg)
+
+        # Only the feature with 50 HH (<= 99) should appear in Merge Preview!
+        self.assertEqual(len(mock_dlg.all_merged_ea_candidates), 1)
+        self.assertEqual(mock_dlg.all_merged_ea_candidates[0][0], "01701001002")
+
+    def test_merge_preview_retains_merged_candidate_above_min_hh(self):
+        """Verify that in Merge Preview, if an EA has been merged (via ea_type or session) and hh > min_hh, it is retained."""
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.delineation_table = MagicMock()
+        mock_dlg.merge_table = MagicMock()
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.merge_prev_ea_combo = MagicMock()
+        mock_dlg.merge_ea_combo = MagicMock()
+        mock_dlg.all_delineation_candidates = []
+        mock_dlg.all_merge_candidates = []
+        mock_dlg.all_merged_ea_candidates = []
+        mock_dlg._session_merged_eans = {"01701001001"}
+        mock_dlg.min_hh_spin = MagicMock()
+        mock_dlg.min_hh_spin.value.return_value = 99
+        mock_dlg.merge_min_hh_spin = MagicMock()
+        mock_dlg.merge_min_hh_spin.value.return_value = 99
+        mock_dlg.max_hh_spin = MagicMock()
+        mock_dlg.max_hh_spin.value.return_value = 300
+        mock_dlg.merge_max_hh_spin = MagicMock()
+        mock_dlg.merge_max_hh_spin.value.return_value = 300
+        mock_dlg.kpi_delin_val = MagicMock()
+        mock_dlg.kpi_merge_val = MagicMock()
+        mock_dlg.kpi_merged_ea_val = MagicMock()
+        mock_dlg.filter_previews = MagicMock()
+        mock_dlg.output_folder_widget = MagicMock()
+        mock_dlg.output_folder_widget.filePath.return_value = "C:/test"
+        mock_dlg.merge_output_folder_widget = MagicMock()
+        mock_dlg.merge_output_folder_widget.filePath.return_value = ""
+        mock_dlg._get_ea_name = lambda feat, ean, fields: f"EA {ean}"
+
+        prev_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Prev_EAs", "memory")
+        pr = prev_ea_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        prev_ea_layer.updateFields()
+
+        # Merge EA layer with 1 merged feature with 180 HH (> 99 min_hh):
+        merge_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Merge_EA", "memory")
+        mpr = merge_ea_layer.dataProvider()
+        mpr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double),
+            QgsField("ea_type", QVariant.String),
+            QgsField("remarks", QVariant.String)
+        ])
+        merge_ea_layer.updateFields()
+
+        f_merged = QgsFeature(merge_ea_layer.fields())
+        f_merged.setAttributes(["01701001001", "01701001", "Poblacion", 180.0, "MERGED", "Merged: 001 + 002"])
+        f_merged.setGeometry(QgsGeometry.fromRect(QgsRectangle(0, 0, 1, 1)))
+        mpr.addFeatures([f_merged])
+
+        mock_dlg._safe_get_layer.side_effect = lambda combo: (
+            prev_ea_layer if combo in (mock_dlg.prev_ea_combo, getattr(mock_dlg, 'merge_prev_ea_combo', None))
+            else merge_ea_layer
+        )
+
+        EALauncherDialog.generate_preview(mock_dlg)
+
+        # Must be retained even though 180 > 99!
+        self.assertEqual(len(mock_dlg.all_merged_ea_candidates), 1)
+        row = mock_dlg.all_merged_ea_candidates[0]
+        self.assertEqual(row[0], "01701001001")
+        self.assertEqual(row[3], 180.0)
+        self.assertEqual(row[4], "Merged ✓")
 
 
 if __name__ == "__main__":
