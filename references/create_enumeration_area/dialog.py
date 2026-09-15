@@ -3244,7 +3244,8 @@ class EALauncherDialog(QDialog):
                         s = str(x).strip()
                         if s.endswith(".0"):
                             s = s[:-2]
-                        merged_eans_set.add(s)
+                        if self._is_full_geocode(s):
+                            merged_eans_set.add(s)
 
             geo5 = self._extract_5digit_geocode() if hasattr(self, '_extract_5digit_geocode') else ""
             target_layer_name = f"{geo5}_merged_ea2026" if geo5 else "merged_ea2026"
@@ -3287,12 +3288,13 @@ class EALauncherDialog(QDialog):
                                 s = str(val).strip()
                                 if s.endswith(".0"):
                                     s = s[:-2]
-                                merged_eans_set.add(s)
+                                if self._is_full_geocode(s):
+                                    merged_eans_set.add(s)
                         if cl_rem_idx != -1:
                             r_text = str(cf.attribute(cl_rem_idx) or "")
                             for part in r_text.replace("+", " ").replace(":", " ").replace(",", " ").split():
                                 part_digits = "".join(c for c in part if c.isdigit())
-                                if len(part_digits) >= 6:
+                                if len(part_digits) >= 9:
                                     merged_eans_set.add(part_digits)
 
             for idx, feat in enumerate(merge_ea_layer.getFeatures()):
@@ -3404,8 +3406,10 @@ class EALauncherDialog(QDialog):
                                 continue  # skip self
 
                             # Exclude neighbor if already merged into another candidate
+                            # Only compare full geocode (_nbr_geocode) — short _nbr_ean is
+                            # not globally unique across barangays and causes false exclusions.
                             if merged_eans_set:
-                                if (_nbr_ean and _nbr_ean in merged_eans_set) or (_nbr_geocode and _nbr_geocode in merged_eans_set):
+                                if _nbr_geocode and _nbr_geocode in merged_eans_set:
                                     continue
 
                             # Same-barangay verification: check barangay names first, then geocode prefix
@@ -3695,6 +3699,17 @@ class EALauncherDialog(QDialog):
     def _make_individual_unmerge_handler(self, row_idx, cand_ean):
         """Factory for individual row unmerge button handlers."""
         return lambda: self._unmerge_individual_row(row_idx, cand_ean)
+
+    @staticmethod
+    def _is_full_geocode(s: str) -> bool:
+        """Return True if *s* contains at least 9 digit characters.
+
+        Philippine PSGC geocodes at the barangay level are 9 digits and are
+        nationally unique.  Short EAN codes (3–6 digits such as ``001000``)
+        are only unique within a single barangay and must never be used for
+        cross-barangay merge exclusion tracking.
+        """
+        return sum(1 for c in str(s) if c.isdigit()) >= 9
 
     @staticmethod
     def _find_feature_in_layer(layer: QgsVectorLayer, target_str: str) -> Optional[QgsFeature]:
@@ -4303,14 +4318,18 @@ class EALauncherDialog(QDialog):
                     pass
 
         # Visual feedback on table row (grayed out)
+        # Only track full geocodes (≥9 digit characters) in session.
+        # Short EANs (e.g. "001000") are NOT globally unique across
+        # barangays and would falsely block merges in other barangays.
         if not hasattr(self, "_session_merged_eans"):
             self._session_merged_eans = set()
-        if cand_ean:
-            self._session_merged_eans.add(str(cand_ean).strip())
-        if partner_ean:
-            self._session_merged_eans.add(str(partner_ean).strip())
-        if highest_ean:
-            self._session_merged_eans.add(str(highest_ean).strip())
+        for _merge_id in (cand_ean, partner_ean):
+            if _merge_id:
+                _s = str(_merge_id).strip()
+                if _s.endswith(".0"):
+                    _s = _s[:-2]
+                if self._is_full_geocode(_s):
+                    self._session_merged_eans.add(_s)
 
         gray_bg = "#2d3139" if getattr(self, "current_theme", "light") == "dark" else "#f2f4f7"
         gray_fg = "#8c959f" if getattr(self, "current_theme", "light") == "dark" else "#6c757d"
@@ -6077,12 +6096,13 @@ class EALauncherDialog(QDialog):
                         s = str(val).strip()
                         if s.endswith(".0"):
                             s = s[:-2]
-                        active_merged_eans.add(s)
+                        if self._is_full_geocode(s):
+                            active_merged_eans.add(s)
                 if rem_idx != -1:
                     r_text = str(f.attribute(rem_idx) or "")
                     for part in r_text.replace("+", " ").replace(":", " ").replace(",", " ").split():
                         part_digits = "".join(c for c in part if c.isdigit())
-                        if len(part_digits) >= 6:
+                        if len(part_digits) >= 9:
                             active_merged_eans.add(part_digits)
 
         self._session_merged_eans = {e for e in self._session_merged_eans if e in active_merged_eans}
