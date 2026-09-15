@@ -226,10 +226,11 @@ class EALauncherDialog(QDialog):
         self.setMinimumSize(960, 620)
         self.resize(1120, 720)
         self.setWindowFlags(
-            Qt.Dialog |
-            Qt.WindowCloseButtonHint |
+            Qt.Window |
+            Qt.WindowTitleHint |
+            Qt.WindowMinimizeButtonHint |
             Qt.WindowMaximizeButtonHint |
-            Qt.WindowTitleHint
+            Qt.WindowCloseButtonHint
         )
 
         self.feedback = None
@@ -245,6 +246,7 @@ class EALauncherDialog(QDialog):
         self.all_delineation_candidates = []
         self.all_merge_candidates = []
         self.all_merged_ea_candidates = []
+        self._session_merged_eans = set()
 
         # Detect QGIS theme (light or dark) based on application palette brightness
         palette = self.palette()
@@ -2276,7 +2278,7 @@ class EALauncherDialog(QDialog):
             table.setColumnCount(8)
             table.setHorizontalHeaderLabels([
                 "Geocode", "Barangay", "EA Name", "Household Count",
-                "Role / Status", "Merge Partner (EAN)", "Total HH Count", "Action"
+                "Role / Status", "Merge Partner (Geocode)", "Total HH Count", "Action"
             ])
         else:
             table.setColumnCount(5)
@@ -2697,6 +2699,8 @@ class EALauncherDialog(QDialog):
         self.all_merge_candidates.clear()
         if hasattr(self, 'all_merged_ea_candidates'):
             self.all_merged_ea_candidates.clear()
+        if hasattr(self, '_session_merged_eans'):
+            self._session_merged_eans.clear()
         if hasattr(self, 'kpi_merged_ea_val'):
             self.kpi_merged_ea_val.setText('0')
         if hasattr(self, 'merged_ea_table'):
@@ -3061,7 +3065,6 @@ class EALauncherDialog(QDialog):
         if hasattr(self, 'all_merged_ea_candidates'):
             self.all_merged_ea_candidates.clear()
 
-        # Resolve the barangay geocode field index (8-digit geocode used to group EAs
         # Resolve the barangay geocode field index (8/9-digit geocode used to group EAs
         # by barangay for the contiguous merge-partner lookup). Prioritize specific bgy_code over generic geocode.
         bgy_geocode_idx = -1
@@ -3074,12 +3077,20 @@ class EALauncherDialog(QDialog):
                 bgy_geocode_idx = i
                 break
 
+        # Resolve EA geocode field index (full EA geocode to display in partner dropdown)
+        ea_geocode_idx = -1
+        for cand_name in ["ea_geocode", "geocode", "geo_code", "psgc", "adm4_pcode"]:
+            for i in range(fields.count()):
+                if fields.at(i).name().lower() == cand_name:
+                    ea_geocode_idx = i
+                    break
+            if ea_geocode_idx != -1:
+                break
+
         # Spatial index over every EA feature in prev_ea_layer (for contiguous-neighbor lookup)
         _ea_spatial_idx = QgsSpatialIndex()
-        # fid → (feat, ean_str, bgy_geocode_str, bgy_name_str, hh_float)
+        # fid → (feat, ean_str, bgy_geocode_str, bgy_name_str, hh_float, nbr_geocode_str)
         _ea_by_fid: Dict[int, Any] = {}
-        # bgy_key → list of (feat, ean_str, hh_float)
-        _ea_by_bgy: Dict[str, List[Tuple[Any, str, float]]] = {}
 
         for idx, feat in enumerate(prev_ea_layer.getFeatures()):
             if idx > 0 and idx % 100 == 0:
@@ -3119,19 +3130,35 @@ class EALauncherDialog(QDialog):
             if not bgy_geocode and len(ean_str) >= 9:
                 bgy_geocode = ean_str[:9]
 
+            # Resolve partner geocode value (show geocode value instead of 6-digit EAN code in dropdown)
+            raw_gc = ""
+            if ea_geocode_idx != -1:
+                _v = feat.attribute(ea_geocode_idx)
+                if _v is not None and _v != NULL:
+                    raw_gc = str(_v).strip()
+                    if raw_gc.endswith(".0"):
+                        raw_gc = raw_gc[:-2]
+
+            ea_gc_digits = "".join(c for c in raw_gc if c.isdigit())
+            ean_digits = "".join(c for c in ean_str if c.isdigit())
+            if len(ea_gc_digits) >= 11:
+                nbr_geocode = raw_gc
+            elif len(ean_digits) >= 11:
+                nbr_geocode = ean_str
+            elif bgy_geocode and ean_str and len(ean_digits) <= 6:
+                nbr_geocode = f"{bgy_geocode}{ean_str}"
+            elif raw_gc and ean_str and len(ean_digits) <= 6:
+                nbr_geocode = f"{raw_gc}{ean_str}"
+            elif raw_gc:
+                nbr_geocode = raw_gc
+            else:
+                nbr_geocode = ean_str
+
             # Add to spatial index for neighbor resolution
             feat_geom = feat.geometry()
             if feat_geom and not feat_geom.isEmpty():
                 _ea_spatial_idx.addFeature(feat)
-            _ea_by_fid[feat.id()] = (feat, ean_str, bgy_geocode, bgy_name_str, hh)
-
-            bgy_norm = bgy_name_str.strip().lower() if (bgy_name_str and bgy_name_str != "Unknown") else ""
-            gc_norm = bgy_geocode.strip().lower()
-            bgy_key = bgy_norm or (gc_norm[:9] if len(gc_norm) >= 9 else gc_norm)
-            if bgy_key:
-                if bgy_key not in _ea_by_bgy:
-                    _ea_by_bgy[bgy_key] = []
-                _ea_by_bgy[bgy_key].append((feat, ean_str, hh))
+            _ea_by_fid[feat.id()] = (feat, ean_str, bgy_geocode, bgy_name_str, hh, nbr_geocode)
 
             # Classify delineation candidates (Sub-tab 1 Live Delineation Preview):
             is_delin = (hh > max_hh)
@@ -3190,6 +3217,15 @@ class EALauncherDialog(QDialog):
                     m_bgy_geocode_idx = i
                     break
 
+            m_gc_idx = -1
+            for cand_name in ["ea_geocode", "geocode", "geo_code", "psgc", "adm4_pcode"]:
+                for i in range(m_fields.count()):
+                    if m_fields.at(i).name().lower() == cand_name:
+                        m_gc_idx = i
+                        break
+                if m_gc_idx != -1:
+                    break
+
             xform = None
             if merge_ea_layer.crs().isValid() and prev_ea_layer.crs().isValid() and merge_ea_layer.crs() != prev_ea_layer.crs():
                 xform = QgsCoordinateTransform(merge_ea_layer.crs(), prev_ea_layer.crs(), QgsProject.instance())
@@ -3197,6 +3233,7 @@ class EALauncherDialog(QDialog):
             is_geo = prev_ea_layer.crs().isGeographic()
             search_dist = 0.0002 if is_geo else 10.0
             merge_max_hh = self.merge_max_hh_spin.value() if hasattr(self, 'merge_max_hh_spin') else max_hh
+            merge_min_hh = self.merge_min_hh_spin.value() if hasattr(self, 'merge_min_hh_spin') and self.merge_min_hh_spin is not None else min_hh
 
             for idx, feat in enumerate(merge_ea_layer.getFeatures()):
                 if idx > 0 and idx % 100 == 0:
@@ -3233,18 +3270,60 @@ class EALauncherDialog(QDialog):
                 if not bgy_geocode and len(ean_str) >= 9:
                     bgy_geocode = ean_str[:9]
 
+                cand_raw_gc = ""
+                if m_gc_idx != -1:
+                    _cg_val = feat.attribute(m_gc_idx)
+                    if _cg_val is not None and _cg_val != NULL:
+                        cand_raw_gc = str(_cg_val).strip()
+                        if cand_raw_gc.endswith(".0"):
+                            cand_raw_gc = cand_raw_gc[:-2]
+
                 feat_geom = feat.geometry()
                 if feat_geom and not feat_geom.isEmpty():
                     if xform:
                         feat_geom = QgsGeometry(feat_geom)
                         feat_geom.transform(xform)
 
-                role_str = f"Initiator (<= {min_hh} HH)" if hh <= min_hh else f"Candidate ({hh:.0f} HH)"
+                # Check if feature in merge_ea_layer is already marked as merged
+                is_already_merged = False
+                for cand_type in ["ea_type", "eatype", "type"]:
+                    idx = m_fields.lookupField(cand_type)
+                    if idx != -1:
+                        val = feat.attribute(idx)
+                        if val is not None and str(val).strip().upper() == "MERGED":
+                            is_already_merged = True
+                            break
+
+                if not is_already_merged:
+                    for cand_rem in ["remarks", "remark", "status", "action"]:
+                        idx = m_fields.lookupField(cand_rem)
+                        if idx != -1:
+                            val = feat.attribute(idx)
+                            if val is not None and "MERGED" in str(val).strip().upper():
+                                is_already_merged = True
+                                break
+
+                if not is_already_merged and hasattr(self, "_session_merged_eans") and self._session_merged_eans:
+                    for ident in (ean_str, cand_raw_gc):
+                        if ident and ident in self._session_merged_eans:
+                            is_already_merged = True
+                            break
+
+                # In the merge preview, if the household count is above the minimum threshold
+                # and it was not merged, it should not appear in the merge preview.
+                # If the merge button was used and the hhcount went above the minimum threshold, retain it.
+                if not is_already_merged and hh > merge_min_hh:
+                    continue
+
+                if is_already_merged:
+                    role_str = "Merged ✓"
+                else:
+                    role_str = f"Initiator (<= {int(merge_min_hh)} HH)"
 
                 # Resolve contiguous same-barangay merge partners from Previous EA Layer
-                # If candidate EA itself exceeds merge_max_hh, or combined HH exceeds merge_max_hh, partner cannot be merged
+                # If candidate EA is already merged, or exceeds merge_max_hh, or combined HH exceeds merge_max_hh, partner cannot be merged
                 neighbors: List[Tuple[str, float]] = []
-                if hh <= merge_max_hh:
+                if not is_already_merged and hh <= merge_max_hh:
                     if feat_geom and not feat_geom.isEmpty():
                         _bbox = feat_geom.boundingBox()
                         _bbox.grow(search_dist)
@@ -3253,8 +3332,9 @@ class EALauncherDialog(QDialog):
                             _entry = _ea_by_fid.get(_cfid)
                             if _entry is None:
                                 continue
-                            _nbr_feat, _nbr_ean, _nbr_bgy_gc, _nbr_bgy_name, _nbr_hh = _entry
-                            if _nbr_ean and _nbr_ean == ean_str:
+                            _nbr_feat, _nbr_ean, _nbr_bgy_gc, _nbr_bgy_name, _nbr_hh = _entry[:5]
+                            _nbr_geocode = _entry[5] if len(_entry) > 5 else (_nbr_ean or "")
+                            if (_nbr_ean and _nbr_ean == ean_str) or (cand_raw_gc and _nbr_geocode and _nbr_geocode == cand_raw_gc):
                                 continue  # skip self
 
                             # Same-barangay verification: check barangay names first, then geocode prefix
@@ -3277,22 +3357,15 @@ class EALauncherDialog(QDialog):
 
                             _nbr_geom = _nbr_feat.geometry()
                             if _nbr_geom and not _nbr_geom.isEmpty():
-                                if (feat_geom.touches(_nbr_geom)
-                                        or feat_geom.intersects(_nbr_geom)
-                                        or feat_geom.distance(_nbr_geom) <= search_dist):
-                                    if _nbr_ean and _nbr_ean not in [n[0] for n in neighbors]:
-                                        neighbors.append((_nbr_ean, _nbr_hh))
+                                # Strict contiguity: only show EAs sharing a boundary (touching or intersecting)
+                                is_contiguous = feat_geom.touches(_nbr_geom) or feat_geom.intersects(_nbr_geom)
+                                if is_contiguous:
+                                    partner_display = _nbr_geocode or _nbr_ean
+                                    if partner_display and partner_display not in [n[0] for n in neighbors]:
+                                        neighbors.append((partner_display, _nbr_hh))
 
-                    # Fallback: if no contiguous neighbor met the boundary tolerance, provide other EAs in same barangay within threshold
-                    if not neighbors:
-                        bgy_norm = bgy_name_str.strip().lower() if (bgy_name_str and bgy_name_str != "Unknown") else ""
-                        gc_norm = bgy_geocode.strip().lower()
-                        bgy_key = bgy_norm or (gc_norm[:9] if len(gc_norm) >= 9 else gc_norm)
-                        bgy_candidates = _ea_by_bgy.get(bgy_key, [])
-                        for _fb_feat, _fb_ean, _fb_hh in bgy_candidates:
-                            if _fb_ean and _fb_ean != ean_str and _fb_ean not in [n[0] for n in neighbors]:
-                                if (hh + _fb_hh) <= merge_max_hh:
-                                    neighbors.append((_fb_ean, _fb_hh))
+                    # Sort contiguous neighbors deterministically by geocode
+                    neighbors.sort(key=lambda n: n[0])
 
                 self.all_merged_ea_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, role_str, neighbors))
 
@@ -3385,6 +3458,14 @@ class EALauncherDialog(QDialog):
         for row_idx, record in enumerate(show_records):
             ean_str, ea_name_str, bgy_name_str, hh = record[:4]
             role_str = record[4] if len(record) > 4 else ("Delineation Candidate" if is_delineation else "Merge Candidate")
+
+            is_merged_row = (role_str == "Merged ✓")
+            if is_merged_row:
+                row_bg = "#2d3139" if getattr(self, "current_theme", "light") == "dark" else "#f2f4f7"
+                row_fg = "#8c959f" if getattr(self, "current_theme", "light") == "dark" else "#6c757d"
+            else:
+                row_bg = bg_col
+                row_fg = fg_col
             
             item_ean = QTableWidgetItem(ean_str)
             item_bgy = QTableWidgetItem(bgy_name_str)
@@ -3399,8 +3480,14 @@ class EALauncherDialog(QDialog):
             item_role.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             
             for item in [item_ean, item_name, item_bgy, item_hh, item_role]:
-                item.setBackground(QColor(bg_col))
-                item.setForeground(QColor(fg_col))
+                item.setBackground(QColor(row_bg))
+                item.setForeground(QColor(row_fg))
+
+            if is_merged_row:
+                item_role.setForeground(QColor("#595959" if getattr(self, "current_theme", "light") != "dark" else "#8c959f"))
+                font = item_role.font()
+                font.setBold(True)
+                item_role.setFont(font)
             
             table.setItem(row_idx, 0, item_ean)
             table.setItem(row_idx, 1, item_bgy)
@@ -3424,9 +3511,18 @@ class EALauncherDialog(QDialog):
                 partner_combo = QComboBox()
                 has_action_col = (table.columnCount() >= 8)
 
-                if normalized_neighbors:
-                    for nbr_ean, nbr_hh in normalized_neighbors:
-                        partner_combo.addItem(nbr_ean, userData=nbr_hh)
+                if is_merged_row:
+                    partner_combo.clear()
+                    partner_combo.setEnabled(False)
+                    partner_combo.setToolTip("EA has already been merged.")
+                    partner_combo.setStyleSheet(
+                        "QComboBox { background-color: %s; color: #8c8c8c; "
+                        "border: 1px solid #d0d7de; border-radius: 3px; padding: 1px 4px; }" % row_bg
+                    )
+                    total_text = f"{hh:.0f}"
+                elif normalized_neighbors:
+                    for nbr_geocode, nbr_hh in normalized_neighbors:
+                        partner_combo.addItem(nbr_geocode, userData=nbr_hh)
                     partner_combo.setEnabled(True)
                     partner_combo.setToolTip(
                         "Contiguous EAs within the same barangay that can absorb this merge candidate."
@@ -3442,7 +3538,7 @@ class EALauncherDialog(QDialog):
                     partner_combo.clear()
                     partner_combo.setEnabled(False)
                     partner_combo.setToolTip(
-                        "No eligible merge partner within the maximum household threshold limit."
+                        "No eligible contiguous merge partner within the maximum household threshold limit."
                     )
                     partner_combo.setStyleSheet(
                         "QComboBox { background-color: %s; color: #999999; "
@@ -3456,8 +3552,8 @@ class EALauncherDialog(QDialog):
                 if table.columnCount() >= 7:
                     item_total_hh = QTableWidgetItem(total_text)
                     item_total_hh.setTextAlignment(Qt.AlignCenter)
-                    item_total_hh.setBackground(QColor(bg_col))
-                    item_total_hh.setForeground(QColor(fg_col))
+                    item_total_hh.setBackground(QColor(row_bg))
+                    item_total_hh.setForeground(QColor(row_fg))
                     table.setItem(row_idx, 6, item_total_hh)
 
                     def _make_handler(target_row, cand_hh, combo, tbl):
@@ -3482,7 +3578,15 @@ class EALauncherDialog(QDialog):
                 if has_action_col:
                     btn_merge = QPushButton("Merge")
                     btn_merge.setFixedHeight(24)
-                    if normalized_neighbors:
+                    if is_merged_row:
+                        btn_merge.setEnabled(False)
+                        btn_merge.setText("Merged")
+                        btn_merge.setToolTip("EA has already been merged.")
+                        btn_merge.setStyleSheet(
+                            "QPushButton { background-color: #e1e4e8; color: #6a737d; font-weight: bold; "
+                            "border-radius: 3px; padding: 2px 8px; border: 1px solid #d1d5da; }"
+                        )
+                    elif normalized_neighbors:
                         btn_merge.setEnabled(True)
                         btn_merge.setToolTip(f"Merge {ean_str} with selected partner from Previous EA Layer.")
                         btn_merge.setStyleSheet(
@@ -3498,7 +3602,7 @@ class EALauncherDialog(QDialog):
                         )
                     else:
                         btn_merge.setEnabled(False)
-                        btn_merge.setToolTip("Cannot merge: No eligible partner within maximum threshold limit.")
+                        btn_merge.setToolTip("Cannot merge: No eligible contiguous partner within maximum threshold limit.")
                         btn_merge.setStyleSheet(
                             "QPushButton { background-color: #e1e4e8; color: #959da5; "
                             "border-radius: 3px; padding: 2px 8px; border: 1px solid #d1d5da; }"
@@ -3526,7 +3630,7 @@ class EALauncherDialog(QDialog):
         fields = layer.fields()
         # Collect candidate identification field indices in order of relevance
         id_indices = []
-        for cand_name in ["ean", "ea_number", "ea_code", "id", "geocode", "code", "map_uuid"]:
+        for cand_name in ["geocode", "ea_geocode", "geo_code", "psgc", "adm4_pcode", "ean", "ea_number", "ea_code", "id", "code", "map_uuid"]:
             for i in range(fields.count()):
                 if fields.at(i).name().lower() == cand_name and i not in id_indices:
                     id_indices.append(i)
@@ -3627,6 +3731,15 @@ class EALauncherDialog(QDialog):
                 and cand_layer_source.crs() != partner_layer_source.crs()):
             xform = QgsCoordinateTransform(cand_layer_source.crs(), partner_layer_source.crs(), QgsProject.instance())
             c_geom.transform(xform)
+
+        # Enforce strict contiguity check before merging (must share a boundary)
+        is_contiguous = c_geom.touches(p_geom) or c_geom.intersects(p_geom)
+        if not is_contiguous:
+            err_msg = f"<span style='color:red;'>[ERROR] Candidate EA '{cand_ean}' and partner EA '{partner_ean}' are not contiguous and cannot be merged.</span>"
+            if hasattr(self, 'merge_log_console'):
+                self.merge_log_console.append(err_msg)
+            QMessageBox.warning(self, "Non-Contiguous EAs", f"Candidate EA '{cand_ean}' and partner EA '{partner_ean}' are not contiguous and cannot be merged.")
+            return
 
         merged_geom = c_geom.combine(p_geom)
         if not merged_geom.isGeosValid():
@@ -4074,11 +4187,29 @@ class EALauncherDialog(QDialog):
                 except Exception:
                     pass
 
-        # Visual feedback on table row
+        # Visual feedback on table row (grayed out)
+        if not hasattr(self, "_session_merged_eans"):
+            self._session_merged_eans = set()
+        if cand_ean:
+            self._session_merged_eans.add(str(cand_ean).strip())
+        if partner_ean:
+            self._session_merged_eans.add(str(partner_ean).strip())
+        if highest_ean:
+            self._session_merged_eans.add(str(highest_ean).strip())
+
+        gray_bg = "#2d3139" if getattr(self, "current_theme", "light") == "dark" else "#f2f4f7"
+        gray_fg = "#8c959f" if getattr(self, "current_theme", "light") == "dark" else "#6c757d"
+
+        for col in range(table.columnCount()):
+            cell = table.item(row_idx, col)
+            if cell:
+                cell.setBackground(QColor(gray_bg))
+                cell.setForeground(QColor(gray_fg))
+
         role_item = table.item(row_idx, 4)
         if role_item:
             role_item.setText("Merged ✓")
-            role_item.setForeground(QColor("#1a7f37"))
+            role_item.setForeground(QColor("#595959" if getattr(self, "current_theme", "light") != "dark" else "#8c959f"))
             font = role_item.font()
             font.setBold(True)
             role_item.setFont(font)
@@ -4087,12 +4218,20 @@ class EALauncherDialog(QDialog):
         if total_item:
             total_item.setText(f"{int(total_hh)}")
 
+        partner_combo.clear()
         partner_combo.setEnabled(False)
+        partner_combo.setToolTip("EA has already been merged.")
+        partner_combo.setStyleSheet(
+            "QComboBox { background-color: %s; color: #8c8c8c; "
+            "border: 1px solid #d0d7de; border-radius: 3px; padding: 1px 4px; }" % gray_bg
+        )
+
         btn_merge.setEnabled(False)
         btn_merge.setText("Merged")
+        btn_merge.setToolTip("EA has already been merged.")
         btn_merge.setStyleSheet(
-            "QPushButton { background-color: #28a745; color: white; font-weight: bold; "
-            "border-radius: 3px; padding: 2px 8px; }"
+            "QPushButton { background-color: #e1e4e8; color: #6a737d; font-weight: bold; "
+            "border-radius: 3px; padding: 2px 8px; border: 1px solid #d1d5da; }"
         )
 
         msg = (
@@ -4103,6 +4242,28 @@ class EALauncherDialog(QDialog):
         )
         if hasattr(self, 'merge_log_console'):
             self.merge_log_console.append(msg)
+
+        # Ensure merge_ea_combo references the updated target_layer
+        if hasattr(self, 'merge_ea_combo') and self.merge_ea_combo:
+            curr_lyr = self._safe_get_layer(self.merge_ea_combo)
+            if not curr_lyr or curr_lyr != target_layer:
+                if hasattr(self, '_safe_set_layer'):
+                    self._safe_set_layer(self.merge_ea_combo, target_layer)
+                else:
+                    self.merge_ea_combo.setLayer(target_layer)
+
+        # Refresh the merge preview dynamically to update candidates, counts, and partner dropdowns
+        if hasattr(self, "refresh_merge_preview"):
+            try:
+                self.refresh_merge_preview()
+            except Exception as exc:
+                if hasattr(self, 'merge_log_console') and self.merge_log_console:
+                    self.merge_log_console.append(f"<span style='color:orange;'>[WARNING] Could not refresh merge preview: {exc}</span>")
+        elif hasattr(self, "generate_preview"):
+            try:
+                self.generate_preview()
+            except Exception:
+                pass
 
     # ── Console Controls ───────────────────────────────────────────────────
 
@@ -5462,8 +5623,27 @@ class EALauncherDialog(QDialog):
             default_bldg_layer=bldg_layer,
             default_min_hh=min_hh,
         )
-        dlg.setWindowFlags(Qt.Dialog)
+        dlg.setWindowFlags(
+            Qt.Window |
+            Qt.WindowTitleHint |
+            Qt.WindowMinimizeButtonHint |
+            Qt.WindowMaximizeButtonHint |
+            Qt.WindowCloseButtonHint
+        )
         dlg.exec_()
+
+    def refresh_merge_preview(self):
+        """Refresh the Merge Preview table and switch to the Merge Preview tab."""
+        if hasattr(self, "generate_preview"):
+            try:
+                self.generate_preview()
+            except Exception:
+                pass
+        if hasattr(self, "merge_right_tabs") and self.merge_right_tabs:
+            try:
+                self.merge_right_tabs.setCurrentIndex(1)
+            except Exception:
+                pass
 
     def _open_unmerge_ea_dialog(self):
         """Open the Unmerge EA Polygons modal dialog."""
@@ -5507,15 +5687,39 @@ class EALauncherDialog(QDialog):
             except Exception:
                 bldg_layer = None
 
+        merged_layer = None
+        try:
+            project = QgsProject.instance()
+            for lyr in project.mapLayers().values():
+                if isinstance(lyr, QgsVectorLayer) and lyr.isValid() and lyr.geometryType() == QgsWkbTypes.PolygonGeometry:
+                    lname = lyr.name().lower()
+                    if geo5 and f"{geo5.lower()}_merged_ea" in lname:
+                        merged_layer = lyr
+                        break
+                    elif "merged_ea" in lname:
+                        merged_layer = lyr
+        except Exception:
+            merged_layer = None
+
         dlg = UnmergeEADialog(
             self,
             default_output_dir=out_dir,
             default_geocode=geo5,
+            default_merged_layer=merged_layer,
             default_prev_ea_layer=prev_ea_layer,
             default_bldg_layer=bldg_layer,
         )
-        dlg.setWindowFlags(Qt.Dialog)
+        dlg.setWindowFlags(
+            Qt.Window |
+            Qt.WindowTitleHint |
+            Qt.WindowMinimizeButtonHint |
+            Qt.WindowMaximizeButtonHint |
+            Qt.WindowCloseButtonHint
+        )
+        if hasattr(dlg, "unmergeCompleted"):
+            dlg.unmergeCompleted.connect(self.refresh_merge_preview)
         dlg.exec_()
+        self.refresh_merge_preview()
 
 
 class MultiLayerSelectDialog(QDialog):

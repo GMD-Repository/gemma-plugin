@@ -69,6 +69,13 @@ class SplitEADialog(QDialog):
         self.setWindowTitle("Run Delineation - Split EA Polygons")
         self.setMinimumSize(560, 680)
         self.resize(620, 720)
+        self.setWindowFlags(
+            Qt.Window |
+            Qt.WindowTitleHint |
+            Qt.WindowMinimizeButtonHint |
+            Qt.WindowMaximizeButtonHint |
+            Qt.WindowCloseButtonHint
+        )
 
         self.default_output_dir = default_output_dir or ""
         self.default_geocode = default_geocode or ""

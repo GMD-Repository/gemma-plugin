@@ -54,10 +54,30 @@ class MockGenericClass(metaclass=MockMetaClass):
     Vertical = 2
 
     def __init__(self, *args, **kwargs):
-        pass
+        self._args = args
+        self._kwargs = kwargs
+
+    def name(self):
+        return str(self._args[0]) if self._args else ""
+
+    def color(self, *args, **kwargs):
+        return self
+
+    def lightness(self):
+        return 255
+
+    def value(self):
+        return 255
 
     def setWindowTitle(self, title): pass
+    def setObjectName(self, name): self._object_name = str(name)
+    def objectName(self): return getattr(self, '_object_name', "")
+    def setWindowIcon(self, icon): pass
     def setLayout(self, layout): pass
+    def palette(self): return MockGenericClass()
+    def window(self): return self
+    def setWindowFlags(self, flags): self._window_flags = flags
+    def windowFlags(self): return getattr(self, '_window_flags', 0)
     def exec_(self): return 1
     def exec(self): return 1
     def show(self): pass
@@ -197,6 +217,12 @@ class QgsRectangle:
         elif hasattr(other, 'x'):
             return (self._xmin <= other.x() <= self._xmax and self._ymin <= other.y() <= self._ymax)
         return False
+    def grow(self, width):
+        self._xmin -= width
+        self._ymin -= width
+        self._xmax += width
+        self._ymax += width
+        return self
     def __repr__(self):
         return f"QgsRectangle({self._xmin}, {self._ymin}, {self._xmax}, {self._ymax})"
 
@@ -359,7 +385,13 @@ class QgsGeometry:
     def isGeosValid(self): return True
     def isMultipart(self): return self.geom_type.startswith("Multi") or (len(self.polygons or []) > 1)
     def makeValid(self): return self
-    def touches(self, other): return True
+    def touches(self, other):
+        if HAS_SHAPELY:
+            s1 = self._to_shapely()
+            s2 = other._to_shapely() if hasattr(other, '_to_shapely') else None
+            if s1 and s2:
+                return bool(s1.touches(s2))
+        return False
     def distance(self, other):
         if HAS_SHAPELY:
             s1 = self._to_shapely()
@@ -547,6 +579,12 @@ class QgsGeometry:
                 def center(self): return QgsPointXY((self._x0+self._x1)/2, (self._y0+self._y1)/2)
                 def buffered(self, b): return self
                 def scale(self, factor): pass
+                def grow(self, width):
+                    self._x0 -= width
+                    self._y0 -= width
+                    self._x1 += width
+                    self._y1 += width
+                    return self
                 def contains(self, pt):
                     px = pt.x() if hasattr(pt, 'x') else pt[0]
                     py = pt.y() if hasattr(pt, 'y') else pt[1]
@@ -562,6 +600,7 @@ class QgsGeometry:
             def center(self): return QgsPointXY(5.0, 5.0)
             def buffered(self, b): return self
             def scale(self, factor): pass
+            def grow(self, width): return self
             def contains(self, pt): return True
         return MockBox()
 
@@ -584,6 +623,27 @@ class QgsField:
     def length(self): return self._length
     def precision(self): return self._precision
     def comment(self): return self._comment
+
+    def convertCompatible(self, val):
+        if val is None:
+            return None
+        t = self._type
+        if t in (1, 10, getattr(MockQVariant, "String", 1)) or str(t).lower() in ("string", "qstring") or self._typeName.lower() in ("string", "text", "varchar"):
+            s = str(val)
+            if self._length > 0:
+                s = s[:self._length]
+            return s
+        if t in (2, 4, getattr(MockQVariant, "Int", 2), getattr(MockQVariant, "LongLong", 4)) or str(t).lower() in ("int", "integer"):
+            try:
+                return int(round(float(val)))
+            except Exception:
+                return None
+        if t in (3, 6, getattr(MockQVariant, "Double", 3)) or str(t).lower() in ("double", "float", "real"):
+            try:
+                return float(val)
+            except Exception:
+                return None
+        return val
 
 
 class QgsFields:
@@ -611,6 +671,17 @@ class QgsFields:
     def indexOf(self, name):
         names = self.names()
         return names.index(name) if name in names else -1
+
+    def lookupField(self, name):
+        name_lower = str(name).lower()
+        for i, f in enumerate(self._fields):
+            fn = f.name() if hasattr(f, 'name') else str(f)
+            if fn.lower() == name_lower:
+                return i
+        return -1
+
+    def toList(self):
+        return list(self._fields)
 
     def count(self):
         return len(self._fields)
@@ -797,8 +868,16 @@ class QgsVectorLayer:
     def getFeatures(self, request=None): return iter(self._features)
     def crs(self): return MockGenericClass()
     def sourceCrs(self): return self.crs()
-    def wkbType(self): return 3  # Polygon
-    def geometryType(self): return 2  # PolygonGeometry
+    def wkbType(self):
+        p = str(self._path).lower()
+        if "point" in p: return 1
+        if "line" in p: return 2
+        return 3  # Polygon
+    def geometryType(self):
+        p = str(self._path).lower()
+        if "point" in p: return 0  # PointGeometry
+        if "line" in p: return 1  # LineGeometry
+        return 2  # PolygonGeometry
     def id(self): return f"layer_{self._name}"
     def setSubsetString(self, string):
         self._subset_string = string
@@ -838,6 +917,14 @@ class QgsVectorLayer:
             if feat.id() == fid:
                 return feat
         return QgsFeature(self._fields)
+    def addFeature(self, feat):
+        return self.dataProvider().addFeatures([feat])
+    def changeGeometry(self, fid, geom):
+        for feat in self._features:
+            if feat.id() == fid:
+                feat.setGeometry(geom)
+                return True
+        return False
     def changeAttributeValue(self, fid, field_idx, value):
         for feat in self._features:
             if feat.id() == fid:
@@ -968,7 +1055,20 @@ class QgsSpatialIndex:
             self.addFeature(f)
 
     def intersects(self, bbox):
-        return list(self._features.keys())
+        if not hasattr(bbox, 'xMinimum'):
+            return list(self._features.keys())
+        results = []
+        for fid, feat in self._features.items():
+            geom = feat.geometry() if hasattr(feat, 'geometry') else None
+            if geom and hasattr(geom, 'boundingBox'):
+                fb = geom.boundingBox()
+                if fb and hasattr(fb, 'xMinimum'):
+                    if not (bbox.xMaximum() < fb.xMinimum() or bbox.xMinimum() > fb.xMaximum() or
+                            bbox.yMaximum() < fb.yMinimum() or bbox.yMinimum() > fb.yMaximum()):
+                        results.append(fid)
+                    continue
+            results.append(fid)
+        return results
 
 
 class QgsProject:
@@ -985,6 +1085,26 @@ class QgsProject:
 
     def fileName(self):
         return ""
+
+    def clear(self):
+        self._layers.clear()
+
+    def addMapLayer(self, layer, addToLegend=True):
+        if layer:
+            lid = getattr(layer, 'id', None)
+            lid = lid() if callable(lid) else (lid or getattr(layer, '_id', str(id(layer))))
+            self._layers[lid] = layer
+            return layer
+        return None
+
+    def mapLayersByName(self, name):
+        return [lyr for lyr in self._layers.values() if hasattr(lyr, 'name') and (lyr.name() if callable(lyr.name) else lyr.name) == name]
+
+    def mapLayers(self):
+        return dict(self._layers)
+
+    def crs(self):
+        return QgsCoordinateReferenceSystem("EPSG:4326")
 
     def homePath(self):
         return ""
@@ -1212,6 +1332,15 @@ class QgsProject:
     def removeMapLayer(self, layer_id):
         self._layers.pop(layer_id, None)
 
+    def clear(self):
+        self._layers.clear()
+
+    def mapLayersByName(self, name):
+        return [l for l in self._layers.values() if hasattr(l, 'name') and (l.name() if callable(l.name) else l.name) == name]
+
+    def crs(self):
+        return QgsCoordinateReferenceSystem("EPSG:4326")
+
     def removeAllMapLayers(self):
         self._layers.clear()
 
@@ -1287,6 +1416,12 @@ class MockQt(metaclass=MockMetaClass):
     UserRole = 32
     Horizontal = 1
     Vertical = 2
+    Window = 0x00000001
+    Dialog = 0x00000002 | 0x00000001
+    WindowTitleHint = 0x00001000
+    WindowMinimizeButtonHint = 0x00004000
+    WindowMaximizeButtonHint = 0x00008000
+    WindowCloseButtonHint = 0x08000000
 
 
 class MockQCoreApplication:
@@ -1321,6 +1456,13 @@ class MockQObject:
 
 class MockQWidget(MockGenericClass):
     def __init__(self, parent=None): super().__init__()
+    def setObjectName(self, name): self._object_name = str(name)
+    def objectName(self): return getattr(self, '_object_name', "")
+    def setWindowFlags(self, flags): self._window_flags = flags
+    def windowFlags(self): return getattr(self, '_window_flags', 0)
+    def setWindowIcon(self, icon): pass
+    def palette(self): return MockGenericClass()
+    def window(self): return self
 
 
 class MockQDialog(MockQWidget): pass
@@ -1456,6 +1598,10 @@ def setup_qgis_mock_if_needed():
     except ImportError:
         pass
 
+    # If mock environment is already initialized, do not re-create mock classes
+    if "qgis" in sys.modules and isinstance(sys.modules.get("qgis"), DynamicMockModule):
+        return
+
     # Create dynamic mock modules for non-QGIS Python environment
     qgis_mod = DynamicMockModule("qgis")
     core_mod = DynamicMockModule("qgis.core")
@@ -1508,6 +1654,8 @@ def setup_qgis_mock_if_needed():
         def setEnabled(self, enabled): self._enabled = bool(enabled)
         def isEnabled(self): return bool(self._enabled)
         def setWindowTitle(self, title): pass
+        def setObjectName(self, name): self._object_name = str(name)
+        def objectName(self): return getattr(self, '_object_name', "")
         def setLayout(self, layout): pass
         def setMinimumSize(self, *args): pass
         def setMinimumWidth(self, *args): pass
@@ -1519,6 +1667,11 @@ def setup_qgis_mock_if_needed():
         def hide(self): pass
         def setStyleSheet(self, style): pass
         def setFont(self, font): pass
+        def setWindowFlags(self, flags): self._window_flags = flags
+        def windowFlags(self): return getattr(self, '_window_flags', 0)
+        def setWindowIcon(self, icon): pass
+        def palette(self): return MockGenericClass()
+        def window(self): return self
 
     class MockQDialog(MockQWidget):
         def exec_(self): return 1
@@ -1547,7 +1700,10 @@ def setup_qgis_mock_if_needed():
             super().__init__(parent)
             self._value = 0
             self._range = (0, 99999)
-        def setValue(self, v): self._value = int(v)
+            self.valueChanged = MockSignal()
+        def setValue(self, v):
+            self._value = int(v)
+            self.valueChanged.emit(self._value)
         def value(self): return int(self._value)
         def setRange(self, min_v, max_v): self._range = (min_v, max_v)
         def setToolTip(self, tip): pass
@@ -1557,11 +1713,224 @@ def setup_qgis_mock_if_needed():
             super().__init__(parent)
             self._value = 0.0
             self._range = (0.0, 99999.0)
-        def setValue(self, v): self._value = float(v)
+            self.valueChanged = MockSignal()
+        def setValue(self, v):
+            self._value = float(v)
+            self.valueChanged.emit(self._value)
         def value(self): return float(self._value)
         def setRange(self, min_v, max_v): self._range = (min_v, max_v)
         def setSingleStep(self, step): pass
+        def setDecimals(self, d): pass
         def setToolTip(self, tip): pass
+
+    class MockQComboBox(MockQWidget):
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self._items = []
+            self._currentIndex = 0
+            self._enabled = True
+            self.currentIndexChanged = MockSignal()
+
+        def addItem(self, text, userData=None):
+            self._items.append((str(text), userData))
+
+        def addItems(self, texts):
+            for t in texts:
+                self.addItem(t)
+
+        def clear(self):
+            self._items.clear()
+            self._currentIndex = 0
+
+        def count(self):
+            return len(self._items)
+
+        def currentText(self):
+            if 0 <= self._currentIndex < len(self._items):
+                return self._items[self._currentIndex][0]
+            return ""
+
+        def currentData(self):
+            if 0 <= self._currentIndex < len(self._items):
+                return self._items[self._currentIndex][1]
+            return None
+
+        def itemText(self, idx):
+            if 0 <= idx < len(self._items):
+                return self._items[idx][0]
+            return ""
+
+        def itemData(self, idx):
+            if 0 <= idx < len(self._items):
+                return self._items[idx][1]
+            return None
+
+        def currentIndex(self):
+            return self._currentIndex
+
+        def setCurrentIndex(self, idx):
+            self._currentIndex = idx
+            self.currentIndexChanged.emit(idx)
+
+        def setCurrentText(self, text):
+            for i, (t, _) in enumerate(self._items):
+                if t == text:
+                    self.setCurrentIndex(i)
+                    break
+
+        def setEnabled(self, enabled):
+            self._enabled = bool(enabled)
+
+        def isEnabled(self):
+            return self._enabled
+
+        def setToolTip(self, tip):
+            self._tooltip = str(tip)
+
+        def toolTip(self):
+            return getattr(self, '_tooltip', "")
+
+        def setStyleSheet(self, style):
+            self._style = style
+
+    class MockQPushButton(MockQWidget):
+        def __init__(self, text="", parent=None):
+            super().__init__(parent)
+            self._text = str(text)
+            self._enabled = True
+            self.clicked = MockSignal()
+
+        def text(self):
+            return self._text
+
+        def setText(self, text):
+            self._text = str(text)
+
+        def setEnabled(self, enabled):
+            self._enabled = bool(enabled)
+
+        def isEnabled(self):
+            return self._enabled
+
+        def setToolTip(self, tip):
+            self._tooltip = str(tip)
+
+        def toolTip(self):
+            return getattr(self, '_tooltip', "")
+
+        def setStyleSheet(self, style):
+            self._style = style
+
+        def styleSheet(self):
+            return getattr(self, '_style', "")
+
+    class MockQTextEdit(MockQWidget):
+        def __init__(self, text="", parent=None):
+            super().__init__(parent)
+            self._text = str(text) if text else ""
+        def append(self, text):
+            if self._text:
+                self._text += "\n" + str(text)
+            else:
+                self._text = str(text)
+        def toPlainText(self):
+            return self._text
+        def setPlainText(self, text):
+            self._text = str(text)
+        def clear(self):
+            self._text = ""
+        def setReadOnly(self, ro):
+            self._read_only = ro
+        def isReadOnly(self):
+            return self._read_only
+
+    class MockQTableWidgetItem:
+        def __init__(self, text=""):
+            self._text = str(text)
+            self._bg = None
+            self._fg = None
+            self._alignment = None
+
+        def text(self):
+            return self._text
+
+        def setText(self, text):
+            self._text = str(text)
+
+        def setBackground(self, bg):
+            self._bg = bg
+
+        def background(self):
+            return self._bg
+
+        def setForeground(self, fg):
+            self._fg = fg
+
+        def foreground(self):
+            return self._fg
+
+        def setTextAlignment(self, align):
+            self._alignment = align
+
+        def font(self):
+            return MockGenericClass()
+
+        def setFont(self, font): pass
+
+    class MockQTableWidget(MockQWidget):
+        def __init__(self, rows=0, cols=0, parent=None):
+            super().__init__(parent)
+            self._rowCount = rows
+            self._columnCount = cols
+            self._items = {}
+            self._cellWidgets = {}
+            self._horizontalHeader = MockGenericClass()
+
+        def setRowCount(self, count):
+            self._rowCount = count
+
+        def rowCount(self):
+            return self._rowCount
+
+        def setColumnCount(self, count):
+            self._columnCount = count
+
+        def columnCount(self):
+            return self._columnCount
+
+        def setItem(self, row, col, item):
+            self._items[(row, col)] = item
+
+        def item(self, row, col):
+            return self._items.get((row, col), None)
+
+        def setCellWidget(self, row, col, widget):
+            self._cellWidgets[(row, col)] = widget
+
+        def cellWidget(self, row, col):
+            return self._cellWidgets.get((row, col), None)
+
+        NoEditTriggers = 0
+        SelectRows = 1
+
+        def horizontalHeader(self):
+            return self._horizontalHeader
+
+        def verticalHeader(self):
+            return self._horizontalHeader
+
+        def resizeColumnsToContents(self): pass
+        def setHorizontalHeaderLabels(self, labels):
+            self._headerLabels = list(labels)
+        def horizontalHeaderItem(self, col):
+            if hasattr(self, '_headerLabels') and 0 <= col < len(self._headerLabels):
+                return MockQTableWidgetItem(self._headerLabels[col])
+            return MockQTableWidgetItem("")
+        def setEditTriggers(self, triggers): pass
+        def setSelectionBehavior(self, behavior): pass
+        def setAlternatingRowColors(self, val): pass
+        def setMinimumHeight(self, h): pass
+        def setSizePolicy(self, h, v): pass
 
     qtcore_mod.QCoreApplication = MockQCoreApplication
     qtcore_mod.QThread = MockQThread
@@ -1575,6 +1944,11 @@ def setup_qgis_mock_if_needed():
     qtgui_mod.QCheckBox = MockQCheckBox
     qtgui_mod.QSpinBox = MockQSpinBox
     qtgui_mod.QDoubleSpinBox = MockQDoubleSpinBox
+    qtgui_mod.QComboBox = MockQComboBox
+    qtgui_mod.QPushButton = MockQPushButton
+    qtgui_mod.QTableWidget = MockQTableWidget
+    qtgui_mod.QTableWidgetItem = MockQTableWidgetItem
+    qtgui_mod.QTextEdit = MockQTextEdit
 
     gui_mod.QgsMapLayerComboBox = QgsMapLayerComboBox
 
@@ -1630,6 +2004,11 @@ def setup_qgis_mock_if_needed():
         pyqt5_qtgui_mod.QCheckBox = MockQCheckBox
         pyqt5_qtgui_mod.QSpinBox = MockQSpinBox
         pyqt5_qtgui_mod.QDoubleSpinBox = MockQDoubleSpinBox
+        pyqt5_qtgui_mod.QComboBox = MockQComboBox
+        pyqt5_qtgui_mod.QPushButton = MockQPushButton
+        pyqt5_qtgui_mod.QTableWidget = MockQTableWidget
+        pyqt5_qtgui_mod.QTableWidgetItem = MockQTableWidgetItem
+        pyqt5_qtgui_mod.QTextEdit = MockQTextEdit
 
         pyqt5_mod.QtCore = pyqt5_qtcore_mod
         pyqt5_mod.QtWidgets = pyqt5_qtgui_mod
