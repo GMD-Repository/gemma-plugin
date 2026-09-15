@@ -1668,7 +1668,200 @@ class TestMergePreviewThresholdAndIndividualMerge(unittest.TestCase):
         self.assertIn("01701001099", mock_dlg._session_merged_eans)
         self.assertNotIn("01701001888", mock_dlg._session_merged_eans)
 
+    def test_is_full_geocode_helper(self):
+        """Verify _is_full_geocode correctly distinguishes short EANs from full geocodes."""
+        # Full geocodes (>= 9 digit characters) → True
+        self.assertTrue(EALauncherDialog._is_full_geocode("01715028001000"))  # 14-digit PSGC
+        self.assertTrue(EALauncherDialog._is_full_geocode("017150280"))  # 9-digit barangay
+        self.assertTrue(EALauncherDialog._is_full_geocode("01701001001"))  # 11-digit
+
+        # Short EANs (< 9 digit characters) → False
+        self.assertFalse(EALauncherDialog._is_full_geocode("001000"))  # 6-digit short EAN
+        self.assertFalse(EALauncherDialog._is_full_geocode("002000"))  # 6-digit short EAN
+        self.assertFalse(EALauncherDialog._is_full_geocode("1000"))  # 4-digit
+        self.assertFalse(EALauncherDialog._is_full_geocode(""))  # empty
+        self.assertFalse(EALauncherDialog._is_full_geocode("EA 001"))  # non-numeric prefix
+
+    def test_cross_barangay_merge_does_not_block_other_barangays(self):
+        """Regression: merging an EA in Bgy_A must NOT block merges in Bgy_B
+        when both barangays reuse the same short EAN codes (e.g. 001000, 002000).
+
+        Scenario (matches the real-world bug report):
+        - Bgy_A has EA 001000 (98 HH) and EA 002000 (114 HH) → contiguous, mergeable
+        - Bgy_B has EA 001000 (77 HH) and EA 002000 (76 HH) → contiguous, mergeable
+        - After merging Bgy_A's EA 001000 with Bgy_A's EA 002000,
+          Bgy_B's EAs must still appear as each other's merge partners.
+        """
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.delineation_table = MagicMock()
+        mock_dlg.merge_table = MagicMock()
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.merge_prev_ea_combo = MagicMock()
+        mock_dlg.merge_ea_combo = MagicMock()
+        mock_dlg.all_delineation_candidates = []
+        mock_dlg.all_merge_candidates = []
+        mock_dlg.all_merged_ea_candidates = []
+        mock_dlg.min_hh_spin = MagicMock()
+        mock_dlg.min_hh_spin.value.return_value = 99
+        mock_dlg.max_hh_spin = MagicMock()
+        mock_dlg.max_hh_spin.value.return_value = 300
+        mock_dlg.merge_max_hh_spin = MagicMock()
+        mock_dlg.merge_max_hh_spin.value.return_value = 300
+        mock_dlg.merge_min_hh_spin = MagicMock()
+        mock_dlg.merge_min_hh_spin.value.return_value = 99
+        mock_dlg.kpi_delin_val = MagicMock()
+        mock_dlg.kpi_merge_val = MagicMock()
+        mock_dlg.kpi_merged_ea_val = MagicMock()
+        mock_dlg.filter_previews = MagicMock()
+        mock_dlg.output_folder_widget = MagicMock()
+        mock_dlg.output_folder_widget.filePath.return_value = ""
+        mock_dlg.merge_output_folder_widget = MagicMock()
+        mock_dlg.merge_output_folder_widget.filePath.return_value = ""
+        mock_dlg._get_ea_name = lambda feat, ean, fields: f"EA {ean[-6:]}" if len(ean) > 6 else f"EA {ean}"
+        mock_dlg._is_full_geocode = EALauncherDialog._is_full_geocode
+
+        # ─── Previous EA Layer (both barangays, 4 contiguous features) ───
+        prev_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Prev_EAs", "memory")
+        pr = prev_ea_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double),
+        ])
+        prev_ea_layer.updateFields()
+
+        # Bgy_A: two contiguous EAs sharing an edge at x=1
+        fa1 = QgsFeature(prev_ea_layer.fields())
+        fa1.setAttributes(["001000", "01715028001000", "San Juan Bautista", 98.0])
+        fa1.setGeometry(QgsGeometry.fromRect(QgsRectangle(0, 10, 1, 11)))
+
+        fa2 = QgsFeature(prev_ea_layer.fields())
+        fa2.setAttributes(["002000", "01715028002000", "San Juan Bautista", 114.0])
+        fa2.setGeometry(QgsGeometry.fromRect(QgsRectangle(1, 10, 2, 11)))
+
+        # Bgy_B: two contiguous EAs sharing an edge at x=101 (far from Bgy_A)
+        fb1 = QgsFeature(prev_ea_layer.fields())
+        fb1.setAttributes(["001000", "01715009001000", "Digdigon", 77.0])
+        fb1.setGeometry(QgsGeometry.fromRect(QgsRectangle(100, 0, 101, 1)))
+
+        fb2 = QgsFeature(prev_ea_layer.fields())
+        fb2.setAttributes(["002000", "01715009002000", "Digdigon", 76.0])
+        fb2.setGeometry(QgsGeometry.fromRect(QgsRectangle(101, 0, 102, 1)))
+
+        pr.addFeatures([fa1, fa2, fb1, fb2])
+
+        # ─── Merged EA Layer (same features as candidates) ───
+        merge_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Merge_EA", "memory")
+        mpr = merge_ea_layer.dataProvider()
+        mpr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double),
+        ])
+        merge_ea_layer.updateFields()
+
+        # All 4 EAs in merge layer (all ≤ 99 HH except fa2 which is 114 but we test from ea combo)
+        for f_orig in [fa1, fa2, fb1, fb2]:
+            fm = QgsFeature(merge_ea_layer.fields())
+            fm.setAttributes(f_orig.attributes())
+            fm.setGeometry(QgsGeometry(f_orig.geometry()))
+            mpr.addFeatures([fm])
+
+        mock_dlg._safe_get_layer.side_effect = lambda combo: (
+            prev_ea_layer if combo in (mock_dlg.prev_ea_combo, getattr(mock_dlg, 'merge_prev_ea_combo', None))
+            else merge_ea_layer
+        )
+
+        # ─── Step 1: Generate preview BEFORE any merge ───
+        EALauncherDialog.generate_preview(mock_dlg)
+
+        # Both Bgy_B EAs should have each other as merge partners
+        bgy_b_candidates = [
+            c for c in mock_dlg.all_merged_ea_candidates
+            if c[2] == "Digdigon" and c[4] != "Merged ✓"
+        ]
+        self.assertTrue(len(bgy_b_candidates) >= 2, "Bgy_B should have at least 2 merge candidates")
+
+        # Both Digdigon EAs should have non-empty neighbor lists
+        for cand in bgy_b_candidates:
+            ean_str, ea_name, bgy, hh, role, neighbors = cand
+            self.assertTrue(
+                len(neighbors) > 0,
+                f"Before merge: Digdigon {ean_str} should have merge partners, got none"
+            )
+
+        # ─── Step 2: Simulate merging Bgy_A's EA 001000 with EA 002000 ───
+        # This is what _merge_individual_row does for session tracking:
+        mock_dlg._session_merged_eans = set()
+        # With the fix, only full geocodes are added (not short EANs like "001000")
+        for _merge_id in ("01715028001000", "01715028002000"):
+            _s = str(_merge_id).strip()
+            if EALauncherDialog._is_full_geocode(_s):
+                mock_dlg._session_merged_eans.add(_s)
+
+        # Also simulate a target layer with the merged feature
+        target_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "01715_merged_ea2026", "memory")
+        tpr = target_layer.dataProvider()
+        tpr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double),
+            QgsField("ea_type", QVariant.String),
+            QgsField("remarks", QVariant.String),
+            QgsField("new_ean", QVariant.String),
+        ])
+        target_layer.updateFields()
+
+        ft_merged = QgsFeature(target_layer.fields())
+        ft_merged.setAttributes([
+            "001000", "01715028001000", "San Juan Bautista", 212.0,
+            "MERGED", "Merged: 01715028001000 + 01715028002000", "002000"
+        ])
+        merged_geom = fa1.geometry().combine(fa2.geometry())
+        ft_merged.setGeometry(merged_geom)
+        tpr.addFeatures([ft_merged])
+        QgsProject.instance().addMapLayer(target_layer, False)
+
+        # ─── Step 3: Re-generate preview AFTER the merge ───
+        mock_dlg.all_merged_ea_candidates.clear()
+        EALauncherDialog.generate_preview(mock_dlg)
+
+        # ─── Assertions: Bgy_B EAs must still have merge partners ───
+        bgy_b_after = [
+            c for c in mock_dlg.all_merged_ea_candidates
+            if c[2] == "Digdigon" and c[4] != "Merged ✓"
+        ]
+        self.assertTrue(len(bgy_b_after) >= 2, "Bgy_B should still have at least 2 merge candidates after Bgy_A merge")
+
+        for cand in bgy_b_after:
+            ean_str, ea_name, bgy, hh, role, neighbors = cand
+            self.assertTrue(
+                len(neighbors) > 0,
+                f"REGRESSION: After Bgy_A merge, Digdigon {ean_str} lost its merge partners! "
+                f"Short EAN collision with Bgy_A is blocking cross-barangay merges."
+            )
+
+        # Verify Bgy_A EAs are correctly tracked as merged
+        bgy_a_merged = [
+            c for c in mock_dlg.all_merged_ea_candidates
+            if c[2] == "San Juan Bautista" and c[4] == "Merged ✓"
+        ]
+        # At least one Bgy_A candidate should show Merged ✓
+        self.assertTrue(
+            len(bgy_a_merged) >= 1,
+            "Bgy_A should have at least 1 'Merged ✓' candidate"
+        )
+
+        # Verify session only has full geocodes (no short EANs)
+        for ean in mock_dlg._session_merged_eans:
+            self.assertTrue(
+                EALauncherDialog._is_full_geocode(ean),
+                f"Session tracking should only contain full geocodes, found: {ean}"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
-
