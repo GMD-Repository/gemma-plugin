@@ -1,7 +1,7 @@
 # ----------------------------------------------------------------------
 # MBI Gaps / Overlaps / Disputed Areas Checker
-# Last updated: 2026-09-03
-# Version: v9
+# Last updated: 2026-09-14
+# Version: v18
 #
 # Changelog:
 #   v1 - Initial Gaps/Overlaps detection between LGU and PSA polygons.
@@ -39,6 +39,96 @@
 #   v10 - Fixed 'Analysis to Run' to 'Gaps, Overlaps, and Disputed'.
 #         Removed selection choices (Overlaps Only, Gaps Only, Disputed
 #         Areas Only); running all three analyses is now mandatory.
+#   v11 - Added LGU-vs-PSA boundary precedence resolution, applied before
+#         Gaps/Overlaps/Disputed detection: the LGU layer is treated as the
+#         latest submission, so for any city_mun where at least one LGU
+#         polygon exists, that city_mun's PSA polygon(s) are excluded and
+#         only the LGU polygon(s) are used; city_mun with no LGU submission
+#         at all still fall back to PSA. The resulting authoritative
+#         boundary set is the sole input to the rest of the analysis, and
+#         is also loaded into the project as its own layer, '2026_province_boundary',
+#         so reviewers can inspect exactly which polygons were kept/dropped.
+#   v12 - Bug fix: duplicate barangay polygons (same geocode, same source,
+#         identical geometry — e.g. a barangay submitted twice, or the same
+#         area present in more than one selected input layer) were passing
+#         straight through into the boundary output. dedupe_same_source()
+#         now removes them before precedence resolution runs; a barangay
+#         legitimately split into multiple disjoint parts is unaffected
+#         since each part has different geometry. Also renamed the boundary
+#         output layer from 'ref_mbi_boundary' to '2026_province_boundary'.
+#   v13 - Bug fix: v12's geometry-equality dedup missed duplicates whose
+#         geometry differed slightly between submissions (e.g. re-digitized
+#         vertices), so map_uuid still repeated in 2026_province_boundary.
+#         dedupe_same_source() now keys primarily on map_uuid — a barangay's
+#         PSGC-matched identifier (see update_metadata.py), unique per
+#         barangay and NULL only for Contested features — dropping any
+#         later feature that repeats an already-seen map_uuid regardless of
+#         geometry. Features with no map_uuid still fall back to the v12
+#         geocode + source + identical-geometry check.
+#   v14 - normalize_source_labels() added, run right after boundary
+#         precedence is resolved: any surviving polygon whose source is not
+#         LGU (blank/NULL/other) is explicitly stamped 'source' = 'PSA'.
+#         Runs on the same poly_layer that feeds both 2026_province_boundary
+#         and polygon_infos, so ref_mbi_cases' source field picks up the
+#         same explicit 'PSA' label wherever it applies.
+#   v15 - Bug fix: barangays with an island or other disjoint piece were
+#         losing that piece from the boundary. Cause: v13's dedup keyed on
+#         map_uuid and dropped ANY repeat of an already-seen map_uuid with
+#         no geometry check — but singleparts() explodes a multipart
+#         barangay into several features that all carry the SAME map_uuid,
+#         so every piece after the first was discarded as a "duplicate",
+#         cutting real islands off the boundary. dedupe_same_source() now
+#         keys on geocode + source (the PSGC geocode is the unique
+#         identifier per barangay within a source) and only drops a feature
+#         whose geometry is IDENTICAL to one already kept, so genuinely
+#         distinct pieces always survive while true duplicate submissions
+#         are still removed.
+#   v16 - Bug fix: geocode repeated across several rows of
+#         2026_province_boundary for any barangay with an islet, so the
+#         output looked duplicated and de-duplicating it by hand deleted
+#         half of that barangay's boundary. Cause: the pipeline ran
+#         singleparts() FIRST, so every multipart barangay was already
+#         exploded into one row per piece by the time the boundary was
+#         resolved and published.
+#         The boundary is now resolved on multipart data and published
+#         before anything is exploded; singleparts() is applied afterwards
+#         to a separate working copy that only Gaps/Overlaps/Disputed
+#         detection sees, so detection behaviour is unchanged.
+#         dedupe_same_source() is replaced by merge_by_geocode(), which
+#         UNIONS every row sharing a geocode + source into one multipart
+#         feature instead of dropping all but one. That is lossless in both
+#         directions: duplicate submissions of the same area union back to
+#         that area, and a barangay whose islet was stored as its own row
+#         keeps the islet as a second part. geocode is therefore unique per
+#         source in the published boundary, with no area lost.
+#         Intermediate boundary layers are now declared MultiPolygon
+#         (boundary_memory_layer()), since they carry multipart features.
+#   v17 - Progress bar fix: the bar restarted from 0 once per sub-process
+#         instead of filling once. Cause: every nested processing.run() was
+#         handed this algorithm's own feedback, and each sub-algorithm
+#         (refactorfields, mergevectorlayers, reprojectlayer, fixgeometries,
+#         multiparttosingleparts, dissolve, deleteholes, difference) reports
+#         its own 0-100% on it. Nested calls now get ChildFeedback, which
+#         forwards log messages and cancellation but swallows setProgress,
+#         so only this algorithm drives the bar. The sweep is also now
+#         continuous end to end: boundary resolution reports 2-8, building
+#         points/indexes 10-12, Disputed 15, Overlaps 20-55, Gaps 60-95
+#         (previously the gap loop reported nothing and jumped straight to
+#         100), and 100 is reached only after ref_mbi_cases is written.
+#         Gap detection also honours Cancel now, as overlap detection did.
+#   v18 - Bug fix: both outputs could contain invalid geometries, because
+#         nothing repaired them after the operations that create them.
+#         2026_province_boundary was published straight out of
+#         merge_by_geocode()'s unions, and every ref_mbi_cases finding comes
+#         from a raw intersection() / difference() result — none of which
+#         were passed through a validity check.
+#         The resolved boundary is now repaired (fix_geoms(), extracted
+#         from singleparts()) before it is published AND before it is
+#         exploded for detection, and build_feature() repairs any finding
+#         whose geometry is not GEOS-valid before writing it. A repair that
+#         returns anything non-polygonal is discarded rather than written,
+#         so the output layer's geometry type never changes. The number of
+#         repaired findings is reported in the log.
 # ----------------------------------------------------------------------
 
 __author__ = 'Geospatial Management Division'
@@ -191,6 +281,46 @@ def make_text_setup():
     return QgsEditorWidgetSetup('TextEdit', {'IsMultiline': False, 'UseHtml': False})
 
 
+class ChildFeedback(QgsProcessingFeedback):
+    """
+    Feedback handed to the nested processing.run() calls.
+
+    Log messages and cancellation still reach the real feedback, but
+    setProgress() is swallowed. Each nested algorithm (refactorfields,
+    dissolve, difference, ...) reports its own 0-100%, so passing the real
+    feedback down made the progress bar restart once per sub-process.
+    Only this algorithm drives the bar now, as a single 0-100 run.
+    """
+
+    def __init__(self, parent):
+        super().__init__()
+        self._parent = parent
+
+    def setProgress(self, progress):
+        pass
+
+    def isCanceled(self):
+        return self._parent.isCanceled()
+
+    def pushInfo(self, info):
+        self._parent.pushInfo(info)
+
+    def pushDebugInfo(self, info):
+        self._parent.pushDebugInfo(info)
+
+    def pushCommandInfo(self, info):
+        self._parent.pushCommandInfo(info)
+
+    def pushConsoleInfo(self, info):
+        self._parent.pushConsoleInfo(info)
+
+    def pushWarning(self, warning):
+        self._parent.pushWarning(warning)
+
+    def reportError(self, error, fatalError=False):
+        self._parent.reportError(error, fatalError)
+
+
 class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
 
     INPUT1   = 'INPUT1'
@@ -227,6 +357,24 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             "<p>Detects boundary findings (gaps, overlaps, and disputed boundaries) "
             "of LGU polygon layers, written into a single combined output layer "
             "named <b>ref_mbi_cases</b>, distinguished by <i>mbi_type</i>.</p>"
+            "<h3>Output: 2026_province_boundary</h3>"
+            "<p>Before any detection runs: (1) every row sharing a <i>geocode</i> and "
+            "<i>source</i> is merged into one multipart feature, so geocode is unique "
+            "per source in the output. This covers both a barangay submitted twice "
+            "(the rows overlap, so the union is that same area) and a barangay whose "
+            "islet was stored as its own row (the rows are disjoint, so the islet is "
+            "kept as a second part rather than discarded). "
+            "(2) LGU vs PSA precedence is then resolved per <i>city_mun</i>: the LGU "
+            "layer is treated as the latest submission, so wherever at least one LGU "
+            "polygon exists for a city_mun, that city_mun's PSA polygon(s) are excluded "
+            "and only the LGU polygon(s) are used. A city_mun with no LGU submission at "
+            "all falls back to PSA.</p>"
+            "<p>The resulting authoritative boundary is published as "
+            "<b>2026_province_boundary</b> with multipart barangays intact — one row "
+            "per geocode per source — so reviewers can inspect which polygons were "
+            "kept or superseded, and so de-duplicating the table by geocode can never "
+            "delete an islet. Gaps/Overlaps/Disputed detection below runs on a separate "
+            "single-part working copy of that same boundary.</p>"
             "<h3>Output: ref_mbi_cases</h3>"
             "<ul>"
             "<li><b>Gaps</b> — Empty slivers between polygons. Disputed polygons are "
@@ -287,6 +435,13 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
 
     def processAlgorithm(self, parameters, context, feedback: QgsProcessingFeedback):
         self._keep_alive = []
+
+        # Every nested processing.run() gets this instead of `feedback`, so
+        # the progress bar is driven only by this algorithm — one 0-100 run
+        # instead of restarting for each sub-process. Keep a reference: the
+        # C++ side does not own it, so a local would be collected mid-run.
+        child_fb = ChildFeedback(feedback)
+        self._child_feedback = child_fb
 
         def keep_layer(layer):
             if layer is not None:
@@ -375,7 +530,7 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             return keep_layer(processing.run(
                 'native:refactorfields',
                 {'INPUT': layer, 'FIELDS_MAPPING': mapping, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
 
         def merge_layers(layers, crs):
@@ -390,7 +545,7 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             return keep_layer(processing.run(
                 'native:mergevectorlayers',
                 {'LAYERS': refs, 'CRS': crs, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
 
         def reproject_fix(layer):
@@ -398,25 +553,196 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                 'native:reprojectlayer',
                 {'INPUT': layer, 'TARGET_CRS': target_crs,
                  'CONVERT_CURVED_GEOMETRIES': False, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
             return keep_layer(processing.run(
                 'native:fixgeometries',
                 {'INPUT': reproj, 'METHOD': 1, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
+            )['OUTPUT'])
+
+        def fix_geoms(layer):
+            return keep_layer(processing.run(
+                'native:fixgeometries',
+                {'INPUT': layer, 'METHOD': 1, 'OUTPUT': 'memory:'},
+                context=context, feedback=child_fb
             )['OUTPUT'])
 
         def singleparts(layer):
             single = keep_layer(processing.run(
                 'native:multiparttosingleparts',
                 {'INPUT': layer, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
-            return keep_layer(processing.run(
-                'native:fixgeometries',
-                {'INPUT': single, 'METHOD': 1, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
-            )['OUTPUT'])
+            return fix_geoms(single)
+
+        def boundary_memory_layer(src_layer, name):
+            """
+            Empty memory layer mirroring src_layer's CRS and fields.
+
+            Declared MultiPolygon on purpose: the boundary pipeline runs
+            BEFORE multiparttosingleparts, so a barangay with an islet is
+            still one feature holding several parts. A 'Polygon' layer risks
+            losing those extra parts on the way through.
+            """
+            layer = QgsVectorLayer(
+                f'MultiPolygon?crs={src_layer.crs().authid()}', name, 'memory'
+            )
+            layer.dataProvider().addAttributes(src_layer.fields().toList())
+            layer.updateFields()
+            return layer
+
+        def merge_by_geocode(layer):
+            """
+            Collapses every feature sharing a geocode+source into ONE
+            multipart feature, so geocode is unique in the published
+            boundary and a manual de-duplication can never cost a barangay
+            part of its area.
+
+            Rows share a geocode+source for two very different reasons, and
+            unioning them is correct for both:
+              - the same barangay submitted twice (the rows overlap) — the
+                union is that same area, so nothing is double-counted, even
+                when the two submissions were digitized slightly
+                differently;
+              - a barangay whose islet was stored as its own row (the rows
+                are disjoint) — the union keeps both as parts of one
+                multipolygon, instead of discarding the islet as a
+                "duplicate".
+
+            source stays in the key because LGU and PSA both carry the same
+            geocode for the same barangay; merging those here would pre-empt
+            resolve_boundary_precedence(), which is what decides which of
+            the two actually wins.
+            """
+            order       = []
+            grouped     = {}
+            passthrough = []
+
+            for feat in layer.getFeatures():
+                geocode = txt(get_attr(feat, ['geocode', 'GEOCODE']))
+                source  = txt(get_attr(feat, ['source', 'SOURCE', 'Source'])).upper()
+                if not geocode:
+                    # Nothing to key on — keep the row exactly as it is.
+                    passthrough.append(feat)
+                    continue
+                key = (geocode, source)
+                if key not in grouped:
+                    grouped[key] = {'feat': feat, 'geoms': []}
+                    order.append(key)
+                grouped[key]['geoms'].append(QgsGeometry(feat.geometry()))
+
+            out_feats  = []
+            merged_cnt = 0
+            for key in order:
+                entry = grouped[key]
+                geoms = entry['geoms']
+                feat  = QgsFeature(entry['feat'])
+                if len(geoms) > 1:
+                    combined = geoms[0]
+                    for g in geoms[1:]:
+                        try:
+                            combined = combined.combine(g)
+                        except Exception:
+                            pass
+                    if combined is not None and not combined.isEmpty():
+                        feat.setGeometry(combined)
+                    merged_cnt += len(geoms) - 1
+                out_feats.append(feat)
+            out_feats.extend(passthrough)
+
+            result = boundary_memory_layer(layer, 'merged_by_geocode')
+            result.dataProvider().addFeatures(out_feats)
+            result.updateExtents()
+
+            feedback.pushInfo(
+                f"  {merged_cnt} extra row(s) merged into their geocode; "
+                f"{len(out_feats)} barangay feature(s) remain, one per "
+                f"geocode + source."
+            )
+            return keep_layer(result)
+
+        def resolve_boundary_precedence(layer):
+            """
+            Keeps one authoritative boundary per city_mun before any
+            Gap/Overlap/Disputed detection runs. The LGU layer is treated as
+            the latest submission: wherever at least one LGU polygon exists
+            for a city_mun, that city_mun's PSA polygon(s) are excluded and
+            only the LGU polygon(s) are kept; a city_mun with no LGU
+            submission at all falls back to PSA.
+            """
+            def feat_city_mun(feat):
+                return txt(get_attr(feat, ['city_mun', 'CITY_MUN', 'city/mun']))
+
+            def feat_is_lgu(feat):
+                return 'LGU' in txt(get_attr(feat, ['source', 'SOURCE', 'Source'])).upper()
+
+            lgu_city_muns = {feat_city_mun(f) for f in layer.getFeatures() if feat_is_lgu(f)}
+
+            kept_feats  = []
+            dropped_cnt = 0
+            for feat in layer.getFeatures():
+                if feat_city_mun(feat) in lgu_city_muns and not feat_is_lgu(feat):
+                    dropped_cnt += 1
+                    continue
+                kept_feats.append(feat)
+
+            result = boundary_memory_layer(layer, 'precedence_resolved')
+            result.dataProvider().addFeatures(kept_feats)
+            result.updateExtents()
+
+            feedback.pushInfo(
+                f"  {len(lgu_city_muns)} city_mun(s) have an LGU submission; "
+                f"{dropped_cnt} superseded PSA polygon(s) excluded; "
+                f"{len(kept_feats)} polygon(s) retained as the authoritative boundary."
+            )
+            return keep_layer(result)
+
+        def normalize_source_labels(layer):
+            """
+            Explicitly labels every non-LGU polygon's source as 'PSA' — this
+            runs after resolve_boundary_precedence, so it only touches
+            polygons that survived: either from a city_mun with no LGU
+            submission (falls back to PSA), or an LGU-covered city_mun's
+            own LGU polygon (left untouched, since it already contains
+            'LGU'). Any blank/NULL/other source value on a non-LGU feature
+            is overwritten with 'PSA' so downstream case_uuid records
+            (ref_mbi_cases) inherit a clean, explicit label too.
+            """
+            src_idx = layer.fields().indexOf('source')
+            if src_idx < 0:
+                for name in ('SOURCE', 'Source'):
+                    src_idx = layer.fields().indexOf(name)
+                    if src_idx >= 0:
+                        break
+
+            result = boundary_memory_layer(layer, 'normalized')
+
+            out_feats  = []
+            filled_cnt = 0
+            for feat in layer.getFeatures():
+                is_lgu = 'LGU' in txt(get_attr(feat, ['source', 'SOURCE', 'Source'])).upper()
+                new_feat = QgsFeature(feat)
+                if src_idx >= 0 and not is_lgu:
+                    if txt(new_feat.attribute(src_idx)).upper() != 'PSA':
+                        filled_cnt += 1
+                    new_feat.setAttribute(src_idx, 'PSA')
+                out_feats.append(new_feat)
+
+            result.dataProvider().addFeatures(out_feats)
+            result.updateExtents()
+
+            feedback.pushInfo(f"  {filled_cnt} non-LGU polygon(s) labeled source='PSA'.")
+            return keep_layer(result)
+
+        def load_plain_layer(layer, name):
+            if layer is None:
+                return None
+            layer.setName(name)
+            details = QgsProcessingContext.LayerDetails(name, context.project(), 'OUTPUT')
+            context.temporaryLayerStore().addMapLayer(layer)
+            context.addLayerToLoadOnCompletion(layer.id(), details)
+            return layer.id()
 
         # ------------------------------------------------------------------
         # Output layer schema
@@ -466,6 +792,8 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             context.addLayerToLoadOnCompletion(layer.id(), details)
             return layer.id()
 
+        results = {}
+
         # ------------------------------------------------------------------
         # Prepare input layers
         # ------------------------------------------------------------------
@@ -473,10 +801,48 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
         feedback.setProgress(2)
         merged_poly = merge_layers(polygon_layers, polygon_layers[0].crs())
         fixed_poly  = reproject_fix(merged_poly)
-        poly_layer  = singleparts(fixed_poly)
+
+        # The boundary is resolved on MULTIPART data, before anything is
+        # exploded into single parts. A barangay with an islet therefore
+        # stays ONE feature with several parts, so geocode remains unique in
+        # 2026_province_boundary — exploding first produced several rows
+        # sharing a geocode, which read as duplicates and cost the barangay
+        # half its boundary when de-duplicated by hand.
+        feedback.pushInfo("Merging rows that share a geocode...")
+        feedback.setProgress(4)
+        boundary_layer = merge_by_geocode(fixed_poly)
+
+        feedback.pushInfo("Resolving LGU vs PSA boundary precedence by city_mun...")
+        feedback.setProgress(6)
+        boundary_layer = resolve_boundary_precedence(boundary_layer)
+
+        feedback.pushInfo("Labeling PSA-sourced polygons...")
+        feedback.setProgress(7)
+        boundary_layer = normalize_source_labels(boundary_layer)
+
+        # merge_by_geocode() unions rows together, which can leave a
+        # self-intersection or other invalid ring behind. Repair before the
+        # boundary is published and before it is exploded for detection, so
+        # neither output carries invalid geometry.
+        feedback.pushInfo("Repairing boundary geometries...")
+        boundary_layer = fix_geoms(boundary_layer)
+
+        boundary_display = keep_layer(processing.run(
+            'native:reprojectlayer',
+            {'INPUT': boundary_layer, 'TARGET_CRS': output_crs,
+             'CONVERT_CURVED_GEOMETRIES': False, 'OUTPUT': 'memory:'},
+            context=context, feedback=child_fb
+        )['OUTPUT'])
+        results['OUTPUT_BOUNDARY'] = load_plain_layer(boundary_display, '2026_province_boundary')
+
+        # Detection needs one geometry per polygon, so the exploded copy is
+        # derived from the resolved boundary and used ONLY from here down —
+        # it never reaches the published layer above.
+        feedback.setProgress(8)
+        poly_layer = singleparts(boundary_layer)
 
         feedback.pushInfo("Merging and fixing building point layers...")
-        feedback.setProgress(8)
+        feedback.setProgress(10)
         merged_bldg = merge_layers(building_layers, building_layers[0].crs())
         bldg_layer  = reproject_fix(merged_bldg)
 
@@ -628,6 +994,8 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                 for x in involved
             )
 
+        repaired_count = 0
+
         def build_feature(geom_3857, involved, kind, out_fields,
                           reference_info=None, map_uuid=None,
                           lgu_bgy_name=None, extra_attrs=None):
@@ -640,6 +1008,8 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                 'Gap'      -> mbi_type 1_Gap
                 'Disputed' -> mbi_type 3_Disputed
             """
+            nonlocal repaired_count
+
             if not involved:
                 return None
 
@@ -648,6 +1018,22 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                 geom_out.transform(transform_to_out)
             except Exception:
                 pass
+
+            # Findings come straight out of raw intersection/difference
+            # results, which can be self-intersecting or otherwise invalid.
+            # Repair here so nothing invalid ever reaches ref_mbi_cases.
+            # A repair that returns anything non-polygonal (GEOS can hand
+            # back a collection) is discarded rather than written.
+            if not geom_out.isGeosValid():
+                try:
+                    fixed = geom_out.makeValid()
+                    if (fixed is not None and not fixed.isEmpty()
+                            and QgsWkbTypes.geometryType(fixed.wkbType())
+                            == QgsWkbTypes.PolygonGeometry):
+                        geom_out = fixed
+                        repaired_count += 1
+                except Exception:
+                    pass
 
             ref = (reference_info if reference_info is not None
                    else max(involved, key=lambda x: x['covered_area'])['info'])
@@ -706,7 +1092,6 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             ] + list(extra_attrs or []))
             return feat
 
-        results   = {}
         all_feats = []
 
         out_layer  = output_layer('ref_mbi_cases')
@@ -828,7 +1213,7 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                     feedback.setProgress(20 + int((i / total) * 35))
 
             feedback.pushInfo(f"  {ovl_count} overlap feature(s) prepared.")
-            feedback.setProgress(55 if run_gaps else 100)
+            feedback.setProgress(55)
 
         # ==================================================================
         # GAP DETECTION
@@ -860,39 +1245,39 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                 'native:dissolve',
                 {'INPUT': non_disp_layer, 'FIELD': [],
                  'SEPARATE_DISJOINT': False, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
 
             no_holes = keep_layer(processing.run(
                 'native:deleteholes',
                 {'INPUT': dissolved, 'MIN_AREA': 0, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
 
             cleaned = keep_layer(processing.run(
                 'native:dissolve',
                 {'INPUT': no_holes, 'FIELD': [],
                  'SEPARATE_DISJOINT': False, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
 
             gap_diff = keep_layer(processing.run(
                 'native:difference',
                 {'INPUT': cleaned, 'OVERLAY': dissolved,
                  'GRID_SIZE': None, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
 
             gap_single = keep_layer(processing.run(
                 'native:multiparttosingleparts',
                 {'INPUT': gap_diff, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
 
             gap_fixed = keep_layer(processing.run(
                 'native:fixgeometries',
                 {'INPUT': gap_single, 'METHOD': 1, 'OUTPUT': 'memory:'},
-                context=context, feedback=feedback
+                context=context, feedback=child_fb
             )['OUTPUT'])
 
             gap_count = 0
@@ -914,7 +1299,13 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                 else:
                     disputed_geom_union = disputed_geom_union.combine(d_geom_3857)
 
-            for feat in gap_fixed.getFeatures():
+            gap_total = gap_fixed.featureCount()
+            for g_i, feat in enumerate(gap_fixed.getFeatures()):
+                if feedback.isCanceled():
+                    return {}
+                if gap_total:
+                    feedback.setProgress(60 + int((g_i / gap_total) * 35))
+
                 geom = feat.geometry()
                 if geom is None or geom.isEmpty():
                     continue
@@ -950,13 +1341,18 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                         gap_count += 1
 
             feedback.pushInfo(f"  {gap_count} gap feature(s) prepared.")
-            feedback.setProgress(100)
+            feedback.setProgress(95)
 
         # ==================================================================
         # WRITE COMBINED OUTPUT — 'ref_mbi_cases'
         # Gaps, Overlaps, and Disputed Areas are written into a single
         # output layer/table (distinguished by the mbi_type field).
         # ==================================================================
+        if repaired_count:
+            feedback.pushInfo(
+                f"  {repaired_count} finding geometry(ies) repaired before output."
+            )
+
         if all_feats:
             out_layer.dataProvider().addFeatures(all_feats)
             out_layer.updateExtents()
@@ -966,7 +1362,8 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             feedback.pushInfo("No Gap/Overlap/Disputed features found.")
             results['OUTPUT'] = None
 
-        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v9.")
+        feedback.setProgress(100)
+        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v18.")
         return results
 
 

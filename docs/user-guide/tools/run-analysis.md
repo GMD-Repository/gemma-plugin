@@ -1,6 +1,6 @@
 # <img src="/icons/run_analysis.svg" width="32" height="32" style="vertical-align: middle; display: inline-block; margin-right: 8px;" /> Run Analysis
 
-The **Run Analysis** tool performs comprehensive boundary topology and discrepancy detection across LGU polygon layers and building points, consolidating all findings into a unified Reference MBI layer named `ref_mbi_cases`. It identifies boundary gaps, overlaps, and disputed territories, assigning standardized administrative metadata, geocodes, and attribute editor widgets.
+The **Run Analysis** tool performs comprehensive boundary topology and discrepancy detection across LGU and PSA polygon layers and building points. It first resolves a single authoritative boundary per city/municipality — deduplicating repeated submissions, giving precedence to the LGU's latest submission over the PSA reference, and labeling every remaining non-LGU polygon's source as `PSA` — then consolidates all Gaps/Overlaps/Disputed findings against that boundary into a unified Reference MBI layer named `ref_mbi_cases`.
 
 ## Access
 
@@ -12,6 +12,8 @@ The **Run Analysis** tool performs comprehensive boundary topology and discrepan
 Use this tool when:
 - Establishing the baseline Reference MBI cases layer (`ref_mbi_cases`) for a municipality or province.
 - Generating the required reference input layer consumed by the [MBI Validator](/tools/mbi-validator) tool.
+- Resolving LGU vs PSA boundary precedence: the LGU layer is treated as the latest submission, so any city/municipality with at least one LGU polygon uses LGU boundaries exclusively; a city/municipality with no LGU submission falls back to PSA.
+- Cleaning up duplicate boundary submissions (the same barangay digitized twice, or the same area present in more than one selected input layer) before they can produce false gap/overlap findings.
 - Detecting sliver gaps between adjacent barangay polygons while automatically excluding already-recorded disputed territories.
 - Identifying boundary overlaps across different administrative levels (Inter-Region, Inter-Province, Inter-City/Municipality, Inter-Barangay, or Within-Barangay).
 - Extracting contested boundary claims tagged as disputed in LGU datasets.
@@ -34,6 +36,7 @@ All three boundary analyses (**Gaps**, **Overlaps**, and **Disputed Areas**) exe
 
 | Output | Type | Description |
 |--------|------|-------------|
+| **2026_province_boundary** | Vector Layer (MultiPolygon, In-Memory) | The resolved authoritative boundary set in EPSG:4326: rows sharing a geocode merged into one multipart feature, LGU polygons kept wherever an LGU submission exists for a city_mun (its PSA counterpart excluded), and every remaining non-LGU polygon explicitly labeled `source = PSA`. One row per `geocode` per `source`, with islets retained as parts of their barangay. Detection below runs on a single-part working copy of this same boundary. |
 | **ref_mbi_cases** | Feature Sink (Polygon) | A consolidated polygon layer in EPSG:4326 containing all detected boundary findings categorized by `mbi_type`. Formatted with pre-configured attribute table editor widgets. |
 
 ## Output Layer Schema
@@ -64,30 +67,44 @@ The resulting `ref_mbi_cases` layer contains the following standardized attribut
 
 1. **Layer Pre-Processing and Coordinate Normalization**:
    - Multiple input polygon and building point layers are refactored, merged, and projected to Web Mercator (`EPSG:3857`) for accurate metric area calculations and geometric topological operations.
-   - Geometries are validated and repaired using geometry fixing algorithms, and multipart geometries are exploded into single parts.
+   - Geometries are validated and repaired using geometry fixing algorithms. Multipart geometries are deliberately **not** exploded at this stage — the boundary is resolved and published first, so a barangay with an islet stays a single feature.
 
-2. **Spatial Indexing & Attribute Extraction**:
-   - Spatial bounding box indexes (`QgsSpatialIndex`) and cached feature lookups are constructed for both polygon boundaries and building points.
+2. **Merging Rows That Share a Geocode**:
+   - Every feature sharing a `geocode` + `source` is merged into one multipart feature, so `geocode` is unique per source in the published boundary.
+   - Rows share a geocode for two different reasons, and the union handles both: a barangay submitted twice produces overlapping rows, whose union is that same area (nothing is double-counted even if the two submissions were digitized slightly differently); a barangay whose islet was stored as its own row produces disjoint rows, whose union keeps the islet as a second part instead of discarding it.
+   - `source` stays in the key because LGU and PSA carry the same geocode for the same barangay — merging them here would pre-empt the precedence rule below.
+
+3. **Boundary Precedence Resolution**:
+   - The LGU layer is treated as the latest submission. For every `city_mun` where at least one polygon's `source` contains `LGU`, that city_mun's PSA polygon(s) are excluded and only the LGU polygon(s) are kept.
+   - A `city_mun` with no LGU submission at all falls back to using its PSA polygon(s) unchanged.
+   - Every non-LGU polygon that survives this step then has its `source` attribute explicitly set to `PSA` (overwriting a blank/`NULL`/other value), so downstream findings never carry an ambiguous source label.
+   - The resolved boundary is repaired with `native:fixgeometries` before anything else happens to it, since merging rows by geocode unions geometries together and can leave a self-intersection behind. Both the published layer and the detection working copy inherit the repaired version.
+   - The resulting authoritative set is reprojected to `EPSG:4326` and published as **2026_province_boundary** with multipart barangays intact — one row per geocode per source, so de-duplicating the table by geocode can never delete an islet.
+
+4. **Spatial Indexing & Attribute Extraction**:
+   - A separate single-part working copy of the resolved boundary is produced with `multiparttosingleparts`, used only by the detection steps below — it never reaches the published layer.
+   - Spatial bounding box indexes (`QgsSpatialIndex`) and cached feature lookups are constructed for both that working copy and the building points.
    - Core administrative attributes (`geocode`, `region`, `province`, `city_mun`, `barangay`, `boundary`, `source`) are normalized into structured lookup records.
 
-3. **Disputed Territory Identification**:
+5. **Disputed Territory Identification**:
    - Polygons tagged with `boundary = Contested` or disputed markers are isolated.
    - Each contested area is converted to `3_Disputed` in the output schema and its footprint is unioned in memory.
 
-4. **Overlap Detection Engine**:
+6. **Overlap Detection Engine**:
    - Pairs of intersecting polygons are detected using the spatial index.
    - The geometric intersection is computed, filtered to retain polygons with areas greater than 0.10 square meters, and tagged with administrative level hierarchy (`mbi_level`).
    - If either overlapping polygon is marked as disputed, `mbi_remarks` is automatically populated with `For Review - Involves Disputed Area`.
    - Intersecting building points within the overlap polygon are tallied into `num_bldg_pts`.
 
-5. **Gap Detection Engine**:
+7. **Gap Detection Engine**:
    - Non-disputed boundary polygons are dissolved into a unified regional coverage.
    - Holes within the dissolved polygon coverage are filled, and a symmetric difference is computed between the filled coverage and the original dissolved coverage to extract internal void slivers.
    - The unioned footprint of all Disputed territories is subtracted from the candidate gap geometries, ensuring that contested territories are never duplicated as gaps.
    - Qualifying gap slivers are linked to adjacent participating barangays and assigned `mbi_type` = `1_Gap`.
 
-6. **Output Layer Generation, Styling & Editor Widget Application**:
+8. **Output Layer Generation, Styling & Editor Widget Application**:
    - All findings are transformed to WGS 84 (`EPSG:4326`) and added to the consolidated `ref_mbi_cases` layer.
+   - Each finding is checked with `isGeosValid()` first and repaired with `makeValid()` if needed, since gap and overlap geometries come straight out of raw intersection and difference results and can be self-intersecting. A repair returning anything non-polygonal is discarded rather than written, so the layer's geometry type never changes; the number of repaired findings is reported in the execution log.
    - The layer post-processor (`FieldWidgetPostProcessor`) automatically loads and applies the embedded categorized QML style (`ref_mbi_cases.qml`), displaying distinct symbology and labeling for `1_Gap`, `2_Overlap`, and `3_Disputed` cases.
    - Attaches `ValueMap` editor widgets to `mbi_status` (`1_Updated`, `2_Pending`) and text input setups to remarks fields directly upon loading into QGIS.
    - Sets computed reference attributes to **Read-Only** (`case_uuid`, `region`, `province`, `source`, `mbi_level`, `involved_areas`, `involved_bgys`, `count_involved_areas`, `mbi_type`, `num_bldg_pts`, and `mbi_remarks`) to prevent accidental edits while keeping reviewer fields (`geocode`, `city_mun`, `barangay`, `mbi_status`, `pso_remarks`, and `lgu_bgy_name`) fully **Editable**.
@@ -99,4 +116,8 @@ The resulting `ref_mbi_cases` layer contains the following standardized attribut
 
 ::: tip Reference Layer Downstream Compatibility
 The output layer `ref_mbi_cases` is engineered to feed directly into the **MBI Validator** tool. When opening MBI Validator, it will automatically detect and pre-select `ref_mbi_cases` as the Reference layer input.
+:::
+
+::: tip Reviewing Boundary Precedence Decisions
+Inspect `2026_province_boundary`'s attribute table to confirm which polygons were kept, superseded, or relabeled: a `city_mun` with mixed LGU/PSA submissions will show only LGU polygons for that city_mun, and any polygon whose `source` was blank or non-LGU will read `PSA`. This is the exact boundary set that Gaps/Overlaps/Disputed detection ran against.
 :::

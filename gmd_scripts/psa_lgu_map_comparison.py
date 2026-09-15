@@ -53,7 +53,15 @@ BUILDING_LAYER_HINTS = [
 # results instead of the original source layers.
 OUTPUT_NAME_MARKERS = [
     "_matched", "_unmatched", "inside lgu boundary", "outside lgu boundary",
+    "outside psa boundary",
 ]
+
+# Fixed names of the Building Point outputs. The review panel finds them in
+# the project by these same names (lower-cased there, see
+# psa_lgu_comparison_panel.py).
+BUILDING_INSIDE_LGU_LAYER_NAME = "Building Points inside LGU Boundary"
+BUILDING_OUTSIDE_LGU_LAYER_NAME = "Building Points Outside LGU Boundary"
+BUILDING_OUTSIDE_PSA_LAYER_NAME = "Building Points Outside PSA Boundary"
 
 
 def find_default_layer_id(hints, geometry_type, exclude_ids=()):
@@ -248,17 +256,18 @@ def style_boundary_outline(layer, color):
     layer.setRenderer(QgsSingleSymbolRenderer(symbol))
 
 
-def style_building_points(layer, color):
-    """Style a building-point layer as small filled circles in color --
-    used to tell the points inside the LGU boundary (green) from the ones
-    outside it (red) without having to click them. Both output layers would
-    otherwise get QGIS's random default symbol, which says nothing."""
+def style_building_points(layer, color, shape="circle", size="2.0"):
+    """Style a building-point layer as small filled markers in color --
+    used to tell the points inside the LGU boundary (green circles), outside
+    it (red circles) and outside the PSA boundary (purple squares) apart
+    without having to click them. The output layers would otherwise get
+    QGIS's random default symbol, which says nothing."""
     symbol = QgsMarkerSymbol.createSimple({
-        "name": "circle",
+        "name": shape,
         "color": color,
         "outline_color": "black",
         "outline_width": "0.2",
-        "size": "2.0",
+        "size": size,
         "size_unit": "MM",
     })
     layer.setRenderer(QgsSingleSymbolRenderer(symbol))
@@ -343,7 +352,8 @@ def first8(value):
 
 class _LguBoundaryLocator:
     """Point-in-polygon lookup over a set of boundary polygons, keyed by
-    first-8 geocode -- used for the LGU layer.
+    first-8 geocode -- built once over the LGU layer and once over the PSA
+    layer, each feeding its own Outside layer.
 
     A building point counts as inside when it falls within the polygon(s)
     of the barangay ITS OWN GEOCODE names -- not merely somewhere within
@@ -468,15 +478,17 @@ class _RunCoordinator:
     """
 
     def __init__(self, input_layer_ids, panel_psa_id, panel_lgu_id, panel_building_id,
-                 panel_unmatched_building_id=None, group_name=None):
+                 panel_unmatched_building_id=None, group_name=None,
+                 panel_unmatched_psa_building_id=None):
         self.input_layer_ids = [lid for lid in input_layer_ids if lid]
         self.panel_psa_id = panel_psa_id
         self.panel_lgu_id = panel_lgu_id
         self.panel_building_id = panel_building_id
         self.panel_unmatched_building_id = panel_unmatched_building_id
+        self.panel_unmatched_psa_building_id = panel_unmatched_psa_building_id
         self.panel_expected = {
             lid for lid in (panel_psa_id, panel_lgu_id, panel_building_id,
-                             panel_unmatched_building_id) if lid
+                             panel_unmatched_building_id, panel_unmatched_psa_building_id) if lid
         }
         self.group_name = group_name or "PSA - LGU Comparison"
         self.group = None
@@ -551,7 +563,7 @@ class _RunCoordinator:
             from .psa_lgu_comparison_panel import show_comparison_panel
             show_comparison_panel(
                 iface, self.panel_psa_id, self.panel_lgu_id, self.panel_building_id,
-                self.panel_unmatched_building_id)
+                self.panel_unmatched_building_id, self.panel_unmatched_psa_building_id)
         except Exception as exc:
             feedback.pushInfo("Could not open the comparison review panel: {}".format(exc))
 
@@ -582,7 +594,8 @@ _PANEL_POST_PROCESSORS = []
 
 def _make_run_post_processors(input_layer_ids, output_layer_ids,
                                panel_psa_id, panel_lgu_id, panel_building_id,
-                               panel_unmatched_building_id=None, group_name=None):
+                               panel_unmatched_building_id=None, group_name=None,
+                               panel_unmatched_psa_building_id=None):
     """Return {layer_id: post_processor} for every output layer id this run
     is about to load -- not just the ones the review panel needs -- so that
     hiding the original input layers happens regardless of whether a
@@ -593,7 +606,7 @@ def _make_run_post_processors(input_layer_ids, output_layer_ids,
     multiple LayerDetails."""
     coordinator = _RunCoordinator(
         input_layer_ids, panel_psa_id, panel_lgu_id, panel_building_id,
-        panel_unmatched_building_id, group_name)
+        panel_unmatched_building_id, group_name, panel_unmatched_psa_building_id)
     processors = {}
     for layer_id in output_layer_ids:
         if not layer_id:
@@ -651,11 +664,13 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
             "of a geocode field on each layer -- names are not used for matching, so spelling "
             "differences between the two maps don't matter. If a barangay is made up of several "
             "separate shapes (like islands), they all stay grouped together as one barangay.\n\n"
-            "Building Points are checked against the barangay their own geocode names: the point "
-            "must actually fall inside that barangay's LGU boundary (reprojected first when the "
-            "layers use different CRSs) to count as inside. A point labelled with a barangay it "
-            "does not sit in goes to the Outside layer, even when it sits inside the municipality "
-            "-- that mismatch is the error this check exists to find.\n\n"
+            "Building Points are checked against the barangay their own geocode names, separately "
+            "for the LGU boundary and for the PSA boundary: the point must actually fall inside "
+            "that barangay's polygon (reprojected first when the layers use different CRSs) to "
+            "count as inside. A point labelled with a barangay it does not sit in goes to that "
+            "boundary's Outside layer, even when it sits inside the municipality -- that mismatch "
+            "is the error this check exists to find. A point outside both boundaries appears in "
+            "both Outside layers.\n\n"
             "The three layer boxes and their Geocode fields are pre-filled from the layers already "
             "loaded in the project -- a polygon layer named '*PSA*', another named '*LGU*', and a "
             "building-point layer -- skipping this tool's own output layers. Any of them can be "
@@ -667,7 +682,7 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
             "- <code>_PSA_Matched -- blue outline, labeled with the PSA layer's 'barangay' field\n"
             "- <code>_LGU_Matched -- yellow outline, labeled with the LGU layer's 'barangay' field\n"
             "- <code>_PSA_Unmatched / <code>_LGU_Unmatched\n\n"
-            "Building Point output layers (both always created, even when empty, so an empty "
+            "Building Point output layers (all always created, even when empty, so an empty "
             "'Outside' layer reads as 'nothing outside' rather than as a check that never ran):\n"
             "- Building Points inside LGU Boundary -- green dots: the point falls inside the "
             "barangay its geocode names, and carries that barangay's match_id and geocode\n"
@@ -677,11 +692,15 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
             "left empty for a point that falls outside every barangay. Carries match_id (set when "
             "the point's own code names the barangay under review) and in_match_id (set when it "
             "geographically landed inside that barangay instead) so the review panel can scope it "
-            "to one barangay the same way it scopes the Matched layers. A point whose own geocode "
-            "names a barangay from a DIFFERENT LGU entirely (not present in either this run's PSA "
-            "or LGU layer) and that doesn't geographically fall inside this LGU either is excluded "
-            "altogether -- it has nothing to do with the boundary being checked here, so it does "
-            "not pad out this layer as a false 'outside' result.\n\n"
+            "to one barangay the same way it scopes the Matched layers.\n"
+            "- Building Points Outside PSA Boundary -- purple squares: same columns and rules as "
+            "the LGU Outside layer, but checked against the PSA boundary instead (in_geocode is "
+            "the PSA barangay the point actually sits in).\n"
+            "A point whose own geocode names a barangay from a DIFFERENT LGU entirely (not present "
+            "in either this run's PSA or LGU layer) and that doesn't geographically fall inside "
+            "the boundary being checked either is excluded from that Outside layer -- it has "
+            "nothing to do with this comparison, so it does not pad it out as a false 'outside' "
+            "result.\n\n"
             "Every output layer above is moved into one '<code> PSA - LGU Comparison' group at the "
             "top of the Layers panel as it loads, so a run's results stay bundled together above "
             "the original PSA, LGU and Building Point input layers instead of scattered as loose "
@@ -1063,26 +1082,28 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
                 f"the review panel's per-barangay filter will not work on this output."
             ))
 
+        # Both Outside layers (LGU and PSA) share one schema.
         fields_building_unmatched = QgsFields(building_layer.fields())
         fields_building_unmatched.append(
             QgsField(_unique_field_name("geocode_first8", fields_building_unmatched), QVariant.String))
-        # Which barangay the point DOES sit in, when it sits in one at all.
-        # This is what separates a mis-coded point (in_geocode filled in, and
-        # different from geocode_first8) from one captured outside the
-        # municipality entirely (in_geocode empty).
+        # Which barangay the point DOES sit in, when it sits in one at all --
+        # checked against the same boundary source (LGU or PSA) as the layer
+        # it lands in. This is what separates a mis-coded point (in_geocode
+        # filled in, and different from geocode_first8) from one captured
+        # outside the municipality entirely (in_geocode empty).
         fields_building_unmatched.append(
             QgsField(_unique_field_name("in_geocode", fields_building_unmatched), QVariant.String))
-        # match_id / in_match_id are what let the review panel scope this
+        # match_id / in_match_id are what let the review panel scope an
         # Outside layer to one barangay, the same way it already scopes the
         # Matched layers -- without them, every barangay's outside points
         # show up together no matter which one is being reviewed. A point
         # can be relevant to a barangay two different ways: match_id is set
         # when the point's OWN geocode names that barangay (it was supposed
         # to be there and failed the boundary test); in_match_id is set when
-        # the point was found to actually sit inside that barangay's LGU
-        # polygon despite carrying a different code (or none). Either or
-        # both may be NULL -- a point with a blank geocode and sitting
-        # outside every LGU polygon has no barangay to be relevant to.
+        # the point was found to actually sit inside that barangay's polygon
+        # despite carrying a different code (or none). Either or both may be
+        # NULL -- a point with a blank geocode and sitting outside every
+        # polygon has no barangay to be relevant to.
         match_id_field_unmatched = _unique_field_name(MATCH_ID_FIELD_NAME, fields_building_unmatched)
         fields_building_unmatched.append(QgsField(match_id_field_unmatched, QVariant.Int))
         in_match_id_field_unmatched = _unique_field_name("in_match_id", fields_building_unmatched)
@@ -1090,64 +1111,81 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
         if match_id_field_unmatched != MATCH_ID_FIELD_NAME:
             feedback.pushInfo(self.tr(
                 f"Warning: the Building Point layer already has a '{MATCH_ID_FIELD_NAME}' field, "
-                f"so this run's grouping field on the Outside layer was added as "
+                f"so this run's grouping field on the Outside layers was added as "
                 f"'{match_id_field_unmatched}' instead -- the review panel's per-barangay filter "
-                f"will not work on this output."
+                f"will not work on these outputs."
             ))
 
-        matched_building = QgsVectorLayer(
-            "{}?crs={}".format(geom_building, crs_building),
-            "Building Points inside LGU Boundary", "memory")
-        unmatched_building = QgsVectorLayer(
-            "{}?crs={}".format(geom_building, crs_building),
-            "Building Points Outside LGU Boundary", "memory")
+        def building_memory_layer(name, fields):
+            layer = QgsVectorLayer(
+                "{}?crs={}".format(geom_building, crs_building), name, "memory")
+            layer.dataProvider().addAttributes(fields)
+            layer.updateFields()
+            return layer
 
-        matched_building.dataProvider().addAttributes(fields_building_matched)
-        matched_building.updateFields()
-        unmatched_building.dataProvider().addAttributes(fields_building_unmatched)
-        unmatched_building.updateFields()
+        matched_building = building_memory_layer(
+            BUILDING_INSIDE_LGU_LAYER_NAME, fields_building_matched)
+        unmatched_building = building_memory_layer(
+            BUILDING_OUTSIDE_LGU_LAYER_NAME, fields_building_unmatched)
+        unmatched_psa_building = building_memory_layer(
+            BUILDING_OUTSIDE_PSA_LAYER_NAME, fields_building_unmatched)
 
-        style_building_points(matched_building, "0,153,0")   # inside  -- green
-        style_building_points(unmatched_building, "227,26,28")  # outside -- red
+        # Outside LGU and Outside PSA differ in both color and shape, so a
+        # point that is outside both boundaries still shows the two markers
+        # (the square drawn larger, underneath the circle) instead of one
+        # hiding the other.
+        style_building_points(matched_building, "0,153,0")   # inside LGU  -- green circle
+        style_building_points(unmatched_building, "227,26,28")  # outside LGU -- red circle
+        style_building_points(unmatched_psa_building, "156,39,176",   # outside PSA -- purple square
+                              shape="square", size="3.0")
 
-        lgu_locator = _LguBoundaryLocator()
-        for fl, code in zip(feats_lgu, code_lgu):
-            lgu_locator.add(fl, code)
-        if lgu_locator.is_empty():
+        # The inside/outside test for each boundary source runs in that
+        # source's own CRS, so a building layer in a different CRS is
+        # reprojected first. Comparing raw coordinates from two systems would
+        # silently place every point outside the boundary.
+        def point_transform_to(boundary_layer, label):
+            crs_boundary = boundary_layer.crs()
+            if building_layer.crs() == crs_boundary:
+                return None
+            if not (building_layer.crs().isValid() and crs_boundary.isValid()):
+                feedback.pushInfo(self.tr(
+                    f"Warning: the building point and {label} layers declare different CRSs but "
+                    f"at least one of them is undefined, so the points are tested as-is -- assign "
+                    f"a CRS to both layers if the inside/outside split looks wrong."
+                ))
+                return None
             feedback.pushInfo(self.tr(
-                "Warning: the LGU layer has no usable polygon geometry -- every building "
-                "point is reported outside."
+                "Reprojecting building points from {} to {} for the {} boundary test.".format(
+                    crs_building or "unknown CRS", crs_boundary.authid() or "unknown CRS", label)
             ))
+            return QgsCoordinateTransform(
+                building_layer.crs(), crs_boundary, QgsProject.instance().transformContext())
 
-        def point_is_inside(code8, test_geom):
-            """True when *test_geom* falls inside the LGU polygon(s) carrying
-            first-8 geocode *code8*."""
-            return lgu_locator.contains(code8, test_geom)
+        def boundary_side(label, boundary_layer, feats, codes, outside_layer):
+            locator = _LguBoundaryLocator()
+            for f, code in zip(feats, codes):
+                locator.add(f, code)
+            if locator.is_empty():
+                feedback.pushInfo(self.tr(
+                    f"Warning: the {label} layer has no usable polygon geometry -- every "
+                    f"building point is reported outside the {label} boundary."
+                ))
+            return {
+                "label": label,
+                "locator": locator,
+                "transform": point_transform_to(boundary_layer, label),
+                "layer": outside_layer,
+                "outside": [],
+                # Why each outside point is outside -- mutually exclusive, so
+                # the three add up to that Outside layer's feature count.
+                "blank_code": 0,      # no geocode at all: nothing to check it against
+                "wrong_barangay": 0,  # sits inside a different barangay
+                "outside_all": 0,     # sits inside no barangay of this boundary whatsoever
+                "foreign_lgu": 0,     # own geocode names a barangay from a different LGU entirely
+            }
 
-        def point_landed_in(test_geom):
-            """Which barangay's LGU polygon *test_geom* actually sits in."""
-            return lgu_locator.code_for(test_geom)
-
-        # The test runs in the LGU layer's CRS, so a building layer in a
-        # different CRS is reprojected first. Comparing raw coordinates from
-        # two systems would silently place every point outside the boundary.
-        point_transform = None
-        crs_differs = building_layer.crs() != layer_lgu.crs()
-        if crs_differs and not (building_layer.crs().isValid() and layer_lgu.crs().isValid()):
-            feedback.pushInfo(self.tr(
-                "Warning: the building point and LGU layers declare different CRSs but at "
-                "least one of them is undefined, so the points are tested as-is -- assign a "
-                "CRS to both layers if the inside/outside split looks wrong."
-            ))
-        elif crs_differs:
-            point_transform = QgsCoordinateTransform(
-                building_layer.crs(), layer_lgu.crs(),
-                QgsProject.instance().transformContext()
-            )
-            feedback.pushInfo(self.tr(
-                "Reprojecting building points from {} to {} for the boundary test.".format(
-                    crs_building or "unknown CRS", crs_lgu or "unknown CRS")
-            ))
+        lgu_side = boundary_side("LGU", layer_lgu, feats_lgu, code_lgu, unmatched_building)
+        psa_side = boundary_side("PSA", layer_psa, feats_psa, code_psa, unmatched_psa_building)
 
         # Every first-8 geocode this run actually knows about, from either
         # side (matched or not) -- used below to tell a genuine boundary
@@ -1156,32 +1194,66 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
         # to do with this comparison run.
         all_run_codes = codes_psa | codes_lgu
 
-        matched_building_feats, unmatched_building_feats = [], []
-        # Why each outside point is outside -- mutually exclusive, so the
-        # three add up to the Outside layer's feature count.
-        blank_code = 0        # no geocode at all: nothing to check it against
-        wrong_barangay = 0    # sits inside a different barangay
-        outside_all = 0       # sits inside no LGU barangay whatsoever
-        foreign_lgu = 0       # own geocode names a barangay from a different LGU entirely
+        def test_geometry(feat, transform):
+            # The test geometry is a copy: reprojecting it must not disturb
+            # the geometry written to the output, which stays in the building
+            # layer's own CRS (the CRS every building output was created with).
+            if not feat.hasGeometry():
+                return None
+            geometry = QgsGeometry(feat.geometry())
+            if transform is not None:
+                try:
+                    geometry.transform(transform)
+                except Exception:
+                    # Un-transformable coordinates can't be placed at all.
+                    return None
+            return geometry
+
+        def record_if_outside(side, feat, code8):
+            """Check *feat* against one boundary source; returns True when it
+            is inside the barangay its geocode names there."""
+            geom = test_geometry(feat, side["transform"])
+            if side["locator"].contains(code8, geom):
+                return True
+            landed_in = side["locator"].code_for(geom)
+
+            if code8 and code8 not in all_run_codes and not landed_in:
+                # The point's own geocode names a barangay from a different
+                # LGU entirely -- not merely a different barangay within this
+                # one -- and it doesn't geographically fall inside any of
+                # this boundary's barangays either. It has nothing to do with
+                # the boundary being checked here, so it is excluded instead
+                # of padding out the Outside layer with a "violation" against
+                # a municipality this run never touched (e.g. 02917004000000
+                # showing up as outside 02915002000000's boundary).
+                side["foreign_lgu"] += 1
+                return False
+
+            if not code8:
+                side["blank_code"] += 1
+            elif landed_in:
+                side["wrong_barangay"] += 1
+            else:
+                side["outside_all"] += 1
+            out_f = QgsFeature(side["layer"].fields())
+            out_f.setGeometry(feat.geometry())
+            out_f.setAttributes(feat.attributes() + [
+                code8, landed_in or "",
+                code8_to_match_id.get(code8),
+                code8_to_match_id.get(landed_in) if landed_in else None,
+            ])
+            side["outside"].append(out_f)
+            return False
+
+        matched_building_feats = []
         total_buildings = building_layer.featureCount()
         for processed, feat in enumerate(building_layer.getFeatures(), start=1):
             if feedback.isCanceled():
                 return {}
 
-            # The test geometry is a copy: reprojecting it must not disturb
-            # the geometry written to the output, which stays in the building
-            # layer's own CRS (the CRS both output layers were created with).
-            test_geom = QgsGeometry(feat.geometry()) if feat.hasGeometry() else None
-            if test_geom is not None and point_transform is not None:
-                try:
-                    test_geom.transform(point_transform)
-                except Exception:
-                    # Un-transformable coordinates can't be placed at all.
-                    test_geom = None
-
             code8 = first8(feat[building_field])
 
-            if point_is_inside(code8, test_geom):
+            if record_if_outside(lgu_side, feat, code8):
                 # match_id is NULL when the barangay the point sits in has no
                 # PSA counterpart: the point is where its geocode says it
                 # should be, but there is no matched pair to review it under.
@@ -1190,75 +1262,52 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
                 out_f.setAttributes(
                     feat.attributes() + [code8_to_match_id.get(code8), code8])
                 matched_building_feats.append(out_f)
-            else:
-                landed_in = point_landed_in(test_geom)
-
-                if code8 and code8 not in all_run_codes and not landed_in:
-                    # The point's own geocode names a barangay from a
-                    # different LGU entirely -- not merely a different
-                    # barangay within this one -- and it doesn't
-                    # geographically fall inside any of this run's PSA/LGU
-                    # barangays either. It has nothing to do with the
-                    # boundary being checked here, so it is excluded
-                    # instead of padding out the Outside layer with a
-                    # "violation" against a municipality this run never
-                    # touched (e.g. 02917004000000 showing up as outside
-                    # 02915002000000's boundary).
-                    foreign_lgu += 1
-                    continue
-
-                if not code8:
-                    blank_code += 1
-                elif landed_in:
-                    wrong_barangay += 1
-                else:
-                    outside_all += 1
-                out_f = QgsFeature(unmatched_building.fields())
-                out_f.setGeometry(feat.geometry())
-                out_f.setAttributes(feat.attributes() + [
-                    code8, landed_in or "",
-                    code8_to_match_id.get(code8),
-                    code8_to_match_id.get(landed_in) if landed_in else None,
-                ])
-                unmatched_building_feats.append(out_f)
+            record_if_outside(psa_side, feat, code8)
 
             if total_buildings > 0 and processed % 500 == 0:
                 feedback.setProgress(50 + int(40.0 * processed / total_buildings))
 
+        unmatched_building_feats = lgu_side["outside"]
+        unmatched_psa_building_feats = psa_side["outside"]
         matched_building.dataProvider().addFeatures(matched_building_feats)
         unmatched_building.dataProvider().addFeatures(unmatched_building_feats)
-        matched_building.updateExtents()
-        unmatched_building.updateExtents()
+        unmatched_psa_building.dataProvider().addFeatures(unmatched_psa_building_feats)
+        for lyr in (matched_building, unmatched_building, unmatched_psa_building):
+            lyr.updateExtents()
 
         feedback.pushInfo(self.tr(
-            f"Building points -- inside the barangay their geocode names: "
-            f"{len(matched_building_feats)}, outside it: {len(unmatched_building_feats)}"
+            f"Building points -- inside the LGU barangay their geocode names: "
+            f"{len(matched_building_feats)}, outside it: {len(unmatched_building_feats)} | "
+            f"outside the PSA barangay their geocode names: {len(unmatched_psa_building_feats)}"
         ))
-        if unmatched_building_feats:
-            feedback.pushInfo(self.tr(
-                f"  Of those outside -- {wrong_barangay} sit inside a different barangay "
-                f"(its code is in the in_geocode column), {outside_all} fall outside every "
-                f"LGU barangay, {blank_code} have no geocode to check against."
-            ))
-        if foreign_lgu:
-            feedback.pushInfo(self.tr(
-                f"  {foreign_lgu} building point(s) carry a geocode naming a barangay from a "
-                f"different LGU entirely (not present in either this run's PSA or LGU layer) and "
-                f"don't geographically fall inside this LGU either -- excluded from both outputs "
-                f"as not relevant to this comparison."
-            ))
+        for side in (lgu_side, psa_side):
+            label = side["label"]
+            if side["outside"]:
+                feedback.pushInfo(self.tr(
+                    f"  Outside {label} -- {side['wrong_barangay']} sit inside a different {label} "
+                    f"barangay (its code is in the in_geocode column), {side['outside_all']} fall "
+                    f"outside every {label} barangay, {side['blank_code']} have no geocode to "
+                    f"check against."
+                ))
+            if side["foreign_lgu"]:
+                feedback.pushInfo(self.tr(
+                    f"  {side['foreign_lgu']} building point(s) carry a geocode naming a barangay "
+                    f"from a different LGU entirely (not present in either this run's PSA or LGU "
+                    f"layer) and don't geographically fall inside the {label} boundary either -- "
+                    f"excluded from the {label} outputs as not relevant to this comparison."
+                ))
         feedback.setProgress(90)
 
         # Only load layers that actually contain features -- an empty
         # matched/unmatched group is common (e.g. every barangay matched)
         # and would just clutter the Layers panel with nothing to show.
         #
-        # The two Building Point layers are the exception: both are always
-        # loaded, empty or not. "Building Points Outside LGU Boundary" is the
-        # answer to the question this tool is run to ask, so it has to be on
-        # the map to be read -- an empty one states "nothing outside", while
-        # a missing one is indistinguishable from the tool not having checked.
-        always_load = {matched_building.id(), unmatched_building.id()}
+        # The Building Point layers are the exception: all are always
+        # loaded, empty or not. The two Outside layers are the answer to the
+        # question this tool is run to ask, so they have to be on the map to
+        # be read -- an empty one states "nothing outside", while a missing
+        # one is indistinguishable from the tool not having checked.
+        always_load = {matched_building.id(), unmatched_building.id(), unmatched_psa_building.id()}
         output_layer_ids = [
             lid for lid, has_feats in (
                 (matched_psa.id(), matched_psa_feats),
@@ -1267,6 +1316,7 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
                 (unmatched_lgu.id(), unmatched_lgu_feats),
                 (matched_building.id(), matched_building_feats),
                 (unmatched_building.id(), unmatched_building_feats),
+                (unmatched_psa_building.id(), unmatched_psa_building_feats),
             ) if has_feats or lid in always_load
         ]
 
@@ -1283,11 +1333,13 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
         panel_lgu_id = matched_lgu.id() if have_panel else None
         panel_building_id = matched_building.id() if have_panel and matched_building_feats else None
         panel_unmatched_building_id = unmatched_building.id() if have_panel else None
+        panel_unmatched_psa_building_id = unmatched_psa_building.id() if have_panel else None
         run_processors = _make_run_post_processors(
             (layer_psa.id(), layer_lgu.id(), building_layer.id()),
             output_layer_ids, panel_psa_id, panel_lgu_id, panel_building_id,
             panel_unmatched_building_id,
-            group_name="{} PSA - LGU Comparison".format(code_prefix))
+            group_name="{} PSA - LGU Comparison".format(code_prefix),
+            panel_unmatched_psa_building_id=panel_unmatched_psa_building_id)
 
         results = {
             'MATCHED_PSA': load_layer(
@@ -1303,11 +1355,14 @@ class PsaLguComparisonAlgorithm(QgsProcessingAlgorithm):
                 unmatched_lgu, name_unmatched_lgu,
                 run_processors.get(unmatched_lgu.id())) if unmatched_lgu_feats else None,
             'MATCHED_BUILDING': load_layer(
-                matched_building, "Building Points inside LGU Boundary",
+                matched_building, BUILDING_INSIDE_LGU_LAYER_NAME,
                 run_processors.get(matched_building.id())),
             'UNMATCHED_BUILDING': load_layer(
-                unmatched_building, "Building Points Outside LGU Boundary",
+                unmatched_building, BUILDING_OUTSIDE_LGU_LAYER_NAME,
                 run_processors.get(unmatched_building.id())),
+            'UNMATCHED_PSA_BUILDING': load_layer(
+                unmatched_psa_building, BUILDING_OUTSIDE_PSA_LAYER_NAME,
+                run_processors.get(unmatched_psa_building.id())),
         }
 
         feedback.setProgress(100)
