@@ -4962,7 +4962,13 @@ class EALauncherDialog(QDialog):
         from qgis.core import QgsApplication
         
         alg_to_run = QgsApplication.processingRegistry().algorithmById(self.ALGORITHM_ID) or self.algo
-        
+
+        # Record pre-existing splitting lines layers to prevent duplicates
+        pre_existing_eadel_ids = {
+            layer_id for layer_id, lyr in QgsProject.instance().mapLayers().items()
+            if lyr.name().endswith("_eadel_update")
+        }
+
         try:
             results = processing.runAndLoadResults(
                 alg_to_run,
@@ -5121,19 +5127,28 @@ class EALauncherDialog(QDialog):
 
                 # Group and persist any generated splitting line layers (ending with _eadel_update) into Splitting Lines
                 has_splitting_lines = False
+                processed_line_names = set()
                 for layer_id, proj_layer in list(QgsProject.instance().mapLayers().items()):
                     if proj_layer.name().endswith("_eadel_update"):
-                        if mode not in ("delineation", "all"):
-                            # If running merging, remove any temporary splitting line layers
+                        target_line_name = proj_layer.name()
+
+                        if mode == "merging" and layer_id not in pre_existing_eadel_ids:
+                            # In merging mode, discard newly spawned scratch splitting line layers
+                            # so that pre-existing delineation splitting lines are not duplicated.
                             QgsProject.instance().removeMapLayer(layer_id)
                             continue
 
-                        target_line_name = proj_layer.name()
-                        line_gpkg_path = os.path.normpath(os.path.join(out_folder, f"{target_line_name}.gpkg")).replace("\\", "/")
+                        if target_line_name in processed_line_names:
+                            # Remove duplicate layers with the same name
+                            QgsProject.instance().removeMapLayer(layer_id)
+                            continue
+
+                        processed_line_names.add(target_line_name)
+                        line_gpkg_path = os.path.normpath(os.path.join(out_folder, f"{target_line_name}.gpkg")).replace("\\", "/") if out_folder else ""
                         if proj_layer.featureCount() == 0:
                             # If 0 features, do not create permanent file and remove from project
                             QgsProject.instance().removeMapLayer(layer_id)
-                            if os.path.exists(line_gpkg_path):
+                            if line_gpkg_path and os.path.exists(line_gpkg_path):
                                 try:
                                     os.remove(line_gpkg_path)
                                 except Exception:
@@ -5143,13 +5158,17 @@ class EALauncherDialog(QDialog):
                         else:
                             has_splitting_lines = True
                             # Convert in-memory splitting line layer to permanent GeoPackage on disk ONLY when it has features
-                            if not proj_layer.source().lower().endswith(".gpkg"):
+                            if line_gpkg_path and not proj_layer.source().lower().endswith(".gpkg"):
                                 if self._export_layer_to_gpkg(proj_layer, line_gpkg_path, target_line_name):
                                     perm_line_layer = QgsVectorLayer(f"{line_gpkg_path}|layername={target_line_name}", target_line_name, "ogr")
                                     if not perm_line_layer.isValid():
                                         perm_line_layer = QgsVectorLayer(line_gpkg_path, target_line_name, "ogr")
                                     if perm_line_layer.isValid():
                                         QgsProject.instance().removeMapLayer(layer_id)
+                                        # Remove any other existing layer with target_line_name to ensure no duplicates
+                                        for old_id, old_lyr in list(QgsProject.instance().mapLayers().items()):
+                                            if old_id != perm_line_layer.id() and old_lyr.name() == target_line_name:
+                                                QgsProject.instance().removeMapLayer(old_id)
                                         QgsProject.instance().addMapLayer(perm_line_layer, False)
                                         apply_qml_to_layer(perm_line_layer, "eadel_update_lines.qml")
                                         splitting_lines_group.addLayer(perm_line_layer)
@@ -5160,6 +5179,7 @@ class EALauncherDialog(QDialog):
                                         _log_msg(save_msg)
                                         continue
 
+                            apply_qml_to_layer(proj_layer, "eadel_update_lines.qml")
                             lnode = root.findLayer(layer_id)
                             if lnode and lnode.parent() != splitting_lines_group:
                                 clone = lnode.clone()

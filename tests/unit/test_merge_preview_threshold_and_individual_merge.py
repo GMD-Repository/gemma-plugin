@@ -2086,6 +2086,77 @@ class TestMergePreviewThresholdAndIndividualMerge(unittest.TestCase):
         self.assertIn("01728001002", eans)
         self.assertIn("01728001001", eans)
 
+    @patch("references.create_enumeration_area.dialog.CustomProcessingFeedback")
+    @patch("qgis.processing.runAndLoadResults")
+    def test_run_pipeline_merging_mode_preserves_eadel_update_with_features(self, mock_run, mock_feedback_cls):
+        """Verify that running pipeline in merging mode preserves _eadel_update layers that have features."""
+        QgsProject.instance().removeAllMapLayers()
+
+        split_line_layer = QgsVectorLayer("LineString?crs=epsg:4326", "01728_eadel_update", "memory")
+        pr = split_line_layer.dataProvider()
+        f = QgsFeature()
+        f.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(0, 0), QgsPointXY(1, 1)]))
+        pr.addFeatures([f])
+        split_line_layer.updateExtents()
+        QgsProject.instance().addMapLayer(split_line_layer)
+
+        # Also add an empty eadel_update layer to verify it gets cleaned up
+        empty_split_layer = QgsVectorLayer("LineString?crs=epsg:4326", "01729_eadel_update", "memory")
+        QgsProject.instance().addMapLayer(empty_split_layer)
+
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.bar_combo = MagicMock()
+        mock_dlg.bldg_combo = MagicMock()
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.road_combo = MagicMock()
+        mock_dlg.river_combo = MagicMock()
+        mock_dlg.tolerance_spin = MagicMock(value=lambda: 5.0)
+        mock_dlg.enable_thresholds_chk = MagicMock(isChecked=lambda: True)
+        mock_dlg.min_hh_spin = MagicMock(value=lambda: 100)
+        mock_dlg.max_hh_spin = MagicMock(value=lambda: 300)
+        mock_dlg.compact_chk = MagicMock(isChecked=lambda: True)
+        mock_dlg.allow_candidate_merge_chk = MagicMock(isChecked=lambda: True)
+        mock_dlg.sliver_combo = MagicMock(currentIndex=lambda: 1)
+        mock_dlg.crs_widget = MagicMock(crs=lambda: None)
+        mock_dlg.merge_log_console = MagicMock()
+        mock_dlg.merge_progress_bar = MagicMock()
+        mock_dlg.merge_run_btn = MagicMock()
+        mock_dlg.merge_cancel_btn = MagicMock()
+        mock_dlg.merge_status_banner = MagicMock()
+        mock_dlg.ALGORITHM_ID = "gmd:create_ea"
+        mock_dlg.algo = MagicMock()
+        mock_dlg._extract_5digit_geocode.return_value = "01728"
+        mock_dlg._export_layer_to_gpkg.return_value = False
+        import tempfile
+        tmp_dir = tempfile.mkdtemp()
+        mock_dlg.output_folder_widget = MagicMock(filePath=lambda: tmp_dir)
+        mock_dlg.merge_output_folder_widget = MagicMock(filePath=lambda: tmp_dir)
+
+        merge_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "01728_merged_ea2026", "memory")
+        mock_dlg._safe_get_layer.return_value = merge_layer
+
+        # Simulate Phase 8 of processing algorithm adding a new scratch memory layer during execution
+        def side_effect(*args, **kwargs):
+            scratch_layer = QgsVectorLayer("LineString?crs=epsg:4326", "01728_eadel_update", "memory")
+            QgsProject.instance().addMapLayer(scratch_layer)
+            return {'MERGED_OUTPUT': merge_layer}
+        mock_run.side_effect = side_effect
+
+        mock_feedback_inst = mock_feedback_cls.return_value
+        mock_feedback_inst.isCanceled.return_value = False
+
+        EALauncherDialog.run_pipeline(mock_dlg, mode="merging")
+
+        # Verify: 01728_eadel_update (with features) must STILL be in QgsProject and NOT duplicated
+        remaining_layers = list(QgsProject.instance().mapLayers().values())
+        matching_eadel_layers = [l for l in remaining_layers if l.name() == "01728_eadel_update"]
+        self.assertEqual(len(matching_eadel_layers), 1, "There should be exactly 1 eadel_update layer, not duplicated")
+        self.assertEqual(matching_eadel_layers[0].id(), split_line_layer.id(), "The preserved layer must be the pre-existing layer")
+
+        # 01729_eadel_update (empty, 0 features) should be removed
+        layer_names = [l.name() for l in remaining_layers]
+        self.assertNotIn("01729_eadel_update", layer_names)
+
 
 if __name__ == "__main__":
     unittest.main()
