@@ -804,7 +804,7 @@ class TestEADialogRefresh(unittest.TestCase):
         table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=True)
         self.assertEqual(table.columnCount(), 8)
         headers = [table.horizontalHeaderItem(i).text() for i in range(8)]
-        self.assertIn("Merge Partner (EAN)", headers[5])
+        self.assertIn("Merge Partner (Geocode)", headers[5])
         self.assertIn("Total HH Count", headers[6])
         self.assertIn("Action", headers[7])
 
@@ -879,14 +879,14 @@ class TestEADialogRefresh(unittest.TestCase):
         reborn_table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=False)
         self.assertEqual(reborn_table.columnCount(), 5)
         headers_5 = [reborn_table.horizontalHeaderItem(i).text() for i in range(5)]
-        self.assertNotIn("Merge Partner (EAN)", headers_5)
+        self.assertNotIn("Merge Partner (Geocode)", headers_5)
         self.assertNotIn("Total HH Count", headers_5)
 
         # 2. New Merge Preview table: 8 columns
         merge_preview_table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=True)
         self.assertEqual(merge_preview_table.columnCount(), 8)
         headers_8 = [merge_preview_table.horizontalHeaderItem(i).text() for i in range(8)]
-        self.assertIn("Merge Partner (EAN)", headers_8[5])
+        self.assertIn("Merge Partner (Geocode)", headers_8[5])
         self.assertIn("Total HH Count", headers_8[6])
         self.assertIn("Action", headers_8[7])
 
@@ -1057,22 +1057,47 @@ class TestEADialogRefresh(unittest.TestCase):
 
         EALauncherDialog.generate_preview(mock_dlg)
 
-        # Verify all_merged_ea_candidates has EA 001 and detected neighbor EA 002
+        # Verify all_merged_ea_candidates has EA 001 and detected neighbor EA 002 with geocode value
         self.assertEqual(len(mock_dlg.all_merged_ea_candidates), 1)
         cand = mock_dlg.all_merged_ea_candidates[0]
         self.assertEqual(cand[0], "001")
         self.assertEqual(len(cand[5]), 1)  # Neighbors list
-        self.assertEqual(cand[5][0][0], "002")
+        self.assertEqual(cand[5][0][0], "017280010002")
         self.assertEqual(cand[5][0][1], 120.0)
 
-        # Verify rendered table cell dropdown is enabled with partner EA 002
+        # Verify rendered table cell dropdown is enabled with partner EA 002's geocode
         table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=True)
         EALauncherDialog._populate_table_rows(mock_dlg, table, mock_dlg.all_merged_ea_candidates, is_delineation=False)
         combo = table.cellWidget(0, 5)
         self.assertIsNotNone(combo)
         self.assertTrue(combo.isEnabled())
-        self.assertEqual(combo.currentText(), "002")
+        self.assertEqual(combo.currentText(), "017280010002")
         self.assertEqual(table.item(0, 6).text(), "170")  # 50 + 120
+
+    def test_dialog_window_flags_have_minimize_button(self):
+        """Verify that EALauncherDialog, SplitEADialog, UnmergeEADialog, and launcher helper have WindowMinimizeButtonHint enabled."""
+        from qgis.PyQt.QtCore import Qt
+        from references.create_enumeration_area.dialog import EALauncherDialog
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+        from references.create_enumeration_area.unmerge_dialog import UnmergeEADialog
+        from gmd_scripts.create_enumeration_area import show_create_ea_dialog
+
+        d1 = EALauncherDialog()
+        d2 = SplitEADialog()
+        d3 = UnmergeEADialog()
+
+        for dlg in [d1, d2, d3]:
+            flags = dlg.windowFlags()
+            self.assertTrue(bool(flags & Qt.WindowMinimizeButtonHint), f"{dlg.__class__.__name__} missing WindowMinimizeButtonHint")
+            self.assertTrue(bool(flags & Qt.WindowMaximizeButtonHint), f"{dlg.__class__.__name__} missing WindowMaximizeButtonHint")
+            self.assertTrue(bool(flags & Qt.WindowCloseButtonHint), f"{dlg.__class__.__name__} missing WindowCloseButtonHint")
+
+        # Also verify show_create_ea_dialog sets correct flags
+        mock_iface = MagicMock()
+        mock_iface.mainWindow.return_value = None
+        dlg_launcher = show_create_ea_dialog(mock_iface)
+        launcher_flags = dlg_launcher.windowFlags()
+        self.assertTrue(bool(launcher_flags & Qt.WindowMinimizeButtonHint))
 
 
 if __name__ == "__main__":

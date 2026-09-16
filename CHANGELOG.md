@@ -5,6 +5,65 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6] - 2026-09-14
+
+### Added
+- Updated PSA-LGU Boundary Comparison and Run Analysis Plugin ([@ftating19](https://github.com/ftating19)) ([#263](https://github.com/GMD-Repository/gemma-plugin/pull/263))
+
+### Changed
+- Separated building points outside LGU and PSA boundaries ([@psacjperez](https://github.com/psacjperez))
+
+### Fixed
+- Key deduplication on geocode and prevented cutting islands off barangays ([@psacjperez](https://github.com/psacjperez))
+- Published boundary before exploding multiparts and merged rows by geocode ([@psacjperez](https://github.com/psacjperez))
+- Repaired geometries before writing either output ([@psacjperez](https://github.com/psacjperez))
+- Optimized progress bar to update once instead of per sub-process ([@psacjperez](https://github.com/psacjperez))
+
+## [1.0.5] - 2026-09-14
+
+### Added
+- Added 2026_province_boundary as a 5th packaging role ([@psacjperez](https://github.com/psacjperez))
+
+### Changed
+- Reconciled Packaged Layers documentation with the latest development merge ([@psacjperez](https://github.com/psacjperez))
+
+### Fixed
+- Resolved LGU/PSA boundary precedence and deduplication before MBI detection ([@ftating19](https://github.com/ftating19)) ([#257](https://github.com/GMD-Repository/gemma-plugin/pull/257))
+- Fixed the generation of the 2026_province_boundary layer ([@ftating19](https://github.com/ftating19)) ([#259](https://github.com/GMD-Repository/gemma-plugin/pull/259))
+- Output 2026_CITYMUN_boundary instead of ref_CITYMUN_boundary ([@psacjperez](https://github.com/psacjperez))
+
+### Removed
+- Eliminated the Packaged Layers group and enforced clean grouping across EA tabs ([@pacoleslaw](https://github.com/pacoleslaw)) ([#258](https://github.com/GMD-Repository/gemma-plugin/pull/258))
+- Masked dynamically fetched emails in GitHub Actions logs to enhance security ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#254](https://github.com/GMD-Repository/gemma-plugin/pull/254))
+
+## [1.0.4] - 2026-09-13
+
+### Added
+- Implemented EA delineation and merging workflow with an interactive split dialog ([@pacoleslaw](https://github.com/pacoleslaw)) ([#220](https://github.com/GMD-Repository/gemma-plugin/pull/220))
+
+### Changed
+- Refined unassigned layer filtering and resolved unzipped libqfieldsync paths ([@nbacquiano-ui](https://github.com/nbacquiano-ui)) ([#213](https://github.com/GMD-Repository/gemma-plugin/pull/213))
+- Standardized unassigned layer filtering to geocode and ea_geocode ([@nbacquiano-ui](https://github.com/nbacquiano-ui)) ([#230](https://github.com/GMD-Repository/gemma-plugin/pull/230))
+- Streamlined projection finder UI and improved edit session handling ([@psacjperez](https://github.com/psacjperez)) ([#249](https://github.com/GMD-Repository/gemma-plugin/pull/249))
+
+### Fixed
+- Removed merge candidates output layer and pruned candidate sinks ([@pacoleslaw](https://github.com/pacoleslaw)) ([#242](https://github.com/GMD-Repository/gemma-plugin/pull/242))
+
+### Documentation
+- Integrated reference MBI cases and updated documentation ([@psacjperez](https://github.com/psacjperez)) ([#214](https://github.com/GMD-Repository/gemma-plugin/pull/214))
+- Updated Geometry Repair Toolkit user guide and enhanced topology diagnostic documentation ([@psacjperez](https://github.com/psacjperez)) ([#221](https://github.com/GMD-Repository/gemma-plugin/pull/221))
+
+## [1.0.3] - 2026-09-03
+
+### Added
+- Implemented EA Delineation and Merging module with a dual-tab UI and included unit tests ([@pacoleslaw](https://github.com/pacoleslaw))
+
+### Fixed
+- Removed unresolvable @actions/github require from workflow dispatch steps ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### Documentation
+- Added PSA-LGU boundary comparison tool documentation and configured VitePress ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
 ## [1.0.2] - 2026-09-03
 
 ### Added

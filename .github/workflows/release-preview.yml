@@ -70,8 +70,24 @@ jobs:
         run: |
           git config user.name "Gemma Release[bot]"
           git config user.email "gemma-release[bot]@users.noreply.github.com"
+
+          # 1. Commit and push to the preview branch (dev)
           git add docs/user-guide/public/gemma-beta.xml docs/user-guide/public/latest-beta.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: update beta channel files for preview ${{ steps.preview.outputs.revision }} [skip ci]" && git push https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git HEAD:${{ github.ref_name }})
+          if ! git diff --quiet || ! git diff --staged --quiet; then
+            git commit -m "chore: update beta channel files for preview ${{ steps.preview.outputs.revision }} [skip ci]"
+            git push https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git HEAD:${{ github.ref_name }}
+          fi
+
+          # 2. Sync beta channel files to main so Vercel deploys to https://gemma-plugin.vercel.app/gemma-beta.xml
+          git fetch origin main
+          git checkout -B main origin/main
+          git checkout ${{ github.ref_name }} -- docs/user-guide/public/gemma-beta.xml docs/user-guide/public/latest-beta.json
+          git add docs/user-guide/public/gemma-beta.xml docs/user-guide/public/latest-beta.json
+          if ! git diff --quiet || ! git diff --staged --quiet; then
+            git commit -m "chore: sync beta channel files for preview ${{ steps.preview.outputs.revision }}"
+            git push https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git main
+          fi
+          git checkout ${{ github.ref_name }}
 
       # ── 7. Send email notification to Triage team ──────────────────
       - name: Notify Triage team — Preview build ready

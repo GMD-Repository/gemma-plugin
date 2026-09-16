@@ -2,6 +2,77 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.6
+<time>Sep 14, 2026</time>
+
+### ✨ New Features
+- Updated PSA-LGU Boundary Comparison and Run Analysis Plugin ([@ftating19](https://github.com/ftating19)) ([#263](https://github.com/GMD-Repository/gemma-plugin/pull/263))
+
+### ⚡ Improvements & Fixes
+- Separated building points outside LGU and PSA boundaries ([@psacjperez](https://github.com/psacjperez))
+
+### 🐛 Bug Fixes
+- Key deduplication on geocode and prevented cutting islands off barangays ([@psacjperez](https://github.com/psacjperez))
+- Published boundary before exploding multiparts and merged rows by geocode ([@psacjperez](https://github.com/psacjperez))
+- Repaired geometries before writing either output ([@psacjperez](https://github.com/psacjperez))
+- Optimized progress bar to update once instead of per sub-process ([@psacjperez](https://github.com/psacjperez))
+
+<Contributors :contributors="['ftating19', 'psacjperez']" />
+
+## 1.0.5
+<time>Sep 14, 2026</time>
+
+### ✨ New Features
+- Added 2026_province_boundary as a 5th packaging role ([@psacjperez](https://github.com/psacjperez))
+
+### ⚡ Improvements & Fixes
+- Reconciled Packaged Layers documentation with the latest development merge ([@psacjperez](https://github.com/psacjperez))
+
+### 🐛 Bug Fixes
+- Resolved LGU/PSA boundary precedence and deduplication before MBI detection ([@ftating19](https://github.com/ftating19)) ([#257](https://github.com/GMD-Repository/gemma-plugin/pull/257))
+- Fixed the generation of the 2026_province_boundary layer ([@ftating19](https://github.com/ftating19)) ([#259](https://github.com/GMD-Repository/gemma-plugin/pull/259))
+- Output 2026_CITYMUN_boundary instead of ref_CITYMUN_boundary ([@psacjperez](https://github.com/psacjperez))
+
+### 💥 Breaking Changes
+- Eliminated the Packaged Layers group and enforced clean grouping across EA tabs ([@pacoleslaw](https://github.com/pacoleslaw)) ([#258](https://github.com/GMD-Repository/gemma-plugin/pull/258))
+- Masked dynamically fetched emails in GitHub Actions logs to enhance security ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#254](https://github.com/GMD-Repository/gemma-plugin/pull/254))
+
+<Contributors :contributors="['psacjperez', 'ftating19', 'pacoleslaw', 'kentemman-gmd']" />
+
+## 1.0.4
+<time>Sep 13, 2026</time>
+
+### ✨ New Features
+- Implemented EA delineation and merging workflow with an interactive split dialog ([@pacoleslaw](https://github.com/pacoleslaw)) ([#220](https://github.com/GMD-Repository/gemma-plugin/pull/220))
+
+### ⚡ Improvements & Fixes
+- Refined unassigned layer filtering and resolved unzipped libqfieldsync paths ([@nbacquiano-ui](https://github.com/nbacquiano-ui)) ([#213](https://github.com/GMD-Repository/gemma-plugin/pull/213))
+- Standardized unassigned layer filtering to geocode and ea_geocode ([@nbacquiano-ui](https://github.com/nbacquiano-ui)) ([#230](https://github.com/GMD-Repository/gemma-plugin/pull/230))
+- Streamlined projection finder UI and improved edit session handling ([@psacjperez](https://github.com/psacjperez)) ([#249](https://github.com/GMD-Repository/gemma-plugin/pull/249))
+
+### 🐛 Bug Fixes
+- Removed merge candidates output layer and pruned candidate sinks ([@pacoleslaw](https://github.com/pacoleslaw)) ([#242](https://github.com/GMD-Repository/gemma-plugin/pull/242))
+
+### 📚 Documentation
+- Integrated reference MBI cases and updated documentation ([@psacjperez](https://github.com/psacjperez)) ([#214](https://github.com/GMD-Repository/gemma-plugin/pull/214))
+- Updated Geometry Repair Toolkit user guide and enhanced topology diagnostic documentation ([@psacjperez](https://github.com/psacjperez)) ([#221](https://github.com/GMD-Repository/gemma-plugin/pull/221))
+
+<Contributors :contributors="['pacoleslaw', 'nbacquiano-ui', 'psacjperez']" />
+
+## 1.0.3
+<time>Sep 03, 2026</time>
+
+### ✨ New Features
+- Implemented EA Delineation and Merging module with a dual-tab UI and included unit tests ([@pacoleslaw](https://github.com/pacoleslaw))
+
+### 🐛 Bug Fixes
+- Removed unresolvable @actions/github require from workflow dispatch steps ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### 📚 Documentation
+- Added PSA-LGU boundary comparison tool documentation and configured VitePress ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+<Contributors :contributors="['pacoleslaw', 'kentemman-gmd', 'actions']" />
+
 ## 1.0.2
 <time>Sep 03, 2026</time>
 

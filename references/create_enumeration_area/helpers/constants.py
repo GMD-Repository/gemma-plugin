@@ -31,7 +31,8 @@ except Exception:
     FIELD_TYPE_INT = None
     FIELD_TYPE_DOUBLE = None
 
-if FIELD_TYPE_STRING is None or FIELD_TYPE_INT is None or FIELD_TYPE_DOUBLE is None:
+if (FIELD_TYPE_STRING is None or FIELD_TYPE_INT is None or FIELD_TYPE_DOUBLE is None
+        or isinstance(FIELD_TYPE_STRING, type) or isinstance(FIELD_TYPE_INT, type) or isinstance(FIELD_TYPE_DOUBLE, type)):
     FIELD_TYPE_STRING = getattr(QVariant, "String", 10)
     FIELD_TYPE_INT = getattr(QVariant, "Int", 2)
     FIELD_TYPE_DOUBLE = getattr(QVariant, "Double", 6)
@@ -51,9 +52,11 @@ for _v_name, _m_name in (
     if _v_val is not None:
         try:
             from qgis.PyQt.QtCore import QMetaType
-            _m_val = getattr(getattr(QMetaType, "Type", None), _m_name, None)
-            if _m_val is not None:
-                _QVARIANT_MAP[_v_val] = _m_val
+            _meta_type = getattr(QMetaType, "Type", None)
+            if _meta_type is not None and not isinstance(_meta_type, type):
+                _m_val = getattr(_meta_type, _m_name, None)
+                if _m_val is not None and not isinstance(_m_val, type):
+                    _QVARIANT_MAP[_v_val] = _m_val
         except Exception:
             pass
 

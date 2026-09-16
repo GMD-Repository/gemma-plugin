@@ -290,6 +290,78 @@ class TestUnmergeEADialog(unittest.TestCase):
         features = list(merged_layer.getFeatures())
         self.assertEqual(len(features), 3)
 
+    def test_run_unmerge_emits_signal_and_refreshes_parent_preview(self, *mocks):
+        """Verify run_unmerge emits unmergeCompleted signal and triggers parent's refresh_merge_preview."""
+        from references.create_enumeration_area.unmerge_dialog import UnmergeEADialog
+        from qgis.PyQt.QtWidgets import QWidget
+
+        prev_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "01728_previous_ea", "memory")
+        dp_prev = prev_layer.dataProvider()
+        dp_prev.addAttributes([QgsField("ean", QVariant.String), QgsField("code", QVariant.String)])
+        prev_layer.updateFields()
+
+        p1_geom = QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(5, 0), QgsPointXY(5, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]])
+        f1 = QgsFeature(prev_layer.fields())
+        f1.setGeometry(p1_geom)
+        f1.setAttribute("ean", "01728001")
+        f1.setAttribute("code", "001")
+
+        p2_geom = QgsGeometry.fromPolygonXY([[
+            QgsPointXY(5, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(5, 10), QgsPointXY(5, 0)
+        ]])
+        f2 = QgsFeature(prev_layer.fields())
+        f2.setGeometry(p2_geom)
+        f2.setAttribute("ean", "01728002")
+        f2.setAttribute("code", "002")
+        dp_prev.addFeatures([f1, f2])
+
+        merged_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "01728_merged_ea2026", "memory")
+        dp_merged = merged_layer.dataProvider()
+        dp_merged.addAttributes([QgsField("ean", QVariant.String), QgsField("code", QVariant.String)])
+        merged_layer.updateFields()
+
+        merged_geom = QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]])
+        fm = QgsFeature(merged_layer.fields())
+        fm.setGeometry(merged_geom)
+        fm.setAttribute("ean", "01728001")
+        fm.setAttribute("code", "001")
+        dp_merged.addFeatures([fm])
+
+        # Mock parent dialog simulating EALauncherDialog
+        mock_parent = MagicMock()
+        dlg = UnmergeEADialog(parent=mock_parent)
+        dlg.merged_combo.setLayer(merged_layer)
+        dlg.prev_ea_combo.setLayer(prev_layer)
+        dlg.bldg_combo.setLayer(None)
+
+        signal_received = []
+        dlg.unmergeCompleted.connect(lambda: signal_received.append(True))
+
+        dlg.run_unmerge()
+
+        # Check that unmergeCompleted signal was fired
+        self.assertTrue(len(signal_received) > 0)
+        # Check that parent's refresh_merge_preview was invoked
+        mock_parent.refresh_merge_preview.assert_called_once()
+
+    def test_ea_launcher_refresh_merge_preview_method(self, *mocks):
+        """Verify refresh_merge_preview invokes generate_preview and selects tab 1."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+
+        launcher = MagicMock(spec=EALauncherDialog)
+        launcher.generate_preview = MagicMock()
+        launcher.merge_right_tabs = MagicMock()
+
+        # Call real unbound method on mock instance
+        EALauncherDialog.refresh_merge_preview(launcher)
+
+        launcher.generate_preview.assert_called_once()
+        launcher.merge_right_tabs.setCurrentIndex.assert_called_once_with(1)
+
 
 if __name__ == "__main__":
     unittest.main()

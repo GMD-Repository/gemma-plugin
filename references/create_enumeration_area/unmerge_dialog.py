@@ -49,6 +49,8 @@ from qgis.gui import QgsMapLayerComboBox
 class UnmergeEADialog(QDialog):
     """Pop-up dialog to unmerge EA polygons back to previous EA boundaries and recalculate counts in-place."""
 
+    unmergeCompleted = pyqtSignal()
+
     def __init__(
         self,
         parent=None,
@@ -62,6 +64,13 @@ class UnmergeEADialog(QDialog):
         self.setWindowTitle("Unmerge EA - Revert Merged Polygons")
         self.setMinimumSize(560, 680)
         self.resize(620, 720)
+        self.setWindowFlags(
+            Qt.Window |
+            Qt.WindowTitleHint |
+            Qt.WindowMinimizeButtonHint |
+            Qt.WindowMaximizeButtonHint |
+            Qt.WindowCloseButtonHint
+        )
 
         self.default_output_dir = default_output_dir or ""
         self.default_geocode = default_geocode or ""
@@ -652,6 +661,23 @@ class UnmergeEADialog(QDialog):
                 f"Unmerge successful! Restored {len(new_features_to_add)} previous EAs in '{merged_layer.name()}'."
             )
             self.status_banner.setStyleSheet("color: #27ae60; font-weight: bold;")
+
+            # Emit unmerge completion signal
+            self.unmergeCompleted.emit()
+
+            # Refresh parent dialog's Merge Preview if available
+            parent_dlg = self.parent()
+            if parent_dlg:
+                if hasattr(parent_dlg, "refresh_merge_preview"):
+                    try:
+                        parent_dlg.refresh_merge_preview()
+                    except Exception as exc:
+                        self._log(f"Notice: Failed to refresh merge preview: {exc}", "WARNING")
+                elif hasattr(parent_dlg, "generate_preview"):
+                    try:
+                        parent_dlg.generate_preview()
+                    except Exception as exc:
+                        self._log(f"Notice: Failed to refresh preview: {exc}", "WARNING")
 
             QMessageBox.information(
                 self,
