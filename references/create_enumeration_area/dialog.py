@@ -2763,7 +2763,12 @@ class EALauncherDialog(QDialog):
             geom = layer.geometryType()
 
             if geom == 2:  # Polygon
-                if candidates["merge_ea"] is None and ("merge_ea" in name_lower or "merged_ea" in name_lower or "merged" in name_lower):
+                if candidates["merge_ea"] is None and (
+                    "merge_ea" in name_lower
+                    or "merged_ea" in name_lower
+                    or "merged" in name_lower
+                    or ("ea2026" in name_lower and "delineat" not in name_lower and "split" not in name_lower)
+                ):
                     candidates["merge_ea"] = layer
                 elif candidates["bar"] is None and any(k in name_lower for k in barangay_keywords) \
                         and not any(k in name_lower for k in pravea_keywords):
@@ -2902,7 +2907,10 @@ class EALauncherDialog(QDialog):
             if hasattr(self, 'out_delineated_lbl'):
                 self.out_delineated_lbl.setText(f"• Delineated EAs: <b>{geo5}_delineated_ea2026.gpkg</b>")
             if hasattr(self, 'out_merged_lbl'):
-                self.out_merged_lbl.setText(f"• Merged EAs: <b>{geo5}_merged_ea2026.gpkg</b>")
+                if merge_ea_layer:
+                    self.out_merged_lbl.setText(f"• Merged EAs: <b>{merge_ea_layer.name()}.gpkg</b>")
+                else:
+                    self.out_merged_lbl.setText(f"• Merged EAs: <b>{geo5}_merged_ea2026.gpkg</b>")
             if hasattr(self, 'out_splitting_lines_lbl'):
                 self.out_splitting_lines_lbl.setText(f"• Proposed Splitting Lines: <b>{geo5}_eadel_update.gpkg</b>")
 
@@ -2918,7 +2926,10 @@ class EALauncherDialog(QDialog):
             if hasattr(self, 'out_delineated_lbl'):
                 self.out_delineated_lbl.setText("• Delineated EAs: <i>-</i>")
             if hasattr(self, 'out_merged_lbl'):
-                self.out_merged_lbl.setText("• Merged EAs: <i>-</i>")
+                if merge_ea_layer:
+                    self.out_merged_lbl.setText(f"• Merged EAs: <b>{merge_ea_layer.name()}.gpkg</b>")
+                else:
+                    self.out_merged_lbl.setText("• Merged EAs: <i>-</i>")
             if hasattr(self, 'out_splitting_lines_lbl'):
                 self.out_splitting_lines_lbl.setText("• Proposed Splitting Lines: <i>-</i>")
 
@@ -3969,66 +3980,90 @@ class EALauncherDialog(QDialog):
         total_hh = int(round(total_hh))
         total_bldg = int(round(total_bldg))
 
-        # Find or create output layer <geocode>_merged_ea2026
+        # Resolve target layer:
+        # 1. Prioritize whatever layer is currently selected in "Merged EA Layer (Polygon)*" input (merge_ea_combo)
+        # e.g., pppmmbbb_ea2026, pppmm_merged_ea2026, or any user-selected layer
+        selected_merge_ea = self._safe_get_layer(getattr(self, 'merge_ea_combo', None))
         prev_fields = partner_layer_source.fields()
         geo5 = self._extract_5digit_geocode() or "output"
-        target_layer_name = f"{geo5}_merged_ea2026"
+        default_target_name = f"{geo5}_merged_ea2026"
+
         target_layer = None
+        target_layer_name = default_target_name
 
-        for lyr in QgsProject.instance().mapLayersByName(target_layer_name):
-            if isinstance(lyr, QgsVectorLayer) and lyr.isValid():
-                target_layer = lyr
-                break
+        if (
+            selected_merge_ea
+            and selected_merge_ea.isValid()
+            and selected_merge_ea != prev_ea_layer
+            and selected_merge_ea.name() not in ("Merge_EA", f"{geo5}_merge_ea")
+        ):
+            target_layer = selected_merge_ea
+            target_layer_name = target_layer.name()
+        else:
+            # 2. Fallback: Find existing project layer <geocode>_merged_ea2026 or create memory layer
+            for lyr in QgsProject.instance().mapLayersByName(default_target_name):
+                if isinstance(lyr, QgsVectorLayer) and lyr.isValid():
+                    target_layer = lyr
+                    target_layer_name = lyr.name()
+                    break
 
-        if not target_layer:
-            # Create a new memory layer matching previous_ea_layer fields
-            crs_auth = prev_ea_layer.crs().authid() if prev_ea_layer.crs().isValid() else "EPSG:4326"
-            target_layer = QgsVectorLayer(f"MultiPolygon?crs={crs_auth}", target_layer_name, "memory")
-            pr = target_layer.dataProvider()
-            attrs_to_add = []
-            for f in prev_fields.toList():
-                if f.name().lower() in ("hh_count", "bldg_count", "bldgcount"):
-                    attrs_to_add.append(create_qgs_field(f.name(), QVariant.Int))
-                else:
-                    attrs_to_add.append(f)
-            pr.addAttributes(attrs_to_add)
-            target_layer.updateFields()
-
-            f_names = [f.name().lower() for f in target_layer.fields()]
-            new_attrs = []
-            if "hh_count" not in f_names:
-                new_attrs.append(create_qgs_field("hh_count", QVariant.Int))
-            if "bldg_count" not in f_names and "bldgcount" not in f_names:
-                new_attrs.append(create_qgs_field("bldg_count", QVariant.Int))
-            if "new_ean" not in f_names:
-                new_attrs.append(create_qgs_field("new_ean", QVariant.String))
-            if "ea_type" not in f_names:
-                new_attrs.append(create_qgs_field("ea_type", QVariant.String))
-            if "remarks" not in f_names:
-                new_attrs.append(create_qgs_field("remarks", QVariant.String))
-            if new_attrs:
-                pr.addAttributes(new_attrs)
+            if not target_layer:
+                # Create a new memory layer matching previous_ea_layer fields
+                crs_auth = prev_ea_layer.crs().authid() if prev_ea_layer.crs().isValid() else "EPSG:4326"
+                target_layer = QgsVectorLayer(f"MultiPolygon?crs={crs_auth}", target_layer_name, "memory")
+                pr = target_layer.dataProvider()
+                attrs_to_add = []
+                for f in prev_fields.toList():
+                    if f.name().lower() in ("hh_count", "bldg_count", "bldgcount"):
+                        attrs_to_add.append(create_qgs_field(f.name(), QVariant.Int))
+                    else:
+                        attrs_to_add.append(f)
+                pr.addAttributes(attrs_to_add)
                 target_layer.updateFields()
 
-            QgsProject.instance().addMapLayer(target_layer, False)
+                f_names = [f.name().lower() for f in target_layer.fields()]
+                new_attrs = []
+                if "hh_count" not in f_names:
+                    new_attrs.append(create_qgs_field("hh_count", QVariant.Int))
+                if "bldg_count" not in f_names and "bldgcount" not in f_names:
+                    new_attrs.append(create_qgs_field("bldg_count", QVariant.Int))
+                if "new_ean" not in f_names:
+                    new_attrs.append(create_qgs_field("new_ean", QVariant.String))
+                if "ea_type" not in f_names:
+                    new_attrs.append(create_qgs_field("ea_type", QVariant.String))
+                if "remarks" not in f_names:
+                    new_attrs.append(create_qgs_field("remarks", QVariant.String))
+                if new_attrs:
+                    pr.addAttributes(new_attrs)
+                    target_layer.updateFields()
 
-            # Insert into project layer tree under EA_Outputs -> EAs group
-            root = QgsProject.instance().layerTreeRoot()
-            main_group_name = f"{geo5}_EA_Outputs"
-            main_group = root.findGroup(main_group_name)
-            if not main_group:
-                main_group = root.insertGroup(0, main_group_name)
-            eas_group = main_group.findGroup("EAs")
-            if not eas_group:
-                eas_group = main_group.insertGroup(0, "EAs")
-            eas_group.addLayer(target_layer)
+                QgsProject.instance().addMapLayer(target_layer, False)
 
-            # Apply style if available
-            try:
-                from .helpers.style import apply_qml_to_layer
-                apply_qml_to_layer(target_layer, "12. Merged EA Polygon.qml")
-            except Exception:
-                pass
+                # Insert into project layer tree under EA_Outputs -> EAs group
+                root = QgsProject.instance().layerTreeRoot()
+                main_group_name = f"{geo5}_EA_Outputs"
+                main_group = root.findGroup(main_group_name)
+                if not main_group:
+                    main_group = root.insertGroup(0, main_group_name)
+                eas_group = main_group.findGroup("EAs")
+                if not eas_group:
+                    eas_group = main_group.insertGroup(0, "EAs")
+                eas_group.addLayer(target_layer)
+
+                # Apply style if available
+                try:
+                    from .helpers.style import apply_qml_to_layer
+                    apply_qml_to_layer(target_layer, "12. Merged EA Polygon.qml")
+                except Exception:
+                    pass
+
+            if hasattr(self, 'merge_ea_combo') and self.merge_ea_combo:
+                curr_lyr = self._safe_get_layer(self.merge_ea_combo)
+                if not curr_lyr or curr_lyr != target_layer:
+                    if hasattr(self, '_safe_set_layer'):
+                        self._safe_set_layer(self.merge_ea_combo, target_layer)
+                    else:
+                        self.merge_ea_combo.setLayer(target_layer)
 
         # Transform merged geometry to target layer CRS if needed
         if (target_layer.crs().isValid() and partner_layer_source.crs().isValid()
@@ -4413,16 +4448,31 @@ class EALauncherDialog(QDialog):
 
         merge_ea_layer = self._safe_get_layer(getattr(self, 'merge_ea_combo', None))
         prev_ea_layer = self._safe_get_layer(getattr(self, 'merge_prev_ea_combo', None)) or self._safe_get_layer(getattr(self, 'prev_ea_combo', None))
-
         geo5 = self._extract_5digit_geocode() if hasattr(self, '_extract_5digit_geocode') else ""
-        target_layer_name = f"{geo5}_merged_ea2026" if geo5 else "merged_ea2026"
+        default_target_name = f"{geo5}_merged_ea2026" if geo5 else "merged_ea2026"
+
+        # Prioritize whatever layer is currently selected in "Merged EA Layer (Polygon)*" input (merge_ea_combo)
         target_layer = None
-        for lyr in QgsProject.instance().mapLayersByName(target_layer_name):
-            if isinstance(lyr, QgsVectorLayer) and lyr.isValid():
-                target_layer = lyr
-                break
-        if not target_layer and merge_ea_layer:
+        target_layer_name = default_target_name
+
+        if (
+            merge_ea_layer
+            and merge_ea_layer.isValid()
+            and merge_ea_layer != prev_ea_layer
+            and merge_ea_layer.name() not in ("Merge_EA", f"{geo5}_merge_ea")
+        ):
             target_layer = merge_ea_layer
+            target_layer_name = target_layer.name()
+        else:
+            for lyr in QgsProject.instance().mapLayersByName(default_target_name):
+                if isinstance(lyr, QgsVectorLayer) and lyr.isValid():
+                    target_layer = lyr
+                    target_layer_name = target_layer.name()
+                    break
+
+        if not target_layer and merge_ea_layer and merge_ea_layer != prev_ea_layer:
+            target_layer = merge_ea_layer
+            target_layer_name = target_layer.name()
 
         if not target_layer or not prev_ea_layer:
             QMessageBox.warning(self, "Missing Layer", "Cannot unmerge: Target merged layer or previous EA layer is not available.")
@@ -6049,15 +6099,19 @@ class EALauncherDialog(QDialog):
         if not hasattr(self, "_session_merged_eans") or not self._session_merged_eans:
             return
 
+        geo5 = self._extract_5digit_geocode() if hasattr(self, '_extract_5digit_geocode') else ""
+        default_target_name = f"{geo5}_merged_ea2026" if geo5 else "merged_ea2026"
+
+        if not target_layer and hasattr(self, 'merge_ea_combo'):
+            m_lyr = self._safe_get_layer(self.merge_ea_combo)
+            if m_lyr and m_lyr.isValid() and m_lyr.name() not in ("Merge_EA", f"{geo5}_merge_ea"):
+                target_layer = m_lyr
+
         if not target_layer:
-            geo5 = self._extract_5digit_geocode() if hasattr(self, '_extract_5digit_geocode') else ""
-            target_layer_name = f"{geo5}_merged_ea2026" if geo5 else "merged_ea2026"
-            for lyr in QgsProject.instance().mapLayersByName(target_layer_name):
+            for lyr in QgsProject.instance().mapLayersByName(default_target_name):
                 if isinstance(lyr, QgsVectorLayer) and lyr.isValid():
                     target_layer = lyr
                     break
-        if not target_layer and hasattr(self, 'merge_ea_combo'):
-            target_layer = self._safe_get_layer(self.merge_ea_combo)
 
         if not target_layer or not target_layer.isValid():
             self._session_merged_eans.clear()
