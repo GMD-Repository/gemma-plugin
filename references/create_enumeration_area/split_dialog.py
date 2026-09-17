@@ -494,6 +494,73 @@ class SplitEADialog(QDialog):
 
             return QgsGeometry.fromPolylineXY(new_poly)
 
+    def _extract_polygon_rings(self, poly_geom: QgsGeometry) -> List[List[QgsPointXY]]:
+        """Extract linear rings from Polygon or MultiPolygon geometry as lists of QgsPointXY."""
+        rings = []
+        if not poly_geom or poly_geom.isEmpty():
+            return rings
+        try:
+            if poly_geom.isMultipart():
+                for poly in poly_geom.asMultiPolygon():
+                    for r in poly:
+                        if r and isinstance(r[0], QgsPointXY):
+                            rings.append(r)
+                        elif r and isinstance(r[0], (list, tuple)):
+                            for sub_r in r:
+                                if sub_r and isinstance(sub_r[0], QgsPointXY):
+                                    rings.append(sub_r)
+            else:
+                for r in poly_geom.asPolygon():
+                    if r and isinstance(r[0], QgsPointXY):
+                        rings.append(r)
+                    elif r and isinstance(r[0], (list, tuple)):
+                        for sub_r in r:
+                            if sub_r and isinstance(sub_r[0], QgsPointXY):
+                                rings.append(sub_r)
+        except Exception:
+            pass
+        return rings
+
+    def _find_boundary_exit_point(
+        self,
+        p0: QgsPointXY,
+        dir_x: float,
+        dir_y: float,
+        rings: List[List[QgsPointXY]],
+    ) -> Optional[Tuple[float, QgsPointXY]]:
+        """Find the closest boundary intersection along the ray p0 + t*(dir_x, dir_y) for t > 0."""
+        best_t = None
+        best_pt = None
+
+        for ring in rings:
+            n = len(ring)
+            if n < 2:
+                continue
+            for i in range(n - 1):
+                a = ring[i]
+                b = ring[i + 1]
+                wx = b.x() - a.x()
+                wy = b.y() - a.y()
+
+                cross = dir_x * wy - dir_y * wx
+                if abs(cross) < 1e-12:
+                    continue
+
+                dx0 = a.x() - p0.x()
+                dy0 = a.y() - p0.y()
+
+                t = (dx0 * wy - dy0 * wx) / cross
+                u = (dx0 * dir_y - dy0 * dir_x) / cross
+
+                if t > 1e-7 and -1e-7 <= u <= 1.0 + 1e-7:
+                    if best_t is None or t < best_t:
+                        best_t = t
+                        best_pt = QgsPointXY(p0.x() + t * dir_x, p0.y() + t * dir_y)
+
+        if best_t is not None:
+            return best_t, best_pt
+        return None
+
     def _extend_line_to_traverse_polygon(
         self,
         line_geom: QgsGeometry,
@@ -501,7 +568,12 @@ class SplitEADialog(QDialog):
         extend_dist_map_units: float = 0.001,
         extend_tol: Optional[float] = None,
     ) -> QgsGeometry:
-        """Extend cut line endpoints outward to guarantee it fully traverses through the target polygon boundary."""
+        """Extend cut line endpoints outward just enough to traverse through the target polygon boundary.
+
+        Finds the nearest boundary exit point along each endpoint ray and extends ONLY by
+        extend_dist_map_units beyond that exit point, completely preventing excessive
+        overshoot across other concave arms, lobes, or disconnected EA parts.
+        """
         if extend_tol is not None:
             extend_dist_map_units = extend_tol
         if not line_geom or line_geom.isEmpty():
@@ -509,36 +581,57 @@ class SplitEADialog(QDialog):
         if not poly_geom or poly_geom.isEmpty():
             return self._extend_line_endpoints(line_geom, extend_dist_map_units)
 
-        bbox = poly_geom.boundingBox()
-        poly_diag = math.hypot(bbox.width(), bbox.height())
-        if poly_diag < 1e-9:
-            poly_diag = 1.0
-
-        ext_len = max(poly_diag * 0.5, extend_dist_map_units) + (extend_dist_map_units * 2.0)
+        rings = self._extract_polygon_rings(poly_geom)
+        if not rings:
+            return self._extend_line_endpoints(line_geom, extend_dist_map_units)
 
         def extend_segment_coords(pts: List[QgsPointXY]) -> List[QgsPointXY]:
             if len(pts) < 2:
                 return pts
             if pts[0] == pts[-1] and len(pts) > 2:
-                # Closed ring / loop already traverses
+                # Closed loop already traverses
                 return pts
 
             new_pts = list(pts)
 
-            # Extend start point p0 outward away from p1
+            # 1. Extend start point p0 outward away from p1
             p0, p1 = new_pts[0], new_pts[1]
             dx0, dy0 = p0.x() - p1.x(), p0.y() - p1.y()
             dist0 = math.hypot(dx0, dy0)
             if dist0 > 1e-12:
-                new_p0 = QgsPointXY(p0.x() + (dx0 / dist0) * ext_len, p0.y() + (dy0 / dist0) * ext_len)
+                dir0_x, dir0_y = dx0 / dist0, dy0 / dist0
+                exit0 = self._find_boundary_exit_point(p0, dir0_x, dir0_y, rings)
+                if exit0 is not None:
+                    _, pt_exit0 = exit0
+                    new_p0 = QgsPointXY(
+                        pt_exit0.x() + dir0_x * extend_dist_map_units,
+                        pt_exit0.y() + dir0_y * extend_dist_map_units,
+                    )
+                else:
+                    new_p0 = QgsPointXY(
+                        p0.x() + dir0_x * extend_dist_map_units,
+                        p0.y() + dir0_y * extend_dist_map_units,
+                    )
                 new_pts[0] = new_p0
 
-            # Extend end point pn outward away from pn_prev
+            # 2. Extend end point pn outward away from pn_prev
             pn, pn_prev = new_pts[-1], new_pts[-2]
             dxn, dyn = pn.x() - pn_prev.x(), pn.y() - pn_prev.y()
             distn = math.hypot(dxn, dyn)
             if distn > 1e-12:
-                new_pn = QgsPointXY(pn.x() + (dxn / distn) * ext_len, pn.y() + (dyn / distn) * ext_len)
+                dirn_x, dirn_y = dxn / distn, dyn / distn
+                exitn = self._find_boundary_exit_point(pn, dirn_x, dirn_y, rings)
+                if exitn is not None:
+                    _, pt_exitn = exitn
+                    new_pn = QgsPointXY(
+                        pt_exitn.x() + dirn_x * extend_dist_map_units,
+                        pt_exitn.y() + dirn_y * extend_dist_map_units,
+                    )
+                else:
+                    new_pn = QgsPointXY(
+                        pn.x() + dirn_x * extend_dist_map_units,
+                        pn.y() + dirn_y * extend_dist_map_units,
+                    )
                 new_pts[-1] = new_pn
 
             return new_pts
@@ -781,15 +874,12 @@ class SplitEADialog(QDialog):
                     cand_line_ids = line_spatial_index.intersects(poly_geom.boundingBox())
                     candidate_lines = [line_lookup[lid] for lid in cand_line_ids if lid in line_lookup]
 
+                snap_search_dist = max(extend_dist_map_units * 2.0, 2.0 if not is_geographic else 0.00005)
                 matching_lines = []
                 for lfeat in candidate_lines:
                     if lfeat and lfeat.geometry() and not lfeat.geometry().isEmpty():
                         lg = lfeat.geometry()
-                        if (
-                            (use_selected_poly and use_selected_lines)
-                            or poly_geom.intersects(lg)
-                            or poly_geom.distance(lg) < max(extend_dist_map_units * 5.0, 50.0 if not is_geographic else 0.001)
-                        ):
+                        if poly_geom.intersects(lg) or poly_geom.distance(lg) <= snap_search_dist:
                             matching_lines.append(lfeat)
 
                 if not matching_lines:

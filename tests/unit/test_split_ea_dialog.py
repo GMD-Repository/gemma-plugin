@@ -352,6 +352,40 @@ class TestSplitEADialog(unittest.TestCase):
         self.assertGreater(ext_pts[1].x(), 10.0)
         self.assertAlmostEqual(ext_pts[1].y(), 5.0, places=4)
 
+    def test_extend_line_concave_polygon_no_overshoot(self):
+        """Verify cut line in concave C-shaped polygon extends only slightly past the nearest exit and does NOT overshoot other arms."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+
+        dlg = SplitEADialog()
+        # C-shaped polygon: top arm y=[6,10], bottom arm y=[0,4], connecting spine x=[0,3], bay for x in (3,10], y in (4,6)
+        c_poly = QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0),
+            QgsPointXY(10, 0),
+            QgsPointXY(10, 4),
+            QgsPointXY(3, 4),
+            QgsPointXY(3, 6),
+            QgsPointXY(10, 6),
+            QgsPointXY(10, 10),
+            QgsPointXY(0, 10),
+            QgsPointXY(0, 0),
+        ]])
+
+        # Line in top arm at x=5, from y=9 to y=7 pointing downward toward the bay
+        line_geom = QgsGeometry.fromPolylineXY([QgsPointXY(5, 9), QgsPointXY(5, 7)])
+
+        ext_geom = dlg._extend_line_to_traverse_polygon(line_geom, c_poly, extend_tol=0.5)
+        ext_pts = ext_geom.asPolyline()
+
+        self.assertEqual(len(ext_pts), 2)
+        # Top endpoint (y=9) extends past y=10 by 0.5 -> y=10.5
+        self.assertGreater(ext_pts[0].y(), 10.0)
+
+        # Bottom endpoint (y=7) hits top arm boundary at y=6, extends by 0.5 -> y=5.5
+        # Crucially, it must NEVER overshoot to y <= 4.0 (the bottom arm)!
+        self.assertAlmostEqual(ext_pts[1].x(), 5.0, places=4)
+        self.assertAlmostEqual(ext_pts[1].y(), 5.5, places=2)
+        self.assertGreater(ext_pts[1].y(), 4.0, "Extended line must NOT penetrate the bottom arm!")
+
     def test_selection_ui_and_signals(self):
         """Verify layer selection updates UI checkbox labels and enables/disables them."""
         from references.create_enumeration_area.split_dialog import SplitEADialog
