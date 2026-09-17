@@ -548,6 +548,9 @@ class QgsGeometry:
             pt = self._point
             xs = [pt.x()]
             ys = [pt.y()]
+        elif getattr(self, '_polyline', None) is not None and self._polyline:
+            xs = [p.x() if hasattr(p, 'x') else p[0] for p in self._polyline]
+            ys = [p.y() if hasattr(p, 'y') else p[1] for p in self._polyline]
         elif self.polygons:
             pts = []
             def _extract_pts(obj):

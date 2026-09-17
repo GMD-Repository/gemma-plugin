@@ -681,8 +681,13 @@ class SplitEADialog(QDialog):
         return -1, ""
 
     def _extract_parent_code_and_prefix(self, feat: QgsFeature, fields: Any = None) -> Tuple[str, str]:
-        """Extract standardized 6-digit code and 3-digit prefix from parent feature."""
-        candidate_fields = ["ean", "new_ean", "code", "ea_code", "ea_number", "id", "name"]
+        """Extract standardized 6-digit code and 3-digit prefix from parent feature.
+        Prioritizes the authoritative 14-digit PSGC geocode (digits[-6:]) if present.
+        """
+        candidate_fields = [
+            "geocode", "ea_geocode", "geo_code",
+            "ean", "new_ean", "code", "ea_code", "ea_number", "id", "name"
+        ]
         for fname in candidate_fields:
             try:
                 raw_val = feat.attribute(fname)
@@ -737,6 +742,75 @@ class SplitEADialog(QDialog):
                                 return code_6, code_6[:3]
 
         return "001000", "001"
+
+    def _extract_barangay_key(self, feat: QgsFeature, fields: Any = None) -> str:
+        """Extract standardized barangay identifier for barangay-level sequence isolation.
+        Prioritizes the authoritative 14-digit PSGC geocode (digits[:8]) if present.
+        """
+        candidate_fields = [
+            "geocode", "ea_geocode", "geo_code",
+            "bgy_code", "brgy_code", "bgy_geocode", "barangay_geocode",
+            "barangay_code", "bgy_c", "brgy_c", "psgc", "psgc_code",
+            "adm4_pcode", "barangay", "bgy", "brgy",
+            "bgy_name", "barangay_name", "code"
+        ]
+        for fname in candidate_fields:
+            try:
+                raw_val = feat.attribute(fname)
+                if raw_val is not None and raw_val != NULL:
+                    s = str(raw_val).strip()
+                    if s.endswith(".0"):
+                        s = s[:-2]
+                    if s and s.lower() not in ("null", "none", "nan", "false"):
+                        digits = "".join([c for c in s if c.isdigit()])
+                        if len(digits) >= 12:
+                            return digits[:8]
+                        elif len(digits) in (8, 9, 10):
+                            return digits
+                        elif digits and len(digits) >= 8:
+                            return digits[:8]
+                        elif digits and fname in ("bgy_code", "brgy_code", "bgy_c", "brgy_c"):
+                            return digits
+                        return s.upper()
+            except Exception:
+                pass
+
+        if fields is not None:
+            for fname in candidate_fields:
+                idx = -1
+                if hasattr(fields, "indexOf"):
+                    idx = fields.indexOf(fname)
+                elif hasattr(fields, "lookupField"):
+                    idx = fields.lookupField(fname)
+                elif hasattr(fields, "indexFromName"):
+                    idx = fields.indexFromName(fname)
+                elif isinstance(fields, (list, tuple)):
+                    for i, f in enumerate(fields):
+                        if hasattr(f, "name") and f.name().lower() == fname:
+                            idx = i
+                            break
+                if idx != -1:
+                    try:
+                        raw_val = feat.attribute(idx)
+                        if raw_val is not None and raw_val != NULL:
+                            s = str(raw_val).strip()
+                            if s.endswith(".0"):
+                                s = s[:-2]
+                            if s and s.lower() not in ("null", "none", "nan", "false"):
+                                digits = "".join([c for c in s if c.isdigit()])
+                                if len(digits) >= 12:
+                                    return digits[:8]
+                                elif len(digits) in (8, 9, 10):
+                                    return digits
+                                elif digits and len(digits) >= 8:
+                                    return digits[:8]
+                                elif digits and fname in ("bgy_code", "brgy_code", "bgy_c", "brgy_c"):
+                                    return digits
+                                return s.upper()
+                    except Exception:
+                        pass
+
+        return "_ALL_"
 
     def run_split(self):
         """Execute polygon splitting pipeline and directly update target polygon layer and counts in-place."""
@@ -1123,15 +1197,15 @@ class SplitEADialog(QDialog):
             total_bldg_sum = 0
             new_features = []
 
-            # Scan layer to identify existing highest suffix sequences per prefix
-            max_seq_by_prefix = {}
+            # Scan layer to identify existing highest EA sequence per barangay
+            max_seq_by_bgy = {}
             for feat in poly_layer.getFeatures():
+                bgy_key = self._extract_barangay_key(feat, poly_layer.fields())
                 code_6, prefix_3 = self._extract_parent_code_and_prefix(feat, poly_layer.fields())
-                suffix_3 = code_6[3:]
                 try:
-                    s_val = int(suffix_3)
-                    if s_val > max_seq_by_prefix.get(prefix_3, 0):
-                        max_seq_by_prefix[prefix_3] = s_val
+                    s_val = int(prefix_3)
+                    if s_val > max_seq_by_bgy.get(bgy_key, 0):
+                        max_seq_by_bgy[bgy_key] = s_val
                 except ValueError:
                     pass
 
@@ -1139,6 +1213,7 @@ class SplitEADialog(QDialog):
                 parent_feat = group["parent"]
                 parts = group["parts"]
                 parent_code_6, orig_prefix = self._extract_parent_code_and_prefix(parent_feat, poly_layer.fields())
+                bgy_key = self._extract_barangay_key(parent_feat, poly_layer.fields())
 
                 # Calculate counts for each child part
                 part_data = []
@@ -1202,7 +1277,7 @@ class SplitEADialog(QDialog):
                     total_hh_sum += inside_hh_count
                     total_bldg_sum += inside_bldg_count
 
-                    # Determine new_ean based on standard PSA Delineation Rules
+                    # Determine new_ean based on standard PSA Delineation Rules enclosed within Barangay:
                     if len(part_data) > 1:
                         if orig_prefix == "000" or parent_code_6 in ("000000", "000", "0"):
                             # Special Rule for parent EA 000000:
@@ -1210,15 +1285,16 @@ class SplitEADialog(QDialog):
                             seq_num = idx + 1
                             assigned_new_ean = f"{seq_num:03d}000"
                         else:
-                            # Standard Delineation Rule for parent EA (e.g., 001000):
-                            # 1. Largest hh_count sub-EA gets parent_code + "000" (e.g., 001000)
-                            # 2. Succeeding sub-EAs get parent_code + (max_seq + 1) (e.g., 001001, 001002, ...)
+                            # Standard Delineation Rule enclosed within Barangay:
+                            # 1. Largest hh_count sub-EA retains mother EA: parent_code + "000" (e.g., 002000)
+                            # 2. Succeeding sub-EAs get [Next Sequential EA in Barangay][Mother EA Prefix]
+                            #    e.g., in a barangay with 3 EAs (001000, 002000, 003000), Part 2 of EA 002000 becomes 004002.
                             if idx == 0:
                                 assigned_new_ean = f"{orig_prefix}000"
                             else:
-                                curr_max = max_seq_by_prefix.get(orig_prefix, 0) + 1
-                                max_seq_by_prefix[orig_prefix] = curr_max
-                                assigned_new_ean = f"{orig_prefix}{curr_max:03d}"
+                                curr_seq = max_seq_by_bgy.get(bgy_key, 0) + 1
+                                max_seq_by_bgy[bgy_key] = curr_seq
+                                assigned_new_ean = f"{curr_seq:03d}{orig_prefix}"
                     else:
                         # Retained un-split polygon
                         existing_new_ean = parent_feat.attribute("new_ean") if "new_ean" in poly_field_names_lower else None
@@ -1249,6 +1325,26 @@ class SplitEADialog(QDialog):
                             else:
                                 val = parent_feat.attribute(fname)
                                 new_feat.setAttribute(fname, val if val is not None and val != NULL and str(val).strip() not in ("", "None", "NULL") else "RETAINED")
+                        elif fname_lower in ("geocode", "ea_geocode", "geo_code"):
+                            if len(part_data) > 1:
+                                # Strictly preserve the original 8-digit code of the geocode starting from the left (do NOT recode)
+                                val = parent_feat.attribute(fname)
+                                val_str = str(val).strip() if val is not None and val != NULL else ""
+                                if val_str.endswith(".0"):
+                                    val_str = val_str[:-2]
+                                digits_val = "".join([c for c in val_str if c.isdigit()])
+                                if len(digits_val) >= 8:
+                                    # Copy the first 8 digits starting from the left verbatim from parent
+                                    parent_left_8 = digits_val[:8]
+                                    new_feat.setAttribute(fname, f"{parent_left_8}{assigned_new_ean}")
+                                elif len(bgy_key) in (8, 9, 10) and bgy_key != "_ALL_":
+                                    new_feat.setAttribute(fname, f"{bgy_key}{assigned_new_ean}")
+                                elif val is not None and val != NULL:
+                                    new_feat.setAttribute(fname, val)
+                            else:
+                                val = parent_feat.attribute(fname)
+                                if val is not None and val != NULL:
+                                    new_feat.setAttribute(fname, val)
                         else:
                             val = parent_feat.attribute(fname)
                             if val is not None and val != NULL:

@@ -206,13 +206,13 @@ class TestSplitEADialog(unittest.TestCase):
             self.assertEqual(feat.attribute("ea_type"), "DELINEATED")
 
         # Part 1 (x: 0..5, highest HH=5): new_ean="001000", bldg_count=2, hh_count=5
-        # Part 2 (x: 5..10, 2nd highest HH=4): new_ean="001001", bldg_count=1, hh_count=4
+        # Part 2 (x: 5..10, 2nd highest HH=4): new_ean="002001", bldg_count=1, hh_count=4 (next seq 2 in bgy, mother 001)
         counts_and_ean = [
             (f.attribute("bldg_count"), f.attribute("hh_count"), f.attribute("new_ean"))
             for f in updated_features
         ]
         self.assertIn((2, 5, "001000"), counts_and_ean)
-        self.assertIn((1, 4, "001001"), counts_and_ean)
+        self.assertIn((1, 4, "002001"), counts_and_ean)
 
     @patch("references.create_enumeration_area.split_dialog.processing.run")
     def test_split_proceeds_with_notice_if_hh_count_falls_below_minimum_threshold(self, mock_proc_run):
@@ -302,7 +302,7 @@ class TestSplitEADialog(unittest.TestCase):
         self.assertEqual(len(updated_features), 2)
         eans = [f.attribute("new_ean") for f in updated_features]
         self.assertIn("001000", eans)
-        self.assertIn("001001", eans)
+        self.assertIn("002001", eans)
 
     def test_extract_parent_code_and_prefix_formats(self):
         """Verify _extract_parent_code_and_prefix standardizes ean/code to 6-digit code and 3-digit prefix."""
@@ -326,6 +326,22 @@ class TestSplitEADialog(unittest.TestCase):
         f3 = QgsFeature(fields2)
         f3.setAttribute("code", "01737004001")
         self.assertEqual(dlg._extract_parent_code_and_prefix(f3, f3.fields()), ("004001", "004"))
+
+        # 14-digit PSGC EA geocode extracts last 6 digits
+        fields3 = QgsFields()
+        fields3.append(QgsField("geocode", QVariant.String))
+        f4 = QgsFeature(fields3)
+        f4.setAttribute("geocode", "01728001002000")
+        self.assertEqual(dlg._extract_parent_code_and_prefix(f4, f4.fields()), ("002000", "002"))
+
+        # Priority: geocode prioritized over code/other fields
+        fields4 = QgsFields()
+        fields4.append(QgsField("code", QVariant.String))
+        fields4.append(QgsField("geocode", QVariant.String))
+        f5 = QgsFeature(fields4)
+        f5.setAttribute("code", "01728001")  # barangay code in code column
+        f5.setAttribute("geocode", "01728001002000")
+        self.assertEqual(dlg._extract_parent_code_and_prefix(f5, f5.fields()), ("002000", "002"))
 
     def test_extend_line_to_traverse_polygon(self):
         """Verify cut line drawn inside polygon is extended to fully traverse outside both boundaries."""
@@ -512,7 +528,7 @@ class TestSplitEADialog(unittest.TestCase):
         types_by_ean = {f.attribute("new_ean"): f.attribute("ea_type") for f in updated_features}
         self.assertEqual(types_by_ean.get("002000"), "RETAINED")
         self.assertEqual(types_by_ean.get("001000"), "DELINEATED")
-        self.assertEqual(types_by_ean.get("001001"), "DELINEATED")
+        self.assertEqual(types_by_ean.get("003001"), "DELINEATED")
 
     @patch("references.create_enumeration_area.split_dialog.processing.run")
     def test_run_split_with_selected_cut_lines_only(self, mock_proc_run):
@@ -596,6 +612,353 @@ class TestSplitEADialog(unittest.TestCase):
 
         updated_features = list(poly_lyr.getFeatures())
         self.assertEqual(len(updated_features), 2)
+
+    def test_extract_barangay_key_formats(self):
+        """Verify _extract_barangay_key standardizes barangay identifiers from attributes."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+        from qgis.core import QgsFields
+
+        dlg = SplitEADialog()
+        fields1 = QgsFields()
+        fields1.append(QgsField("bgy_code", QVariant.String))
+
+        f1 = QgsFeature(fields1)
+        f1.setAttribute("bgy_code", "01728001")
+        self.assertEqual(dlg._extract_barangay_key(f1, f1.fields()), "01728001")
+
+        fields2 = QgsFields()
+        fields2.append(QgsField("geocode", QVariant.String))
+        f2 = QgsFeature(fields2)
+        f2.setAttribute("geocode", "01728001002000")
+        self.assertEqual(dlg._extract_barangay_key(f2, f2.fields()), "01728001")
+
+        fields3 = QgsFields()
+        fields3.append(QgsField("ean", QVariant.String))
+        f3 = QgsFeature(fields3)
+        f3.setAttribute("ean", "002000")
+        self.assertEqual(dlg._extract_barangay_key(f3, f3.fields()), "_ALL_")
+
+    @patch("references.create_enumeration_area.split_dialog.processing.run")
+    def test_delineation_numbering_three_eas_split_ea_002000(self, mock_proc_run):
+        """Verify sequential numbering: barangay with 001000, 002000, 003000 where 002000 is delineated produces 004002."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+
+        poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "delineated_ea", "memory")
+        dp_poly = poly_lyr.dataProvider()
+        dp_poly.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("hh_count", QVariant.Int),
+            QgsField("bldg_count", QVariant.Int),
+            QgsField("bgy_code", QVariant.String),
+        ])
+        poly_lyr.updateFields()
+
+        # 3 EAs in Barangay 01728001: 001000, 002000, 003000
+        p1 = QgsFeature(poly_lyr.fields())
+        p1.setId(1)
+        p1.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        p1.setAttributes(["001000", 150, 20, "01728001"])
+
+        p2 = QgsFeature(poly_lyr.fields())
+        p2.setId(2)
+        p2.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(10, 0), QgsPointXY(20, 0), QgsPointXY(20, 10), QgsPointXY(10, 10), QgsPointXY(10, 0)
+        ]]))
+        p2.setAttributes(["002000", 350, 50, "01728001"])
+
+        p3 = QgsFeature(poly_lyr.fields())
+        p3.setId(3)
+        p3.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(20, 0), QgsPointXY(30, 0), QgsPointXY(30, 10), QgsPointXY(20, 10), QgsPointXY(20, 0)
+        ]]))
+        p3.setAttributes(["003000", 200, 25, "01728001"])
+        dp_poly.addFeatures([p1, p2, p3])
+        poly_lyr.updateExtents()
+
+        # Cut line dividing p2 (x: 10..20) at x=15
+        line_lyr = QgsVectorLayer("LineString?crs=epsg:4326", "cut_lines", "memory")
+        dp_line = line_lyr.dataProvider()
+        line = QgsFeature()
+        line.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(15, -2), QgsPointXY(15, 12)]))
+        dp_line.addFeatures([line])
+        line_lyr.updateExtents()
+
+        # Mock split output for p2 -> two parts
+        split_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "split_out", "memory")
+        dp_split = split_lyr.dataProvider()
+        f_part1 = QgsFeature()
+        f_part1.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(10, 0), QgsPointXY(15, 0), QgsPointXY(15, 10), QgsPointXY(10, 10), QgsPointXY(10, 0)
+        ]]))
+        f_part2 = QgsFeature()
+        f_part2.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(15, 0), QgsPointXY(20, 0), QgsPointXY(20, 10), QgsPointXY(15, 10), QgsPointXY(15, 0)
+        ]]))
+        dp_split.addFeatures([f_part1, f_part2])
+        split_lyr.updateExtents()
+
+        mock_proc_run.return_value = {"OUTPUT": split_lyr}
+
+        # Select EA 002000 (ID 2) only
+        poly_lyr.selectByIds([2])
+
+        dlg = SplitEADialog()
+        dlg.poly_combo.currentLayer = MagicMock(return_value=poly_lyr)
+        dlg.line_combo.currentLayer = MagicMock(return_value=line_lyr)
+        dlg.bldg_combo.currentLayer = MagicMock(return_value=None)
+        dlg.poly_selected_chk.setChecked(True)
+        dlg.tolerance_spin.value = MagicMock(return_value=1.0)
+        dlg.min_hh_spin.value = MagicMock(return_value=1)
+        dlg.status_banner = MagicMock()
+        dlg.progress_bar = MagicMock()
+        dlg.log_console = MagicMock()
+
+        dlg.run_split()
+
+        # Verify layer features: total 4 features
+        updated_features = list(poly_lyr.getFeatures())
+        self.assertEqual(len(updated_features), 4)
+
+        # Map new_ean to ea_type
+        eans_and_types = {f.attribute("new_ean"): f.attribute("ea_type") for f in updated_features}
+
+        # Untouched EAs 001000 and 003000 are RETAINED
+        self.assertIn("001000", eans_and_types)
+        self.assertEqual(eans_and_types["001000"], "RETAINED")
+        self.assertIn("003000", eans_and_types)
+        self.assertEqual(eans_and_types["003000"], "RETAINED")
+
+        # Delineated sub-EAs from 002000:
+        # Part 1 retains mother EA code 002000
+        self.assertIn("002000", eans_and_types)
+        self.assertEqual(eans_and_types["002000"], "DELINEATED")
+
+        # Part 2 is assigned next sequential in barangay (004) + mother EA prefix (002) = 004002!
+        self.assertIn("004002", eans_and_types)
+        self.assertEqual(eans_and_types["004002"], "DELINEATED")
+
+    @patch("references.create_enumeration_area.split_dialog.processing.run")
+    def test_delineation_numbering_isolated_per_barangay(self, mock_proc_run):
+        """Verify sequential numbering is strictly isolated per barangay."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+
+        poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "delineated_ea", "memory")
+        dp_poly = poly_lyr.dataProvider()
+        dp_poly.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("hh_count", QVariant.Int),
+            QgsField("bldg_count", QVariant.Int),
+            QgsField("bgy_code", QVariant.String),
+        ])
+        poly_lyr.updateFields()
+
+        # Barangay A (01728001) has 3 EAs (001000, 002000, 003000)
+        p1 = QgsFeature(poly_lyr.fields())
+        p1.setId(1)
+        p1.setGeometry(QgsGeometry.fromPolygonXY([[QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)]]))
+        p1.setAttributes(["001000", 100, 10, "BGY_A"])
+
+        p2 = QgsFeature(poly_lyr.fields())
+        p2.setId(2)
+        p2.setGeometry(QgsGeometry.fromPolygonXY([[QgsPointXY(10, 0), QgsPointXY(20, 0), QgsPointXY(20, 10), QgsPointXY(10, 10), QgsPointXY(10, 0)]]))
+        p2.setAttributes(["002000", 350, 30, "BGY_A"])
+
+        p3 = QgsFeature(poly_lyr.fields())
+        p3.setId(3)
+        p3.setGeometry(QgsGeometry.fromPolygonXY([[QgsPointXY(20, 0), QgsPointXY(30, 0), QgsPointXY(30, 10), QgsPointXY(20, 10), QgsPointXY(20, 0)]]))
+        p3.setAttributes(["003000", 150, 15, "BGY_A"])
+
+        # Barangay B (BGY_B) has 2 EAs (001000, 002000)
+        p4 = QgsFeature(poly_lyr.fields())
+        p4.setId(4)
+        p4.setGeometry(QgsGeometry.fromPolygonXY([[QgsPointXY(100, 0), QgsPointXY(110, 0), QgsPointXY(110, 10), QgsPointXY(100, 10), QgsPointXY(100, 0)]]))
+        p4.setAttributes(["001000", 400, 40, "BGY_B"])
+
+        p5 = QgsFeature(poly_lyr.fields())
+        p5.setId(5)
+        p5.setGeometry(QgsGeometry.fromPolygonXY([[QgsPointXY(110, 0), QgsPointXY(120, 0), QgsPointXY(120, 10), QgsPointXY(110, 10), QgsPointXY(110, 0)]]))
+        p5.setAttributes(["002000", 200, 20, "BGY_B"])
+
+        dp_poly.addFeatures([p1, p2, p3, p4, p5])
+        poly_lyr.updateExtents()
+
+        line_lyr = QgsVectorLayer("LineString?crs=epsg:4326", "cut_lines", "memory")
+        dp_line = line_lyr.dataProvider()
+        line1 = QgsFeature()
+        line1.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(15, -2), QgsPointXY(15, 12)]))
+        line2 = QgsFeature()
+        line2.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(105, -2), QgsPointXY(105, 12)]))
+        dp_line.addFeatures([line1, line2])
+        line_lyr.updateExtents()
+
+        sp_a = QgsVectorLayer("Polygon?crs=epsg:4326", "sp_a", "memory")
+        dp_a = sp_a.dataProvider()
+        dp_a.addFeatures([
+            QgsFeature(QgsGeometry.fromPolygonXY([[QgsPointXY(10, 0), QgsPointXY(15, 0), QgsPointXY(15, 10), QgsPointXY(10, 10), QgsPointXY(10, 0)]])),
+            QgsFeature(QgsGeometry.fromPolygonXY([[QgsPointXY(15, 0), QgsPointXY(20, 0), QgsPointXY(20, 10), QgsPointXY(15, 10), QgsPointXY(15, 0)]])),
+        ])
+
+        sp_b = QgsVectorLayer("Polygon?crs=epsg:4326", "sp_b", "memory")
+        dp_b = sp_b.dataProvider()
+        dp_b.addFeatures([
+            QgsFeature(QgsGeometry.fromPolygonXY([[QgsPointXY(100, 0), QgsPointXY(105, 0), QgsPointXY(105, 10), QgsPointXY(100, 10), QgsPointXY(100, 0)]])),
+            QgsFeature(QgsGeometry.fromPolygonXY([[QgsPointXY(105, 0), QgsPointXY(110, 0), QgsPointXY(110, 10), QgsPointXY(105, 10), QgsPointXY(105, 0)]])),
+        ])
+
+        def side_effect(alg_name, params):
+            if alg_name == "native:multiparttosingleparts":
+                return {"OUTPUT": params.get("INPUT")}
+            inp = params.get("INPUT")
+            pts = list(inp.getFeatures())
+            f = pts[0]
+            if f.attribute("bgy_code") == "BGY_A":
+                return {"OUTPUT": sp_a}
+            else:
+                return {"OUTPUT": sp_b}
+
+        mock_proc_run.side_effect = side_effect
+
+        # Select poly 2 (BGY_A) and poly 4 (BGY_B)
+        poly_lyr.selectByIds([2, 4])
+
+        dlg = SplitEADialog()
+        dlg.poly_combo.currentLayer = MagicMock(return_value=poly_lyr)
+        dlg.line_combo.currentLayer = MagicMock(return_value=line_lyr)
+        dlg.bldg_combo.currentLayer = MagicMock(return_value=None)
+        dlg.poly_selected_chk.setChecked(True)
+        dlg.tolerance_spin.value = MagicMock(return_value=1.0)
+        dlg.min_hh_spin.value = MagicMock(return_value=1)
+        dlg.status_banner = MagicMock()
+        dlg.progress_bar = MagicMock()
+        dlg.log_console = MagicMock()
+
+        dlg.run_split()
+
+        updated_features = list(poly_lyr.getFeatures())
+        # 3 initial from A + 2 initial from B = 5.
+        # Two were split into 2 parts each (+2) -> Total = 7 features
+        self.assertEqual(len(updated_features), 7)
+
+        bgy_a_eans = [f.attribute("new_ean") for f in updated_features if f.attribute("bgy_code") == "BGY_A"]
+        bgy_b_eans = [f.attribute("new_ean") for f in updated_features if f.attribute("bgy_code") == "BGY_B"]
+
+        # In BGY_A: max was 3, 002000 was split -> part 1: 002000, part 2: 004002
+        self.assertIn("001000", bgy_a_eans)
+        self.assertIn("002000", bgy_a_eans)
+        self.assertIn("003000", bgy_a_eans)
+        self.assertIn("004002", bgy_a_eans)
+
+        # In BGY_B: max was 2, 001000 was split -> part 1: 001000, part 2: 003001 (isolated from BGY_A!)
+        self.assertIn("001000", bgy_b_eans)
+        self.assertIn("002000", bgy_b_eans)
+        self.assertIn("003001", bgy_b_eans)
+
+    @patch("references.create_enumeration_area.split_dialog.processing.run")
+    def test_delineation_numbering_with_14_digit_geocode(self, mock_proc_run):
+        """Verify sequential numbering with 14-digit PSGC geocode:
+        Barangay 01728001 with 3 EAs:
+          01728001001000 (001000)
+          01728001002000 (002000) -> split into 2 parts
+          01728001003000 (003000)
+        Part 1: new_ean="002000", geocode="01728001002000", ea_type="DELINEATED"
+        Part 2: new_ean="004002", geocode="01728001004002", ea_type="DELINEATED"
+        """
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+
+        poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "delineated_ea", "memory")
+        dp_poly = poly_lyr.dataProvider()
+        dp_poly.addAttributes([
+            QgsField("geocode", QVariant.String),
+            QgsField("hh_count", QVariant.Int),
+            QgsField("bldg_count", QVariant.Int),
+        ])
+        poly_lyr.updateFields()
+
+        # 3 EAs in Barangay 01728001
+        p1 = QgsFeature(poly_lyr.fields())
+        p1.setId(1)
+        p1.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        p1.setAttributes(["01728001001000", 150, 20])
+
+        p2 = QgsFeature(poly_lyr.fields())
+        p2.setId(2)
+        p2.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(10, 0), QgsPointXY(20, 0), QgsPointXY(20, 10), QgsPointXY(10, 10), QgsPointXY(10, 0)
+        ]]))
+        p2.setAttributes(["01728001002000", 400, 60])
+
+        p3 = QgsFeature(poly_lyr.fields())
+        p3.setId(3)
+        p3.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(20, 0), QgsPointXY(30, 0), QgsPointXY(30, 10), QgsPointXY(20, 10), QgsPointXY(20, 0)
+        ]]))
+        p3.setAttributes(["01728001003000", 220, 30])
+        dp_poly.addFeatures([p1, p2, p3])
+        poly_lyr.updateExtents()
+
+        # Cut line dividing p2 at x=15
+        line_lyr = QgsVectorLayer("LineString?crs=epsg:4326", "cut_lines", "memory")
+        dp_line = line_lyr.dataProvider()
+        line = QgsFeature()
+        line.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(15, -2), QgsPointXY(15, 12)]))
+        dp_line.addFeatures([line])
+        line_lyr.updateExtents()
+
+        # Mock split output for p2 -> two parts
+        split_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "split_out", "memory")
+        dp_split = split_lyr.dataProvider()
+        f_part1 = QgsFeature()
+        f_part1.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(10, 0), QgsPointXY(15, 0), QgsPointXY(15, 10), QgsPointXY(10, 10), QgsPointXY(10, 0)
+        ]]))
+        f_part2 = QgsFeature()
+        f_part2.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(15, 0), QgsPointXY(20, 0), QgsPointXY(20, 10), QgsPointXY(15, 10), QgsPointXY(15, 0)
+        ]]))
+        dp_split.addFeatures([f_part1, f_part2])
+        split_lyr.updateExtents()
+
+        mock_proc_run.return_value = {"OUTPUT": split_lyr}
+
+        # Select EA 002000 (ID 2) only
+        poly_lyr.selectByIds([2])
+
+        dlg = SplitEADialog()
+        dlg.poly_combo.currentLayer = MagicMock(return_value=poly_lyr)
+        dlg.line_combo.currentLayer = MagicMock(return_value=line_lyr)
+        dlg.bldg_combo.currentLayer = MagicMock(return_value=None)
+        dlg.poly_selected_chk.setChecked(True)
+        dlg.tolerance_spin.value = MagicMock(return_value=1.0)
+        dlg.min_hh_spin.value = MagicMock(return_value=1)
+        dlg.status_banner = MagicMock()
+        dlg.progress_bar = MagicMock()
+        dlg.log_console = MagicMock()
+
+        dlg.run_split()
+
+        updated_features = list(poly_lyr.getFeatures())
+        self.assertEqual(len(updated_features), 4)
+
+        geocodes = {f.attribute("new_ean"): f.attribute("geocode") for f in updated_features}
+        ea_types = {f.attribute("new_ean"): f.attribute("ea_type") for f in updated_features}
+
+        # Untouched
+        self.assertEqual(geocodes["001000"], "01728001001000")
+        self.assertEqual(ea_types["001000"], "RETAINED")
+        self.assertEqual(geocodes["003000"], "01728001003000")
+        self.assertEqual(ea_types["003000"], "RETAINED")
+
+        # Split Part 1 retains mother geocode
+        self.assertEqual(geocodes["002000"], "01728001002000")
+        self.assertEqual(ea_types["002000"], "DELINEATED")
+
+        # Split Part 2 assigned new_ean 004002 and geocode 01728001004002
+        self.assertEqual(geocodes["004002"], "01728001004002")
+        self.assertEqual(ea_types["004002"], "DELINEATED")
 
 
 if __name__ == "__main__":
