@@ -494,6 +494,73 @@ class SplitEADialog(QDialog):
 
             return QgsGeometry.fromPolylineXY(new_poly)
 
+    def _extract_polygon_rings(self, poly_geom: QgsGeometry) -> List[List[QgsPointXY]]:
+        """Extract linear rings from Polygon or MultiPolygon geometry as lists of QgsPointXY."""
+        rings = []
+        if not poly_geom or poly_geom.isEmpty():
+            return rings
+        try:
+            if poly_geom.isMultipart():
+                for poly in poly_geom.asMultiPolygon():
+                    for r in poly:
+                        if r and isinstance(r[0], QgsPointXY):
+                            rings.append(r)
+                        elif r and isinstance(r[0], (list, tuple)):
+                            for sub_r in r:
+                                if sub_r and isinstance(sub_r[0], QgsPointXY):
+                                    rings.append(sub_r)
+            else:
+                for r in poly_geom.asPolygon():
+                    if r and isinstance(r[0], QgsPointXY):
+                        rings.append(r)
+                    elif r and isinstance(r[0], (list, tuple)):
+                        for sub_r in r:
+                            if sub_r and isinstance(sub_r[0], QgsPointXY):
+                                rings.append(sub_r)
+        except Exception:
+            pass
+        return rings
+
+    def _find_boundary_exit_point(
+        self,
+        p0: QgsPointXY,
+        dir_x: float,
+        dir_y: float,
+        rings: List[List[QgsPointXY]],
+    ) -> Optional[Tuple[float, QgsPointXY]]:
+        """Find the closest boundary intersection along the ray p0 + t*(dir_x, dir_y) for t > 0."""
+        best_t = None
+        best_pt = None
+
+        for ring in rings:
+            n = len(ring)
+            if n < 2:
+                continue
+            for i in range(n - 1):
+                a = ring[i]
+                b = ring[i + 1]
+                wx = b.x() - a.x()
+                wy = b.y() - a.y()
+
+                cross = dir_x * wy - dir_y * wx
+                if abs(cross) < 1e-12:
+                    continue
+
+                dx0 = a.x() - p0.x()
+                dy0 = a.y() - p0.y()
+
+                t = (dx0 * wy - dy0 * wx) / cross
+                u = (dx0 * dir_y - dy0 * dir_x) / cross
+
+                if t > 1e-7 and -1e-7 <= u <= 1.0 + 1e-7:
+                    if best_t is None or t < best_t:
+                        best_t = t
+                        best_pt = QgsPointXY(p0.x() + t * dir_x, p0.y() + t * dir_y)
+
+        if best_t is not None:
+            return best_t, best_pt
+        return None
+
     def _extend_line_to_traverse_polygon(
         self,
         line_geom: QgsGeometry,
@@ -501,7 +568,12 @@ class SplitEADialog(QDialog):
         extend_dist_map_units: float = 0.001,
         extend_tol: Optional[float] = None,
     ) -> QgsGeometry:
-        """Extend cut line endpoints outward to guarantee it fully traverses through the target polygon boundary."""
+        """Extend cut line endpoints outward just enough to traverse through the target polygon boundary.
+
+        Finds the nearest boundary exit point along each endpoint ray and extends ONLY by
+        extend_dist_map_units beyond that exit point, completely preventing excessive
+        overshoot across other concave arms, lobes, or disconnected EA parts.
+        """
         if extend_tol is not None:
             extend_dist_map_units = extend_tol
         if not line_geom or line_geom.isEmpty():
@@ -509,36 +581,57 @@ class SplitEADialog(QDialog):
         if not poly_geom or poly_geom.isEmpty():
             return self._extend_line_endpoints(line_geom, extend_dist_map_units)
 
-        bbox = poly_geom.boundingBox()
-        poly_diag = math.hypot(bbox.width(), bbox.height())
-        if poly_diag < 1e-9:
-            poly_diag = 1.0
-
-        ext_len = max(poly_diag * 0.5, extend_dist_map_units) + (extend_dist_map_units * 2.0)
+        rings = self._extract_polygon_rings(poly_geom)
+        if not rings:
+            return self._extend_line_endpoints(line_geom, extend_dist_map_units)
 
         def extend_segment_coords(pts: List[QgsPointXY]) -> List[QgsPointXY]:
             if len(pts) < 2:
                 return pts
             if pts[0] == pts[-1] and len(pts) > 2:
-                # Closed ring / loop already traverses
+                # Closed loop already traverses
                 return pts
 
             new_pts = list(pts)
 
-            # Extend start point p0 outward away from p1
+            # 1. Extend start point p0 outward away from p1
             p0, p1 = new_pts[0], new_pts[1]
             dx0, dy0 = p0.x() - p1.x(), p0.y() - p1.y()
             dist0 = math.hypot(dx0, dy0)
             if dist0 > 1e-12:
-                new_p0 = QgsPointXY(p0.x() + (dx0 / dist0) * ext_len, p0.y() + (dy0 / dist0) * ext_len)
+                dir0_x, dir0_y = dx0 / dist0, dy0 / dist0
+                exit0 = self._find_boundary_exit_point(p0, dir0_x, dir0_y, rings)
+                if exit0 is not None:
+                    _, pt_exit0 = exit0
+                    new_p0 = QgsPointXY(
+                        pt_exit0.x() + dir0_x * extend_dist_map_units,
+                        pt_exit0.y() + dir0_y * extend_dist_map_units,
+                    )
+                else:
+                    new_p0 = QgsPointXY(
+                        p0.x() + dir0_x * extend_dist_map_units,
+                        p0.y() + dir0_y * extend_dist_map_units,
+                    )
                 new_pts[0] = new_p0
 
-            # Extend end point pn outward away from pn_prev
+            # 2. Extend end point pn outward away from pn_prev
             pn, pn_prev = new_pts[-1], new_pts[-2]
             dxn, dyn = pn.x() - pn_prev.x(), pn.y() - pn_prev.y()
             distn = math.hypot(dxn, dyn)
             if distn > 1e-12:
-                new_pn = QgsPointXY(pn.x() + (dxn / distn) * ext_len, pn.y() + (dyn / distn) * ext_len)
+                dirn_x, dirn_y = dxn / distn, dyn / distn
+                exitn = self._find_boundary_exit_point(pn, dirn_x, dirn_y, rings)
+                if exitn is not None:
+                    _, pt_exitn = exitn
+                    new_pn = QgsPointXY(
+                        pt_exitn.x() + dirn_x * extend_dist_map_units,
+                        pt_exitn.y() + dirn_y * extend_dist_map_units,
+                    )
+                else:
+                    new_pn = QgsPointXY(
+                        pn.x() + dirn_x * extend_dist_map_units,
+                        pn.y() + dirn_y * extend_dist_map_units,
+                    )
                 new_pts[-1] = new_pn
 
             return new_pts
@@ -588,8 +681,13 @@ class SplitEADialog(QDialog):
         return -1, ""
 
     def _extract_parent_code_and_prefix(self, feat: QgsFeature, fields: Any = None) -> Tuple[str, str]:
-        """Extract standardized 6-digit code and 3-digit prefix from parent feature."""
-        candidate_fields = ["ean", "new_ean", "code", "ea_code", "ea_number", "id", "name"]
+        """Extract standardized 6-digit code and 3-digit prefix from parent feature.
+        Prioritizes the authoritative 14-digit PSGC geocode (digits[-6:]) if present.
+        """
+        candidate_fields = [
+            "geocode", "ea_geocode", "geo_code",
+            "ean", "new_ean", "code", "ea_code", "ea_number", "id", "name"
+        ]
         for fname in candidate_fields:
             try:
                 raw_val = feat.attribute(fname)
@@ -644,6 +742,75 @@ class SplitEADialog(QDialog):
                                 return code_6, code_6[:3]
 
         return "001000", "001"
+
+    def _extract_barangay_key(self, feat: QgsFeature, fields: Any = None) -> str:
+        """Extract standardized barangay identifier for barangay-level sequence isolation.
+        Prioritizes the authoritative 14-digit PSGC geocode (digits[:8]) if present.
+        """
+        candidate_fields = [
+            "geocode", "ea_geocode", "geo_code",
+            "bgy_code", "brgy_code", "bgy_geocode", "barangay_geocode",
+            "barangay_code", "bgy_c", "brgy_c", "psgc", "psgc_code",
+            "adm4_pcode", "barangay", "bgy", "brgy",
+            "bgy_name", "barangay_name", "code"
+        ]
+        for fname in candidate_fields:
+            try:
+                raw_val = feat.attribute(fname)
+                if raw_val is not None and raw_val != NULL:
+                    s = str(raw_val).strip()
+                    if s.endswith(".0"):
+                        s = s[:-2]
+                    if s and s.lower() not in ("null", "none", "nan", "false"):
+                        digits = "".join([c for c in s if c.isdigit()])
+                        if len(digits) >= 12:
+                            return digits[:8]
+                        elif len(digits) in (8, 9, 10):
+                            return digits
+                        elif digits and len(digits) >= 8:
+                            return digits[:8]
+                        elif digits and fname in ("bgy_code", "brgy_code", "bgy_c", "brgy_c"):
+                            return digits
+                        return s.upper()
+            except Exception:
+                pass
+
+        if fields is not None:
+            for fname in candidate_fields:
+                idx = -1
+                if hasattr(fields, "indexOf"):
+                    idx = fields.indexOf(fname)
+                elif hasattr(fields, "lookupField"):
+                    idx = fields.lookupField(fname)
+                elif hasattr(fields, "indexFromName"):
+                    idx = fields.indexFromName(fname)
+                elif isinstance(fields, (list, tuple)):
+                    for i, f in enumerate(fields):
+                        if hasattr(f, "name") and f.name().lower() == fname:
+                            idx = i
+                            break
+                if idx != -1:
+                    try:
+                        raw_val = feat.attribute(idx)
+                        if raw_val is not None and raw_val != NULL:
+                            s = str(raw_val).strip()
+                            if s.endswith(".0"):
+                                s = s[:-2]
+                            if s and s.lower() not in ("null", "none", "nan", "false"):
+                                digits = "".join([c for c in s if c.isdigit()])
+                                if len(digits) >= 12:
+                                    return digits[:8]
+                                elif len(digits) in (8, 9, 10):
+                                    return digits
+                                elif digits and len(digits) >= 8:
+                                    return digits[:8]
+                                elif digits and fname in ("bgy_code", "brgy_code", "bgy_c", "brgy_c"):
+                                    return digits
+                                return s.upper()
+                    except Exception:
+                        pass
+
+        return "_ALL_"
 
     def run_split(self):
         """Execute polygon splitting pipeline and directly update target polygon layer and counts in-place."""
@@ -781,15 +948,12 @@ class SplitEADialog(QDialog):
                     cand_line_ids = line_spatial_index.intersects(poly_geom.boundingBox())
                     candidate_lines = [line_lookup[lid] for lid in cand_line_ids if lid in line_lookup]
 
+                snap_search_dist = max(extend_dist_map_units * 2.0, 2.0 if not is_geographic else 0.00005)
                 matching_lines = []
                 for lfeat in candidate_lines:
                     if lfeat and lfeat.geometry() and not lfeat.geometry().isEmpty():
                         lg = lfeat.geometry()
-                        if (
-                            (use_selected_poly and use_selected_lines)
-                            or poly_geom.intersects(lg)
-                            or poly_geom.distance(lg) < max(extend_dist_map_units * 5.0, 50.0 if not is_geographic else 0.001)
-                        ):
+                        if poly_geom.intersects(lg) or poly_geom.distance(lg) <= snap_search_dist:
                             matching_lines.append(lfeat)
 
                 if not matching_lines:
@@ -1033,15 +1197,15 @@ class SplitEADialog(QDialog):
             total_bldg_sum = 0
             new_features = []
 
-            # Scan layer to identify existing highest suffix sequences per prefix
-            max_seq_by_prefix = {}
+            # Scan layer to identify existing highest EA sequence per barangay
+            max_seq_by_bgy = {}
             for feat in poly_layer.getFeatures():
+                bgy_key = self._extract_barangay_key(feat, poly_layer.fields())
                 code_6, prefix_3 = self._extract_parent_code_and_prefix(feat, poly_layer.fields())
-                suffix_3 = code_6[3:]
                 try:
-                    s_val = int(suffix_3)
-                    if s_val > max_seq_by_prefix.get(prefix_3, 0):
-                        max_seq_by_prefix[prefix_3] = s_val
+                    s_val = int(prefix_3)
+                    if s_val > max_seq_by_bgy.get(bgy_key, 0):
+                        max_seq_by_bgy[bgy_key] = s_val
                 except ValueError:
                     pass
 
@@ -1049,6 +1213,7 @@ class SplitEADialog(QDialog):
                 parent_feat = group["parent"]
                 parts = group["parts"]
                 parent_code_6, orig_prefix = self._extract_parent_code_and_prefix(parent_feat, poly_layer.fields())
+                bgy_key = self._extract_barangay_key(parent_feat, poly_layer.fields())
 
                 # Calculate counts for each child part
                 part_data = []
@@ -1112,7 +1277,7 @@ class SplitEADialog(QDialog):
                     total_hh_sum += inside_hh_count
                     total_bldg_sum += inside_bldg_count
 
-                    # Determine new_ean based on standard PSA Delineation Rules
+                    # Determine new_ean based on standard PSA Delineation Rules enclosed within Barangay:
                     if len(part_data) > 1:
                         if orig_prefix == "000" or parent_code_6 in ("000000", "000", "0"):
                             # Special Rule for parent EA 000000:
@@ -1120,15 +1285,16 @@ class SplitEADialog(QDialog):
                             seq_num = idx + 1
                             assigned_new_ean = f"{seq_num:03d}000"
                         else:
-                            # Standard Delineation Rule for parent EA (e.g., 001000):
-                            # 1. Largest hh_count sub-EA gets parent_code + "000" (e.g., 001000)
-                            # 2. Succeeding sub-EAs get parent_code + (max_seq + 1) (e.g., 001001, 001002, ...)
+                            # Standard Delineation Rule enclosed within Barangay:
+                            # 1. Largest hh_count sub-EA retains mother EA: parent_code + "000" (e.g., 002000)
+                            # 2. Succeeding sub-EAs get [Next Sequential EA in Barangay][Mother EA Prefix]
+                            #    e.g., in a barangay with 3 EAs (001000, 002000, 003000), Part 2 of EA 002000 becomes 004002.
                             if idx == 0:
                                 assigned_new_ean = f"{orig_prefix}000"
                             else:
-                                curr_max = max_seq_by_prefix.get(orig_prefix, 0) + 1
-                                max_seq_by_prefix[orig_prefix] = curr_max
-                                assigned_new_ean = f"{orig_prefix}{curr_max:03d}"
+                                curr_seq = max_seq_by_bgy.get(bgy_key, 0) + 1
+                                max_seq_by_bgy[bgy_key] = curr_seq
+                                assigned_new_ean = f"{curr_seq:03d}{orig_prefix}"
                     else:
                         # Retained un-split polygon
                         existing_new_ean = parent_feat.attribute("new_ean") if "new_ean" in poly_field_names_lower else None
@@ -1159,6 +1325,26 @@ class SplitEADialog(QDialog):
                             else:
                                 val = parent_feat.attribute(fname)
                                 new_feat.setAttribute(fname, val if val is not None and val != NULL and str(val).strip() not in ("", "None", "NULL") else "RETAINED")
+                        elif fname_lower in ("geocode", "ea_geocode", "geo_code"):
+                            if len(part_data) > 1:
+                                # Strictly preserve the original 8-digit code of the geocode starting from the left (do NOT recode)
+                                val = parent_feat.attribute(fname)
+                                val_str = str(val).strip() if val is not None and val != NULL else ""
+                                if val_str.endswith(".0"):
+                                    val_str = val_str[:-2]
+                                digits_val = "".join([c for c in val_str if c.isdigit()])
+                                if len(digits_val) >= 8:
+                                    # Copy the first 8 digits starting from the left verbatim from parent
+                                    parent_left_8 = digits_val[:8]
+                                    new_feat.setAttribute(fname, f"{parent_left_8}{assigned_new_ean}")
+                                elif len(bgy_key) in (8, 9, 10) and bgy_key != "_ALL_":
+                                    new_feat.setAttribute(fname, f"{bgy_key}{assigned_new_ean}")
+                                elif val is not None and val != NULL:
+                                    new_feat.setAttribute(fname, val)
+                            else:
+                                val = parent_feat.attribute(fname)
+                                if val is not None and val != NULL:
+                                    new_feat.setAttribute(fname, val)
                         else:
                             val = parent_feat.attribute(fname)
                             if val is not None and val != NULL:

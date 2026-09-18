@@ -86,7 +86,7 @@ To provide a clean and focused workflow, Tab 2 is split into two dedicated sub-t
 
 1. **Proposed Delineation Sub-Tab**: Focused on overpopulated EAs (`> 300 HH`). Features delineation threshold settings, road/river boundary snapping parameters, an isolated **Delineation Candidates Preview** table with KPI counter card, a dedicated delineation execution log console, and two action buttons:
    - **Extract Delineation Candidate**: Generates and loads candidate layers (`<geocode>_delineated_ea2026.gpkg`, `<geocode>_delineation_candidates`, `<geocode>_extracted_bldgpts`, `<geocode>_eadel_update.gpkg`).
-   - **Run Delineation**: Opens a dedicated modal pop-up to split EA polygons with proposed cut lines in-place and recalculate building and household counts.
+   - **Run Delineation**: Opens a dedicated modal pop-up to split EA polygons with proposed cut lines in-place and recalculate building and household counts. Resulting sub-EAs are assigned standard sequential numbers enclosed within their barangay (`[Next Sequential EA in Barangay][Mother EA Prefix]`, e.g. Part 2 of Mother EA `002000` in a barangay with initial EAs `001000`, `002000`, `003000` becomes `004002`).
 2. **Proposed Merging Sub-Tab**: Focused on underpopulated EAs (`<= 100 HH`). Features merging threshold settings, under-threshold candidate-to-candidate merging toggles, an isolated **Merge Candidates Preview** table with KPI counter card, a dedicated merging execution log console, and two action buttons:
    - **Extract Merge Candidate**: Generates and loads candidate layers (`<geocode>_merged_ea2026.gpkg`, `<geocode>_extracted_bldgpts`).
    - **Unmerge EA**: Opens a dedicated modal pop-up to unmerge recently merged EA polygons back into their constituent original geometries based on the EA previous layer, updating the merged layer in-place and recalculating `hh_count` (from building points `est_hhcount`) and `bldg_count` for each restored EA. Triggering "Run Unmerge" emits an completion signal that automatically refreshes the **Merge Preview** table in the main launcher dialog in real time.
@@ -102,6 +102,24 @@ To provide a clean and focused workflow, Tab 2 is split into two dedicated sub-t
 
 > [!TIP]
 > **Two-Way Synchronization**: Selecting input layers, designating output directories, updating search filters, or adjusting shared threshold parameters in either sub-tab automatically synchronizes the corresponding controls across both sub-tabs in real time. Running either action button automatically discards temporary in-memory outputs belonging to the opposite sub-tab mode.
+
+> [!NOTE]
+> **Delineation Sequential Numbering Rules (Barangay-Enclosed & PSGC Standard)**:
+> When an Enumeration Area polygon is delineated (split) into multiple pieces:
+> 1. **Authoritative 14-Digit PSGC Geocode Source**:
+>    - The 14-digit PSGC EA geocode (`geocode` / `ea_geocode`, e.g. `01728001002000`) serves as the single authoritative source of truth for both barangay grouping and EA identification:
+>      - **Barangay Code (`digits[:8]`)**: The first 8 digits starting from the left designate the parent barangay (`01728001`). **These 8 digits are strictly preserved and NEVER recoded**.
+>      - **Mother EA Code (`digits[-6:]`)**: The last 6 digits designate the mother EA (`002000`).
+>      - **Mother EA Prefix (`digits[-6:-3]`)**: The first 3 digits of the EA designate the mother prefix (`002`).
+> 2. **Strict Preservation of the 8-Digit Barangay Code**:
+>    - Renumbering is exclusively applied to the 6-digit EA code (`new_ean`). Under no circumstances is the 8-digit PSGC barangay code modified.
+> 3. **Mother EA Portion (Part 1)**: Retains the original mother EA code formatted as `[Mother EA Prefix]000` (e.g. `002000`) and the original 14-digit geocode (`01728001002000`).
+> 4. **Sub-EA Portions (Part 2+)**: Assigned sequential numbers enclosed within the specific barangay using the convention `[Next Sequential EA in Barangay (3 digits)][Mother EA Prefix (3 digits)]`:
+>    - *Example*: In barangay `01728001` with 3 initial EAs (`001000`, `002000`, `003000`), the current maximum sequential EA number is `3`. When EA `002000` is split into 2 parts:
+>      - **Part 1**: `new_ean = "002000"`, `geocode = "01728001002000"`, `ea_type = "DELINEATED"`
+>      - **Part 2**: `new_ean = "004002"`, `geocode = "01728001004002"` *(first 8 digits `01728001` untouched + new EA `004002`)*, `ea_type = "DELINEATED"`
+>    - If EA `002000` were split into 3 parts, Part 3 would receive `new_ean = "005002"` and `geocode = "01728001005002"`.
+> 5. **Barangay Isolation**: Sequence determination is strictly scoped per barangay so that each barangay maintains an independent sequence counter without cross-barangay number leakage. Fallback fields (`bgy_code`, `ean`) are supported when full 14-digit geocodes are absent.
 
 > [!NOTE]
 > **Merge Preview Minimum Threshold & Retention Rule**:
@@ -155,7 +173,7 @@ The output layers `<geocode>_delineated_ea2026` and `<geocode>_merged_ea2026` sh
 | **hhcount** | Double | Original household count from the starting EA input layer. |
 | **bldgcount** | Integer | Original building count from the starting EA input layer. |
 | **sy** | String / Integer | Survey Year / Census round identifier (e.g. `2026`). |
-| **new_ean** | String | Newly assigned post-delineation 6-digit EA sequence number code (e.g. `001000`). |
+| **new_ean** | String | Newly assigned post-delineation 6-digit EA sequence number code (e.g. `001000` for retained / mother part, or `004002` for sub-EA derived from mother `002000` with next sequential EA `004` in the barangay). |
 | **hh_count** | Integer | New total household count aggregated from building points assigned to this polygon (whole number). |
 | **bldg_count** | Integer | New total building point count contained in this polygon. |
 | **ea_type** | String | EA classification and transformation type (`DELINEATED`, `MERGED`, or `RETAINED`). |
