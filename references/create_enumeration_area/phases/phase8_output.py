@@ -1723,8 +1723,8 @@ def run_phase_8(
                 'province': line_prov,
                 'city_mun': line_cm,
                 'barangay': line_bgy,
-                'indicator': str(parent_feat.attribute(eadel_indi_idx)) if eadel_indi_idx != -1 and parent_feat.attribute(eadel_indi_idx) is not None else "FOR DELINEATION",
-                'remarks': "Proposed delineation line",
+                'indicator': p_line.get('indicator') or (str(parent_feat.attribute(eadel_indi_idx)) if eadel_indi_idx != -1 and parent_feat.attribute(eadel_indi_idx) is not None else "FOR DELINEATION"),
+                'remarks': p_line.get('remarks') or "Proposed delineation line",
                 'split_by': p_line.get('split_by', 'voronoi'),
                 'num_parts': p_line.get('num_parts', 2),
                 'part_hh_counts': p_line.get('part_hh_counts', []),
@@ -1834,7 +1834,8 @@ def run_phase_8(
 
             all_splitting_lines.append((merged, attrs))
 
-    if all_splitting_lines:
+    has_delin_candidates = bool(delineation_candidate_ids)
+    if all_splitting_lines or has_delin_candidates:
         geo5 = "00000"
         for ea_item in eas:
             bar = ea_item.get('parent_barangay')
@@ -1881,24 +1882,30 @@ def run_phase_8(
             ])
             features_to_add.append(f)
 
-        if features_to_add:
-            line_layer = QgsVectorLayer(uri, layer_name, "memory")
-            if line_layer.isValid():
+        line_layer = QgsVectorLayer(uri, layer_name, "memory")
+        if line_layer.isValid():
+            if features_to_add:
                 pr = line_layer.dataProvider()
                 pr.addFeatures(features_to_add)
                 line_layer.updateExtents()
 
-                apply_qml_to_layer(line_layer, "eadel_update_lines.qml")
+            apply_qml_to_layer(line_layer, "eadel_update_lines.qml")
 
-                project = QgsProject.instance()
-                if project:
-                    project.addMapLayer(line_layer)
+            project = QgsProject.instance()
+            if project:
+                project.addMapLayer(line_layer)
+            if features_to_add:
                 feedback.pushInfo(
                     f"Created line layer '{layer_name}' with {len(features_to_add)} "
                     f"feature(s) ({len(all_splitting_lines)} candidate(s) processed)."
                 )
             else:
-                feedback.reportError(f"Failed to create memory layer for {layer_name}")
+                feedback.pushInfo(
+                    f"Created empty proposed cut lines layer '{layer_name}' for {len(delineation_candidate_ids)} "
+                    f"delineation candidate(s) (Ready for manual digitizing/editing in QGIS)."
+                )
+        else:
+            feedback.reportError(f"Failed to create memory layer for {layer_name}")
 
     feedback.pushInfo("Successfully created and structured Enumeration Areas.")
 

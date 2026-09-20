@@ -5145,8 +5145,8 @@ class EALauncherDialog(QDialog):
 
                         processed_line_names.add(target_line_name)
                         line_gpkg_path = os.path.normpath(os.path.join(out_folder, f"{target_line_name}.gpkg")).replace("\\", "/") if out_folder else ""
-                        if proj_layer.featureCount() == 0:
-                            # If 0 features, do not create permanent file and remove from project
+                        if mode == "merging" and proj_layer.featureCount() == 0:
+                            # In merging mode, do not keep empty splitting line layers
                             QgsProject.instance().removeMapLayer(layer_id)
                             if line_gpkg_path and os.path.exists(line_gpkg_path):
                                 try:
@@ -5157,7 +5157,7 @@ class EALauncherDialog(QDialog):
                             _log_msg(skip_msg)
                         else:
                             has_splitting_lines = True
-                            # Convert in-memory splitting line layer to permanent GeoPackage on disk ONLY when it has features
+                            # Convert in-memory splitting line layer to permanent GeoPackage on disk
                             if line_gpkg_path and not proj_layer.source().lower().endswith(".gpkg"):
                                 if self._export_layer_to_gpkg(proj_layer, line_gpkg_path, target_line_name):
                                     perm_line_layer = QgsVectorLayer(f"{line_gpkg_path}|layername={target_line_name}", target_line_name, "ogr")
@@ -5172,9 +5172,14 @@ class EALauncherDialog(QDialog):
                                         QgsProject.instance().addMapLayer(perm_line_layer, False)
                                         apply_qml_to_layer(perm_line_layer, "eadel_update_lines.qml")
                                         splitting_lines_group.addLayer(perm_line_layer)
+                                        feat_desc = (
+                                            f"{perm_line_layer.featureCount()} feature(s)"
+                                            if perm_line_layer.featureCount() > 0
+                                            else "0 features; ready for manual editing"
+                                        )
                                         save_msg = (
                                             f"<span style='color:#0969da; font-weight:bold;'>[INFO]</span> "
-                                            f"Permanent GeoPackage layer (.gpkg) saved: {target_line_name} ({line_gpkg_path})"
+                                            f"Permanent GeoPackage layer (.gpkg) saved: {target_line_name} ({feat_desc}) ({line_gpkg_path})"
                                         )
                                         _log_msg(save_msg)
                                         continue
