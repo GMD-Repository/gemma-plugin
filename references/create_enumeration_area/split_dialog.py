@@ -684,6 +684,38 @@ class SplitEADialog(QDialog):
                     return idx, fields.at(idx).name()
         return -1, ""
 
+    def _resolve_bldg_ea_geocode_field(self, bldg_layer: QgsVectorLayer) -> Tuple[int, str]:
+        """Find the index and name of the ea_geocode field in building point layer strictly."""
+        fields = bldg_layer.fields()
+        for idx in range(fields.count()):
+            if fields.at(idx).name().lower() == "ea_geocode":
+                return idx, fields.at(idx).name()
+        return -1, ""
+
+    def _resolve_ea_geocode_field(self, poly_layer: QgsVectorLayer) -> Tuple[int, str]:
+        """Find the index and name of the geocode field in EA layer strictly."""
+        fields = poly_layer.fields()
+        for idx in range(fields.count()):
+            if fields.at(idx).name().lower() == "geocode":
+                return idx, fields.at(idx).name()
+        return -1, ""
+
+    def _extract_8digit_code(self, val: Any) -> str:
+        """Extract standardized 8-digit numeric code from a geocode string/int."""
+        if val is None or val == NULL or str(val).strip() in ("", "NULL", "None", "nan"):
+            return ""
+        if isinstance(val, QVariant) and val.isNull():
+            return ""
+        val_str = str(val).strip()
+        if val_str.endswith(".0"):
+            val_str = val_str[:-2]
+        digits = "".join([c for c in val_str if c.isdigit()])
+        if len(digits) >= 8:
+            return digits[:8]
+        elif len(digits) > 0:
+            return digits.zfill(8)
+        return val_str[:8] if len(val_str) >= 8 else val_str
+
     def _extract_parent_code_and_prefix(self, feat: QgsFeature, fields: Any = None) -> Tuple[str, str]:
         """Extract standardized 6-digit code and 3-digit prefix from parent feature.
         Prioritizes the authoritative 14-digit PSGC geocode (digits[-6:]) if present.
@@ -939,12 +971,15 @@ class SplitEADialog(QDialog):
             bldg_spatial_index = None
             bldg_lookup = {}
             bldg_hh_idx, bldg_hh_name = -1, ""
+            bldg_ea_geo_idx, bldg_ea_geo_name = -1, ""
 
             if bldg_layer and bldg_layer.isValid() and bldg_layer.featureCount() > 0:
                 bldg_hh_idx, bldg_hh_name = self._resolve_bldg_hh_field(bldg_layer)
+                bldg_ea_geo_idx, bldg_ea_geo_name = self._resolve_bldg_ea_geocode_field(bldg_layer)
+                geo_info = f", building ea_geocode: '{bldg_ea_geo_name}'" if bldg_ea_geo_idx != -1 else ""
                 self._log(
                     f"Computing building & household counts using '{bldg_layer.name()}' "
-                    f"(household field: '{bldg_hh_name or 'none [fallback 1/point]'}')..."
+                    f"(household field: '{bldg_hh_name or 'none [fallback 1/point]'}'{geo_info})..."
                 )
                 bldg_spatial_index = QgsSpatialIndex()
                 for bf in bldg_layer.getFeatures():
@@ -960,11 +995,20 @@ class SplitEADialog(QDialog):
                         bldg_spatial_index.addFeature(feat_clone)
                         bldg_lookup[bf.id()] = feat_clone
 
-            def _calculate_geom_counts(geom):
+            # Resolve EA layer geocode field strictly
+            ea_geo_idx, ea_geo_name = self._resolve_ea_geocode_field(poly_layer)
+
+            def _calculate_geom_counts(geom, target_8digit_code=None):
                 inside_bldg_count = 0
                 inside_hh_float = 0.0
                 if bldg_spatial_index and geom and not geom.isEmpty():
                     candidate_ids = bldg_spatial_index.intersects(geom.boundingBox())
+
+                    # Group counts by 8-digit code of ea_geocode
+                    grouped_counts = {}
+                    all_spatial_bldg_count = 0
+                    all_spatial_hh_float = 0.0
+
                     for bid in candidate_ids:
                         bfeat = bldg_lookup.get(bid)
                         if not bfeat:
@@ -973,18 +1017,54 @@ class SplitEADialog(QDialog):
                         if not bgeom or bgeom.isEmpty():
                             continue
                         if geom.contains(bgeom) or geom.intersects(bgeom):
-                            inside_bldg_count += 1
+                            # Resolve household float for point
                             if bldg_hh_idx != -1:
                                 raw_val = bfeat.attribute(bldg_hh_idx)
                                 if raw_val is not None and raw_val != NULL:
                                     try:
-                                        inside_hh_float += float(raw_val)
+                                        pt_hh = float(raw_val)
                                     except (ValueError, TypeError):
-                                        inside_hh_float += 1.0
+                                        pt_hh = 1.0
                                 else:
-                                    inside_hh_float += 1.0
+                                    pt_hh = 1.0
                             else:
-                                inside_hh_float += 1.0
+                                pt_hh = 1.0
+
+                            all_spatial_bldg_count += 1
+                            all_spatial_hh_float += pt_hh
+
+                            # Extract 8-digit code from ea_geocode strictly
+                            if bldg_ea_geo_idx != -1:
+                                raw_b_geo = bfeat.attribute(bldg_ea_geo_idx)
+                                b_code_8 = self._extract_8digit_code(raw_b_geo)
+                            else:
+                                b_code_8 = ""
+
+                            if b_code_8 not in grouped_counts:
+                                grouped_counts[b_code_8] = {"bldg_count": 0, "hh_float": 0.0}
+                            grouped_counts[b_code_8]["bldg_count"] += 1
+                            grouped_counts[b_code_8]["hh_float"] += pt_hh
+
+                    # If target_8digit_code and bldg_ea_geo_idx are present, sum strictly matching 8-digit code
+                    if target_8digit_code and bldg_ea_geo_idx != -1:
+                        target_key = str(target_8digit_code).strip()
+                        matching = grouped_counts.get(target_key, {"bldg_count": 0, "hh_float": 0.0})
+                        inside_bldg_count = matching["bldg_count"]
+                        inside_hh_float = matching["hh_float"]
+
+                        mismatched_bldg = all_spatial_bldg_count - inside_bldg_count
+                        if mismatched_bldg > 0:
+                            other_groups = [k for k in grouped_counts.keys() if k != target_key and k != ""]
+                            self._log(
+                                f"Building point aggregation: excluded {mismatched_bldg} building point(s) "
+                                f"(with 8-digit codes: {other_groups or ['none/empty']}) not matching EA 8-digit code '{target_key}'.",
+                                "INFO",
+                            )
+                    else:
+                        # Fallback to pure spatial containment if layer lacks ea_geocode or target_8digit_code not specified
+                        inside_bldg_count = all_spatial_bldg_count
+                        inside_hh_float = all_spatial_hh_float
+
                 return inside_bldg_count, int(math.ceil(inside_hh_float))
 
             exploded_features = []
@@ -1006,7 +1086,12 @@ class SplitEADialog(QDialog):
                 # Upfront Gate: If parent EA total households < 2 * min_hh_threshold, splitting cannot produce valid sub-EAs
                 min_hh_threshold = self.min_hh_spin.value() if hasattr(self, "min_hh_spin") else 99
                 if bldg_spatial_index:
-                    parent_bldg_cnt, parent_hh_cnt = _calculate_geom_counts(poly_geom)
+                    parent_8digit = ""
+                    if ea_geo_idx != -1:
+                        raw_ea_geo = poly_feat.attribute(ea_geo_idx)
+                        parent_8digit = self._extract_8digit_code(raw_ea_geo)
+
+                    parent_bldg_cnt, parent_hh_cnt = _calculate_geom_counts(poly_geom, target_8digit_code=parent_8digit)
                     if parent_hh_cnt < 2 * min_hh_threshold:
                         self._log(
                             f"Notice: Cannot split EA '{parent_code_6}' — total household count ({parent_hh_cnt}) "
@@ -1275,8 +1360,13 @@ class SplitEADialog(QDialog):
 
                 # Calculate counts for each child part
                 part_data = []
+                parent_8digit = ""
+                if ea_geo_idx != -1:
+                    raw_ea_geo = parent_feat.attribute(ea_geo_idx)
+                    parent_8digit = self._extract_8digit_code(raw_ea_geo)
+
                 for p_geom in parts:
-                    inside_bldg_count, inside_hh_count = _calculate_geom_counts(p_geom)
+                    inside_bldg_count, inside_hh_count = _calculate_geom_counts(p_geom, target_8digit_code=parent_8digit)
                     area_val = p_geom.area() if p_geom else 0.0
                     part_data.append({
                         "geom": p_geom,
