@@ -1828,7 +1828,7 @@ class EALauncherDialog(QDialog):
         # Refresh button
         self.merged_ea_refresh_btn = QPushButton("Refresh Merge Preview")
         self.merged_ea_refresh_btn.setFixedHeight(30)
-        self.merged_ea_refresh_btn.clicked.connect(self.generate_preview)
+        self.merged_ea_refresh_btn.clicked.connect(self.refresh_merge_preview)
         merged_ea_tab_layout.addWidget(self.merged_ea_refresh_btn)
 
         self.merge_right_tabs.addTab(merged_ea_tab, "Merge Preview")
@@ -2730,6 +2730,53 @@ class EALauncherDialog(QDialog):
         if hasattr(self, 'prev_ea_combo') and self._safe_get_layer(self.prev_ea_combo):
             self.generate_preview()
 
+    def auto_detect_merge_ea_layer(self):
+        """Scan active QGIS project for a matching Merged EA polygon layer."""
+        geo5 = self._extract_5digit_geocode() if hasattr(self, '_extract_5digit_geocode') else ""
+        target_name = f"{geo5}_merged_ea2026".lower() if geo5 else "merged_ea2026"
+
+        prev_layer = (
+            self._safe_get_layer(getattr(self, 'merge_prev_ea_combo', None))
+            or self._safe_get_layer(getattr(self, 'prev_ea_combo', None))
+        )
+        bar_layer = (
+            self._safe_get_layer(getattr(self, 'merge_bar_combo', None))
+            or self._safe_get_layer(getattr(self, 'bar_combo', None))
+        )
+
+        layers = list(QgsProject.instance().mapLayers().values())
+        best_candidate = None
+
+        # Priority 1: Exact target layer name match (e.g. {geo5}_merged_ea2026)
+        for layer in layers:
+            if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
+                continue
+            if layer.geometryType() not in (2, QgsWkbTypes.PolygonGeometry):
+                continue
+            if (prev_layer and layer == prev_layer) or (bar_layer and layer == bar_layer):
+                continue
+            name_lower = layer.name().lower()
+            if target_name in name_lower or (geo5 and geo5 in name_lower and "merged" in name_lower):
+                return layer
+
+        # Priority 2: General merge keywords
+        for layer in layers:
+            if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
+                continue
+            if layer.geometryType() not in (2, QgsWkbTypes.PolygonGeometry):
+                continue
+            if (prev_layer and layer == prev_layer) or (bar_layer and layer == bar_layer):
+                continue
+            name_lower = layer.name().lower()
+            if "delineat" in name_lower or "split" in name_lower or "boundary" in name_lower:
+                continue
+            if "merge_ea" in name_lower or "merged_ea" in name_lower or "merged" in name_lower:
+                return layer
+            if "ea2026" in name_lower and not best_candidate:
+                best_candidate = layer
+
+        return best_candidate
+
     def auto_detect_layers(self):
         """Scan all loaded layers in QGIS project and automatically match inputs by name keywords.
 
@@ -2753,7 +2800,7 @@ class EALauncherDialog(QDialog):
             "prev_ea":  None,
             "road":     None,
             "river":    None,
-            "merge_ea": None,
+            "merge_ea": self.auto_detect_merge_ea_layer(),
         }
 
         for layer in layers:
@@ -3196,6 +3243,14 @@ class EALauncherDialog(QDialog):
 
         # ── Pass 2: Populate New "Merge Preview" Tab from Merged EA Layer vs Previous EA Layer ──
         merge_ea_layer = self._safe_get_layer(getattr(self, 'merge_ea_combo', None))
+        if not merge_ea_layer and hasattr(self, 'auto_detect_merge_ea_layer'):
+            detected_m = self.auto_detect_merge_ea_layer()
+            if detected_m and hasattr(self, 'merge_ea_combo'):
+                self._safe_set_layer(self.merge_ea_combo, detected_m)
+                merge_ea_layer = detected_m
+                if hasattr(self, 'validate_layer_inputs'):
+                    self.validate_layer_inputs()
+
         if merge_ea_layer:
             m_fields = merge_ea_layer.fields()
             m_hh_idx = -1
@@ -6310,7 +6365,71 @@ class EALauncherDialog(QDialog):
         self._session_merged_eans = {e for e in self._session_merged_eans if e in active_merged_eans}
 
     def refresh_merge_preview(self):
-        """Refresh the Merge Preview table and switch to the Merge Preview tab."""
+        """Refresh the Merge Preview table and switch to the Merge Preview tab with empty layer detection."""
+        # 1. Detect if Merged EA layer is empty or unselected
+        merge_ea_layer = self._safe_get_layer(getattr(self, 'merge_ea_combo', None))
+        if not merge_ea_layer:
+            # Attempt auto-detection from active project layers
+            detected_layer = self.auto_detect_merge_ea_layer() if hasattr(self, 'auto_detect_merge_ea_layer') else None
+            if detected_layer and hasattr(self, 'merge_ea_combo'):
+                self._safe_set_layer(self.merge_ea_combo, detected_layer)
+                merge_ea_layer = detected_layer
+                if hasattr(self, 'validate_layer_inputs'):
+                    self.validate_layer_inputs()
+                if hasattr(self, 'merge_log_console') and self.merge_log_console:
+                    self.merge_log_console.append(
+                        f"<span style='color:green;'>[INFO] Auto-detected Merged EA layer: {detected_layer.name()}</span>"
+                    )
+
+        if not merge_ea_layer:
+            # Merged EA layer is still empty - update UI status, log warning, and alert user
+            if hasattr(self, 'merge_ea_status_lbl'):
+                self.merge_ea_status_lbl.setText("[!] No Merged EA layer selected or detected.")
+                self.merge_ea_status_lbl.setStyleSheet("color: #d9534f; font-size: 10px; font-weight: bold;")
+            if hasattr(self, 'merge_log_console') and self.merge_log_console:
+                self.merge_log_console.append(
+                    "<span style='color:orange;'>[WARNING] Merged EA layer is empty or not selected. Please select a Merged EA polygon layer.</span>"
+                )
+            if hasattr(self, 'merged_ea_table'):
+                self.merged_ea_table.setRowCount(0)
+            if hasattr(self, 'kpi_merged_ea_val'):
+                self.kpi_merged_ea_val.setText("0")
+            if hasattr(self, "merge_right_tabs") and self.merge_right_tabs:
+                try:
+                    self.merge_right_tabs.setCurrentIndex(1)
+                except Exception:
+                    pass
+            QMessageBox.warning(
+                self,
+                "Missing Merged EA Layer",
+                "The Merged EA layer is not selected or detected in the project.\n\nPlease select or load a valid Merged EA polygon layer before refreshing the Merge Preview."
+            )
+            return
+
+        if merge_ea_layer.featureCount() == 0:
+            if hasattr(self, 'merge_ea_status_lbl'):
+                self.merge_ea_status_lbl.setText(f"[!] Selected Merged EA layer '{merge_ea_layer.name()}' is empty (0 features).")
+                self.merge_ea_status_lbl.setStyleSheet("color: #d9534f; font-size: 10px; font-weight: bold;")
+            if hasattr(self, 'merge_log_console') and self.merge_log_console:
+                self.merge_log_console.append(
+                    f"<span style='color:orange;'>[WARNING] Selected Merged EA layer '{merge_ea_layer.name()}' contains 0 features.</span>"
+                )
+            if hasattr(self, 'merged_ea_table'):
+                self.merged_ea_table.setRowCount(0)
+            if hasattr(self, 'kpi_merged_ea_val'):
+                self.kpi_merged_ea_val.setText("0")
+            if hasattr(self, "merge_right_tabs") and self.merge_right_tabs:
+                try:
+                    self.merge_right_tabs.setCurrentIndex(1)
+                except Exception:
+                    pass
+            QMessageBox.warning(
+                self,
+                "Empty Merged EA Layer",
+                f"The selected Merged EA layer '{merge_ea_layer.name()}' contains 0 polygon features.\n\nPlease select a valid layer with features."
+            )
+            return
+
         if hasattr(self, "_reconcile_session_merged_eans"):
             try:
                 self._reconcile_session_merged_eans()
