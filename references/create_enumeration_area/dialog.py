@@ -3933,21 +3933,29 @@ class EALauncherDialog(QDialog):
                 b_geom.transform(xform_b)
 
             req = QgsFeatureRequest().setFilterRect(b_geom.boundingBox())
-            b_cnt = 0
-            b_hh = 0.0
+            points_by_geom = {}
             for bf in bldg_layer.getFeatures(req):
                 geom = bf.geometry()
                 if geom and not geom.isEmpty() and b_geom.intersects(geom):
-                    b_cnt += 1
+                    pt = geom.asPoint()
+                    k = (round(pt.x(), 6), round(pt.y(), 6))
+                    val = 1.0
                     if bldg_hh_idx != -1:
-                        val = bf.attribute(bldg_hh_idx)
-                        if val is not None and val != NULL:
+                        raw = bf.attribute(bldg_hh_idx)
+                        if raw is not None and raw != NULL:
                             try:
-                                b_hh += float(val)
+                                val = float(raw)
                             except (ValueError, TypeError):
-                                b_hh += 1.0
-                    else:
-                        b_hh += 1.0
+                                val = 1.0
+                    points_by_geom.setdefault(k, []).append(val)
+
+            # Prevailing point per coordinate is the one with highest household count
+            b_cnt = 0
+            b_hh = 0.0
+            for k, val_list in points_by_geom.items():
+                val_list.sort(reverse=True)
+                b_cnt += 1
+                b_hh += val_list[0]
 
             total_bldg = b_cnt
             total_hh = int(round(b_hh))
@@ -4331,6 +4339,75 @@ class EALauncherDialog(QDialog):
             except Exception:
                 pass
 
+        # Synchronize active extracted buildings layer: deduplicate duplicate geometries and update parent_ean / merge_role
+        extracted_bldg_layer = None
+        for lyr in QgsProject.instance().mapLayers().values():
+            if isinstance(lyr, QgsVectorLayer) and lyr.isValid() and lyr.geometryType() == QgsWkbTypes.PointGeometry:
+                lname = lyr.name().lower()
+                if "extracted_bldg" in lname or (geo5 and f"{geo5.lower()}_extracted_bldg" in lname):
+                    extracted_bldg_layer = lyr
+                    break
+
+        if extracted_bldg_layer and extracted_bldg_layer.isValid():
+            try:
+                eb_geom = QgsGeometry(merged_geom)
+                if (extracted_bldg_layer.crs().isValid() and partner_layer_source.crs().isValid()
+                        and extracted_bldg_layer.crs() != partner_layer_source.crs()):
+                    xform_eb = QgsCoordinateTransform(partner_layer_source.crs(), extracted_bldg_layer.crs(), QgsProject.instance())
+                    eb_geom.transform(xform_eb)
+
+                eb_req = QgsFeatureRequest().setFilterRect(eb_geom.boundingBox())
+                eb_points_by_geom = {}
+                eb_hh_idx = -1
+                for cand_fld in ["est_hhcount", "est_hh_count", "pop", "hh_count", "hhcount"]:
+                    idx = extracted_bldg_layer.fields().lookupField(cand_fld)
+                    if idx != -1:
+                        eb_hh_idx = idx
+                        break
+
+                for bf in extracted_bldg_layer.getFeatures(eb_req):
+                    geom = bf.geometry()
+                    if geom and not geom.isEmpty() and eb_geom.intersects(geom):
+                        pt = geom.asPoint()
+                        k = (round(pt.x(), 6), round(pt.y(), 6))
+                        val = 1.0
+                        if eb_hh_idx != -1:
+                            raw = bf.attribute(eb_hh_idx)
+                            if raw is not None and raw != NULL:
+                                try:
+                                    val = float(raw)
+                                except Exception:
+                                    val = 1.0
+                        eb_points_by_geom.setdefault(k, []).append((bf.id(), val))
+
+                extracted_bldg_layer.startEditing()
+                fids_to_delete = []
+                fids_to_update = []
+                for k, flist in eb_points_by_geom.items():
+                    flist.sort(key=lambda item: item[1], reverse=True)
+                    fids_to_update.append(flist[0][0])
+                    if len(flist) > 1:
+                        for dup in flist[1:]:
+                            fids_to_delete.append(dup[0])
+
+                if fids_to_delete:
+                    extracted_bldg_layer.deleteFeatures(fids_to_delete)
+
+                p_ean_idx = extracted_bldg_layer.fields().lookupField("parent_ean")
+                m_role_idx = extracted_bldg_layer.fields().lookupField("merge_role")
+                for ufid in fids_to_update:
+                    if p_ean_idx != -1:
+                        extracted_bldg_layer.changeAttributeValue(ufid, p_ean_idx, highest_ean)
+                    if m_role_idx != -1:
+                        extracted_bldg_layer.changeAttributeValue(ufid, m_role_idx, "Merged")
+
+                extracted_bldg_layer.commitChanges()
+                extracted_bldg_layer.updateExtents()
+                extracted_bldg_layer.triggerRepaint()
+            except Exception:
+                if extracted_bldg_layer.isEditable():
+                    extracted_bldg_layer.rollBack()
+
         # Export to GPKG only if target_layer is a memory layer (or not pointing to the exact target GPKG)
         out_folder = ""
         if hasattr(self, 'merge_output_folder_widget') and self.merge_output_folder_widget.filePath().strip():
@@ -4687,6 +4764,52 @@ class EALauncherDialog(QDialog):
                 self.iface.mapCanvas().refresh()
             except Exception:
                 pass
+
+        # Restore active extracted buildings layer: reset parent_ean and merge_role
+        extracted_bldg_layer = None
+        for lyr in QgsProject.instance().mapLayers().values():
+            if isinstance(lyr, QgsVectorLayer) and lyr.isValid() and lyr.geometryType() == QgsWkbTypes.PointGeometry:
+                lname = lyr.name().lower()
+                if "extracted_bldg" in lname or (geo5 and f"{geo5.lower()}_extracted_bldg" in lname):
+                    extracted_bldg_layer = lyr
+                    break
+
+        if extracted_bldg_layer and extracted_bldg_layer.isValid():
+            try:
+                extracted_bldg_layer.startEditing()
+                p_ean_idx = extracted_bldg_layer.fields().lookupField("parent_ean")
+                m_role_idx = extracted_bldg_layer.fields().lookupField("merge_role")
+
+                for rf in restored_feats:
+                    rf_geom = rf.geometry()
+                    rf_ean_val = rf.attribute("ean") or rf.attribute("new_ean") or ""
+                    rf_ean_str = str(rf_ean_val).strip()
+                    if rf_ean_str.endswith(".0"):
+                        rf_ean_str = rf_ean_str[:-2]
+
+                    rf_role = "Candidate" if rf_ean_str == cand_clean else "Merge Partner"
+
+                    eb_geom = QgsGeometry(rf_geom)
+                    if (extracted_bldg_layer.crs().isValid() and target_layer.crs().isValid()
+                            and extracted_bldg_layer.crs() != target_layer.crs()):
+                        xform_eb = QgsCoordinateTransform(target_layer.crs(), extracted_bldg_layer.crs(), QgsProject.instance())
+                        eb_geom.transform(xform_eb)
+
+                    req = QgsFeatureRequest().setFilterRect(eb_geom.boundingBox())
+                    for bf in extracted_bldg_layer.getFeatures(req):
+                        bg = bf.geometry()
+                        if bg and not bg.isEmpty() and eb_geom.intersects(bg):
+                            if p_ean_idx != -1:
+                                extracted_bldg_layer.changeAttributeValue(bf.id(), p_ean_idx, rf_ean_str)
+                            if m_role_idx != -1:
+                                extracted_bldg_layer.changeAttributeValue(bf.id(), m_role_idx, rf_role)
+
+                extracted_bldg_layer.commitChanges()
+                extracted_bldg_layer.updateExtents()
+                extracted_bldg_layer.triggerRepaint()
+            except Exception:
+                if extracted_bldg_layer.isEditable():
+                    extracted_bldg_layer.rollBack()
 
         # Also sync GPKG if target_layer is saved on disk
         out_folder = ""

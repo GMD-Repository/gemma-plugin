@@ -28,7 +28,7 @@ from qgis.core import (
 from ..helpers.constants import _PHASE_LABELS, yield_to_ui, create_qgs_field
 from ..helpers.geometry import get_polygons_from_geom, allocate_gaps_to_parts
 from ..helpers.style import apply_qml_to_layer
-from ..helpers.spatial import get_parent_barangay
+from ..helpers.spatial import get_parent_barangay, deduplicate_building_points
 
 
 def refine_split_line(geom: QgsGeometry, gap_tolerance: float, min_branch_len: float) -> QgsGeometry:
@@ -1430,6 +1430,14 @@ def run_phase_8(
 
             parent_ean_idx = bldg_out_fields.indexOf("parent_ean")
 
+            if bldg_out_fields.indexOf("merge_role") == -1:
+                bldg_out_fields.append(create_qgs_field("merge_role", QVariant.String))
+            role_idx = bldg_out_fields.indexOf("merge_role")
+
+            if bldg_out_fields.indexOf("candidate_ean") == -1:
+                bldg_out_fields.append(create_qgs_field("candidate_ean", QVariant.String))
+            cand_ean_idx = bldg_out_fields.indexOf("candidate_ean")
+
             _ea_orig_id = ea.get('original_id')
             _ea_orig_code = ea.get('original_code', '')
             parent_ean_val = ea.get('new_ea_code', _ea_orig_code)
@@ -1441,7 +1449,21 @@ def run_phase_8(
                 or _ea_orig_id in adjacent_ea_ids
             )
             if _is_target_ea:
-                for b in ea.get('buildings', []):
+                ea_bldgs = ea.get('buildings', [])
+                deduped_ea_bldgs, _ = deduplicate_building_points(ea_bldgs)
+
+                if ea.get('from_merge', False):
+                    ea_role = "Merged"
+                elif _ea_orig_id in merge_candidate_ids:
+                    ea_role = "Candidate"
+                elif _ea_orig_id in adjacent_ea_ids:
+                    ea_role = "Merge Partner"
+                elif _ea_orig_id in delineation_candidate_ids:
+                    ea_role = "Delineation Candidate"
+                else:
+                    ea_role = "Other"
+
+                for b in deduped_ea_bldgs:
                     b_feat = QgsFeature(bldg_out_fields)
                     b_geom = QgsGeometry.fromPointXY(b['point'])
                     if barangay_to_target:
@@ -1456,11 +1478,15 @@ def run_phase_8(
                         b_attrs = b_attrs[:bldg_out_fields.count()]
 
                     if bldgpts_idx != -1:
-                        b_attrs[bldgpts_idx] = b['bldgpoints_value']
+                        b_attrs[bldgpts_idx] = b.get('bldgpoints_value')
                     if pop_out_idx != -1:
-                        b_attrs[pop_out_idx] = b['pop']
+                        b_attrs[pop_out_idx] = b.get('pop')
                     if parent_ean_idx != -1:
                         b_attrs[parent_ean_idx] = str(parent_ean_val)
+                    if role_idx != -1:
+                        b_attrs[role_idx] = ea_role
+                    if cand_ean_idx != -1:
+                        b_attrs[cand_ean_idx] = str(b.get('candidate_ean', ''))
 
                     bldg_fid = extracted_bldg_feat_count + 1
                     fid_idx_bldg = bldg_out_fields.indexOf("fid")
