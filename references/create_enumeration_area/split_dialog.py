@@ -673,6 +673,10 @@ class SplitEADialog(QDialog):
             "est_hhcount",
             "est_hh_count",
             "est_hh",
+            "hh_count",
+            "hhcount",
+            "pop",
+            "population",
         ]
         for cname in candidate_names:
             for idx in range(fields.count()):
@@ -1157,6 +1161,10 @@ class SplitEADialog(QDialog):
             self.progress_bar.setValue(75)
 
             # 5. Calculate hh_count (from est_hhcount) and bldg_count from building points
+            bldg_to_poly_xform = None
+            if bldg_layer and poly_layer and bldg_layer.crs() != poly_layer.crs():
+                bldg_to_poly_xform = QgsCoordinateTransform(bldg_layer.crs(), poly_layer.crs(), QgsProject.instance().transformContext())
+
             bldg_spatial_index = None
             bldg_lookup = {}
             bldg_hh_idx, bldg_hh_name = -1, ""
@@ -1170,8 +1178,16 @@ class SplitEADialog(QDialog):
                 bldg_spatial_index = QgsSpatialIndex()
                 for bf in bldg_layer.getFeatures():
                     if bf and bf.hasGeometry() and not bf.geometry().isEmpty():
-                        bldg_spatial_index.addFeature(bf)
-                bldg_lookup = {f.id(): f for f in bldg_layer.getFeatures()}
+                        bg = QgsGeometry(bf.geometry())
+                        if bldg_to_poly_xform:
+                            try:
+                                bg.transform(bldg_to_poly_xform)
+                            except Exception:
+                                pass
+                        feat_clone = QgsFeature(bf)
+                        feat_clone.setGeometry(bg)
+                        bldg_spatial_index.addFeature(feat_clone)
+                        bldg_lookup[bf.id()] = feat_clone
 
             # Ensure poly_layer has hh_count, bldg_count, new_ean, and ea_type fields
             poly_fields = poly_layer.fields()
@@ -1253,8 +1269,97 @@ class SplitEADialog(QDialog):
                         "area": area_val,
                     })
 
-                # If split into multiple parts, log notice if any resulting piece falls below min_hh_threshold
-                if len(part_data) > 1 and bldg_spatial_index:
+                def _safe_parent_attr(pf, name, default=None):
+                    if not pf:
+                        return default
+                    try:
+                        flds = pf.fields()
+                        if flds:
+                            idx = -1
+                            if hasattr(flds, "indexOf"):
+                                idx = flds.indexOf(name)
+                            elif hasattr(flds, "lookupField"):
+                                idx = flds.lookupField(name)
+                            elif hasattr(flds, "indexFromName"):
+                                idx = flds.indexFromName(name)
+                            if idx != -1:
+                                val = pf.attribute(idx)
+                                return val if val is not None and val != NULL else default
+                        val = pf.attribute(name)
+                        return val if val is not None and val != NULL else default
+                    except Exception:
+                        return default
+
+                # ── DISSOLVE FIRST: Merge 0-HH sub-polygon slices into adjacent populated siblings ──
+                if bldg_spatial_index:
+                    nonzero_parts = [p for p in part_data if p["hh_count"] > 0]
+                    zero_parts = [p for p in part_data if p["hh_count"] == 0]
+
+                    if zero_parts and nonzero_parts:
+                        for zp in zero_parts:
+                            best_neighbor = None
+                            max_shared_len = -1.0
+                            zp_geom = zp["geom"]
+
+                            for np in nonzero_parts:
+                                np_geom = np["geom"]
+                                shared = np_geom.intersection(zp_geom)
+                                s_len = shared.length() if shared and not shared.isEmpty() else 0.0
+                                if s_len > max_shared_len:
+                                    max_shared_len = s_len
+                                    best_neighbor = np
+
+                            # If no shared boundary (e.g. sliver), fallback to nearest centroid
+                            if not best_neighbor or max_shared_len <= 0.0:
+                                zp_c = zp_geom.centroid().asPoint()
+                                best_neighbor = min(
+                                    nonzero_parts,
+                                    key=lambda np: zp_c.distance(np["geom"].centroid().asPoint())
+                                )
+
+                            # Dissolve zero-household slice into best_neighbor
+                            raw_combined = best_neighbor["geom"].combine(zp_geom)
+                            best_neighbor["geom"] = raw_combined.makeValid() if hasattr(raw_combined, 'makeValid') else raw_combined
+                            best_neighbor["area"] = best_neighbor["geom"].area()
+                            best_neighbor["bldg_count"] += zp["bldg_count"]
+
+                            self._log(
+                                f"Notice: Dissolved empty slice (0 HH, {zp['area']:.1f} m²) into adjacent "
+                                f"sibling sub-EA to prevent 0 hh_count emergence.",
+                                "INFO",
+                            )
+
+                        part_data = nonzero_parts
+
+                    elif not nonzero_parts:
+                        # If ALL parts have 0 households, reject split to prevent 0-HH EAs
+                        self._log(
+                            f"Warning: Cannot split EA '{parent_code_6}' — all resulting sub-polygons "
+                            f"have 0 households. EA preserved whole.",
+                            "WARNING",
+                        )
+                        orig_hh = _safe_parent_attr(parent_feat, "hh_count", 0)
+                        orig_bldg = _safe_parent_attr(parent_feat, "bldg_count", 0)
+                        try:
+                            orig_hh = int(orig_hh) if orig_hh is not None and orig_hh != NULL else 0
+                        except (ValueError, TypeError):
+                            orig_hh = 0
+                        try:
+                            orig_bldg = int(orig_bldg) if orig_bldg is not None and orig_bldg != NULL else 0
+                        except (ValueError, TypeError):
+                            orig_bldg = 0
+                        part_data = [{
+                            "geom": parent_feat.geometry(),
+                            "hh_count": orig_hh,
+                            "bldg_count": orig_bldg,
+                            "area": parent_feat.geometry().area() if parent_feat.geometry() else 0.0,
+                        }]
+
+                # ── NUMBER new_ean SECOND: Only on surviving populated parts ──
+                # If still split into multiple parts, sort by hh_count descending (with area as tie-breaker)
+                if len(part_data) > 1:
+                    part_data.sort(key=lambda item: (item["hh_count"], item["area"]), reverse=True)
+
                     min_hh_threshold = self.min_hh_spin.value() if hasattr(self, "min_hh_spin") else 99
                     under_threshold_parts = [p for p in part_data if p["hh_count"] < min_hh_threshold]
                     if under_threshold_parts:
@@ -1264,10 +1369,6 @@ class SplitEADialog(QDialog):
                             f"(below threshold of {min_hh_threshold} HH). Sub-EAs successfully created.",
                             "WARNING",
                         )
-
-                # If still split into multiple parts, sort by hh_count descending (with area as tie-breaker)
-                if len(part_data) > 1:
-                    part_data.sort(key=lambda item: (item["hh_count"], item["area"]), reverse=True)
 
                 for idx, p_item in enumerate(part_data):
                     inside_hh_count = p_item["hh_count"]
@@ -1297,7 +1398,7 @@ class SplitEADialog(QDialog):
                                 assigned_new_ean = f"{curr_seq:03d}{orig_prefix}"
                     else:
                         # Retained un-split polygon
-                        existing_new_ean = parent_feat.attribute("new_ean") if "new_ean" in poly_field_names_lower else None
+                        existing_new_ean = _safe_parent_attr(parent_feat, "new_ean")
                         if existing_new_ean and str(existing_new_ean).strip().upper() not in ("", "NULL", "NONE"):
                             assigned_new_ean = str(existing_new_ean).strip()
                         else:
@@ -1323,13 +1424,19 @@ class SplitEADialog(QDialog):
                             if len(part_data) > 1:
                                 new_feat.setAttribute(fname, "DELINEATED")
                             else:
-                                val = parent_feat.attribute(fname)
-                                new_feat.setAttribute(fname, val if val is not None and val != NULL and str(val).strip() not in ("", "None", "NULL") else "RETAINED")
+                                val = _safe_parent_attr(parent_feat, fname)
+                                new_feat.setAttribute(fname, val if val is not None and str(val).strip() not in ("", "None", "NULL") else "RETAINED")
+                        elif fname_lower in ("remarks", "remark", "delin_remarks", "delin_remark"):
+                            if len(part_data) > 1:
+                                new_feat.setAttribute(fname, f"Delineated from EA {parent_code_6}")
+                            else:
+                                val = _safe_parent_attr(parent_feat, fname, "")
+                                new_feat.setAttribute(fname, val if val is not None else "")
                         elif fname_lower in ("geocode", "ea_geocode", "geo_code"):
                             if len(part_data) > 1:
                                 # Strictly preserve the original 8-digit code of the geocode starting from the left (do NOT recode)
-                                val = parent_feat.attribute(fname)
-                                val_str = str(val).strip() if val is not None and val != NULL else ""
+                                val = _safe_parent_attr(parent_feat, fname)
+                                val_str = str(val).strip() if val is not None else ""
                                 if val_str.endswith(".0"):
                                     val_str = val_str[:-2]
                                 digits_val = "".join([c for c in val_str if c.isdigit()])
@@ -1339,18 +1446,25 @@ class SplitEADialog(QDialog):
                                     new_feat.setAttribute(fname, f"{parent_left_8}{assigned_new_ean}")
                                 elif len(bgy_key) in (8, 9, 10) and bgy_key != "_ALL_":
                                     new_feat.setAttribute(fname, f"{bgy_key}{assigned_new_ean}")
-                                elif val is not None and val != NULL:
+                                elif val is not None:
                                     new_feat.setAttribute(fname, val)
                             else:
-                                val = parent_feat.attribute(fname)
-                                if val is not None and val != NULL:
+                                val = _safe_parent_attr(parent_feat, fname)
+                                if val is not None:
                                     new_feat.setAttribute(fname, val)
                         else:
-                            val = parent_feat.attribute(fname)
-                            if val is not None and val != NULL:
+                            val = _safe_parent_attr(parent_feat, fname)
+                            if val is not None:
                                 new_feat.setAttribute(fname, val)
 
+                    # Guard: Never add a 0-HH sub-EA feature if multiple parts were created
+                    if bldg_spatial_index and inside_hh_count <= 0 and len(part_data) > 1:
+                        continue
                     new_features.append(new_feat)
+
+            out_poly_count = len(new_features)
+            delta_count = out_poly_count - in_poly_count
+            is_truly_split = delta_count > 0
 
             self.progress_bar.setValue(85)
 
@@ -1413,10 +1527,16 @@ class SplitEADialog(QDialog):
                 self.status_banner.setStyleSheet("color: #e67e22; font-weight: bold;")
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             self._log(f"Error during polygon splitting: {str(e)}", "ERROR")
             self.status_banner.setText(f"Error: {str(e)}")
             self.status_banner.setStyleSheet("color: #c0392b; font-weight: bold;")
-            QMessageBox.critical(self, "Split Error", f"An error occurred during splitting:\n{str(e)}")
+            if not os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get("QGIS_UNIT_TEST"):
+                try:
+                    QMessageBox.critical(self, "Split Error", f"An error occurred during splitting:\n{str(e)}")
+                except Exception:
+                    pass
 
         finally:
             self.run_btn.setEnabled(True)
