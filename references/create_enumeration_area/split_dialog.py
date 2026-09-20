@@ -196,10 +196,10 @@ class SplitEADialog(QDialog):
         self.tolerance_spin = QDoubleSpinBox()
         self.tolerance_spin.setMinimumHeight(26)
         self.tolerance_spin.setRange(0.0, 50.0)
-        self.tolerance_spin.setValue(1.0)
+        self.tolerance_spin.setValue(0.0)
         self.tolerance_spin.setSingleStep(0.5)
         self.tolerance_spin.setToolTip(
-            "Slightly extends line endpoints across the polygon boundary to prevent undershoots and ensure clean bisection."
+            "Optional line endpoint extension distance in meters. Default is 0.0 (strictly cuts where line ends without extending)."
         )
         tol_layout.addWidget(self.tolerance_spin)
         tol_layout.addStretch()
@@ -931,6 +931,62 @@ class SplitEADialog(QDialog):
                     line_spatial_index.addFeature(lf)
             line_lookup = {f.id(): f for f in selected_line_feats}
 
+            # Building points spatial index & lookup for household estimation
+            bldg_to_poly_xform = None
+            if bldg_layer and poly_layer and bldg_layer.crs() != poly_layer.crs():
+                bldg_to_poly_xform = QgsCoordinateTransform(bldg_layer.crs(), poly_layer.crs(), QgsProject.instance().transformContext())
+
+            bldg_spatial_index = None
+            bldg_lookup = {}
+            bldg_hh_idx, bldg_hh_name = -1, ""
+
+            if bldg_layer and bldg_layer.isValid() and bldg_layer.featureCount() > 0:
+                bldg_hh_idx, bldg_hh_name = self._resolve_bldg_hh_field(bldg_layer)
+                self._log(
+                    f"Computing building & household counts using '{bldg_layer.name()}' "
+                    f"(household field: '{bldg_hh_name or 'none [fallback 1/point]'}')..."
+                )
+                bldg_spatial_index = QgsSpatialIndex()
+                for bf in bldg_layer.getFeatures():
+                    if bf and bf.hasGeometry() and not bf.geometry().isEmpty():
+                        bg = QgsGeometry(bf.geometry())
+                        if bldg_to_poly_xform:
+                            try:
+                                bg.transform(bldg_to_poly_xform)
+                            except Exception:
+                                pass
+                        feat_clone = QgsFeature(bf)
+                        feat_clone.setGeometry(bg)
+                        bldg_spatial_index.addFeature(feat_clone)
+                        bldg_lookup[bf.id()] = feat_clone
+
+            def _calculate_geom_counts(geom):
+                inside_bldg_count = 0
+                inside_hh_float = 0.0
+                if bldg_spatial_index and geom and not geom.isEmpty():
+                    candidate_ids = bldg_spatial_index.intersects(geom.boundingBox())
+                    for bid in candidate_ids:
+                        bfeat = bldg_lookup.get(bid)
+                        if not bfeat:
+                            continue
+                        bgeom = bfeat.geometry()
+                        if not bgeom or bgeom.isEmpty():
+                            continue
+                        if geom.contains(bgeom) or geom.intersects(bgeom):
+                            inside_bldg_count += 1
+                            if bldg_hh_idx != -1:
+                                raw_val = bfeat.attribute(bldg_hh_idx)
+                                if raw_val is not None and raw_val != NULL:
+                                    try:
+                                        inside_hh_float += float(raw_val)
+                                    except (ValueError, TypeError):
+                                        inside_hh_float += 1.0
+                                else:
+                                    inside_hh_float += 1.0
+                            else:
+                                inside_hh_float += 1.0
+                return inside_bldg_count, int(math.ceil(inside_hh_float))
+
             exploded_features = []
             parent_split_groups = []
 
@@ -939,11 +995,27 @@ class SplitEADialog(QDialog):
                 if not poly_geom or poly_geom.isEmpty():
                     continue
 
+                parent_code_6, orig_prefix = self._extract_parent_code_and_prefix(poly_feat, poly_layer.fields())
+
                 if use_selected_poly and poly_feat.id() not in selected_poly_ids:
                     # Unselected polygon -> preserve whole and untouched
                     exploded_features.append(poly_feat)
                     parent_split_groups.append({"parent": poly_feat, "parts": [poly_geom]})
                     continue
+
+                # Upfront Gate: If parent EA total households < 2 * min_hh_threshold, splitting cannot produce valid sub-EAs
+                min_hh_threshold = self.min_hh_spin.value() if hasattr(self, "min_hh_spin") else 99
+                if bldg_spatial_index:
+                    parent_bldg_cnt, parent_hh_cnt = _calculate_geom_counts(poly_geom)
+                    if parent_hh_cnt < 2 * min_hh_threshold:
+                        self._log(
+                            f"Notice: Cannot split EA '{parent_code_6}' — total household count ({parent_hh_cnt}) "
+                            f"is less than twice the minimum threshold ({min_hh_threshold} * 2 = {min_hh_threshold * 2} HH). EA preserved whole.",
+                            "WARNING",
+                        )
+                        exploded_features.append(poly_feat)
+                        parent_split_groups.append({"parent": poly_feat, "parts": [poly_geom]})
+                        continue
 
                 # Find cut lines that intersect this specific polygon
                 if use_selected_lines:
@@ -952,12 +1024,11 @@ class SplitEADialog(QDialog):
                     cand_line_ids = line_spatial_index.intersects(poly_geom.boundingBox())
                     candidate_lines = [line_lookup[lid] for lid in cand_line_ids if lid in line_lookup]
 
-                snap_search_dist = max(extend_dist_map_units * 2.0, 2.0 if not is_geographic else 0.00005)
                 matching_lines = []
                 for lfeat in candidate_lines:
                     if lfeat and lfeat.geometry() and not lfeat.geometry().isEmpty():
                         lg = lfeat.geometry()
-                        if poly_geom.intersects(lg) or poly_geom.distance(lg) <= snap_search_dist:
+                        if poly_geom.intersects(lg):
                             matching_lines.append(lfeat)
 
                 if not matching_lines:
@@ -995,7 +1066,7 @@ class SplitEADialog(QDialog):
                 for lf in matching_lines:
                     lg = lf.geometry()
                     if extend_tol > 0.0:
-                        lg = self._extend_line_to_traverse_polygon(lg, poly_geom, extend_dist_map_units)
+                        lg = self._extend_line_endpoints(lg, extend_dist_map_units)
                     new_lf = QgsFeature(line_layer.fields())
                     new_lf.setGeometry(lg)
                     prepared_line_feats.append(new_lf)
@@ -1160,36 +1231,7 @@ class SplitEADialog(QDialog):
 
             self.progress_bar.setValue(75)
 
-            # 5. Calculate hh_count (from est_hhcount) and bldg_count from building points
-            bldg_to_poly_xform = None
-            if bldg_layer and poly_layer and bldg_layer.crs() != poly_layer.crs():
-                bldg_to_poly_xform = QgsCoordinateTransform(bldg_layer.crs(), poly_layer.crs(), QgsProject.instance().transformContext())
-
-            bldg_spatial_index = None
-            bldg_lookup = {}
-            bldg_hh_idx, bldg_hh_name = -1, ""
-
-            if bldg_layer and bldg_layer.isValid() and bldg_layer.featureCount() > 0:
-                bldg_hh_idx, bldg_hh_name = self._resolve_bldg_hh_field(bldg_layer)
-                self._log(
-                    f"Computing building & household counts using '{bldg_layer.name()}' "
-                    f"(household field: '{bldg_hh_name or 'none [fallback 1/point]'}')..."
-                )
-                bldg_spatial_index = QgsSpatialIndex()
-                for bf in bldg_layer.getFeatures():
-                    if bf and bf.hasGeometry() and not bf.geometry().isEmpty():
-                        bg = QgsGeometry(bf.geometry())
-                        if bldg_to_poly_xform:
-                            try:
-                                bg.transform(bldg_to_poly_xform)
-                            except Exception:
-                                pass
-                        feat_clone = QgsFeature(bf)
-                        feat_clone.setGeometry(bg)
-                        bldg_spatial_index.addFeature(feat_clone)
-                        bldg_lookup[bf.id()] = feat_clone
-
-            # Ensure poly_layer has hh_count, bldg_count, new_ean, and ea_type fields
+            # 5. Ensure poly_layer has hh_count, bldg_count, new_ean, and ea_type fields
             poly_fields = poly_layer.fields()
             poly_field_names_lower = [poly_fields.at(i).name().lower() for i in range(poly_fields.count())]
             fields_to_add = []
@@ -1234,33 +1276,7 @@ class SplitEADialog(QDialog):
                 # Calculate counts for each child part
                 part_data = []
                 for p_geom in parts:
-                    inside_bldg_count = 0
-                    inside_hh_float = 0.0
-
-                    if bldg_spatial_index and p_geom and not p_geom.isEmpty():
-                        candidate_ids = bldg_spatial_index.intersects(p_geom.boundingBox())
-                        for bid in candidate_ids:
-                            bfeat = bldg_lookup.get(bid)
-                            if not bfeat:
-                                continue
-                            bgeom = bfeat.geometry()
-                            if not bgeom or bgeom.isEmpty():
-                                continue
-                            if p_geom.contains(bgeom) or p_geom.intersects(bgeom):
-                                inside_bldg_count += 1
-                                if bldg_hh_idx != -1:
-                                    raw_val = bfeat.attribute(bldg_hh_idx)
-                                    if raw_val is not None and raw_val != NULL:
-                                        try:
-                                            inside_hh_float += float(raw_val)
-                                        except (ValueError, TypeError):
-                                            inside_hh_float += 1.0
-                                    else:
-                                        inside_hh_float += 1.0
-                                else:
-                                    inside_hh_float += 1.0
-
-                    inside_hh_count = int(math.ceil(inside_hh_float))
+                    inside_bldg_count, inside_hh_count = _calculate_geom_counts(p_geom)
                     area_val = p_geom.area() if p_geom else 0.0
                     part_data.append({
                         "geom": p_geom,
@@ -1290,7 +1306,7 @@ class SplitEADialog(QDialog):
                     except Exception:
                         return default
 
-                # ── DISSOLVE FIRST: Merge 0-HH sub-polygon slices into adjacent populated siblings ──
+                # ── Dissolve 0-HH sub-polygon slices (e.g. road/boundary slivers) into adjacent populated siblings ──
                 if bldg_spatial_index:
                     nonzero_parts = [p for p in part_data if p["hh_count"] > 0]
                     zero_parts = [p for p in part_data if p["hh_count"] == 0]
@@ -1355,19 +1371,42 @@ class SplitEADialog(QDialog):
                             "area": parent_feat.geometry().area() if parent_feat.geometry() else 0.0,
                         }]
 
-                # ── NUMBER new_ean SECOND: Only on surviving populated parts ──
-                # If still split into multiple parts, sort by hh_count descending (with area as tie-breaker)
-                if len(part_data) > 1:
-                    part_data.sort(key=lambda item: (item["hh_count"], item["area"]), reverse=True)
-
-                    min_hh_threshold = self.min_hh_spin.value() if hasattr(self, "min_hh_spin") else 99
-                    under_threshold_parts = [p for p in part_data if p["hh_count"] < min_hh_threshold]
-                    if under_threshold_parts:
+                # ── Enforce Minimum Household Threshold strictly based on eadel_update cut lines ──
+                min_hh_threshold = self.min_hh_spin.value() if hasattr(self, "min_hh_spin") else 99
+                if bldg_spatial_index and len(part_data) > 1:
+                    under_threshold = [p for p in part_data if p["hh_count"] < min_hh_threshold]
+                    if under_threshold:
                         min_hh_found = min(p["hh_count"] for p in part_data)
                         self._log(
-                            f"Notice: Resulting sub-EA for EA '{parent_code_6}' has {min_hh_found} households "
-                            f"(below threshold of {min_hh_threshold} HH). Sub-EAs successfully created.",
+                            f"Warning: Cannot split EA '{parent_code_6}' using 'eadel_update' — resulting sub-EA has "
+                            f"{min_hh_found} households, which falls below the minimum threshold of {min_hh_threshold} HH. "
+                            f"Split rejected; EA preserved whole.",
                             "WARNING",
+                        )
+                        orig_hh = _safe_parent_attr(parent_feat, "hh_count", 0)
+                        orig_bldg = _safe_parent_attr(parent_feat, "bldg_count", 0)
+                        try:
+                            orig_hh = int(orig_hh) if orig_hh is not None and orig_hh != NULL else 0
+                        except (ValueError, TypeError):
+                            orig_hh = 0
+                        try:
+                            orig_bldg = int(orig_bldg) if orig_bldg is not None and orig_bldg != NULL else 0
+                        except (ValueError, TypeError):
+                            orig_bldg = 0
+
+                        parent_bldg_cnt, parent_hh_cnt = _calculate_geom_counts(parent_feat.geometry())
+                        part_data = [{
+                            "geom": parent_feat.geometry(),
+                            "hh_count": parent_hh_cnt if parent_hh_cnt > 0 else orig_hh,
+                            "bldg_count": parent_bldg_cnt if parent_bldg_cnt > 0 else orig_bldg,
+                            "area": parent_feat.geometry().area() if parent_feat.geometry() else 0.0,
+                        }]
+                    else:
+                        part_data.sort(key=lambda item: (item["hh_count"], item["area"]), reverse=True)
+                        self._log(
+                            f"Success: EA '{parent_code_6}' successfully split into {len(part_data)} sub-EAs using 'eadel_update' "
+                            f"(HH counts: {[p['hh_count'] for p in part_data]}).",
+                            "SUCCESS",
                         )
 
                 for idx, p_item in enumerate(part_data):

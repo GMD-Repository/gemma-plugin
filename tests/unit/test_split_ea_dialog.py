@@ -215,8 +215,8 @@ class TestSplitEADialog(unittest.TestCase):
         self.assertIn((1, 4, "002001"), counts_and_ean)
 
     @patch("references.create_enumeration_area.split_dialog.processing.run")
-    def test_split_proceeds_with_notice_if_hh_count_falls_below_minimum_threshold(self, mock_proc_run):
-        """Verify split is preserved and completed with notice when sub-EA falls below min_hh threshold."""
+    def test_split_rejected_if_hh_count_falls_below_minimum_threshold(self, mock_proc_run):
+        """Verify split is strictly rejected and parent EA preserved whole when sub-EA falls below min_hh threshold."""
         from references.create_enumeration_area.split_dialog import SplitEADialog
 
         poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "delineated_ea", "memory")
@@ -249,7 +249,7 @@ class TestSplitEADialog(unittest.TestCase):
         dp_line.addFeatures([line_feat])
         line_lyr.updateExtents()
 
-        # Buildings: Part 1 has 5 HH, Part 2 has 4 HH
+        # Buildings: Part 1 has 5 HH, Part 2 has 4 HH (total parent HH = 9)
         bldg_lyr = QgsVectorLayer("Point?crs=epsg:4326", "bldg_points", "memory")
         dp_bldg = bldg_lyr.dataProvider()
         dp_bldg.addAttributes([QgsField("est_hhcount", QVariant.Double)])
@@ -289,7 +289,7 @@ class TestSplitEADialog(unittest.TestCase):
         dlg.line_combo.currentLayer = MagicMock(return_value=line_lyr)
         dlg.bldg_combo.currentLayer = MagicMock(return_value=bldg_lyr)
         dlg.tolerance_spin.value = MagicMock(return_value=1.0)
-        # Threshold is set to 10 (both parts 5 and 4 are < 10 -> split still completes with notice)
+        # Threshold is set to 10 (parts 5 and 4 are < 10 -> split is rejected, parent EA preserved whole)
         dlg.min_hh_spin.value = MagicMock(return_value=10)
         dlg.status_banner = MagicMock()
         dlg.progress_bar = MagicMock()
@@ -297,12 +297,167 @@ class TestSplitEADialog(unittest.TestCase):
 
         dlg.run_split()
 
-        # Check features in poly_lyr -> should be split into 2 features
+        # Check features in poly_lyr -> should be preserved whole as exactly 1 feature
+        updated_features = list(poly_lyr.getFeatures())
+        self.assertEqual(len(updated_features), 1)
+        feat = updated_features[0]
+        self.assertEqual(feat.attribute("new_ean"), "001000")
+        self.assertEqual(feat.attribute("ea_type"), "RETAINED")
+        self.assertEqual(feat.attribute("hh_count"), 9)
+        self.assertEqual(feat.attribute("bldg_count"), 2)
+
+    @patch("references.create_enumeration_area.split_dialog.processing.run")
+    def test_split_accepted_when_all_sub_eas_meet_minimum_threshold(self, mock_proc_run):
+        """Verify split succeeds strictly along eadel_update lines when all sub-EAs meet or exceed min_hh threshold."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+
+        poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "delineated_ea", "memory")
+        dp_poly = poly_lyr.dataProvider()
+        dp_poly.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("hhcount", QVariant.Int),
+            QgsField("bldgcount", QVariant.Int),
+            QgsField("hh_count", QVariant.Int),
+            QgsField("bldg_count", QVariant.Int),
+        ])
+        poly_lyr.updateFields()
+
+        poly_feat = QgsFeature(poly_lyr.fields())
+        poly_feat.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        poly_feat.setAttribute("ean", "001000")
+        poly_feat.setAttribute("hhcount", 300)
+        poly_feat.setAttribute("bldgcount", 50)
+        dp_poly.addFeatures([poly_feat])
+        poly_lyr.updateExtents()
+
+        line_lyr = QgsVectorLayer("LineString?crs=epsg:4326", "eadel_update", "memory")
+        dp_line = line_lyr.dataProvider()
+        line_feat = QgsFeature()
+        line_feat.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(5, -1), QgsPointXY(5, 11)]))
+        dp_line.addFeatures([line_feat])
+        line_lyr.updateExtents()
+
+        # Buildings: Part 1 has 150 HH, Part 2 has 120 HH
+        bldg_lyr = QgsVectorLayer("Point?crs=epsg:4326", "bldg_points", "memory")
+        dp_bldg = bldg_lyr.dataProvider()
+        dp_bldg.addAttributes([QgsField("est_hhcount", QVariant.Double)])
+        bldg_lyr.updateFields()
+
+        b1 = QgsFeature(bldg_lyr.fields())
+        b1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(2, 2)))
+        b1.setAttribute("est_hhcount", 150.0)
+
+        b2 = QgsFeature(bldg_lyr.fields())
+        b2.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(8, 8)))
+        b2.setAttribute("est_hhcount", 120.0)
+
+        dp_bldg.addFeatures([b1, b2])
+        bldg_lyr.updateExtents()
+
+        split_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "split_res", "memory")
+        dp_split = split_lyr.dataProvider()
+        dp_split.addAttributes([QgsField("hh_count", QVariant.Int), QgsField("bldg_count", QVariant.Int)])
+        split_lyr.updateFields()
+
+        f1 = QgsFeature(split_lyr.fields())
+        f1.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(5, 0), QgsPointXY(5, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        f2 = QgsFeature(split_lyr.fields())
+        f2.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(5, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(5, 10), QgsPointXY(5, 0)
+        ]]))
+        dp_split.addFeatures([f1, f2])
+        split_lyr.updateExtents()
+
+        mock_proc_run.return_value = {"OUTPUT": split_lyr}
+
+        dlg = SplitEADialog()
+        dlg.poly_combo.currentLayer = MagicMock(return_value=poly_lyr)
+        dlg.line_combo.currentLayer = MagicMock(return_value=line_lyr)
+        dlg.bldg_combo.currentLayer = MagicMock(return_value=bldg_lyr)
+        dlg.tolerance_spin.value = MagicMock(return_value=1.0)
+        dlg.min_hh_spin.value = MagicMock(return_value=99)
+        dlg.status_banner = MagicMock()
+        dlg.progress_bar = MagicMock()
+        dlg.log_console = MagicMock()
+
+        dlg.run_split()
+
+        # Both parts (150 and 120) >= 99 -> split succeeds into 2 DELINEATED features
         updated_features = list(poly_lyr.getFeatures())
         self.assertEqual(len(updated_features), 2)
-        eans = [f.attribute("new_ean") for f in updated_features]
-        self.assertIn("001000", eans)
-        self.assertIn("002001", eans)
+        for f in updated_features:
+            self.assertEqual(f.attribute("ea_type"), "DELINEATED")
+            self.assertGreaterEqual(f.attribute("hh_count"), 99)
+
+    @patch("references.create_enumeration_area.split_dialog.processing.run")
+    def test_split_rejected_upfront_when_parent_hh_less_than_twice_min_hh(self, mock_proc_run):
+        """Verify split is rejected upfront when parent EA total households < 2 * min_hh_threshold."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+
+        poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "delineated_ea", "memory")
+        dp_poly = poly_lyr.dataProvider()
+        dp_poly.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("hhcount", QVariant.Int),
+            QgsField("bldgcount", QVariant.Int),
+            QgsField("hh_count", QVariant.Int),
+            QgsField("bldg_count", QVariant.Int),
+        ])
+        poly_lyr.updateFields()
+
+        poly_feat = QgsFeature(poly_lyr.fields())
+        poly_feat.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        poly_feat.setAttribute("ean", "001000")
+        poly_feat.setAttribute("hhcount", 150)
+        poly_feat.setAttribute("bldgcount", 20)
+        dp_poly.addFeatures([poly_feat])
+        poly_lyr.updateExtents()
+
+        line_lyr = QgsVectorLayer("LineString?crs=epsg:4326", "eadel_update", "memory")
+        dp_line = line_lyr.dataProvider()
+        line_feat = QgsFeature()
+        line_feat.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(5, -1), QgsPointXY(5, 11)]))
+        dp_line.addFeatures([line_feat])
+        line_lyr.updateExtents()
+
+        # Buildings: 1 building point with 150 HH (< 2 * 99 = 198 HH)
+        bldg_lyr = QgsVectorLayer("Point?crs=epsg:4326", "bldg_points", "memory")
+        dp_bldg = bldg_lyr.dataProvider()
+        dp_bldg.addAttributes([QgsField("est_hhcount", QVariant.Double)])
+        bldg_lyr.updateFields()
+
+        b1 = QgsFeature(bldg_lyr.fields())
+        b1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(5, 5)))
+        b1.setAttribute("est_hhcount", 150.0)
+        dp_bldg.addFeatures([b1])
+        bldg_lyr.updateExtents()
+
+        dlg = SplitEADialog()
+        dlg.poly_combo.currentLayer = MagicMock(return_value=poly_lyr)
+        dlg.line_combo.currentLayer = MagicMock(return_value=line_lyr)
+        dlg.bldg_combo.currentLayer = MagicMock(return_value=bldg_lyr)
+        dlg.tolerance_spin.value = MagicMock(return_value=1.0)
+        dlg.min_hh_spin.value = MagicMock(return_value=99)
+        dlg.status_banner = MagicMock()
+        dlg.progress_bar = MagicMock()
+        dlg.log_console = MagicMock()
+
+        dlg.run_split()
+
+        # Split should be rejected upfront without calling processing.run split
+        mock_proc_run.assert_not_called()
+        updated_features = list(poly_lyr.getFeatures())
+        self.assertEqual(len(updated_features), 1)
+        feat = updated_features[0]
+        self.assertEqual(feat.attribute("new_ean"), "001000")
+        self.assertEqual(feat.attribute("ea_type"), "RETAINED")
+        self.assertEqual(feat.attribute("hh_count"), 150)
 
     def test_extract_parent_code_and_prefix_formats(self):
         """Verify _extract_parent_code_and_prefix standardizes ean/code to 6-digit code and 3-digit prefix."""
@@ -1267,6 +1422,30 @@ class TestSplitEADialog(unittest.TestCase):
             for f in bldg_lyr.getFeatures()
         ]
         self.assertEqual(bldg_snap_before, bldg_snap_after)
+
+    def test_split_cuts_strictly_where_line_ends_without_ray_extension(self):
+        """Verify SplitEADialog defaults to 0.0 tolerance and uses exact cut line geometry without ray extension."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+        from qgis.core import QgsGeometry, QgsPointXY
+
+        dlg = SplitEADialog()
+        # Default tolerance must be 0.0 (strictly cuts where line ends)
+        self.assertEqual(dlg.tolerance_spin.value(), 0.0)
+
+        # Polygon: (0,0) to (10,10)
+        poly_geom = QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]])
+
+        # Cut line: (5,0) to (5,10)
+        line_geom = QgsGeometry.fromPolylineXY([QgsPointXY(5, 0), QgsPointXY(5, 10)])
+
+        # When tolerance is 0.0, line endpoints are not modified
+        # And even when endpoints method is called with 0.0, geometry remains exact
+        extended = dlg._extend_line_endpoints(line_geom, 0.0)
+        pts = extended.asPolyline()
+        self.assertEqual(pts[0], QgsPointXY(5, 0))
+        self.assertEqual(pts[-1], QgsPointXY(5, 10))
 
 
 if __name__ == "__main__":
