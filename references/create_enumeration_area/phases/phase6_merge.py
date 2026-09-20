@@ -8,6 +8,7 @@ from qgis.core import (
 from qgis.PyQt.QtCore import QCoreApplication, QThread
 
 from ..helpers.constants import _PHASE_LABELS
+from ..helpers.spatial import deduplicate_building_points
 
 
 def run_phase_6(alg, parameters, context, feedback, multi_feedback, p1, p2, p5):
@@ -149,13 +150,22 @@ def process_barangay_merge(
                         prevailing_ean = neighbor_code
                         max_orig_hh = neighbor_max_orig
 
+                    merged_bldgs = list(ea.get('buildings', [])) + list(neighbor.get('buildings', []))
+                    deduped_bldgs, drop_cnt = deduplicate_building_points(merged_bldgs)
+                    for b in deduped_bldgs:
+                        b['parent_ean'] = prevailing_ean
+                        b['merge_role'] = 'Merged'
+
+                    computed_hh = sum(b.get('pop', 0.0) for b in deduped_bldgs) if deduped_bldgs else (ea['hh_count'] + neighbor['hh_count'])
+                    computed_bldg = len(deduped_bldgs) if deduped_bldgs else (ea.get('bldg_count', 0) + neighbor.get('bldg_count', 0))
+
                     merged_ea = {
                         'geom': merged_geom,
-                        'buildings': ea.get('buildings', []) + neighbor.get('buildings', []),
-                        'hh_count': ea['hh_count'] + neighbor['hh_count'],
+                        'buildings': deduped_bldgs,
+                        'hh_count': computed_hh,
                         'original_hhcount': ea.get('original_hhcount', ea.get('hh_count', 0.0)),
                         'original_bldgcount': ea.get('original_bldgcount', ea.get('bldg_count', 0)),
-                        'bldg_count': ea.get('bldg_count', 0) + neighbor.get('bldg_count', 0),
+                        'bldg_count': computed_bldg,
                         'attributes': list(ea['attributes']),
                         'original_id': ea['original_id'],
                         'original_code': ea['original_code'],
@@ -237,13 +247,22 @@ def process_barangay_merge(
                         prevailing_ean = neighbor_code
                         max_orig_hh = neighbor_max_orig
 
+                    merged_bldgs = list(ea.get('buildings', [])) + list(neighbor.get('buildings', []))
+                    deduped_bldgs, drop_cnt = deduplicate_building_points(merged_bldgs)
+                    for b in deduped_bldgs:
+                        b['parent_ean'] = prevailing_ean
+                        b['merge_role'] = 'Merged'
+
+                    computed_hh = sum(b.get('pop', 0.0) for b in deduped_bldgs) if deduped_bldgs else (ea['hh_count'] + neighbor['hh_count'])
+                    computed_bldg = len(deduped_bldgs) if deduped_bldgs else (ea.get('bldg_count', 0) + neighbor.get('bldg_count', 0))
+
                     merged_ea = {
                         'geom': merged_geom,
-                        'buildings': ea.get('buildings', []) + neighbor.get('buildings', []),
-                        'hh_count': ea['hh_count'] + neighbor['hh_count'],
+                        'buildings': deduped_bldgs,
+                        'hh_count': computed_hh,
                         'original_hhcount': ea.get('original_hhcount', ea.get('hh_count', 0.0)),
                         'original_bldgcount': ea.get('original_bldgcount', ea.get('bldg_count', 0)),
-                        'bldg_count': ea.get('bldg_count', 0) + neighbor.get('bldg_count', 0),
+                        'bldg_count': computed_bldg,
                         'attributes': list(ea['attributes']),
                         'original_id': ea['original_id'],
                         'original_code': ea['original_code'],

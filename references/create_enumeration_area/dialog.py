@@ -1828,7 +1828,7 @@ class EALauncherDialog(QDialog):
         # Refresh button
         self.merged_ea_refresh_btn = QPushButton("Refresh Merge Preview")
         self.merged_ea_refresh_btn.setFixedHeight(30)
-        self.merged_ea_refresh_btn.clicked.connect(self.generate_preview)
+        self.merged_ea_refresh_btn.clicked.connect(self.refresh_merge_preview)
         merged_ea_tab_layout.addWidget(self.merged_ea_refresh_btn)
 
         self.merge_right_tabs.addTab(merged_ea_tab, "Merge Preview")
@@ -2730,6 +2730,53 @@ class EALauncherDialog(QDialog):
         if hasattr(self, 'prev_ea_combo') and self._safe_get_layer(self.prev_ea_combo):
             self.generate_preview()
 
+    def auto_detect_merge_ea_layer(self):
+        """Scan active QGIS project for a matching Merged EA polygon layer."""
+        geo5 = self._extract_5digit_geocode() if hasattr(self, '_extract_5digit_geocode') else ""
+        target_name = f"{geo5}_merged_ea2026".lower() if geo5 else "merged_ea2026"
+
+        prev_layer = (
+            self._safe_get_layer(getattr(self, 'merge_prev_ea_combo', None))
+            or self._safe_get_layer(getattr(self, 'prev_ea_combo', None))
+        )
+        bar_layer = (
+            self._safe_get_layer(getattr(self, 'merge_bar_combo', None))
+            or self._safe_get_layer(getattr(self, 'bar_combo', None))
+        )
+
+        layers = list(QgsProject.instance().mapLayers().values())
+        best_candidate = None
+
+        # Priority 1: Exact target layer name match (e.g. {geo5}_merged_ea2026)
+        for layer in layers:
+            if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
+                continue
+            if layer.geometryType() not in (2, QgsWkbTypes.PolygonGeometry):
+                continue
+            if (prev_layer and layer == prev_layer) or (bar_layer and layer == bar_layer):
+                continue
+            name_lower = layer.name().lower()
+            if target_name in name_lower or (geo5 and geo5 in name_lower and "merged" in name_lower):
+                return layer
+
+        # Priority 2: General merge keywords
+        for layer in layers:
+            if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
+                continue
+            if layer.geometryType() not in (2, QgsWkbTypes.PolygonGeometry):
+                continue
+            if (prev_layer and layer == prev_layer) or (bar_layer and layer == bar_layer):
+                continue
+            name_lower = layer.name().lower()
+            if "delineat" in name_lower or "split" in name_lower or "boundary" in name_lower:
+                continue
+            if "merge_ea" in name_lower or "merged_ea" in name_lower or "merged" in name_lower:
+                return layer
+            if "ea2026" in name_lower and not best_candidate:
+                best_candidate = layer
+
+        return best_candidate
+
     def auto_detect_layers(self):
         """Scan all loaded layers in QGIS project and automatically match inputs by name keywords.
 
@@ -2753,7 +2800,7 @@ class EALauncherDialog(QDialog):
             "prev_ea":  None,
             "road":     None,
             "river":    None,
-            "merge_ea": None,
+            "merge_ea": self.auto_detect_merge_ea_layer(),
         }
 
         for layer in layers:
@@ -3196,6 +3243,14 @@ class EALauncherDialog(QDialog):
 
         # ── Pass 2: Populate New "Merge Preview" Tab from Merged EA Layer vs Previous EA Layer ──
         merge_ea_layer = self._safe_get_layer(getattr(self, 'merge_ea_combo', None))
+        if not merge_ea_layer and hasattr(self, 'auto_detect_merge_ea_layer'):
+            detected_m = self.auto_detect_merge_ea_layer()
+            if detected_m and hasattr(self, 'merge_ea_combo'):
+                self._safe_set_layer(self.merge_ea_combo, detected_m)
+                merge_ea_layer = detected_m
+                if hasattr(self, 'validate_layer_inputs'):
+                    self.validate_layer_inputs()
+
         if merge_ea_layer:
             m_fields = merge_ea_layer.fields()
             m_hh_idx = -1
@@ -3933,21 +3988,29 @@ class EALauncherDialog(QDialog):
                 b_geom.transform(xform_b)
 
             req = QgsFeatureRequest().setFilterRect(b_geom.boundingBox())
-            b_cnt = 0
-            b_hh = 0.0
+            points_by_geom = {}
             for bf in bldg_layer.getFeatures(req):
                 geom = bf.geometry()
                 if geom and not geom.isEmpty() and b_geom.intersects(geom):
-                    b_cnt += 1
+                    pt = geom.asPoint()
+                    k = (round(pt.x(), 6), round(pt.y(), 6))
+                    val = 1.0
                     if bldg_hh_idx != -1:
-                        val = bf.attribute(bldg_hh_idx)
-                        if val is not None and val != NULL:
+                        raw = bf.attribute(bldg_hh_idx)
+                        if raw is not None and raw != NULL:
                             try:
-                                b_hh += float(val)
+                                val = float(raw)
                             except (ValueError, TypeError):
-                                b_hh += 1.0
-                    else:
-                        b_hh += 1.0
+                                val = 1.0
+                    points_by_geom.setdefault(k, []).append(val)
+
+            # Prevailing point per coordinate is the one with highest household count
+            b_cnt = 0
+            b_hh = 0.0
+            for k, val_list in points_by_geom.items():
+                val_list.sort(reverse=True)
+                b_cnt += 1
+                b_hh += val_list[0]
 
             total_bldg = b_cnt
             total_hh = int(round(b_hh))
@@ -4331,6 +4394,75 @@ class EALauncherDialog(QDialog):
             except Exception:
                 pass
 
+        # Synchronize active extracted buildings layer: deduplicate duplicate geometries and update parent_ean / merge_role
+        extracted_bldg_layer = None
+        for lyr in QgsProject.instance().mapLayers().values():
+            if isinstance(lyr, QgsVectorLayer) and lyr.isValid() and lyr.geometryType() == QgsWkbTypes.PointGeometry:
+                lname = lyr.name().lower()
+                if "extracted_bldg" in lname or (geo5 and f"{geo5.lower()}_extracted_bldg" in lname):
+                    extracted_bldg_layer = lyr
+                    break
+
+        if extracted_bldg_layer and extracted_bldg_layer.isValid():
+            try:
+                eb_geom = QgsGeometry(merged_geom)
+                if (extracted_bldg_layer.crs().isValid() and partner_layer_source.crs().isValid()
+                        and extracted_bldg_layer.crs() != partner_layer_source.crs()):
+                    xform_eb = QgsCoordinateTransform(partner_layer_source.crs(), extracted_bldg_layer.crs(), QgsProject.instance())
+                    eb_geom.transform(xform_eb)
+
+                eb_req = QgsFeatureRequest().setFilterRect(eb_geom.boundingBox())
+                eb_points_by_geom = {}
+                eb_hh_idx = -1
+                for cand_fld in ["est_hhcount", "est_hh_count", "pop", "hh_count", "hhcount"]:
+                    idx = extracted_bldg_layer.fields().lookupField(cand_fld)
+                    if idx != -1:
+                        eb_hh_idx = idx
+                        break
+
+                for bf in extracted_bldg_layer.getFeatures(eb_req):
+                    geom = bf.geometry()
+                    if geom and not geom.isEmpty() and eb_geom.intersects(geom):
+                        pt = geom.asPoint()
+                        k = (round(pt.x(), 6), round(pt.y(), 6))
+                        val = 1.0
+                        if eb_hh_idx != -1:
+                            raw = bf.attribute(eb_hh_idx)
+                            if raw is not None and raw != NULL:
+                                try:
+                                    val = float(raw)
+                                except Exception:
+                                    val = 1.0
+                        eb_points_by_geom.setdefault(k, []).append((bf.id(), val))
+
+                extracted_bldg_layer.startEditing()
+                fids_to_delete = []
+                fids_to_update = []
+                for k, flist in eb_points_by_geom.items():
+                    flist.sort(key=lambda item: item[1], reverse=True)
+                    fids_to_update.append(flist[0][0])
+                    if len(flist) > 1:
+                        for dup in flist[1:]:
+                            fids_to_delete.append(dup[0])
+
+                if fids_to_delete:
+                    extracted_bldg_layer.deleteFeatures(fids_to_delete)
+
+                p_ean_idx = extracted_bldg_layer.fields().lookupField("parent_ean")
+                m_role_idx = extracted_bldg_layer.fields().lookupField("merge_role")
+                for ufid in fids_to_update:
+                    if p_ean_idx != -1:
+                        extracted_bldg_layer.changeAttributeValue(ufid, p_ean_idx, highest_ean)
+                    if m_role_idx != -1:
+                        extracted_bldg_layer.changeAttributeValue(ufid, m_role_idx, "Merged")
+
+                extracted_bldg_layer.commitChanges()
+                extracted_bldg_layer.updateExtents()
+                extracted_bldg_layer.triggerRepaint()
+            except Exception:
+                if extracted_bldg_layer.isEditable():
+                    extracted_bldg_layer.rollBack()
+
         # Export to GPKG only if target_layer is a memory layer (or not pointing to the exact target GPKG)
         out_folder = ""
         if hasattr(self, 'merge_output_folder_widget') and self.merge_output_folder_widget.filePath().strip():
@@ -4687,6 +4819,52 @@ class EALauncherDialog(QDialog):
                 self.iface.mapCanvas().refresh()
             except Exception:
                 pass
+
+        # Restore active extracted buildings layer: reset parent_ean and merge_role
+        extracted_bldg_layer = None
+        for lyr in QgsProject.instance().mapLayers().values():
+            if isinstance(lyr, QgsVectorLayer) and lyr.isValid() and lyr.geometryType() == QgsWkbTypes.PointGeometry:
+                lname = lyr.name().lower()
+                if "extracted_bldg" in lname or (geo5 and f"{geo5.lower()}_extracted_bldg" in lname):
+                    extracted_bldg_layer = lyr
+                    break
+
+        if extracted_bldg_layer and extracted_bldg_layer.isValid():
+            try:
+                extracted_bldg_layer.startEditing()
+                p_ean_idx = extracted_bldg_layer.fields().lookupField("parent_ean")
+                m_role_idx = extracted_bldg_layer.fields().lookupField("merge_role")
+
+                for rf in restored_feats:
+                    rf_geom = rf.geometry()
+                    rf_ean_val = rf.attribute("ean") or rf.attribute("new_ean") or ""
+                    rf_ean_str = str(rf_ean_val).strip()
+                    if rf_ean_str.endswith(".0"):
+                        rf_ean_str = rf_ean_str[:-2]
+
+                    rf_role = "Candidate" if rf_ean_str == cand_clean else "Merge Partner"
+
+                    eb_geom = QgsGeometry(rf_geom)
+                    if (extracted_bldg_layer.crs().isValid() and target_layer.crs().isValid()
+                            and extracted_bldg_layer.crs() != target_layer.crs()):
+                        xform_eb = QgsCoordinateTransform(target_layer.crs(), extracted_bldg_layer.crs(), QgsProject.instance())
+                        eb_geom.transform(xform_eb)
+
+                    req = QgsFeatureRequest().setFilterRect(eb_geom.boundingBox())
+                    for bf in extracted_bldg_layer.getFeatures(req):
+                        bg = bf.geometry()
+                        if bg and not bg.isEmpty() and eb_geom.intersects(bg):
+                            if p_ean_idx != -1:
+                                extracted_bldg_layer.changeAttributeValue(bf.id(), p_ean_idx, rf_ean_str)
+                            if m_role_idx != -1:
+                                extracted_bldg_layer.changeAttributeValue(bf.id(), m_role_idx, rf_role)
+
+                extracted_bldg_layer.commitChanges()
+                extracted_bldg_layer.updateExtents()
+                extracted_bldg_layer.triggerRepaint()
+            except Exception:
+                if extracted_bldg_layer.isEditable():
+                    extracted_bldg_layer.rollBack()
 
         # Also sync GPKG if target_layer is saved on disk
         out_folder = ""
@@ -5145,8 +5323,8 @@ class EALauncherDialog(QDialog):
 
                         processed_line_names.add(target_line_name)
                         line_gpkg_path = os.path.normpath(os.path.join(out_folder, f"{target_line_name}.gpkg")).replace("\\", "/") if out_folder else ""
-                        if proj_layer.featureCount() == 0:
-                            # If 0 features, do not create permanent file and remove from project
+                        if mode == "merging" and proj_layer.featureCount() == 0:
+                            # In merging mode, do not keep empty splitting line layers
                             QgsProject.instance().removeMapLayer(layer_id)
                             if line_gpkg_path and os.path.exists(line_gpkg_path):
                                 try:
@@ -5157,7 +5335,7 @@ class EALauncherDialog(QDialog):
                             _log_msg(skip_msg)
                         else:
                             has_splitting_lines = True
-                            # Convert in-memory splitting line layer to permanent GeoPackage on disk ONLY when it has features
+                            # Convert in-memory splitting line layer to permanent GeoPackage on disk
                             if line_gpkg_path and not proj_layer.source().lower().endswith(".gpkg"):
                                 if self._export_layer_to_gpkg(proj_layer, line_gpkg_path, target_line_name):
                                     perm_line_layer = QgsVectorLayer(f"{line_gpkg_path}|layername={target_line_name}", target_line_name, "ogr")
@@ -5172,9 +5350,14 @@ class EALauncherDialog(QDialog):
                                         QgsProject.instance().addMapLayer(perm_line_layer, False)
                                         apply_qml_to_layer(perm_line_layer, "eadel_update_lines.qml")
                                         splitting_lines_group.addLayer(perm_line_layer)
+                                        feat_desc = (
+                                            f"{perm_line_layer.featureCount()} feature(s)"
+                                            if perm_line_layer.featureCount() > 0
+                                            else "0 features; ready for manual editing"
+                                        )
                                         save_msg = (
                                             f"<span style='color:#0969da; font-weight:bold;'>[INFO]</span> "
-                                            f"Permanent GeoPackage layer (.gpkg) saved: {target_line_name} ({line_gpkg_path})"
+                                            f"Permanent GeoPackage layer (.gpkg) saved: {target_line_name} ({feat_desc}) ({line_gpkg_path})"
                                         )
                                         _log_msg(save_msg)
                                         continue
@@ -6182,7 +6365,71 @@ class EALauncherDialog(QDialog):
         self._session_merged_eans = {e for e in self._session_merged_eans if e in active_merged_eans}
 
     def refresh_merge_preview(self):
-        """Refresh the Merge Preview table and switch to the Merge Preview tab."""
+        """Refresh the Merge Preview table and switch to the Merge Preview tab with empty layer detection."""
+        # 1. Detect if Merged EA layer is empty or unselected
+        merge_ea_layer = self._safe_get_layer(getattr(self, 'merge_ea_combo', None))
+        if not merge_ea_layer:
+            # Attempt auto-detection from active project layers
+            detected_layer = self.auto_detect_merge_ea_layer() if hasattr(self, 'auto_detect_merge_ea_layer') else None
+            if detected_layer and hasattr(self, 'merge_ea_combo'):
+                self._safe_set_layer(self.merge_ea_combo, detected_layer)
+                merge_ea_layer = detected_layer
+                if hasattr(self, 'validate_layer_inputs'):
+                    self.validate_layer_inputs()
+                if hasattr(self, 'merge_log_console') and self.merge_log_console:
+                    self.merge_log_console.append(
+                        f"<span style='color:green;'>[INFO] Auto-detected Merged EA layer: {detected_layer.name()}</span>"
+                    )
+
+        if not merge_ea_layer:
+            # Merged EA layer is still empty - update UI status, log warning, and alert user
+            if hasattr(self, 'merge_ea_status_lbl'):
+                self.merge_ea_status_lbl.setText("[!] No Merged EA layer selected or detected.")
+                self.merge_ea_status_lbl.setStyleSheet("color: #d9534f; font-size: 10px; font-weight: bold;")
+            if hasattr(self, 'merge_log_console') and self.merge_log_console:
+                self.merge_log_console.append(
+                    "<span style='color:orange;'>[WARNING] Merged EA layer is empty or not selected. Please select a Merged EA polygon layer.</span>"
+                )
+            if hasattr(self, 'merged_ea_table'):
+                self.merged_ea_table.setRowCount(0)
+            if hasattr(self, 'kpi_merged_ea_val'):
+                self.kpi_merged_ea_val.setText("0")
+            if hasattr(self, "merge_right_tabs") and self.merge_right_tabs:
+                try:
+                    self.merge_right_tabs.setCurrentIndex(1)
+                except Exception:
+                    pass
+            QMessageBox.warning(
+                self,
+                "Missing Merged EA Layer",
+                "The Merged EA layer is not selected or detected in the project.\n\nPlease select or load a valid Merged EA polygon layer before refreshing the Merge Preview."
+            )
+            return
+
+        if merge_ea_layer.featureCount() == 0:
+            if hasattr(self, 'merge_ea_status_lbl'):
+                self.merge_ea_status_lbl.setText(f"[!] Selected Merged EA layer '{merge_ea_layer.name()}' is empty (0 features).")
+                self.merge_ea_status_lbl.setStyleSheet("color: #d9534f; font-size: 10px; font-weight: bold;")
+            if hasattr(self, 'merge_log_console') and self.merge_log_console:
+                self.merge_log_console.append(
+                    f"<span style='color:orange;'>[WARNING] Selected Merged EA layer '{merge_ea_layer.name()}' contains 0 features.</span>"
+                )
+            if hasattr(self, 'merged_ea_table'):
+                self.merged_ea_table.setRowCount(0)
+            if hasattr(self, 'kpi_merged_ea_val'):
+                self.kpi_merged_ea_val.setText("0")
+            if hasattr(self, "merge_right_tabs") and self.merge_right_tabs:
+                try:
+                    self.merge_right_tabs.setCurrentIndex(1)
+                except Exception:
+                    pass
+            QMessageBox.warning(
+                self,
+                "Empty Merged EA Layer",
+                f"The selected Merged EA layer '{merge_ea_layer.name()}' contains 0 polygon features.\n\nPlease select a valid layer with features."
+            )
+            return
+
         if hasattr(self, "_reconcile_session_merged_eans"):
             try:
                 self._reconcile_session_merged_eans()

@@ -99,6 +99,8 @@ class MockGenericClass(metaclass=MockMetaClass):
     def __ror__(self, other): return self
     def __and__(self, other): return self
     def __rand__(self, other): return self
+    def __iter__(self): return iter([])
+    def __contains__(self, item): return False
 
     def __getattr__(self, name):
         if name.startswith("__"):
@@ -152,6 +154,11 @@ class QgsPointXY:
 
     def __repr__(self):
         return f"QgsPointXY({self._x}, {self._y})"
+
+    def __eq__(self, other):
+        if not hasattr(other, 'x') or not hasattr(other, 'y'):
+            return False
+        return math.isclose(self._x, other.x(), abs_tol=1e-7) and math.isclose(self._y, other.y(), abs_tol=1e-7)
 
 
 class QgsPolygon:
@@ -827,6 +834,36 @@ class MockSignal:
                 pass
 
 
+class QgsCoordinateReferenceSystem:
+    def __init__(self, authid="EPSG:4326"):
+        if isinstance(authid, QgsCoordinateReferenceSystem):
+            self._authid = authid.authid()
+        else:
+            self._authid = str(authid)
+
+    def authid(self):
+        return self._authid
+
+    def isValid(self):
+        return bool(self._authid)
+
+    def __repr__(self):
+        return f"<QgsCoordinateReferenceSystem: {self._authid}>"
+
+
+class QgsCoordinateTransform:
+    def __init__(self, source_crs=None, dest_crs=None, context=None):
+        self._source_crs = source_crs
+        self._dest_crs = dest_crs
+        self._context = context
+
+    def transform(self, pt):
+        return pt
+
+    def transformBoundingBox(self, rect):
+        return rect
+
+
 _MOCK_LAYER_CACHE = {}
 
 
@@ -835,6 +872,7 @@ class QgsVectorLayer:
         self._path = path
         self._name = name
         self._provider = provider
+        self._id = f"{name}_{id(self)}"
         self._fields = QgsFields()
         self._features = []
         self._selected_fids = set()
@@ -854,6 +892,7 @@ class QgsVectorLayer:
 
     def name(self): return self._name
     def setName(self, name): self._name = name
+    def source(self): return getattr(self, '_path', "")
     def isValid(self): return True
     def isEditable(self): return False
     def rollBack(self): return True
@@ -869,7 +908,17 @@ class QgsVectorLayer:
     def extent(self): return MockGenericClass()
     def sourceExtent(self): return self.extent()
     def getFeatures(self, request=None): return iter(self._features)
-    def crs(self): return MockGenericClass()
+    def crs(self):
+        authid = "EPSG:4326"
+        p = str(self._path).upper()
+        if "CRS=" in p:
+            parts = p.split("CRS=")
+            if len(parts) > 1:
+                authid = parts[1].split("&")[0].split(";")[0]
+        crs_obj = MockGenericClass()
+        crs_obj.authid = lambda: authid
+        crs_obj.isValid = lambda: True
+        return crs_obj
     def sourceCrs(self): return self.crs()
     def wkbType(self):
         p = str(self._path).lower()
@@ -881,7 +930,7 @@ class QgsVectorLayer:
         if "point" in p: return 0  # PointGeometry
         if "line" in p: return 1  # LineGeometry
         return 2  # PolygonGeometry
-    def id(self): return f"layer_{self._name}"
+    def id(self): return getattr(self, '_id', f"layer_{self._name}")
     def setSubsetString(self, string):
         self._subset_string = string
         return True
@@ -1646,6 +1695,8 @@ def setup_qgis_mock_if_needed():
     core_mod.QgsProcessingParameterString = QgsProcessingParameterString
     core_mod.QgsProcessingParameterBoolean = QgsProcessingParameterBoolean
     core_mod.QgsProcessingParameterNumber = QgsProcessingParameterNumber
+    core_mod.QgsCoordinateReferenceSystem = QgsCoordinateReferenceSystem
+    core_mod.QgsCoordinateTransform = QgsCoordinateTransform
 
     # PyQt attributes
     class MockQWidget:
