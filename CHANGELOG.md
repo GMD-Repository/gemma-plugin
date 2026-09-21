@@ -5,6 +5,20 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.7] - 2026-09-16
+
+### Added
+- add EA delineation, unmerge dialog, dynamic preview refresh, and individual merging ([@pacoleslaw](https://github.com/pacoleslaw)) ([#265](https://github.com/GMD-Repository/gemma-plugin/pull/265))
+- implement interactive EA merge preview, individual merging, unmerge restoration, and session reconciliation ([@pacoleslaw](https://github.com/pacoleslaw)) ([#266](https://github.com/GMD-Repository/gemma-plugin/pull/266))
+- add EA delineation, split, unmerge, merge preview threshold gating, and individual EA merge workflow ([@pacoleslaw](https://github.com/pacoleslaw)) ([#268](https://github.com/GMD-Repository/gemma-plugin/pull/268))
+- add enumeration area delineation, split, and unmerge tools along with user documentation and unit tests ([@pacoleslaw](https://github.com/pacoleslaw))
+- add EA delineation and merging module with UI dialog, user guide, and unit tests ([@pacoleslaw](https://github.com/pacoleslaw))
+- add merge preview threshold gating and individual EA merge functionality with unit tests ([@pacoleslaw](https://github.com/pacoleslaw))
+- add QGIS plugin ZIP packaging script and unit tests ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### Changed
+- exclude tests and development assets from plugin ZIP builds ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#269](https://github.com/GMD-Repository/gemma-plugin/pull/269))
+
 ## [1.0.6] - 2026-09-14
 
 ### Added

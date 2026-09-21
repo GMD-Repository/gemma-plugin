@@ -14,7 +14,7 @@ hero:
       link: /getting-started
     - theme: alt
       text: Download
-      link: https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.6/gemma-plugin-v1.0.6.zip
+      link: https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.7/gemma-plugin-v1.0.7.zip
 
 features:
   - icon:
