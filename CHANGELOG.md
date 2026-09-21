@@ -5,6 +5,39 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.8] - 2026-09-21
+
+### Added
+- Implemented EA split dialog, merge preview threshold gating, and barangay-enclosed sequential numbering ([@pacoleslaw](https://github.com/pacoleslaw)) ([#272](https://github.com/GMD-Repository/gemma-plugin/pull/272))
+- Added custom UI dialog and unit tests for EA delineation and merging workflow ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added custom processing UI dialog and unit tests for merge preview threshold and individual merge ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added SplitEADialog and unit tests for splitting enumeration area polygons ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added UI dialog and processing phase modules for enumeration area creation reference ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added Phase 1 initialization module, split dialog, and unit tests for enumeration area creation ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added enumeration area generation phases, dialog, spatial helpers, and unit tests ([@pacoleslaw](https://github.com/pacoleslaw))
+
+### Changed
+- Enhanced QGIS mock environment for CRS, vector layer properties, and iteration ([@pacoleslaw](https://github.com/pacoleslaw))
+- Made candidate preview table columns resizable and responsive on small screens ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#283](https://github.com/GMD-Repository/gemma-plugin/pull/283))
+- Added in-row preview zoom to feature button in candidate tables ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#281](https://github.com/GMD-Repository/gemma-plugin/pull/281))
+
+### Documentation
+- Added EA Delineation and Merging tool interface, preview widget, and user guide ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+## [1.0.7] - 2026-09-16
+
+### Added
+- add EA delineation, unmerge dialog, dynamic preview refresh, and individual merging ([@pacoleslaw](https://github.com/pacoleslaw)) ([#265](https://github.com/GMD-Repository/gemma-plugin/pull/265))
+- implement interactive EA merge preview, individual merging, unmerge restoration, and session reconciliation ([@pacoleslaw](https://github.com/pacoleslaw)) ([#266](https://github.com/GMD-Repository/gemma-plugin/pull/266))
+- add EA delineation, split, unmerge, merge preview threshold gating, and individual EA merge workflow ([@pacoleslaw](https://github.com/pacoleslaw)) ([#268](https://github.com/GMD-Repository/gemma-plugin/pull/268))
+- add enumeration area delineation, split, and unmerge tools along with user documentation and unit tests ([@pacoleslaw](https://github.com/pacoleslaw))
+- add EA delineation and merging module with UI dialog, user guide, and unit tests ([@pacoleslaw](https://github.com/pacoleslaw))
+- add merge preview threshold gating and individual EA merge functionality with unit tests ([@pacoleslaw](https://github.com/pacoleslaw))
+- add QGIS plugin ZIP packaging script and unit tests ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### Changed
+- exclude tests and development assets from plugin ZIP builds ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#269](https://github.com/GMD-Repository/gemma-plugin/pull/269))
+
 ## [1.0.6] - 2026-09-14
 
 ### Added
