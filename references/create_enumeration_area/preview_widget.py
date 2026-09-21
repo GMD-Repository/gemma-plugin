@@ -91,10 +91,10 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
             "Geocode", "Barangay", "EA Name", "Household Count"
         ])
         delin_hdr = self.delineation_table.horizontalHeader()
-        delin_hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        delin_hdr.setSectionResizeMode(1, QHeaderView.Stretch)
-        delin_hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        delin_hdr.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        delin_hdr.setSectionResizeMode(QHeaderView.Interactive)
+        delin_hdr.setHighlightSections(True)
+        delin_hdr.setMinimumSectionSize(60)
+        self.delineation_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.delineation_table.verticalHeader().setVisible(False)
         self.delineation_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.delineation_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -109,10 +109,10 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
             "Geocode", "Barangay", "EA Name", "Household Count"
         ])
         merge_hdr = self.merge_table.horizontalHeader()
-        merge_hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        merge_hdr.setSectionResizeMode(1, QHeaderView.Stretch)
-        merge_hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        merge_hdr.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        merge_hdr.setSectionResizeMode(QHeaderView.Interactive)
+        merge_hdr.setHighlightSections(True)
+        merge_hdr.setMinimumSectionSize(60)
+        self.merge_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.merge_table.verticalHeader().setVisible(False)
         self.merge_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.merge_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -455,6 +455,15 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
             self.delineation_table.setItem(row_idx, 2, item_name)
             self.delineation_table.setItem(row_idx, 3, item_hh)
 
+        self.delineation_table.resizeColumnsToContents()
+        for c, mw in enumerate([85, 120, 95, 110]):
+            if self.delineation_table.columnWidth(c) < mw:
+                self.delineation_table.setColumnWidth(c, mw)
+        delin_total_w = sum(self.delineation_table.columnWidth(c) for c in range(4))
+        delin_vp_w = self.delineation_table.viewport().width()
+        if delin_vp_w > delin_total_w:
+            self.delineation_table.setColumnWidth(1, self.delineation_table.columnWidth(1) + (delin_vp_w - delin_total_w))
+
         # 2. Populate Merge Table
         show_merge = merge_candidates[:15]
         self.merge_table.setRowCount(len(show_merge))
@@ -477,6 +486,15 @@ class TablePreviewWidgetWrapper(WidgetWrapper):
             self.merge_table.setItem(row_idx, 1, item_bgy)
             self.merge_table.setItem(row_idx, 2, item_name)
             self.merge_table.setItem(row_idx, 3, item_hh)
+
+        self.merge_table.resizeColumnsToContents()
+        for c, mw in enumerate([85, 120, 95, 110]):
+            if self.merge_table.columnWidth(c) < mw:
+                self.merge_table.setColumnWidth(c, mw)
+        merge_total_w = sum(self.merge_table.columnWidth(c) for c in range(4))
+        merge_vp_w = self.merge_table.viewport().width()
+        if merge_vp_w > merge_total_w:
+            self.merge_table.setColumnWidth(1, self.merge_table.columnWidth(1) + (merge_vp_w - merge_total_w))
 
         stats_text = (
             f"<b>Candidates Summary:</b> Found <b>{len(delineation_candidates)}</b> delineation candidate(s) "
