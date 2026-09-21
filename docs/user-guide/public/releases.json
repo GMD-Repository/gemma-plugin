@@ -1,6 +1,44 @@
 {
   "releases": [
     {
+      "version": "1.0.8",
+      "date": "2026-09-21",
+      "tag": "v1.0.8",
+      "prerelease": false,
+      "contributors": [
+        "pacoleslaw",
+        "kentemman-gmd"
+      ],
+      "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/download/v1.0.8/gemma-plugin-v1.0.8.zip",
+      "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin/releases/tag/v1.0.8",
+      "qgisVersions": [
+        "3.34",
+        "3.40",
+        "3.44"
+      ],
+      "changes": {
+        "features": [
+          "Implemented EA split dialog, merge preview threshold gating, and barangay-enclosed sequential numbering ([@pacoleslaw](https://github.com/pacoleslaw)) ([#272](https://github.com/GMD-Repository/gemma-plugin/pull/272))",
+          "Added custom UI dialog and unit tests for EA delineation and merging workflow ([@pacoleslaw](https://github.com/pacoleslaw))",
+          "Added custom processing UI dialog and unit tests for merge preview threshold and individual merge ([@pacoleslaw](https://github.com/pacoleslaw))",
+          "Added SplitEADialog and unit tests for splitting enumeration area polygons ([@pacoleslaw](https://github.com/pacoleslaw))",
+          "Added UI dialog and processing phase modules for enumeration area creation reference ([@pacoleslaw](https://github.com/pacoleslaw))",
+          "Added Phase 1 initialization module, split dialog, and unit tests for enumeration area creation ([@pacoleslaw](https://github.com/pacoleslaw))",
+          "Added enumeration area generation phases, dialog, spatial helpers, and unit tests ([@pacoleslaw](https://github.com/pacoleslaw))"
+        ],
+        "improvements": [
+          "Enhanced QGIS mock environment for CRS, vector layer properties, and iteration ([@pacoleslaw](https://github.com/pacoleslaw))",
+          "Made candidate preview table columns resizable and responsive on small screens ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#283](https://github.com/GMD-Repository/gemma-plugin/pull/283))",
+          "Added in-row preview zoom to feature button in candidate tables ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#281](https://github.com/GMD-Repository/gemma-plugin/pull/281))"
+        ],
+        "changes": [],
+        "fixes": [],
+        "breaking": [],
+        "deprecated": [],
+        "dependencies": []
+      }
+    },
+    {
       "version": "1.0.7",
       "date": "2026-09-16",
       "tag": "v1.0.7",
@@ -253,5 +291,5 @@
       }
     }
   ],
-  "latest": "1.0.7"
+  "latest": "1.0.8"
 }
