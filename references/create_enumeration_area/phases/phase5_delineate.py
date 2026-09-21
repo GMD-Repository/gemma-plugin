@@ -1832,6 +1832,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
 
             split_parts = split_ea(ea, max_household, fback)
             if len(split_parts) > 1:
+                initial_parts = list(split_parts)
                 _ea_id = ea.get('original_id')
                 _ea_ean = str(ea.get('original_code', '')).strip()
                 _max_part_hh = max(p['hh_count'] for p in split_parts) if split_parts else 0
@@ -1878,10 +1879,33 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                             f"Could not extract proposed boundary cut line geometry. Preserving EA whole."
                         )
                 else:
-                    fback.pushWarning(
-                        f"[Barangay {bar_code}] [EA {ea['original_code']}] "
-                        f"Split rejected because resulting sub-polygon(s) fall below min threshold ({min_household} HH). Preserving EA whole."
-                    )
+                    # Attempt fallback cut line extraction from initial split parts so GIS specialist can manually adjust in Split EA
+                    fallback_cut_line = extract_proposed_cut_line(initial_parts, parent_geom=ea['geom'])
+                    if fallback_cut_line and not fallback_cut_line.isEmpty():
+                        bar_proposed_lines.append({
+                            'ea_id': ea.get('original_id'),
+                            'geom': fallback_cut_line,
+                            'parent_ea': ea,
+                            'split_by': initial_parts[0].get('split_by', 'voronoi'),
+                            'num_parts': len(initial_parts),
+                            'part_hh_counts': [p['hh_count'] for p in initial_parts],
+                            'remarks': "Proposed cut line (Sub-threshold: requires manual review)",
+                            'indicator': "FOR DELINEATION (MANUAL REVIEW)",
+                        })
+                        ea['has_proposed_split'] = True
+                        ea['proposed_parts_count'] = len(initial_parts)
+                        ea['proposed_split_by'] = initial_parts[0].get('split_by', 'voronoi')
+                        ea['remarks'] = "Proposed cut line (Sub-threshold: requires manual review)"
+                        fback.pushWarning(
+                            f"[Barangay {bar_code}] [EA {ea['original_code']}] "
+                            f"Automated partition produced sub-polygon(s) below min threshold ({min_household} HH). "
+                            f"Proposed cut line generated with warning for manual review in Split EA tool."
+                        )
+                    else:
+                        fback.pushWarning(
+                            f"[Barangay {bar_code}] [EA {ea['original_code']}] "
+                            f"Split rejected because resulting sub-polygon(s) fall below min threshold ({min_household} HH). Preserving EA whole."
+                        )
             else:
                 unique_pt_count = len(set((b['point'].x(), b['point'].y()) for b in ea.get('buildings', [])))
                 reason = []

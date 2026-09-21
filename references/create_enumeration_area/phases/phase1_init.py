@@ -88,9 +88,14 @@ def run_phase_1(
 
     bldg_fields = building_source.fields()
     bldg_hh_field = "hhcount"
-    for i in range(bldg_fields.count()):
-        if bldg_fields.at(i).name().lower() == "hhcount":
-            bldg_hh_field = bldg_fields.at(i).name()
+    for cand in ["est_hhcount", "est_hh_count", "est_hh", "hhcount", "hh_count", "pop", "population"]:
+        found = False
+        for i in range(bldg_fields.count()):
+            if bldg_fields.at(i).name().lower() == cand:
+                bldg_hh_field = bldg_fields.at(i).name()
+                found = True
+                break
+        if found:
             break
 
     barangay_id_field = "geocode"
@@ -487,7 +492,7 @@ def run_phase_1(
                 spec_bldg_map = {}
                 _spec_bldg_hh_idx = building_source.fields().indexOf(bldg_hh_field)
                 if _spec_bldg_hh_idx == -1:
-                    for _cname in ["hhcount", "hh_count", "household", "household_count", "pop", "population"]:
+                    for _cname in ["est_hhcount", "est_hh_count", "est_hh", "hhcount", "hh_count", "household", "household_count", "pop", "population"]:
                         if building_source.fields().indexOf(_cname) != -1:
                             _spec_bldg_hh_idx = building_source.fields().indexOf(_cname)
                             break

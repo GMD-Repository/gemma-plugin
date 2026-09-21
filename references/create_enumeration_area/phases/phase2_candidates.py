@@ -17,7 +17,7 @@ from qgis.core import (
 from qgis.PyQt.QtCore import QVariant
 
 from ..helpers.constants import _PHASE_LABELS, yield_to_ui, create_qgs_field
-from ..helpers.spatial import get_parent_barangay, normalize_to_8_digits
+from ..helpers.spatial import get_parent_barangay, normalize_to_8_digits, deduplicate_building_points
 
 
 def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
@@ -239,6 +239,12 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             pop_out_idx = bldg_out_fields.indexOf(bldg_hh_field)
         if pop_out_idx == -1:
             bldg_out_fields.append(create_qgs_field("pop", QVariant.Double))
+
+        if bldg_out_fields.indexOf("merge_role") == -1:
+            bldg_out_fields.append(create_qgs_field("merge_role", QVariant.String))
+
+        if bldg_out_fields.indexOf("candidate_ean") == -1:
+            bldg_out_fields.append(create_qgs_field("candidate_ean", QVariant.String))
 
         (extracted_buildings_sink, extracted_buildings_dest_id) = alg.parameterAsSink(
             parameters,
@@ -916,6 +922,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     feedback.pushInfo("Identifying contiguous partners for Merge Candidates...")
     merge_candidates_by_geocode = {}
     adjacent_ea_ids = set()
+    partner_to_candidate_eans = {}
     for feat in previous_ea_source.getFeatures():
         if multi_feedback.isCanceled():
             raise QgsProcessingException("Algorithm cancelled by user.")
@@ -938,6 +945,10 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             partners = []
             candidates = full_ea_index.intersects(geom.boundingBox())
             parent_bar_geo = resolve_ea_parent_barangay(feat)
+            _mc_ean = feat.attribute(ea_id_field)
+            _mc_ean_str = str(_mc_ean).strip() if _mc_ean is not None else ""
+            if _mc_ean_str.endswith(".0"):
+                _mc_ean_str = _mc_ean_str[:-2]
 
             for cid in candidates:
                 if cid == feat.id():
@@ -954,6 +965,8 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                             nb_ean_str = nb_ean_str[:-2]
                         if nb_ean_str:
                             adjacent_ea_ids.add(nb_feat.id())
+                            if _mc_ean_str:
+                                partner_to_candidate_eans.setdefault(nb_feat.id(), set()).add(_mc_ean_str)
 
                         nb_hh = imputed_hhcount.get(nb_feat.id(), 0.0)
                         if nb_hh == 0.0:
@@ -966,8 +979,6 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                             if nb_ean_str:
                                 partners.append(nb_ean_str)
 
-            _mc_ean = feat.attribute(ea_id_field)
-            _mc_ean_str = str(_mc_ean).strip() if _mc_ean is not None else ""
             merge_candidates_by_geocode.setdefault(parent_bar_geo, []).append(
                 (_mc_ean_str, _dc_hh, partners)
             )
@@ -1058,11 +1069,33 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                         except (TypeError, ValueError):
                             bldg_val = None
 
+                    _p_feat = ea_by_id.get(parent_ea_id)
+                    _p_ean = _p_feat.attribute(ea_id_field) if _p_feat else ""
+                    _p_ean_str = str(_p_ean).strip() if _p_ean is not None else ""
+                    if _p_ean_str.endswith(".0"):
+                        _p_ean_str = _p_ean_str[:-2]
+
+                    if parent_ea_id in merge_candidate_ids:
+                        m_role = "Candidate"
+                        cand_ean = _p_ean_str
+                    elif parent_ea_id in adjacent_ea_ids:
+                        m_role = "Merge Partner"
+                        cand_ean = ", ".join(sorted(partner_to_candidate_eans.get(parent_ea_id, set())))
+                    elif parent_ea_id in delineation_candidate_ids:
+                        m_role = "Delineation Candidate"
+                        cand_ean = ""
+                    else:
+                        m_role = "Other"
+                        cand_ean = ""
+
                     ea_id_to_buildings.setdefault(parent_ea_id, []).append({
                         'point': p,
                         'pop': pop_val,
                         'bldgpoints_value': bldg_val,
-                        'attributes': feat.attributes()
+                        'attributes': feat.attributes(),
+                        'parent_ean': _p_ean_str,
+                        'merge_role': m_role,
+                        'candidate_ean': cand_ean,
                     })
                     bldg_matched_count += 1
                     break
@@ -1092,57 +1125,75 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             if pop_out_idx == -1:
                 bldg_out_fields.append(create_qgs_field("pop", QVariant.Double))
 
+            if bldg_out_fields.indexOf("merge_role") == -1:
+                bldg_out_fields.append(create_qgs_field("merge_role", QVariant.String))
+
+            if bldg_out_fields.indexOf("candidate_ean") == -1:
+                bldg_out_fields.append(create_qgs_field("candidate_ean", QVariant.String))
+
             barangay_to_target = None
             if previous_ea_source.sourceCrs() != target_crs:
                 barangay_to_target = QgsCoordinateTransform(
                     previous_ea_source.sourceCrs(), target_crs, context.transformContext()
                 )
 
-            bldg_written_preview = 0
+            # Collect and deduplicate building points by geometry, retaining highest pop
+            all_preview_bldgs = []
             for parent_ea_id, buildings in ea_id_to_buildings.items():
-                parent_feat = ea_by_id[parent_ea_id]
-                parent_ean_val = parent_feat.attribute(ea_id_field)
-
                 for b in buildings:
-                    b_feat = QgsFeature(bldg_out_fields)
-                    b_geom = QgsGeometry.fromPointXY(b['point'])
-                    if barangay_to_target:
-                        b_geom.transform(barangay_to_target)
-                    b_feat.setGeometry(b_geom)
+                    all_preview_bldgs.append(b)
 
-                    b_feat.setAttributes(b['attributes'])
-                    attrs = b_feat.attributes()
-                    needed = bldg_out_fields.count() - len(attrs)
-                    bldg_fid = extracted_bldg_feat_count + 1
-                    fid_idx_bldg = bldg_out_fields.indexOf("fid")
-                    if fid_idx_bldg != -1 and fid_idx_bldg < len(attrs):
-                        attrs[fid_idx_bldg] = bldg_fid
+            deduped_bldgs, dropped_count = deduplicate_building_points(all_preview_bldgs)
+            if dropped_count > 0:
+                feedback.pushInfo(
+                    f"Deduplicated extracted buildings: retained {len(deduped_bldgs)} prevailing points "
+                    f"(highest household count), dropped {dropped_count} duplicate geometries."
+                )
 
-                    if needed > 0:
-                        attrs.extend([None] * needed)
-                        b_feat.setAttributes(attrs)
-                    elif fid_idx_bldg != -1:
-                        b_feat.setAttributes(attrs)
+            bldg_written_preview = 0
+            role_idx = bldg_out_fields.indexOf("merge_role")
+            cand_ean_idx = bldg_out_fields.indexOf("candidate_ean")
+            parent_ean_idx = bldg_out_fields.indexOf("parent_ean")
 
-                    b_feat.setId(bldg_fid)
-                    if fid_idx_bldg != -1:
-                        b_feat.setAttribute(fid_idx_bldg, bldg_fid)
+            for b in deduped_bldgs:
+                b_feat = QgsFeature(bldg_out_fields)
+                b_geom = QgsGeometry.fromPointXY(b['point'])
+                if barangay_to_target:
+                    b_geom.transform(barangay_to_target)
+                b_feat.setGeometry(b_geom)
 
-                    b_feat["parent_ean"] = str(parent_ean_val)
+                attrs = list(b['attributes']) if 'attributes' in b else []
+                needed = bldg_out_fields.count() - len(attrs)
+                bldg_fid = extracted_bldg_feat_count + 1
+                fid_idx_bldg = bldg_out_fields.indexOf("fid")
+                if fid_idx_bldg != -1 and fid_idx_bldg < len(attrs):
+                    attrs[fid_idx_bldg] = bldg_fid
 
-                    if "pop" in [f.name() for f in bldg_out_fields]:
-                        b_feat["pop"] = b['pop']
-                    elif bldg_hh_field in [f.name() for f in bldg_out_fields]:
-                        b_feat[bldg_hh_field] = b['pop']
+                if needed > 0:
+                    attrs.extend([None] * needed)
+                elif len(attrs) > bldg_out_fields.count():
+                    attrs = attrs[:bldg_out_fields.count()]
 
-                    if "bldgpoints_value" in [f.name() for f in bldg_out_fields]:
-                        b_feat["bldgpoints_value"] = b['bldgpoints_value']
-                    elif "bldgpts_val" in [f.name() for f in bldg_out_fields]:
-                        b_feat["bldgpts_val"] = b['bldgpoints_value']
+                if bldgpts_idx != -1:
+                    attrs[bldgpts_idx] = b.get('bldgpoints_value')
+                if pop_out_idx != -1:
+                    attrs[pop_out_idx] = b.get('pop')
+                if parent_ean_idx != -1:
+                    attrs[parent_ean_idx] = str(b.get('parent_ean', ''))
+                if role_idx != -1:
+                    attrs[role_idx] = str(b.get('merge_role', ''))
+                if cand_ean_idx != -1:
+                    attrs[cand_ean_idx] = str(b.get('candidate_ean', ''))
 
-                    if extracted_buildings_sink.addFeature(b_feat, QgsFeatureSink.Flag.FastInsert):
-                        bldg_written_preview += 1
-                        extracted_bldg_feat_count += 1
+                b_feat.setAttributes(attrs)
+                b_feat.setId(bldg_fid)
+                if fid_idx_bldg != -1:
+                    b_feat.setAttribute(fid_idx_bldg, bldg_fid)
+
+                if extracted_buildings_sink.addFeature(b_feat, QgsFeatureSink.Flag.FastInsert):
+                    bldg_written_preview += 1
+                    extracted_bldg_feat_count += 1
+
             feedback.pushInfo(f"Successfully wrote {bldg_written_preview} building features to output in preview mode.")
 
         feedback.pushInfo("PREVIEW ONLY check is active — exiting early after creating candidate layers.")
@@ -1181,6 +1232,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         "delineation_candidates_by_geocode": delineation_candidates_by_geocode,
         "delineation_candidate_bar_geocodes": delineation_candidate_bar_geocodes,
         "adjacent_ea_ids": adjacent_ea_ids,
+        "partner_to_candidate_eans": partner_to_candidate_eans,
         "imputed_hhcount": imputed_hhcount,
         "ea_index": ea_index,
         "ea_by_id": ea_by_id,
