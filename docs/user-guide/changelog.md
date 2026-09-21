@@ -2,6 +2,28 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.8
+<time>Sep 21, 2026</time>
+
+### ✨ New Features
+- Implemented EA split dialog, merge preview threshold gating, and barangay-enclosed sequential numbering ([@pacoleslaw](https://github.com/pacoleslaw)) ([#272](https://github.com/GMD-Repository/gemma-plugin/pull/272))
+- Added custom UI dialog and unit tests for EA delineation and merging workflow ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added custom processing UI dialog and unit tests for merge preview threshold and individual merge ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added SplitEADialog and unit tests for splitting enumeration area polygons ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added UI dialog and processing phase modules for enumeration area creation reference ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added Phase 1 initialization module, split dialog, and unit tests for enumeration area creation ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added enumeration area generation phases, dialog, spatial helpers, and unit tests ([@pacoleslaw](https://github.com/pacoleslaw))
+
+### ⚡ Improvements & Fixes
+- Enhanced QGIS mock environment for CRS, vector layer properties, and iteration ([@pacoleslaw](https://github.com/pacoleslaw))
+- Made candidate preview table columns resizable and responsive on small screens ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#283](https://github.com/GMD-Repository/gemma-plugin/pull/283))
+- Added in-row preview zoom to feature button in candidate tables ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#281](https://github.com/GMD-Repository/gemma-plugin/pull/281))
+
+### 📚 Documentation
+- Added EA Delineation and Merging tool interface, preview widget, and user guide ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+<Contributors :contributors="['pacoleslaw', 'kentemman-gmd']" />
+
 ## 1.0.7
 <time>Sep 16, 2026</time>
 
