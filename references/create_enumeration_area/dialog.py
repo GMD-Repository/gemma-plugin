@@ -217,6 +217,8 @@ class MergeActionWidget(QPushButton):
         super().__init__(parent)
         self.btn_preview = btn_preview
         self.btn_merge = btn_merge
+        self.setMinimumWidth(150)
+        self.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(4)
@@ -226,6 +228,18 @@ class MergeActionWidget(QPushButton):
 
         # Forward btn_merge clicked signal to self.clicked for seamless slot compatibility
         self.btn_merge.clicked.connect(self.clicked)
+
+    def sizeHint(self) -> QSize:
+        w = 0
+        if hasattr(self, 'btn_preview') and self.btn_preview:
+            w += max(self.btn_preview.sizeHint().width(), 65)
+        if hasattr(self, 'btn_merge') and self.btn_merge:
+            w += max(self.btn_merge.sizeHint().width(), 65)
+        w += 16  # margins and spacing
+        return QSize(max(w, 150), 28)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(150, 26)
 
     def setEnabled(self, enabled: bool):
         super().setEnabled(enabled)
@@ -287,7 +301,7 @@ class EALauncherDialog(QDialog):
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
-        self.setMinimumSize(960, 620)
+        self.setMinimumSize(860, 540)
         self.resize(1120, 720)
         self.setWindowFlags(
             Qt.Window |
@@ -2334,10 +2348,10 @@ class EALauncherDialog(QDialog):
             line_edit.setText(path)
 
     def _create_preview_table(self, include_merge_partner=False):
-        """Create a styled QTableWidget for candidate previews.
+        """Create a styled QTableWidget for candidate previews with resizable columns.
 
         Args:
-            include_merge_partner: When True, adds a 6th column ``Merge Partner (EAN)``,
+            include_merge_partner: When True, adds a 6th column ``Merge Partner (Geocode)``,
                 7th column ``Total HH Count``, and 8th column ``Action`` for merge candidate rows.
         """
         table = QTableWidget()
@@ -2350,16 +2364,12 @@ class EALauncherDialog(QDialog):
         else:
             table.setColumnCount(5)
             table.setHorizontalHeaderLabels(["Geocode", "Barangay", "EA Name", "Household Count", "Role / Status"])
+
         hdr = table.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(1, QHeaderView.Stretch)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        if include_merge_partner:
-            hdr.setSectionResizeMode(5, QHeaderView.ResizeToContents)
-            hdr.setSectionResizeMode(6, QHeaderView.ResizeToContents)
-            hdr.setSectionResizeMode(7, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(QHeaderView.Interactive)
+        hdr.setHighlightSections(True)
+        hdr.setMinimumSectionSize(60)
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -2860,6 +2870,15 @@ class EALauncherDialog(QDialog):
         road_keywords     = ["road", "highway", "street", "way", "route"]
         river_keywords    = ["river", "stream", "water", "drainage", "creek"]
 
+        detected_merge = None
+        if hasattr(self, 'auto_detect_merge_ea_layer') and callable(self.auto_detect_merge_ea_layer):
+            try:
+                res = self.auto_detect_merge_ea_layer()
+                if isinstance(res, QgsVectorLayer):
+                    detected_merge = res
+            except Exception:
+                detected_merge = None
+
         # Candidates: first match per slot wins (order of iteration = layer panel order)
         candidates = {
             "bar":      None,
@@ -2867,7 +2886,7 @@ class EALauncherDialog(QDialog):
             "prev_ea":  None,
             "road":     None,
             "river":    None,
-            "merge_ea": self.auto_detect_merge_ea_layer(),
+            "merge_ea": detected_merge,
         }
 
         for layer in layers:
@@ -3786,6 +3805,7 @@ class EALauncherDialog(QDialog):
                 if has_action_col:
                     btn_preview = QPushButton("Preview")
                     btn_preview.setFixedHeight(24)
+                    btn_preview.setMinimumWidth(65)
                     btn_preview.setToolTip(f"Zoom map canvas to candidate EA {ean_str} and selected merge partner.")
                     btn_preview.setStyleSheet(
                         "QPushButton { background-color: #0969da; color: white; font-weight: bold; "
@@ -3798,9 +3818,11 @@ class EALauncherDialog(QDialog):
 
                     btn_merge = QPushButton("Merge")
                     btn_merge.setFixedHeight(24)
+                    btn_merge.setMinimumWidth(65)
                     if is_merged_row:
                         btn_merge.setEnabled(True)
                         btn_merge.setText("Unmerge")
+                        btn_merge.setMinimumWidth(72)
                         btn_merge.setToolTip(f"Unmerge {ean_str} to restore original boundaries and re-enable merging with another partner.")
                         btn_merge.setStyleSheet(
                             "QPushButton { background-color: #d97706; color: white; font-weight: bold; "
@@ -3836,8 +3858,21 @@ class EALauncherDialog(QDialog):
                     table.setCellWidget(row_idx, 7, action_widget)
 
         table.resizeColumnsToContents()
-        if table.columnCount() > 1:
-            table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        hdr = table.horizontalHeader()
+        for col_idx in range(table.columnCount()):
+            hdr.setSectionResizeMode(col_idx, QHeaderView.Interactive)
+
+        # Enforce minimum sensible column widths so columns don't truncate on small screens
+        min_widths = [85, 120, 95, 110, 130, 160, 100, 160]
+        for col_idx, min_w in enumerate(min_widths[:table.columnCount()]):
+            if table.columnWidth(col_idx) < min_w:
+                table.setColumnWidth(col_idx, min_w)
+
+        # On wider viewports, distribute extra available space to Barangay (col 1) while remaining Interactive
+        total_col_w = sum(table.columnWidth(c) for c in range(table.columnCount()))
+        viewport_w = table.viewport().width()
+        if viewport_w > total_col_w and table.columnCount() > 1:
+            table.setColumnWidth(1, table.columnWidth(1) + (viewport_w - total_col_w))
 
     def _make_individual_preview_handler(self, cand_ean, partner_combo=None):
         """Factory for individual row preview (zoom to feature) button handlers."""
