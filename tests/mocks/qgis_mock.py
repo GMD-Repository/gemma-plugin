@@ -1716,6 +1716,8 @@ def setup_qgis_mock_if_needed():
         def setMinimumHeight(self, *args): pass
         def setMaximumHeight(self, *args): pass
         def setFixedHeight(self, *args): pass
+        def setSizePolicy(self, *args, **kwargs): pass
+        def sizePolicy(self): return MockGenericClass()
         def resize(self, *args): pass
         def show(self): pass
         def hide(self): pass
@@ -1985,6 +1987,11 @@ def setup_qgis_mock_if_needed():
         def setAlternatingRowColors(self, val): pass
         def setMinimumHeight(self, h): pass
         def setSizePolicy(self, h, v): pass
+        def setHorizontalScrollBarPolicy(self, policy): pass
+        def setVerticalScrollBarPolicy(self, policy): pass
+        def columnWidth(self, col): return 100
+        def setColumnWidth(self, col, w): pass
+        def viewport(self): return MockGenericClass()
 
     qtcore_mod.QCoreApplication = MockQCoreApplication
     qtcore_mod.QThread = MockQThread

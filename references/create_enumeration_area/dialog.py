@@ -217,8 +217,13 @@ class MergeActionWidget(QPushButton):
         super().__init__(parent)
         self.btn_preview = btn_preview
         self.btn_merge = btn_merge
-        self.setMinimumWidth(150)
-        self.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
+        if hasattr(self, 'setMinimumWidth'):
+            self.setMinimumWidth(150)
+        if hasattr(self, 'setSizePolicy'):
+            try:
+                self.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
+            except Exception:
+                pass
         layout = QHBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(4)
@@ -2368,8 +2373,8 @@ class EALauncherDialog(QDialog):
         hdr = table.horizontalHeader()
         hdr.setSectionResizeMode(QHeaderView.Interactive)
         hdr.setHighlightSections(True)
-        hdr.setMinimumSectionSize(60)
-        table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        if hasattr(table, "setHorizontalScrollBarPolicy") and hasattr(Qt, "ScrollBarAsNeeded"):
+            table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -3862,17 +3867,25 @@ class EALauncherDialog(QDialog):
         for col_idx in range(table.columnCount()):
             hdr.setSectionResizeMode(col_idx, QHeaderView.Interactive)
 
-        # Enforce minimum sensible column widths so columns don't truncate on small screens
-        min_widths = [85, 120, 95, 110, 130, 160, 100, 160]
-        for col_idx, min_w in enumerate(min_widths[:table.columnCount()]):
-            if table.columnWidth(col_idx) < min_w:
-                table.setColumnWidth(col_idx, min_w)
+        if hasattr(table, 'columnWidth') and hasattr(table, 'setColumnWidth'):
+            # Enforce minimum sensible column widths so columns don't truncate on small screens
+            min_widths = [85, 120, 95, 110, 130, 160, 100, 160]
+            for col_idx, min_w in enumerate(min_widths[:table.columnCount()]):
+                try:
+                    if table.columnWidth(col_idx) < min_w:
+                        table.setColumnWidth(col_idx, min_w)
+                except Exception:
+                    pass
 
-        # On wider viewports, distribute extra available space to Barangay (col 1) while remaining Interactive
-        total_col_w = sum(table.columnWidth(c) for c in range(table.columnCount()))
-        viewport_w = table.viewport().width()
-        if viewport_w > total_col_w and table.columnCount() > 1:
-            table.setColumnWidth(1, table.columnWidth(1) + (viewport_w - total_col_w))
+            # On wider viewports, distribute extra available space to Barangay (col 1) while remaining Interactive
+            try:
+                if hasattr(table, 'viewport') and hasattr(table.viewport(), 'width'):
+                    total_col_w = sum(table.columnWidth(c) for c in range(table.columnCount()))
+                    viewport_w = table.viewport().width()
+                    if viewport_w > total_col_w and table.columnCount() > 1:
+                        table.setColumnWidth(1, table.columnWidth(1) + (viewport_w - total_col_w))
+            except Exception:
+                pass
 
     def _make_individual_preview_handler(self, cand_ean, partner_combo=None):
         """Factory for individual row preview (zoom to feature) button handlers."""
