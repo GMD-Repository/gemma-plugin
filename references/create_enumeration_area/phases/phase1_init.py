@@ -47,6 +47,21 @@ def run_phase_1(
     preview_only = alg.parameterAsBoolean(parameters, alg.PREVIEW_ONLY, context)
     allow_candidate_merge = alg.parameterAsBoolean(parameters, getattr(alg, 'ALLOW_CANDIDATE_MERGE', 'ALLOW_CANDIDATE_MERGE'), context)
 
+    exec_mode = "all"
+    exec_mode_param = getattr(alg, 'EXECUTION_MODE', 'EXECUTION_MODE')
+    if exec_mode_param in parameters and parameters[exec_mode_param] is not None:
+        try:
+            val = alg.parameterAsEnum(parameters, exec_mode_param, context)
+            mode_map = {0: "all", 1: "delineation", 2: "merging"}
+            exec_mode = mode_map.get(val, "all")
+        except Exception:
+            raw_val = parameters.get(exec_mode_param, "all")
+            if isinstance(raw_val, int):
+                exec_mode = {0: "all", 1: "delineation", 2: "merging"}.get(raw_val, "all")
+            elif isinstance(raw_val, str):
+                s = raw_val.strip().lower()
+                exec_mode = s if s in ("all", "delineation", "merging") else "all"
+
     # Resolve dynamic field names from Previous EA Layer case-insensitively
     ea_fields = previous_ea_source.fields()
     eadel_indi_col_idx = -1
@@ -731,6 +746,7 @@ def run_phase_1(
         "snap_tolerance_m": snap_tolerance_m,
         "preview_only": preview_only,
         "allow_candidate_merge": allow_candidate_merge,
+        "execution_mode": exec_mode,
         "split_strategy": split_strategy,
         "split_type": split_type,
         "eadel_indi_col_idx": eadel_indi_col_idx,

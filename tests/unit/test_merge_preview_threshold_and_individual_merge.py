@@ -15,8 +15,8 @@ from qgis.core import (
     QgsField,
     QgsProject,
 )
-from qgis.PyQt.QtCore import QVariant
-from qgis.PyQt.QtWidgets import QComboBox, QPushButton, QTableWidget, QTextEdit
+from qgis.PyQt.QtCore import QVariant, Qt
+from qgis.PyQt.QtWidgets import QComboBox, QPushButton, QTableWidget, QTextEdit, QTableWidgetItem
 
 from references.create_enumeration_area.dialog import EALauncherDialog
 
@@ -1786,7 +1786,7 @@ class TestMergePreviewThresholdAndIndividualMerge(unittest.TestCase):
 
         # Both Digdigon EAs should have non-empty neighbor lists
         for cand in bgy_b_candidates:
-            ean_str, ea_name, bgy, hh, role, neighbors = cand
+            ean_str, ea_name, bgy, hh, role, neighbors = cand[:6]
             self.assertTrue(
                 len(neighbors) > 0,
                 f"Before merge: Digdigon {ean_str} should have merge partners, got none"
@@ -1837,7 +1837,7 @@ class TestMergePreviewThresholdAndIndividualMerge(unittest.TestCase):
         self.assertTrue(len(bgy_b_after) >= 2, "Bgy_B should still have at least 2 merge candidates after Bgy_A merge")
 
         for cand in bgy_b_after:
-            ean_str, ea_name, bgy, hh, role, neighbors = cand
+            ean_str, ea_name, bgy, hh, role, neighbors = cand[:6]
             self.assertTrue(
                 len(neighbors) > 0,
                 f"REGRESSION: After Bgy_A merge, Digdigon {ean_str} lost its merge partners! "
@@ -2156,6 +2156,182 @@ class TestMergePreviewThresholdAndIndividualMerge(unittest.TestCase):
         # 01729_eadel_update (empty, 0 features) should be removed
         layer_names = [l.name() for l in remaining_layers]
         self.assertNotIn("01729_eadel_update", layer_names)
+
+    def test_find_feature_in_layer_barangay_scoping(self):
+        """Verify that _find_feature_in_layer uses bgy_name to disambiguate identical EANs across barangays."""
+        layer = QgsVectorLayer("Point?crs=epsg:4326", "test_bgy_layer", "memory")
+        pr = layer.dataProvider()
+        pr.addAttributes([
+            QgsField("id", QVariant.Int),
+            QgsField("ean", QVariant.String),
+            QgsField("bgy_name", QVariant.String),
+        ])
+        layer.updateFields()
+
+        f1 = QgsFeature(layer.fields())
+        f1.setAttributes([1, "001000", "Barangay Alpha"])
+        f1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(120.0, 14.0)))
+
+        f2 = QgsFeature(layer.fields())
+        f2.setAttributes([2, "001000", "Barangay Beta"])
+        f2.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(121.0, 15.0)))
+
+        pr.addFeatures([f1, f2])
+        layer.updateExtents()
+
+        # Scoped to Beta -> returns f2
+        res_beta = EALauncherDialog._find_feature_in_layer(layer, "001000", bgy_name="Barangay Beta")
+        self.assertIsNotNone(res_beta)
+        self.assertEqual(res_beta.attribute("bgy_name"), "Barangay Beta")
+
+        # Scoped to Alpha -> returns f1
+        res_alpha = EALauncherDialog._find_feature_in_layer(layer, "001000", bgy_name="Barangay Alpha")
+        self.assertIsNotNone(res_alpha)
+        self.assertEqual(res_alpha.attribute("bgy_name"), "Barangay Alpha")
+
+        # Unknown barangay falls back to first match
+        res_fallback = EALauncherDialog._find_feature_in_layer(layer, "001000", bgy_name="Unknown Bgy")
+        self.assertIsNotNone(res_fallback)
+
+    def test_find_feature_in_layer_generic_id_no_suffix_false_positive(self):
+        """Verify that generic integer 'id' field is never suffix matched against geocodes."""
+        layer = QgsVectorLayer("Point?crs=epsg:4326", "test_id_layer", "memory")
+        pr = layer.dataProvider()
+        pr.addAttributes([
+            QgsField("id", QVariant.Int),
+            QgsField("ean", QVariant.String),
+        ])
+        layer.updateFields()
+
+        f1 = QgsFeature(layer.fields())
+        f1.setAttributes([1, "002000"])
+        f1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(120.0, 14.0)))
+        pr.addFeatures([f1])
+        layer.updateExtents()
+
+        # Searching for geocode ending in '1' (e.g. 01718014001001) must NOT match f1 just because f1['id'] == 1
+        res = EALauncherDialog._find_feature_in_layer(layer, "01718014001001")
+        self.assertIsNone(res, "Integer 'id' must not falsely suffix-match geocodes ending in the same digit")
+
+    def test_action_preview_button_and_row_double_click_parity(self):
+        """Verify that clicking the preview action button and double-clicking the row call zoom_to_candidate_feature identically."""
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.merged_ea_table = QTableWidget(1, 8)
+        mock_dlg.zoom_to_candidate_feature = MagicMock()
+
+        # Setup row items
+        target_layer = MagicMock()
+        item_ean = QTableWidgetItem("001000")
+        item_ean.setData(Qt.UserRole, {
+            "ean": "001000",
+            "bgy_name": "San Jose",
+            "layer": target_layer,
+        })
+        mock_dlg.merged_ea_table.setItem(0, 0, item_ean)
+        mock_dlg.merged_ea_table.setItem(0, 1, QTableWidgetItem("San Jose"))
+
+        # Setup partner combo in col 5
+        partner_combo = QComboBox()
+        partner_combo.addItem("002000")
+        partner_combo.setCurrentIndex(0)
+        mock_dlg.merged_ea_table.setCellWidget(0, 5, partner_combo)
+
+        # 1. Trigger preview action handler
+        handler = EALauncherDialog._make_individual_preview_handler(
+            mock_dlg, "001000", partner_combo=partner_combo, bgy_name="San Jose", cand_layer=target_layer
+        )
+        handler()
+        mock_dlg.zoom_to_candidate_feature.assert_called_once_with(
+            "001000", "002000", bgy_name="San Jose", preferred_layer=target_layer, cand_fid=None
+        )
+
+        mock_dlg.zoom_to_candidate_feature.reset_mock()
+
+        # 2. Trigger double-click handler
+        EALauncherDialog._on_merged_ea_table_double_clicked(mock_dlg, 0, 0)
+        mock_dlg.zoom_to_candidate_feature.assert_called_once_with(
+            "001000", "002000", bgy_name="San Jose", preferred_layer=target_layer, cand_fid=None
+        )
+
+    def test_zoom_to_candidate_feature_both_selected_on_same_layer(self):
+        """Verify that zoom_to_candidate_feature selects both candidate and partner features on the same layer."""
+        layer = QgsVectorLayer("Polygon?crs=epsg:4326", "test_merge_layer", "memory")
+        pr = layer.dataProvider()
+        pr.addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("bgy_name", QVariant.String),
+        ])
+        layer.updateFields()
+
+        geom1 = QgsGeometry.fromPolygonXY([[QgsPointXY(0, 0), QgsPointXY(1, 0), QgsPointXY(1, 1), QgsPointXY(0, 1)]])
+        geom2 = QgsGeometry.fromPolygonXY([[QgsPointXY(1, 0), QgsPointXY(2, 0), QgsPointXY(2, 1), QgsPointXY(1, 1)]])
+
+        f1 = QgsFeature(layer.fields())
+        f1.setAttributes(["001000", "Alpha"])
+        f1.setGeometry(geom1)
+
+        f2 = QgsFeature(layer.fields())
+        f2.setAttributes(["002000", "Alpha"])
+        f2.setGeometry(geom2)
+
+        pr.addFeatures([f1, f2])
+        layer.updateExtents()
+
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg._safe_get_layer.return_value = layer
+        mock_dlg._find_feature_in_layer = EALauncherDialog._find_feature_in_layer
+        mock_dlg._extract_5digit_geocode.return_value = ""
+
+        mock_canvas = MagicMock()
+        mock_canvas.mapSettings().destinationCrs.return_value = layer.crs()
+        mock_iface = MagicMock()
+        mock_iface.mapCanvas.return_value = mock_canvas
+        mock_dlg.iface = mock_iface
+
+        layer.selectByIds = MagicMock()
+
+        EALauncherDialog.zoom_to_candidate_feature(
+            mock_dlg,
+            "001000",
+            partner_ean="002000",
+            bgy_name="Alpha",
+            preferred_layer=layer,
+        )
+
+        # Both feature IDs should be passed together to selectByIds
+        f_ids = [f.id() for f in [f1, f2]]
+        layer.selectByIds.assert_called_with([f_ids[0], f_ids[1]])
+        mock_canvas.setExtent.assert_called_once()
+        mock_canvas.refresh.assert_called_once()
+
+    def test_description_panels_hidden_by_default(self):
+        """Verify all description panels across all tabs/subtabs are hidden by default on creation."""
+        dlg = EALauncherDialog()
+        self.assertFalse(dlg.pre_ea_desc_panel.isVisible())
+        self.assertFalse(dlg.help_panel.isVisible())
+        self.assertFalse(dlg.merge_help_panel.isVisible())
+        self.assertFalse(dlg.ea_merge_desc_panel.isVisible())
+        self.assertEqual(dlg.toggle_desc_btn.toolTip(), "Show Description Panel")
+
+    def test_proposed_merging_toggle_help(self):
+        """Verify clicking the info/guide toggle button on Proposed Merging subtab toggles merge_help_panel."""
+        dlg = EALauncherDialog()
+        # Switch to Tab 2 (Create Enumeration Areas) -> Subtab 1 (Proposed Merging)
+        dlg.main_tabs.setCurrentIndex(1)
+        dlg.create_ea_sub_tabs.setCurrentIndex(1)
+
+        self.assertFalse(dlg.merge_help_panel.isVisible())
+        self.assertEqual(dlg.toggle_desc_btn.toolTip(), "Show Description Panel")
+
+        # Click toggle: should show merge_help_panel
+        dlg.toggle_desc_btn.click()
+        self.assertTrue(dlg.merge_help_panel.isVisible())
+        self.assertEqual(dlg.toggle_desc_btn.toolTip(), "Hide Description Panel")
+
+        # Click toggle again: should hide merge_help_panel
+        dlg.toggle_desc_btn.click()
+        self.assertFalse(dlg.merge_help_panel.isVisible())
+        self.assertEqual(dlg.toggle_desc_btn.toolTip(), "Show Description Panel")
 
 
 if __name__ == "__main__":
