@@ -20,7 +20,7 @@ from typing import Optional, List, Dict, Any
 from qgis.core import (
     Qgis, QgsMessageLog,
     QgsApplication, QgsProject, QgsVectorLayer, QgsMapLayer, QgsCoordinateTransform, QgsSpatialIndex,
-    QgsFeature, QgsField, QgsGeometry, QgsProcessingContext, QgsProcessingFeedback,
+    QgsFeature, QgsField, QgsGeometry, QgsRectangle, QgsProcessingContext, QgsProcessingFeedback,
     QgsCoordinateReferenceSystem, QgsWkbTypes, NULL, QgsMapLayerProxyModel, QgsFeatureRequest
 )
 try:
@@ -209,13 +209,91 @@ class CustomProcessingFeedback(QgsProcessingFeedback):
         self.helper.append_html.emit("<span style='color:#d17a00; font-weight:bold;'>[CANCEL] Cancellation requested by user...</span>")
 
 
+class MergeActionWidget(QPushButton):
+    """Action column container widget that displays both Preview and Merge buttons
+    while maintaining full interface compatibility with QPushButton."""
+
+    def __init__(self, btn_preview: QPushButton, btn_merge: QPushButton, parent=None):
+        super().__init__(parent)
+        self.btn_preview = btn_preview
+        self.btn_merge = btn_merge
+        self.setMinimumWidth(150)
+        self.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(4)
+        layout.addWidget(btn_preview)
+        layout.addWidget(btn_merge)
+        self.setStyleSheet("QPushButton { background: transparent; border: none; }")
+
+        # Forward btn_merge clicked signal to self.clicked for seamless slot compatibility
+        self.btn_merge.clicked.connect(self.clicked)
+
+    def sizeHint(self) -> QSize:
+        w = 0
+        if hasattr(self, 'btn_preview') and self.btn_preview:
+            w += max(self.btn_preview.sizeHint().width(), 65)
+        if hasattr(self, 'btn_merge') and self.btn_merge:
+            w += max(self.btn_merge.sizeHint().width(), 65)
+        w += 16  # margins and spacing
+        return QSize(max(w, 150), 28)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(150, 26)
+
+    def setEnabled(self, enabled: bool):
+        super().setEnabled(enabled)
+        if hasattr(self, 'btn_merge') and self.btn_merge:
+            self.btn_merge.setEnabled(enabled)
+
+    def isEnabled(self) -> bool:
+        if hasattr(self, 'btn_merge') and self.btn_merge:
+            return self.btn_merge.isEnabled()
+        return super().isEnabled()
+
+    def setText(self, text: str):
+        if hasattr(self, 'btn_merge') and self.btn_merge:
+            self.btn_merge.setText(text)
+        super().setText(text)
+
+    def text(self) -> str:
+        if hasattr(self, 'btn_merge') and self.btn_merge:
+            return self.btn_merge.text()
+        return super().text()
+
+    def setToolTip(self, tip: str):
+        if hasattr(self, 'btn_merge') and self.btn_merge:
+            self.btn_merge.setToolTip(tip)
+        super().setToolTip(tip)
+
+    def styleSheet(self) -> str:
+        if hasattr(self, 'btn_merge') and self.btn_merge:
+            return self.btn_merge.styleSheet()
+        return super().styleSheet()
+
+    def setStyleSheet(self, style: str):
+        if hasattr(self, 'btn_merge') and self.btn_merge and "transparent" not in style:
+            self.btn_merge.setStyleSheet(style)
+        else:
+            super().setStyleSheet(style)
+
+
 class EALauncherDialog(QDialog):
     """Comprehensive Processing UI for EA Delineation and Merging."""
 
     ALGORITHM_ID = "gmd_pipeline:createea"
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, iface=None):
         super().__init__(parent)
+        if iface is not None:
+            self.iface = iface
+        else:
+            try:
+                from qgis.utils import iface as qgis_iface
+                self.iface = qgis_iface
+            except Exception:
+                self.iface = None
+
         self.setWindowTitle("EA Delineation and Merging")
         icon_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "..", "icons", "create_ea.svg")
@@ -223,7 +301,7 @@ class EALauncherDialog(QDialog):
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
-        self.setMinimumSize(960, 620)
+        self.setMinimumSize(860, 540)
         self.resize(1120, 720)
         self.setWindowFlags(
             Qt.Window |
@@ -1454,6 +1532,7 @@ class EALauncherDialog(QDialog):
 
         # Delineation Candidates Table
         self.delineation_table = self._create_preview_table()
+        self.delineation_table.cellDoubleClicked.connect(self._on_delin_table_double_clicked)
         preview_tab_layout.addWidget(self.delineation_table)
 
         # Refresh preview button
@@ -1793,6 +1872,7 @@ class EALauncherDialog(QDialog):
 
         # Reborn Live Preview Table — standard 5-column variant
         self.merge_table = self._create_preview_table(include_merge_partner=False)
+        self.merge_table.cellDoubleClicked.connect(self._on_merge_table_double_clicked)
         merge_preview_tab_layout.addWidget(self.merge_table)
 
         # Refresh preview button
@@ -1823,6 +1903,7 @@ class EALauncherDialog(QDialog):
 
         # Merge Preview Table — 7-column variant with Merge Partner dropdown and Total HH Count
         self.merged_ea_table = self._create_preview_table(include_merge_partner=True)
+        self.merged_ea_table.cellDoubleClicked.connect(self._on_merged_ea_table_double_clicked)
         merged_ea_tab_layout.addWidget(self.merged_ea_table)
 
         # Refresh button
@@ -2267,10 +2348,10 @@ class EALauncherDialog(QDialog):
             line_edit.setText(path)
 
     def _create_preview_table(self, include_merge_partner=False):
-        """Create a styled QTableWidget for candidate previews.
+        """Create a styled QTableWidget for candidate previews with resizable columns.
 
         Args:
-            include_merge_partner: When True, adds a 6th column ``Merge Partner (EAN)``,
+            include_merge_partner: When True, adds a 6th column ``Merge Partner (Geocode)``,
                 7th column ``Total HH Count``, and 8th column ``Action`` for merge candidate rows.
         """
         table = QTableWidget()
@@ -2283,16 +2364,12 @@ class EALauncherDialog(QDialog):
         else:
             table.setColumnCount(5)
             table.setHorizontalHeaderLabels(["Geocode", "Barangay", "EA Name", "Household Count", "Role / Status"])
+
         hdr = table.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(1, QHeaderView.Stretch)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        if include_merge_partner:
-            hdr.setSectionResizeMode(5, QHeaderView.ResizeToContents)
-            hdr.setSectionResizeMode(6, QHeaderView.ResizeToContents)
-            hdr.setSectionResizeMode(7, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(QHeaderView.Interactive)
+        hdr.setHighlightSections(True)
+        hdr.setMinimumSectionSize(60)
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -2793,6 +2870,15 @@ class EALauncherDialog(QDialog):
         road_keywords     = ["road", "highway", "street", "way", "route"]
         river_keywords    = ["river", "stream", "water", "drainage", "creek"]
 
+        detected_merge = None
+        if hasattr(self, 'auto_detect_merge_ea_layer') and callable(self.auto_detect_merge_ea_layer):
+            try:
+                res = self.auto_detect_merge_ea_layer()
+                if isinstance(res, QgsVectorLayer):
+                    detected_merge = res
+            except Exception:
+                detected_merge = None
+
         # Candidates: first match per slot wins (order of iteration = layer panel order)
         candidates = {
             "bar":      None,
@@ -2800,7 +2886,7 @@ class EALauncherDialog(QDialog):
             "prev_ea":  None,
             "road":     None,
             "river":    None,
-            "merge_ea": self.auto_detect_merge_ea_layer(),
+            "merge_ea": detected_merge,
         }
 
         for layer in layers:
@@ -3715,13 +3801,28 @@ class EALauncherDialog(QDialog):
                         _make_handler(row_idx, hh, partner_combo, table)
                     )
 
-                # Column 7: Action (Merge button)
+                # Column 7: Action (Preview and Merge buttons)
                 if has_action_col:
+                    btn_preview = QPushButton("Preview")
+                    btn_preview.setFixedHeight(24)
+                    btn_preview.setMinimumWidth(65)
+                    btn_preview.setToolTip(f"Zoom map canvas to candidate EA {ean_str} and selected merge partner.")
+                    btn_preview.setStyleSheet(
+                        "QPushButton { background-color: #0969da; color: white; font-weight: bold; "
+                        "border-radius: 3px; padding: 2px 8px; border: 1px solid #0550ae; } "
+                        "QPushButton:hover { background-color: #0550ae; }"
+                    )
+                    btn_preview.clicked.connect(
+                        self._make_individual_preview_handler(ean_str, partner_combo)
+                    )
+
                     btn_merge = QPushButton("Merge")
                     btn_merge.setFixedHeight(24)
+                    btn_merge.setMinimumWidth(65)
                     if is_merged_row:
                         btn_merge.setEnabled(True)
                         btn_merge.setText("Unmerge")
+                        btn_merge.setMinimumWidth(72)
                         btn_merge.setToolTip(f"Unmerge {ean_str} to restore original boundaries and re-enable merging with another partner.")
                         btn_merge.setStyleSheet(
                             "QPushButton { background-color: #d97706; color: white; font-weight: bold; "
@@ -3752,11 +3853,221 @@ class EALauncherDialog(QDialog):
                             "QPushButton { background-color: #e1e4e8; color: #959da5; "
                             "border-radius: 3px; padding: 2px 8px; border: 1px solid #d1d5da; }"
                         )
-                    table.setCellWidget(row_idx, 7, btn_merge)
+
+                    action_widget = MergeActionWidget(btn_preview, btn_merge)
+                    table.setCellWidget(row_idx, 7, action_widget)
 
         table.resizeColumnsToContents()
-        if table.columnCount() > 1:
-            table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        hdr = table.horizontalHeader()
+        for col_idx in range(table.columnCount()):
+            hdr.setSectionResizeMode(col_idx, QHeaderView.Interactive)
+
+        # Enforce minimum sensible column widths so columns don't truncate on small screens
+        min_widths = [85, 120, 95, 110, 130, 160, 100, 160]
+        for col_idx, min_w in enumerate(min_widths[:table.columnCount()]):
+            if table.columnWidth(col_idx) < min_w:
+                table.setColumnWidth(col_idx, min_w)
+
+        # On wider viewports, distribute extra available space to Barangay (col 1) while remaining Interactive
+        total_col_w = sum(table.columnWidth(c) for c in range(table.columnCount()))
+        viewport_w = table.viewport().width()
+        if viewport_w > total_col_w and table.columnCount() > 1:
+            table.setColumnWidth(1, table.columnWidth(1) + (viewport_w - total_col_w))
+
+    def _make_individual_preview_handler(self, cand_ean, partner_combo=None):
+        """Factory for individual row preview (zoom to feature) button handlers."""
+        def _handler():
+            p_text = partner_combo.currentText().strip() if partner_combo else None
+            self.zoom_to_candidate_feature(cand_ean, p_text)
+        return _handler
+
+    def _on_merged_ea_table_double_clicked(self, row, col):
+        """Double-click on any row in merged_ea_table zooms to the candidate feature."""
+        item = self.merged_ea_table.item(row, 0)
+        if not item:
+            return
+        cand_ean = item.text().strip()
+        partner_combo = self.merged_ea_table.cellWidget(row, 5)
+        partner_ean = partner_combo.currentText().strip() if partner_combo else None
+        self.zoom_to_candidate_feature(cand_ean, partner_ean)
+
+    def _on_delin_table_double_clicked(self, row, col):
+        """Double-click on any row in delineation candidate table zooms to feature."""
+        item = self.delineation_table.item(row, 0)
+        if not item:
+            return
+        cand_ean = item.text().strip()
+        self.zoom_to_candidate_feature(cand_ean)
+
+    def _on_merge_table_double_clicked(self, row, col):
+        """Double-click on any row in merge candidate table zooms to feature."""
+        item = self.merge_table.item(row, 0)
+        if not item:
+            return
+        cand_ean = item.text().strip()
+        self.zoom_to_candidate_feature(cand_ean)
+
+    def zoom_to_candidate_feature(self, cand_ean: str, partner_ean: Optional[str] = None):
+        """Zoom map canvas to candidate EA feature and its selected merge partner (if any)."""
+        if not cand_ean:
+            return
+
+        cand_clean = str(cand_ean).strip()
+        if cand_clean.endswith(".0"):
+            cand_clean = cand_clean[:-2]
+
+        partner_clean = None
+        if partner_ean and not partner_ean.startswith("—") and partner_ean.strip() != "":
+            partner_clean = str(partner_ean).strip()
+            if partner_clean.endswith(".0"):
+                partner_clean = partner_clean[:-2]
+
+        # 1. Resolve layers
+        merge_ea_layer = self._safe_get_layer(getattr(self, 'merge_ea_combo', None))
+        prev_ea_layer = self._safe_get_layer(getattr(self, 'merge_prev_ea_combo', None)) or self._safe_get_layer(getattr(self, 'prev_ea_combo', None))
+
+        geo5 = self._extract_5digit_geocode() if hasattr(self, '_extract_5digit_geocode') else ""
+        target_name = f"{geo5}_merged_ea2026" if geo5 else "merged_ea2026"
+        target_layer = None
+        for lyr in QgsProject.instance().mapLayersByName(target_name):
+            if isinstance(lyr, QgsVectorLayer) and lyr.isValid():
+                target_layer = lyr
+                break
+
+        # Candidate feature search priority: target_layer -> merge_ea_layer -> prev_ea_layer
+        cand_feat = None
+        cand_layer = None
+        for lyr in [target_layer, merge_ea_layer, prev_ea_layer]:
+            if lyr and lyr.isValid():
+                f = self._find_feature_in_layer(lyr, cand_clean)
+                if f:
+                    cand_feat = f
+                    cand_layer = lyr
+                    break
+
+        if not cand_feat or not cand_layer:
+            msg = f"<span style='color:orange;'>[PREVIEW] Could not locate feature for candidate EA '{cand_ean}'.</span>"
+            if hasattr(self, 'merge_log_console') and self.merge_log_console:
+                self.merge_log_console.append(msg)
+            return
+
+        cand_geom = cand_feat.geometry()
+        if not cand_geom or cand_geom.isEmpty():
+            msg = f"<span style='color:orange;'>[PREVIEW] Candidate EA '{cand_ean}' has empty geometry.</span>"
+            if hasattr(self, 'merge_log_console') and self.merge_log_console:
+                self.merge_log_console.append(msg)
+            return
+
+        # 2. Locate partner feature if requested
+        partner_feat = None
+        partner_layer = None
+        partner_geom = None
+        if partner_clean:
+            for lyr in [prev_ea_layer, merge_ea_layer, target_layer]:
+                if lyr and lyr.isValid():
+                    f = self._find_feature_in_layer(lyr, partner_clean)
+                    if f:
+                        partner_feat = f
+                        partner_layer = lyr
+                        break
+            if partner_feat:
+                pg = partner_feat.geometry()
+                if pg and not pg.isEmpty():
+                    partner_geom = pg
+
+        # 3. Canvas resolution
+        iface = getattr(self, 'iface', None)
+        if not iface:
+            try:
+                from qgis.utils import iface as qgis_iface
+                iface = qgis_iface
+            except Exception:
+                iface = None
+
+        if not iface or not hasattr(iface, 'mapCanvas') or not iface.mapCanvas():
+            msg = f"<span style='color:#1f6feb;'>[PREVIEW] Located candidate EA '{cand_ean}' (FID {cand_feat.id()}) in layer '{cand_layer.name()}'.</span>"
+            if hasattr(self, 'merge_log_console') and self.merge_log_console:
+                self.merge_log_console.append(msg)
+            return
+
+        canvas = iface.mapCanvas()
+        canvas_crs = canvas.mapSettings().destinationCrs()
+        proj_context = QgsProject.instance().transformContext()
+
+        # 4. Compute bounding box in canvas CRS
+        c_bbox = cand_geom.boundingBox()
+        if cand_layer.crs().isValid() and canvas_crs.isValid() and cand_layer.crs() != canvas_crs:
+            xform_c = QgsCoordinateTransform(cand_layer.crs(), canvas_crs, proj_context)
+            c_bbox = xform_c.transformBoundingBox(c_bbox)
+
+        zoom_extent = QgsRectangle(c_bbox)
+
+        # If partner geometry exists, transform its bbox to canvas CRS and combine
+        if partner_geom and partner_layer:
+            p_bbox = partner_geom.boundingBox()
+            if partner_layer.crs().isValid() and canvas_crs.isValid() and partner_layer.crs() != canvas_crs:
+                xform_p = QgsCoordinateTransform(partner_layer.crs(), canvas_crs, proj_context)
+                p_bbox = xform_p.transformBoundingBox(p_bbox)
+            zoom_extent.combineExtentWith(p_bbox)
+
+        # 5. Add 20% visual margin padding
+        padding = max(zoom_extent.width(), zoom_extent.height()) * 0.20
+        if padding <= 0:
+            padding = 0.0005 if canvas_crs.isGeographic() else 20.0
+        zoom_extent.grow(padding)
+
+        # 6. Apply zoom and refresh canvas
+        canvas.setExtent(zoom_extent)
+        canvas.refresh()
+
+        # 7. Select features and flash geometries for visual feedback
+        try:
+            cand_layer.selectByIds([cand_feat.id()])
+            if partner_feat and partner_layer:
+                partner_layer.selectByIds([partner_feat.id()])
+            if hasattr(iface, 'setActiveLayer'):
+                iface.setActiveLayer(cand_layer)
+        except Exception:
+            pass
+
+        try:
+            geoms_to_flash = [cand_geom]
+            if partner_geom:
+                if partner_layer and partner_layer.crs() != canvas_crs:
+                    xform_flash = QgsCoordinateTransform(partner_layer.crs(), canvas_crs, proj_context)
+                    fl_geom = QgsGeometry(partner_geom)
+                    fl_geom.transform(xform_flash)
+                    geoms_to_flash.append(fl_geom)
+                else:
+                    geoms_to_flash.append(partner_geom)
+            if cand_layer.crs() != canvas_crs:
+                xform_flash_c = QgsCoordinateTransform(cand_layer.crs(), canvas_crs, proj_context)
+                fl_c = QgsGeometry(cand_geom)
+                fl_c.transform(xform_flash_c)
+                geoms_to_flash[0] = fl_c
+            canvas.flashGeometries(geoms_to_flash)
+        except Exception:
+            pass
+
+        # 8. Feedback in log console
+        if partner_feat:
+            log_text = (
+                f"<span style='color:#0969da; font-weight:bold;'>"
+                f"[PREVIEW] Zoomed to Candidate EA {cand_clean} (layer: {cand_layer.name()}) "
+                f"and Partner EA {partner_clean} (layer: {partner_layer.name()}) on map canvas."
+                f"</span>"
+            )
+        else:
+            log_text = (
+                f"<span style='color:#0969da; font-weight:bold;'>"
+                f"[PREVIEW] Zoomed to Candidate EA {cand_clean} (layer: {cand_layer.name()}) on map canvas."
+                f"</span>"
+            )
+
+        if hasattr(self, 'merge_log_console') and self.merge_log_console:
+            self.merge_log_console.append(log_text)
+        elif hasattr(self, 'log_console') and self.log_console:
+            self.log_console.append(log_text)
 
     def _make_individual_merge_handler(self, row_idx, cand_ean, ea_name_str, bgy_name_str, cand_hh, partner_combo, table, btn_merge):
         """Factory for individual row merge button handlers."""
@@ -4527,19 +4838,26 @@ class EALauncherDialog(QDialog):
             "border: 1px solid #d0d7de; border-radius: 3px; padding: 1px 4px; }" % gray_bg
         )
 
-        btn_merge.setEnabled(True)
-        btn_merge.setText("Unmerge")
-        btn_merge.setToolTip(f"Unmerge {cand_ean} to restore original boundaries and re-enable merging with another partner.")
-        btn_merge.setStyleSheet(
+        target_btn = getattr(btn_merge, "btn_merge", btn_merge)
+        target_btn.setEnabled(True)
+        target_btn.setText("Unmerge")
+        target_btn.setToolTip(f"Unmerge {cand_ean} to restore original boundaries and re-enable merging with another partner.")
+        target_btn.setStyleSheet(
             "QPushButton { background-color: #d97706; color: white; font-weight: bold; "
             "border-radius: 3px; padding: 2px 8px; border: 1px solid #b45309; } "
             "QPushButton:hover { background-color: #b45309; }"
         )
         try:
-            btn_merge.clicked.disconnect()
+            target_btn.clicked.disconnect()
         except Exception:
             pass
-        btn_merge.clicked.connect(self._make_individual_unmerge_handler(row_idx, cand_ean))
+        target_btn.clicked.connect(self._make_individual_unmerge_handler(row_idx, cand_ean))
+
+        if btn_merge is not target_btn:
+            try:
+                btn_merge.setText("Unmerge")
+            except Exception:
+                pass
 
         msg = (
             f"<span style='color:#1a7f37; font-weight:bold;'>"
