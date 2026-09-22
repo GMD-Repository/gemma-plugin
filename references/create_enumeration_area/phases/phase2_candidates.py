@@ -1138,8 +1138,13 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                 )
 
             # Collect and deduplicate building points by geometry, retaining highest pop
+            exec_mode = p1.get("execution_mode", "all")
             all_preview_bldgs = []
             for parent_ea_id, buildings in ea_id_to_buildings.items():
+                if exec_mode == "delineation" and parent_ea_id not in delineation_candidate_ids:
+                    continue
+                if exec_mode == "merging" and (parent_ea_id not in merge_candidate_ids and parent_ea_id not in adjacent_ea_ids):
+                    continue
                 for b in buildings:
                     all_preview_bldgs.append(b)
 

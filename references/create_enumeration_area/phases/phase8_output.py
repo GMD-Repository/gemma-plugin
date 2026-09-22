@@ -1301,6 +1301,8 @@ def run_phase_8(
         # Check if EA feature geometry is empty
         _is_blank_feat = out_feat.geometry().isEmpty()
 
+        exec_mode = p1.get("execution_mode", "all")
+
         if _is_blank_feat:
             feedback.pushWarning(f"[Output] Skipped writing empty geometry EA feature to output layer (code={ea.get('original_code', '?')}).")
         else:
@@ -1322,7 +1324,7 @@ def run_phase_8(
                         feedback.reportError(f"Failed to add Special EA {i} to special EA sink.")
 
             # 2. Add to Delineated EAs sink (only extract whole candidate EAs above the max household threshold or valid split parts)
-            if ea.get('from_split', False) and not ea.get('is_special_ea', False):
+            if exec_mode != "merging" and ea.get('from_split', False) and not ea.get('is_special_ea', False):
                 if ea.get('hh_count', 0) < min_household:
                     feedback.pushWarning(
                         f"[Output Sink] Skipping EA {ea.get('original_code')} from delineated output: "
@@ -1341,7 +1343,7 @@ def run_phase_8(
                             delineated_feat_count += 1
                         else:
                             feedback.reportError(f"Failed to add EA {i} to delineated sink.")
-            elif not ea.get('from_split', False) and not ea.get('is_special_ea', False):
+            elif exec_mode != "merging" and not ea.get('from_split', False) and not ea.get('is_special_ea', False):
                 _orig_cand_id = ea.get('original_id')
                 if _orig_cand_id in delineation_candidate_ids:
                     if _orig_cand_id not in written_delineation_candidate_ids:
@@ -1392,7 +1394,7 @@ def run_phase_8(
                                         feedback.reportError(f"Failed to add candidate EA {_orig_cand_id} to delineated sink.")
 
             # 3. Add to Merged EAs sink if feature was generated from EA merging
-            if ea.get('from_merge', False) and not ea.get('is_special_ea', False):
+            if exec_mode != "delineation" and ea.get('from_merge', False) and not ea.get('is_special_ea', False):
                 if merged_sink is not None:
                     exp_feat_merged = make_export_feature(out_feat, merged_export_fields)
                     merged_fid = merged_feat_count + 1
@@ -1441,13 +1443,25 @@ def run_phase_8(
             _ea_orig_id = ea.get('original_id')
             _ea_orig_code = ea.get('original_code', '')
             parent_ean_val = ea.get('new_ea_code', _ea_orig_code)
-            _is_target_ea = (
-                ea.get('from_split', False)
-                or ea.get('from_merge', False)
-                or _ea_orig_id in delineation_candidate_ids
-                or _ea_orig_id in merge_candidate_ids
-                or _ea_orig_id in adjacent_ea_ids
-            )
+            if exec_mode == "delineation":
+                _is_target_ea = (
+                    ea.get('from_split', False)
+                    or _ea_orig_id in delineation_candidate_ids
+                )
+            elif exec_mode == "merging":
+                _is_target_ea = (
+                    ea.get('from_merge', False)
+                    or _ea_orig_id in merge_candidate_ids
+                    or _ea_orig_id in adjacent_ea_ids
+                )
+            else:
+                _is_target_ea = (
+                    ea.get('from_split', False)
+                    or ea.get('from_merge', False)
+                    or _ea_orig_id in delineation_candidate_ids
+                    or _ea_orig_id in merge_candidate_ids
+                    or _ea_orig_id in adjacent_ea_ids
+                )
             if _is_target_ea:
                 ea_bldgs = ea.get('buildings', [])
                 deduped_ea_bldgs, _ = deduplicate_building_points(ea_bldgs)
