@@ -579,10 +579,16 @@ def output_fields():
     fields.append(QgsField("barangay", QVariant.String, len=100))
     fields.append(QgsField("mbi_type", QVariant.String, len=50))
     fields.append(QgsField("ref_status", QVariant.String, len=60))
-    fields.append(QgsField("ref_remarks", QVariant.String, len=255))
-    fields.append(QgsField("ref_involved_bgys", QVariant.String, len=255))
+    # ref_remarks / ref_involved_bgys / remarks are unbounded: ref_remarks and
+    # ref_involved_bgys copy free-text / concatenated-list source fields
+    # (pso_remarks, involved_bgys) that carry no length cap, and remarks can
+    # itself be a "; "-joined combination of several mismatch reasons. A
+    # len=255 cap here previously rejected any longer value outright
+    # ("String of length N exceeds maximum field length (255)").
+    fields.append(QgsField("ref_remarks", QVariant.String))
+    fields.append(QgsField("ref_involved_bgys", QVariant.String))
     fields.append(QgsField("ref_num_bldg_pts", QVariant.Int))
-    fields.append(QgsField("remarks", QVariant.String, len=255))
+    fields.append(QgsField("remarks", QVariant.String))
     return fields
 
 
