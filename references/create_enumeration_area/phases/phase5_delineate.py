@@ -52,6 +52,37 @@ def extract_proposed_cut_line(split_parts: List[Dict[str, Any]], parent_geom: Qg
                 except Exception:
                     pass
 
+    # Fallback 1: check if cutting_line was recorded on split_parts
+    if not shared_edges:
+        for p in split_parts:
+            cline = p.get('cutting_line')
+            if cline and not cline.isEmpty():
+                shared_edges.append(cline)
+                break
+
+    # Fallback 2: buffered boundary intersection to bridge floating-point boundary slivers
+    if not shared_edges:
+        for p_i in range(len(split_parts)):
+            for p_j in range(p_i + 1, len(split_parts)):
+                geom_i = split_parts[p_i].get('geom')
+                geom_j = split_parts[p_j].get('geom')
+                if not geom_i or not geom_j or geom_i.isEmpty() or geom_j.isEmpty():
+                    continue
+                buf_inter = geom_i.boundary().intersection(geom_j.buffer(0.05, 3))
+                if buf_inter and not buf_inter.isEmpty():
+                    flat = QgsWkbTypes.flatType(buf_inter.wkbType())
+                    if flat in (QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString):
+                        shared_edges.append(buf_inter)
+                    elif flat == QgsWkbTypes.GeometryCollection or buf_inter.isMultipart():
+                        try:
+                            for sub_part in buf_inter.constParts():
+                                sub_geom = QgsGeometry(sub_part.clone())
+                                ptype = QgsWkbTypes.flatType(sub_geom.wkbType())
+                                if ptype in (QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString):
+                                    shared_edges.append(sub_geom)
+                        except Exception:
+                            pass
+
     if not shared_edges:
         return None
 
@@ -591,7 +622,151 @@ def split_ea_voronoi_road_hybrid(ea_item, road_lines, river_lines, target_pop, f
     return final_parts
 
 
-split_polygon_by_linear_features = split_ea_voronoi_road_hybrid
+def split_polygon_by_linear_features(ea_item, road_lines, river_lines, target_pop, fback, min_household=100, max_household=300):
+    """
+    Directly splits an EA polygon using intersecting physical road and river polylines.
+    Works whether building points are loaded or not.
+    """
+    if fback.isCanceled():
+        return [ea_item]
+
+    bldgs = ea_item.get('buildings', [])
+    parent_geom = ea_item['geom']
+    bbox = parent_geom.boundingBox()
+    ext_len = max(100.0, max(bbox.width(), bbox.height()) * 3.0)
+
+    all_input_lines = road_lines + river_lines
+    if not all_input_lines:
+        return [ea_item]
+
+    all_polylines = []
+    for lg in all_input_lines:
+        all_polylines.extend(get_polylines_from_geom(lg))
+
+    if not all_polylines:
+        return [ea_item]
+
+    current_polys = [parent_geom]
+    used_split = False
+    used_cut_lines = []
+
+    for polyline in all_polylines:
+        if len(polyline) < 2:
+            continue
+
+        p0, p1 = polyline[0], polyline[1]
+        dx0, dy0 = p0.x() - p1.x(), p0.y() - p1.y()
+        len0 = math.hypot(dx0, dy0)
+        p0_ext = QgsPointXY(p0.x() + (dx0 / len0) * ext_len, p0.y() + (dy0 / len0) * ext_len) if len0 > 1e-7 else p0
+
+        pn, pn_prev = polyline[-1], polyline[-2]
+        dxn, dyn = pn.x() - pn_prev.x(), pn.y() - pn_prev.y()
+        lenn = math.hypot(dxn, dyn)
+        pn_ext = QgsPointXY(pn.x() + (dxn / lenn) * ext_len, pn.y() + (dyn / lenn) * ext_len) if lenn > 1e-7 else pn
+
+        extended_line = [p0_ext] + list(polyline) + [pn_ext]
+
+        next_polys = []
+        for poly in current_polys:
+            target_geom = QgsGeometry(poly)
+            res, new_geoms, _ = target_geom.splitGeometry(extended_line, False)
+            res_val = getattr(res, 'value', res)
+            if res_val == 0 and len(new_geoms) > 0:
+                split_pieces = [target_geom] + new_geoms
+                valid_pieces = []
+                for sp in split_pieces:
+                    if sp and not sp.isEmpty() and sp.area() > 1e-6:
+                        clipped = sp.intersection(parent_geom).buffer(0.0, 3)
+                        if not clipped.isEmpty() and clipped.area() > 1e-6:
+                            valid_pieces.append(clipped)
+                if len(valid_pieces) >= 2:
+                    next_polys.extend(valid_pieces)
+                    used_split = True
+                    cut_inter = QgsGeometry.fromPolylineXY(polyline).intersection(parent_geom)
+                    if cut_inter and not cut_inter.isEmpty():
+                        used_cut_lines.append(cut_inter)
+                else:
+                    next_polys.append(poly)
+            else:
+                next_polys.append(poly)
+        current_polys = next_polys
+
+    if not used_split or len(current_polys) < 2:
+        return [ea_item]
+
+    extracted_polys = []
+    for cp in current_polys:
+        extracted_polys.extend(get_polygons_from_geom(cp))
+
+    extracted_polys = [ep for ep in extracted_polys if ep and not ep.isEmpty() and ep.area() > 1e-6]
+    if len(extracted_polys) < 2:
+        return [ea_item]
+
+    split_by = 'road'
+    if road_lines and river_lines:
+        split_by = 'road+river'
+    elif river_lines:
+        split_by = 'river'
+
+    cutting_line_merged = QgsGeometry.unaryUnion(used_cut_lines) if used_cut_lines else None
+
+    if bldgs:
+        part_bldgs_list = assign_buildings_to_parts(bldgs, extracted_polys, fback, ea_item.get('original_code', ''))
+        parts = []
+        for poly, p_bldgs in zip(extracted_polys, part_bldgs_list):
+            sub_pop = sum(b['pop'] for b in p_bldgs)
+            parts.append({
+                'geom': poly,
+                'buildings': p_bldgs,
+                'hh_count': sub_pop,
+                'original_hhcount': ea_item.get('original_hhcount') if ea_item.get('original_hhcount') is not None else ea_item.get('hh_count', 0.0),
+                'original_bldgcount': ea_item.get('original_bldgcount') if ea_item.get('original_bldgcount') is not None else ea_item.get('bldg_count', 0),
+                'bldg_count': len(p_bldgs),
+                'bldgpoints_value': sub_pop / len(p_bldgs) if len(p_bldgs) > 0 else 0.0,
+                'attributes': list(ea_item['attributes']),
+                'original_id': ea_item['original_id'],
+                'original_code': ea_item['original_code'],
+                'is_new': True,
+                'from_split': True,
+                'split_by': split_by,
+                'parent_barangay': ea_item['parent_barangay'],
+                'cutting_line': cutting_line_merged,
+            })
+    else:
+        total_area = sum(p.area() for p in extracted_polys)
+        parent_hh = ea_item.get('hh_count', 0.0)
+        parts = []
+        for poly in extracted_polys:
+            fraction = poly.area() / total_area if total_area > 0 else 1.0 / len(extracted_polys)
+            sub_pop = round(parent_hh * fraction)
+            parts.append({
+                'geom': poly,
+                'buildings': [],
+                'hh_count': sub_pop,
+                'original_hhcount': ea_item.get('original_hhcount', parent_hh),
+                'original_bldgcount': ea_item.get('original_bldgcount', 0),
+                'bldg_count': 0,
+                'bldgpoints_value': 0.0,
+                'attributes': list(ea_item['attributes']),
+                'original_id': ea_item['original_id'],
+                'original_code': ea_item['original_code'],
+                'is_new': True,
+                'from_split': True,
+                'split_by': split_by,
+                'parent_barangay': ea_item['parent_barangay'],
+                'cutting_line': cutting_line_merged,
+            })
+
+    parts, _ = allocate_gaps_to_parts(parts, parent_geom)
+    for p in parts:
+        clipped = p['geom'].intersection(parent_geom).buffer(0.0, 3)
+        if not clipped.isEmpty():
+            p['geom'] = clipped
+        p['split_by'] = split_by
+        if cutting_line_merged and not cutting_line_merged.isEmpty():
+            p['cutting_line'] = cutting_line_merged
+
+    return parts
 
 
 def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, p4):
@@ -602,14 +777,14 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
     Returns dictionary containing:
     - split_eas: List[dict] of EAs after iterative splitting
     """
-    eadel_indi_col_idx = p1["eadel_indi_col_idx"]
-    full_ea_by_id = p2["full_ea_by_id"]
+    eadel_indi_col_idx = p1.get("eadel_indi_col_idx", -1)
+    full_ea_by_id = p2.get("full_ea_by_id", {})
     min_household = p1["min_household"]
     max_household = p1["max_household"]
     target_household = p1["target_household"]
     snap_tolerance = p1["snap_tolerance"]
-    densify_dist = p1["densify_dist"]
-    area_threshold = p1["area_threshold"]
+    densify_dist = p1.get("densify_dist", 5.0)
+    area_threshold = p1.get("area_threshold", 100.0)
     num_cores = p1.get("num_cores", QThread.idealThreadCount())
     split_strategy = p1.get("split_strategy", 0)
     split_type = p1.get("split_type", 0)
@@ -1521,9 +1696,15 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         if len(parts) < 2:
             return [ea_item]
 
+        pre_enforce_parts = list(parts)
+
         # ── Step 7: Enforce Minimum Household Limit ──
         parts = enforce_min_household(parts, fback, ea_geom=parent_geom)
         if len(parts) < 2:
+            if is_delineation_candidate(ea_item) and len(pre_enforce_parts) >= 2:
+                for p in pre_enforce_parts:
+                    p['sub_threshold'] = True
+                return pre_enforce_parts
             return [ea_item]
 
         # ── Step 8: Handle Oversized Sub-parts ──
@@ -1568,13 +1749,172 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
             fback.pushWarning(
                 f"[EA {ea_item['original_code']}] Hybrid split rejected: "
                 f"{len(under_parts)} sub-polygon(s) fall below min threshold "
-                f"({min_household} HH). Keeping EA whole."
+                f"({min_household} HH). Returning pre-enforce road/river parts for proposed delineation."
             )
+            if is_delineation_candidate(ea_item) and len(pre_enforce_parts) >= 2:
+                for p in pre_enforce_parts:
+                    p['sub_threshold'] = True
+                return pre_enforce_parts
             return [ea_item]
 
         return final_parts
 
-    split_polygon_by_linear_features = split_ea_voronoi_road_hybrid
+    def split_polygon_by_linear_features(ea_item, road_lines, river_lines, target_pop, fback):
+        """
+        Direct Physical Slicing along Road / River Lines:
+        1. Slices parent EA along intersecting road and river polylines.
+        2. Extends polylines across parent polygon bounding box to guarantee clean division.
+        3. Supports polygonization fallback if ray extension does not bisect.
+        4. Assigns buildings if available (does not require buildings to split).
+        5. Preserves road/river physical split pieces for cut-line extraction.
+        """
+        if fback.isCanceled():
+            return [ea_item]
+
+        parent_geom = ea_item['geom']
+        bbox = parent_geom.boundingBox()
+        ext_len = max(100.0, max(bbox.width(), bbox.height()) * 3.0)
+
+        all_input_lines = [lg for lg in (road_lines + river_lines) if lg and not lg.isEmpty() and parent_geom.intersects(lg)]
+        if not all_input_lines:
+            return [ea_item]
+
+        all_input_lines.sort(
+            key=lambda lg: lg.intersection(parent_geom).length() if not lg.isEmpty() else 0.0,
+            reverse=True
+        )
+
+        all_polylines = []
+        for lg in all_input_lines:
+            all_polylines.extend(get_polylines_from_geom(lg))
+
+        if not all_polylines:
+            return [ea_item]
+
+        current_polys = [parent_geom]
+        used_split = False
+        applied_cut_lines = []
+
+        for polyline in all_polylines:
+            if len(polyline) < 2:
+                continue
+
+            p0, p1 = polyline[0], polyline[1]
+            dx0, dy0 = p0.x() - p1.x(), p0.y() - p1.y()
+            len0 = math.hypot(dx0, dy0)
+            p0_ext = QgsPointXY(p0.x() + (dx0 / len0) * ext_len, p0.y() + (dy0 / len0) * ext_len) if len0 > 1e-7 else p0
+
+            pn, pn_prev = polyline[-1], polyline[-2]
+            dxn, dyn = pn.x() - pn_prev.x(), pn.y() - pn_prev.y()
+            lenn = math.hypot(dxn, dyn)
+            pn_ext = QgsPointXY(pn.x() + (dxn / lenn) * ext_len, pn.y() + (dyn / lenn) * ext_len) if lenn > 1e-7 else pn
+
+            extended_line = [p0_ext] + list(polyline) + [pn_ext]
+            ext_geom = QgsGeometry.fromPolylineXY(extended_line)
+
+            next_polys = []
+            sliced_any = False
+            for poly in current_polys:
+                target_geom = QgsGeometry(poly)
+                res, new_geoms, _ = target_geom.splitGeometry(extended_line, False)
+                if res == 0 and len(new_geoms) > 0:
+                    split_pieces = [target_geom] + new_geoms
+                    valid_pieces = []
+                    for sp in split_pieces:
+                        if sp and not sp.isEmpty() and sp.area() > 1e-6:
+                            clipped = sp.intersection(parent_geom).buffer(0.0, 3)
+                            if not clipped.isEmpty() and clipped.area() > 1e-6:
+                                valid_pieces.append(clipped)
+                    if len(valid_pieces) >= 2:
+                        next_polys.extend(valid_pieces)
+                        sliced_any = True
+                    else:
+                        next_polys.append(poly)
+                else:
+                    next_polys.append(poly)
+            if sliced_any:
+                applied_cut_lines.append(ext_geom.intersection(parent_geom))
+                used_split = True
+            current_polys = next_polys
+            if len(current_polys) >= 2:
+                break
+
+        # Fallback to polygonization if extended line slicing yielded < 2 pieces
+        if len(current_polys) < 2:
+            lines_to_union = []
+            if parent_geom.isMultipart():
+                for poly in parent_geom.asMultiPolygon():
+                    for ring in poly:
+                        lines_to_union.append(QgsGeometry.fromPolylineXY(ring))
+            else:
+                for ring in parent_geom.asPolygon():
+                    lines_to_union.append(QgsGeometry.fromPolylineXY(ring))
+            for lg in all_input_lines:
+                inter = lg.intersection(parent_geom)
+                if inter and not inter.isEmpty():
+                    lines_to_union.append(inter)
+            if len(lines_to_union) >= 2:
+                noded = QgsGeometry.unaryUnion(lines_to_union)
+                if noded and not noded.isEmpty():
+                    poly_collection = QgsGeometry.polygonize([noded])
+                    if poly_collection and not poly_collection.isEmpty():
+                        faces = [f.intersection(parent_geom).buffer(0.0, 3) for f in get_polygons_from_geom(poly_collection)]
+                        faces = [f for f in faces if f and not f.isEmpty() and f.area() > 1e-6]
+                        if len(faces) >= 2:
+                            current_polys = faces
+                            used_split = True
+
+        if not used_split or len(current_polys) < 2:
+            return [ea_item]
+
+        extracted_polys = []
+        for cp in current_polys:
+            extracted_polys.extend(get_polygons_from_geom(cp))
+        extracted_polys = [p for p in extracted_polys if p and not p.isEmpty() and p.area() > 1e-6]
+
+        if len(extracted_polys) < 2:
+            return [ea_item]
+
+        split_by = 'road'
+        if road_lines and river_lines:
+            split_by = 'road+river'
+        elif river_lines:
+            split_by = 'river'
+
+        cut_line_geom = QgsGeometry.unaryUnion(applied_cut_lines) if applied_cut_lines else None
+        bldgs = ea_item.get('buildings', [])
+        if bldgs:
+            part_bldgs_list = assign_buildings_to_parts(bldgs, extracted_polys, fback, ea_item.get('original_code', ''))
+        else:
+            part_bldgs_list = [[] for _ in extracted_polys]
+
+        parts = []
+        total_hh = float(ea_item.get('hh_count', 0.0))
+        for poly, p_bldgs in zip(extracted_polys, part_bldgs_list):
+            if bldgs:
+                sub_pop = sum(b['pop'] for b in p_bldgs)
+            else:
+                area_frac = poly.area() / parent_geom.area() if parent_geom.area() > 0 else 1.0 / len(extracted_polys)
+                sub_pop = total_hh * area_frac
+            parts.append({
+                'geom': poly,
+                'buildings': p_bldgs,
+                'hh_count': sub_pop,
+                'original_hhcount': ea_item.get('original_hhcount', total_hh),
+                'original_bldgcount': ea_item.get('original_bldgcount', ea_item.get('bldg_count', 0)),
+                'bldg_count': len(p_bldgs),
+                'bldgpoints_value': sub_pop / len(p_bldgs) if len(p_bldgs) > 0 else 0.0,
+                'attributes': list(ea_item['attributes']),
+                'original_id': ea_item['original_id'],
+                'original_code': ea_item['original_code'],
+                'is_new': True,
+                'from_split': True,
+                'split_by': split_by,
+                'cutting_line': cut_line_geom,
+                'parent_barangay': ea_item['parent_barangay'],
+            })
+
+        return parts
 
     def split_ea_by_building_clusters(ea_item, target_pop, fback):
         if fback.isCanceled():
@@ -1771,30 +2111,41 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
         # Mode 1: Road & River Alignment Only
         if split_type == 1:
             if road_lines or river_lines:
-                fback.pushInfo(f"[EA {ea_item['original_code']}] Partitioning with Voronoi clustering and road/river boundary alignment...")
+                fback.pushInfo(f"[EA {ea_item['original_code']}] Partitioning with road/river boundary alignment...")
+                linear_parts = split_polygon_by_linear_features(ea_item, road_lines, river_lines, target_pop, fback)
+                if len(linear_parts) >= 2:
+                    return linear_parts
                 hybrid_parts = split_ea_voronoi_road_hybrid(ea_item, road_lines, river_lines, target_pop, fback)
                 if len(hybrid_parts) >= 2:
                     return hybrid_parts
             fback.pushWarning(f"[EA {ea_item['original_code']}] Road & River alignment unavailable or yielded 1 part. Keeping whole under Road/River Only mode.")
             return [ea_item]
 
-        # Mode 0: Auto (Hybrid Road/River -> Voronoi -> Forced Cut) [Default]
+        # Mode 0: Auto (Road/River -> Hybrid Road/River -> Voronoi -> Forced Cut) [Default]
+        # ── Tier 1: Road / River Boundary Alignment (Physical features take top priority) ──
+        if road_lines or river_lines:
+            fback.pushInfo(f"[EA {ea_item['original_code']}] Partitioning with road/river boundary alignment...")
+            linear_parts = split_polygon_by_linear_features(ea_item, road_lines, river_lines, target_pop, fback)
+            if len(linear_parts) >= 2:
+                fback.pushInfo(
+                    f"[EA {ea_item['original_code']}] Road/river linear split succeeded: "
+                    f"{len(linear_parts)} surveyable sub-polygons created along {linear_parts[0].get('split_by', 'road/river')}."
+                )
+                return linear_parts
+
+            hybrid_parts = split_ea_voronoi_road_hybrid(ea_item, road_lines, river_lines, target_pop, fback)
+            if len(hybrid_parts) >= 2:
+                fback.pushInfo(
+                    f"[EA {ea_item['original_code']}] Hybrid road/river split succeeded: "
+                    f"{len(hybrid_parts)} surveyable sub-polygons created along {hybrid_parts[0].get('split_by', 'road/river')}."
+                )
+                return hybrid_parts
+
         if not bldgs:
             if is_delineation_candidate(ea_item):
                 fback.pushInfo(f"[EA {ea_item['original_code']}] Delineation candidate has no building points. Forcing geometric split...")
                 return force_geometric_split(ea_item, target_pop, fback)
             return [ea_item]
-
-        # ── Tier 1: Voronoi Population Clustering + Road/River Physical Boundaries ──
-        if road_lines or river_lines:
-            fback.pushInfo(f"[EA {ea_item['original_code']}] Partitioning with Voronoi clustering and road/river boundary alignment...")
-            hybrid_parts = split_ea_voronoi_road_hybrid(ea_item, road_lines, river_lines, target_pop, fback)
-            if len(hybrid_parts) >= 2:
-                fback.pushInfo(
-                    f"[EA {ea_item['original_code']}] Hybrid split succeeded: "
-                    f"{len(hybrid_parts)} surveyable sub-polygons created along {hybrid_parts[0].get('split_by', 'road/river')}."
-                )
-                return hybrid_parts
 
         # ── Tier 2: Voronoi Building Point Cluster Partitioning (Fallback / No roads) ──
         fback.pushInfo(f"[EA {ea_item['original_code']}] Splitting by building point Voronoi cluster distribution...")
@@ -1887,24 +2238,25 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                     # Attempt fallback cut line extraction from initial split parts so GIS specialist can manually adjust in Split EA
                     fallback_cut_line = extract_proposed_cut_line(initial_parts, parent_geom=ea['geom'])
                     if fallback_cut_line and not fallback_cut_line.isEmpty():
+                        split_by_str = initial_parts[0].get('split_by', 'voronoi')
                         bar_proposed_lines.append({
                             'ea_id': ea.get('original_id'),
                             'geom': fallback_cut_line,
                             'parent_ea': ea,
-                            'split_by': initial_parts[0].get('split_by', 'voronoi'),
+                            'split_by': split_by_str,
                             'num_parts': len(initial_parts),
                             'part_hh_counts': [p['hh_count'] for p in initial_parts],
-                            'remarks': "Proposed cut line (Sub-threshold: requires manual review)",
-                            'indicator': "FOR DELINEATION (MANUAL REVIEW)",
+                            'remarks': f"Proposed cut line along {split_by_str} (Sub-threshold: requires manual review)",
+                            'indicator': "",
                         })
                         ea['has_proposed_split'] = True
                         ea['proposed_parts_count'] = len(initial_parts)
-                        ea['proposed_split_by'] = initial_parts[0].get('split_by', 'voronoi')
-                        ea['remarks'] = "Proposed cut line (Sub-threshold: requires manual review)"
+                        ea['proposed_split_by'] = split_by_str
+                        ea['remarks'] = f"Proposed cut line along {split_by_str} (Sub-threshold: requires manual review)"
                         fback.pushWarning(
                             f"[Barangay {bar_code}] [EA {ea['original_code']}] "
                             f"Automated partition produced sub-polygon(s) below min threshold ({min_household} HH). "
-                            f"Proposed cut line generated with warning for manual review in Split EA tool."
+                            f"Proposed cut line generated along {split_by_str} for manual review in Split EA tool."
                         )
                     else:
                         fback.pushWarning(
@@ -1912,22 +2264,54 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                             f"Split rejected because resulting sub-polygon(s) fall below min threshold ({min_household} HH). Preserving EA whole."
                         )
             else:
-                unique_pt_count = len(set((b['point'].x(), b['point'].y()) for b in ea.get('buildings', [])))
-                reason = []
-                if unique_pt_count < 2:
-                    reason.append(f"only {unique_pt_count} unique building point(s) — Voronoi cannot split")
-                if unique_pt_count >= 2:
-                    k_needed = max(2, int(round(ea['hh_count'] / float(target_household))))
-                    if k_needed > unique_pt_count:
-                        reason.append(f"k={k_needed} required but only {unique_pt_count} unique points available")
-                if not reason:
-                    reason.append("splitting returned 1 part — check sliver threshold vs cell size")
-                fback.pushWarning(
-                    f"[Barangay {bar_code}] UNRESOLVED OVER-THRESHOLD: EA (code={ea['original_code']}, "
-                    f"hh_count={ea['hh_count']}, bldg_count={ea.get('bldg_count',0)}, "
-                    f"unique_pts={unique_pt_count}). "
-                    f"Reason: {'; '.join(reason)}. Preserving EA whole."
-                )
+                if is_delineation_candidate(ea):
+                    road_lines = collect_linear_features(ea['geom'], road_index, road_geoms)
+                    river_lines = collect_linear_features(ea['geom'], river_index, river_geoms)
+                    direct_cut = None
+                    split_by_name = 'forced_grid'
+                    if road_lines or river_lines:
+                        merged_lines = merge_line_geometries(road_lines + river_lines)
+                        if merged_lines and not merged_lines.isEmpty():
+                            inter_line = merged_lines.intersection(ea['geom'])
+                            if inter_line and not inter_line.isEmpty() and inter_line.length() > 1e-4:
+                                direct_cut = inter_line
+                                split_by_name = 'road' if road_lines and not river_lines else ('river' if river_lines and not road_lines else 'road+river')
+
+                    if direct_cut is None or direct_cut.isEmpty():
+                        bbox = ea['geom'].boundingBox()
+                        if bbox.width() >= bbox.height():
+                            mid_x = (bbox.xMinimum() + bbox.xMaximum()) / 2.0
+                            bisector = QgsGeometry.fromPolylineXY([QgsPointXY(mid_x, bbox.yMinimum() - 10), QgsPointXY(mid_x, bbox.yMaximum() + 10)])
+                        else:
+                            mid_y = (bbox.yMinimum() + bbox.yMaximum()) / 2.0
+                            bisector = QgsGeometry.fromPolylineXY([QgsPointXY(bbox.xMinimum() - 10, mid_y), QgsPointXY(bbox.xMaximum() + 10, mid_y)])
+                        direct_cut = bisector.intersection(ea['geom'])
+                        split_by_name = 'forced_grid'
+
+                    if direct_cut and not direct_cut.isEmpty():
+                        bar_proposed_lines.append({
+                            'ea_id': ea.get('original_id'),
+                            'geom': direct_cut,
+                            'parent_ea': ea,
+                            'split_by': split_by_name,
+                            'num_parts': 2,
+                            'part_hh_counts': [ea.get('hh_count', 0.0), 0.0],
+                            'remarks': f"Proposed cut line along {split_by_name} (Manual review required)",
+                            'indicator': "",
+                        })
+                        ea['has_proposed_split'] = True
+                        ea['proposed_parts_count'] = 2
+                        ea['proposed_split_by'] = split_by_name
+                        ea['remarks'] = f"Proposed cut line along {split_by_name} (Manual review required)"
+                        fback.pushWarning(
+                            f"[Barangay {bar_code}] Generated fallback proposed boundary cut line along {split_by_name} for EA "
+                            f"(code={ea['original_code']}, pop={ea['hh_count']})."
+                        )
+                else:
+                    unique_pt_count = len(set((b['point'].x(), b['point'].y()) for b in ea.get('buildings', [])))
+                    fback.pushWarning(
+                        f"[Barangay {bar_code}] Preserving non-candidate EA {ea.get('original_code')} whole."
+                    )
 
             # Preserve parent EA whole without splitting polygon
             processed_eas.append(ea)

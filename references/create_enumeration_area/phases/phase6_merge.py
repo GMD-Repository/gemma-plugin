@@ -324,8 +324,8 @@ def run_phase_6(alg, parameters, context, feedback, multi_feedback, p1, p2, p5):
     Returns dictionary containing:
     - merged_eas: List[dict] of EAs after iterative merging
     """
-    eadel_indi_col_idx = p1["eadel_indi_col_idx"]
-    full_ea_by_id = p2["full_ea_by_id"]
+    eadel_indi_col_idx = p1.get("eadel_indi_col_idx", -1)
+    full_ea_by_id = p2.get("full_ea_by_id", {})
     min_household = p1["min_household"]
     max_household = p1["max_household"]
     num_cores = p1.get("num_cores", QThread.idealThreadCount())
@@ -338,7 +338,10 @@ def run_phase_6(alg, parameters, context, feedback, multi_feedback, p1, p2, p5):
     exec_mode = p1.get("execution_mode", "all")
     if exec_mode == "delineation":
         feedback.pushInfo("[Phase 6] Skipping EA merging (delineation execution mode).")
-        return {"merged_eas": split_eas}
+        return {
+            "merged_eas": split_eas,
+            "proposed_lines": p5.get("proposed_lines", []),
+        }
 
     barangay_split_groups = {}
     for ea in split_eas:

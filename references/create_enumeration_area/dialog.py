@@ -6284,7 +6284,8 @@ class EALauncherDialog(QDialog):
         from qgis import processing
         from qgis.core import QgsApplication
         
-        alg_to_run = QgsApplication.processingRegistry().algorithmById(self.ALGORITHM_ID) or self.algo
+        alg_id = self.ALGORITHM_ID if isinstance(self.ALGORITHM_ID, str) else ""
+        alg_to_run = (QgsApplication.processingRegistry().algorithmById(alg_id) if alg_id else None) or self.algo
 
         # Record pre-existing splitting lines layers to prevent duplicates
         pre_existing_eadel_ids = set()
@@ -6527,6 +6528,19 @@ class EALauncherDialog(QDialog):
                         continue
                     else:
                         has_splitting_lines = True
+                        # Ensure indicator values are removed in eadel_update layer
+                        try:
+                            indi_idx = proj_layer.fields().indexOf("indicator")
+                            if indi_idx != -1 and proj_layer.featureCount() > 0:
+                                proj_layer.startEditing()
+                                for f in proj_layer.getFeatures():
+                                    val = f.attribute(indi_idx)
+                                    if val is not None and str(val).strip() != "":
+                                        proj_layer.changeAttributeValue(f.id(), indi_idx, "")
+                                proj_layer.commitChanges()
+                        except Exception:
+                            pass
+
                         # Convert in-memory splitting line layer to permanent GeoPackage on disk
                         if line_gpkg_path and not proj_layer.source().lower().endswith(".gpkg"):
                             if self._export_layer_to_gpkg(proj_layer, line_gpkg_path, target_line_name):
