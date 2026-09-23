@@ -581,6 +581,8 @@ class UnmergeEADialog(QDialog):
                     prev_fields = pf.fields()
                     for pfld in prev_fields:
                         pf_name = pfld.name()
+                        if pf_name.lower() in ("fid", "ogc_fid", "ogcfid"):
+                            continue
                         val = pf.attribute(pf_name)
                         if val is not None and val != NULL:
                             # Match case-insensitively to merged_layer fields
@@ -588,6 +590,12 @@ class UnmergeEADialog(QDialog):
                                 if mfld.name().lower() == pf_name.lower():
                                     new_feat.setAttribute(mfld.name(), val)
                                     break
+
+                    # Ensure primary key / fid field is explicitly NULL so OGR autoincrements a new unique fid
+                    for fid_name in ("fid", "ogc_fid", "ogcfid"):
+                        f_idx = merged_fields.lookupField(fid_name)
+                        if f_idx != -1:
+                            new_feat.setAttribute(f_idx, NULL)
 
                     # Recalculate bldg_count and hh_count from building points inside pg
                     inside_bldg_count = 0
@@ -615,6 +623,14 @@ class UnmergeEADialog(QDialog):
                                     inside_hh_float += 1.0
 
                     inside_hh_count = int(math.ceil(inside_hh_float))
+                    if not bldg_spatial_index:
+                        base_hh = pf.attribute("hhcount")
+                        if base_hh is None or base_hh == NULL or str(base_hh).strip() == "":
+                            base_hh = pf.attribute("hh_count") or 0.0
+                        try:
+                            inside_hh_count = int(round(float(base_hh)))
+                        except Exception:
+                            inside_hh_count = 0
 
                     # Ensure baseline hhcount and bldgcount are preserved from pf
                     for base_col in ("hhcount", "bldgcount"):

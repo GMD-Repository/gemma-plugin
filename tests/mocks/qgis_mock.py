@@ -2058,6 +2058,12 @@ def setup_qgis_mock_if_needed():
                 self._data = {}
             self._data[role] = value
 
+        def setToolTip(self, tip):
+            self._tooltip = str(tip)
+
+        def toolTip(self):
+            return getattr(self, '_tooltip', "")
+
         def data(self, role):
             if not hasattr(self, '_data'):
                 self._data = {}

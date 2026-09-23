@@ -102,6 +102,7 @@ class TestUnmergeEADialog(unittest.TestCase):
         prev_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "01728_previous_ea", "memory")
         dp_prev = prev_layer.dataProvider()
         dp_prev.addAttributes([
+            QgsField("fid", QVariant.Int),
             QgsField("ean", QVariant.String),
             QgsField("code", QVariant.String),
             QgsField("barangay", QVariant.String),
@@ -116,6 +117,7 @@ class TestUnmergeEADialog(unittest.TestCase):
         ]])
         f1 = QgsFeature(prev_layer.fields())
         f1.setGeometry(p1_geom)
+        f1.setAttribute("fid", 101)
         f1.setAttribute("ean", "01728001")
         f1.setAttribute("code", "001")
         f1.setAttribute("barangay", "Sample Bar")
@@ -128,6 +130,7 @@ class TestUnmergeEADialog(unittest.TestCase):
         ]])
         f2 = QgsFeature(prev_layer.fields())
         f2.setGeometry(p2_geom)
+        f2.setAttribute("fid", 102)
         f2.setAttribute("ean", "01728002")
         f2.setAttribute("code", "002")
         f2.setAttribute("barangay", "Sample Bar")
@@ -141,6 +144,7 @@ class TestUnmergeEADialog(unittest.TestCase):
         merged_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "01728_merged_ea2026", "memory")
         dp_merged = merged_layer.dataProvider()
         dp_merged.addAttributes([
+            QgsField("fid", QVariant.Int),
             QgsField("ean", QVariant.String),
             QgsField("code", QVariant.String),
             QgsField("barangay", QVariant.String),
@@ -156,6 +160,7 @@ class TestUnmergeEADialog(unittest.TestCase):
         ]])
         fm = QgsFeature(merged_layer.fields())
         fm.setGeometry(merged_geom)
+        fm.setAttribute("fid", 1)
         fm.setAttribute("ean", "01728001")
         fm.setAttribute("code", "001")
         fm.setAttribute("barangay", "Sample Bar")
@@ -237,6 +242,10 @@ class TestUnmergeEADialog(unittest.TestCase):
         # Baseline hhcount and bldgcount must remain unchanged after unmerge
         self.assertEqual(feat_002.attribute("hhcount"), 55.0)
         self.assertEqual(feat_002.attribute("bldgcount"), 25.0)
+
+        # Verify that original fids (101, 102) were not copied into restored features (preventing UNIQUE constraint collision in GPKG)
+        self.assertNotIn(feat_001.attribute("fid"), (101, 102))
+        self.assertNotIn(feat_002.attribute("fid"), (101, 102))
 
     def test_run_unmerge_selected_features_only(self, *mocks):
         """Verify run_unmerge respects 'Selected features only' checkbox."""

@@ -3112,7 +3112,7 @@ class EALauncherDialog(QDialog):
             prev_ea_text = "Previous EA Layer is required."
         else:
             fields = [f.name().lower() for f in prev_ea_layer.fields()]
-            hh_found = any(f in fields for f in ["hh_count", "hhcount", "household", "household_count", "pop", "population", "new_hhcount", "hh_cnt"])
+            hh_found = any(f in fields for f in ["hhcount", "household", "household_count", "pop", "population", "new_hhcount", "hh_cnt", "hh_count"])
             ean_found = any(f in fields for f in ["ean", "ea_number", "ea_no", "eano", "ea_code", "id", "geocode", "code", "ea"])
 
             if not hh_found:
@@ -3270,9 +3270,9 @@ class EALauncherDialog(QDialog):
 
         fields = prev_ea_layer.fields()
 
-        # Resolve household field index case-insensitively with hh_count (computed count) taking priority
+        # Resolve household field index case-insensitively with hhcount (baseline census count) taking priority
         hh_idx = -1
-        for candidate in ["hh_count", "new_hhcount", "hhcount", "household", "household_count", "pop", "population"]:
+        for candidate in ["hhcount", "new_hhcount", "household", "household_count", "pop", "population", "hh_count"]:
             for i in range(fields.count()):
                 if fields.at(i).name().lower() == candidate:
                     hh_idx = i
@@ -3463,12 +3463,19 @@ class EALauncherDialog(QDialog):
         if merge_ea_layer:
             m_fields = merge_ea_layer.fields()
             m_hh_idx = -1
-            for candidate in ["hh_count", "new_hhcount", "hhcount", "household", "household_count", "pop", "population"]:
+            for candidate in ["hhcount", "new_hhcount", "household", "household_count", "pop", "population", "hh_count"]:
                 for i in range(m_fields.count()):
                     if m_fields.at(i).name().lower() == candidate:
                         m_hh_idx = i
                         break
                 if m_hh_idx != -1:
+                    break
+
+            m_hh_count_idx = -1
+            for cand in ["hh_count", "total_hh", "merged_hh"]:
+                idx = m_fields.lookupField(cand)
+                if idx != -1:
+                    m_hh_count_idx = idx
                     break
 
             m_ean_idx = -1
@@ -3597,6 +3604,15 @@ class EALauncherDialog(QDialog):
                 except Exception:
                     hh = 0.0
 
+                merged_total_hh = hh
+                if m_hh_count_idx != -1:
+                    _mhh_val = feat.attribute(m_hh_count_idx)
+                    if _mhh_val is not None and _mhh_val != NULL:
+                        try:
+                            merged_total_hh = float(_mhh_val)
+                        except Exception:
+                            pass
+
                 bgy_geocode = ""
                 if m_bgy_geocode_idx != -1:
                     _gc_val = feat.attribute(m_bgy_geocode_idx)
@@ -3717,7 +3733,7 @@ class EALauncherDialog(QDialog):
                     # Sort contiguous neighbors deterministically by geocode
                     neighbors.sort(key=lambda n: n[0])
 
-                self.all_merged_ea_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, role_str, neighbors, feat.id(), cand_raw_gc))
+                self.all_merged_ea_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, role_str, neighbors, feat.id(), cand_raw_gc, merged_total_hh))
 
         # Update KPI Dashboard Stats
         self.kpi_delin_val.setText(str(len(self.all_delineation_candidates)))
@@ -3888,6 +3904,9 @@ class EALauncherDialog(QDialog):
                 partner_combo = QComboBox()
                 has_action_col = (table.columnCount() >= 8)
 
+                merged_total_hh = record[8] if len(record) > 8 and isinstance(record[8], (int, float)) else hh
+
+                total_tooltip = ""
                 if is_merged_row:
                     partner_combo.clear()
                     partner_combo.setEnabled(False)
@@ -3896,7 +3915,8 @@ class EALauncherDialog(QDialog):
                         "QComboBox { background-color: %s; color: #8c8c8c; "
                         "border: 1px solid #d0d7de; border-radius: 3px; padding: 1px 4px; }" % row_bg
                     )
-                    total_text = f"{hh:.0f}"
+                    total_text = f"{merged_total_hh:.0f}"
+                    total_tooltip = f"Merged Total: {merged_total_hh:.0f} HH (Constituent Baseline: {hh:.0f} HH)"
                 elif normalized_neighbors:
                     for nbr_geocode, nbr_hh in normalized_neighbors:
                         partner_combo.addItem(nbr_geocode, userData=nbr_hh)
@@ -3908,9 +3928,11 @@ class EALauncherDialog(QDialog):
                         "QComboBox { background-color: %s; color: %s; "
                         "border: 1px solid #b0c4b1; border-radius: 3px; padding: 1px 4px; }" % (bg_col, fg_col)
                     )
+                    # When unmerged, hh_count column copies baseline hhcount
+                    total_text = f"{hh:.0f}"
                     initial_partner_hh = normalized_neighbors[0][1]
-                    initial_total = hh + initial_partner_hh
-                    total_text = f"{initial_total:.0f}"
+                    initial_nbr_gc = normalized_neighbors[0][0]
+                    total_tooltip = f"Unmerged: {hh:.0f} HH (Projected if merged with {initial_nbr_gc}: {hh + initial_partner_hh:.0f} HH)"
                 else:
                     partner_combo.clear()
                     partner_combo.setEnabled(False)
@@ -3922,6 +3944,7 @@ class EALauncherDialog(QDialog):
                         "border: 1px solid #cccccc; border-radius: 3px; padding: 1px 4px; }" % bg_col
                     )
                     total_text = "—"
+                    total_tooltip = f"Unmerged: {hh:.0f} HH (No eligible contiguous partner within threshold)"
 
                 table.setCellWidget(row_idx, 5, partner_combo)
 
@@ -3931,20 +3954,25 @@ class EALauncherDialog(QDialog):
                     item_total_hh.setTextAlignment(Qt.AlignCenter)
                     item_total_hh.setBackground(QColor(row_bg))
                     item_total_hh.setForeground(QColor(row_fg))
+                    if total_tooltip and hasattr(item_total_hh, "setToolTip"):
+                        item_total_hh.setToolTip(total_tooltip)
                     table.setItem(row_idx, 6, item_total_hh)
 
                     def _make_handler(target_row, cand_hh, combo, tbl):
                         def _handler(idx):
                             data = combo.currentData()
+                            partner_txt = combo.currentText()
                             try:
                                 p_hh = float(data) if data is not None else 0.0
                                 tot = cand_hh + p_hh
-                                txt = f"{tot:.0f}"
                             except Exception:
-                                txt = f"{cand_hh:.0f}"
+                                tot = cand_hh
                             cell = tbl.item(target_row, 6)
                             if cell:
-                                cell.setText(txt)
+                                # When unmerged, column copies hhcount; tooltip indicates projected total
+                                cell.setText(f"{cand_hh:.0f}")
+                                if hasattr(cell, "setToolTip"):
+                                    cell.setToolTip(f"Unmerged: {cand_hh:.0f} HH (Projected if merged with {partner_txt}: {tot:.0f} HH)")
                         return _handler
 
                     partner_combo.currentIndexChanged.connect(
@@ -4551,7 +4579,7 @@ class EALauncherDialog(QDialog):
         else:
             hh_idx = -1
             src_fields = partner_layer_source.fields()
-            for cand in ["hh_count", "new_hhcount", "hhcount", "household", "household_count"]:
+            for cand in ["hhcount", "new_hhcount", "household", "household_count", "hh_count"]:
                 for i in range(src_fields.count()):
                     if src_fields.at(i).name().lower() == cand:
                         hh_idx = i
@@ -4940,8 +4968,13 @@ class EALauncherDialog(QDialog):
             new_feat.setGeometry(merged_geom)
             for fld in prev_fields:
                 fname = fld.name()
-                if fname.lower() != "fid" and target_layer.fields().lookupField(fname) != -1:
+                if fname.lower() not in ("fid", "ogc_fid", "ogcfid") and target_layer.fields().lookupField(fname) != -1:
                     _safe_set_feat_attribute(new_feat, target_layer.fields(), fname, partner_feat.attribute(fname))
+            # Ensure primary key / fid field is explicitly NULL so OGR autoincrements a new unique fid
+            for fid_name in ("fid", "ogc_fid", "ogcfid"):
+                f_idx = target_layer.fields().lookupField(fid_name)
+                if f_idx != -1:
+                    new_feat.setAttribute(f_idx, NULL)
             # ONLY update hh_count, leave hhcount unchanged
             _safe_set_feat_attribute(new_feat, target_layer.fields(), "hh_count", total_hh)
             for fname in ["bldg_count", "bldgcount", "building_count", "buildings"]:
@@ -4968,8 +5001,12 @@ class EALauncherDialog(QDialog):
             new_feat.setGeometry(merged_geom)
             for fld in prev_fields:
                 fname = fld.name()
-                if fname.lower() != "fid" and target_layer.fields().lookupField(fname) != -1:
+                if fname.lower() not in ("fid", "ogc_fid", "ogcfid") and target_layer.fields().lookupField(fname) != -1:
                     _safe_set_feat_attribute(new_feat, target_layer.fields(), fname, partner_feat.attribute(fname))
+            for fid_name in ("fid", "ogc_fid", "ogcfid"):
+                f_idx = target_layer.fields().lookupField(fid_name)
+                if f_idx != -1:
+                    new_feat.setAttribute(f_idx, NULL)
             # ONLY update hh_count, leave hhcount unchanged
             _safe_set_feat_attribute(new_feat, target_layer.fields(), "hh_count", total_hh)
             for fname in ["bldg_count", "bldgcount", "building_count", "buildings"]:
@@ -5117,6 +5154,7 @@ class EALauncherDialog(QDialog):
         total_item = table.item(row_idx, 6)
         if total_item:
             total_item.setText(f"{int(total_hh)}")
+            total_item.setToolTip(f"Merged Total: {int(total_hh)} HH")
 
         partner_combo.clear()
         partner_combo.setEnabled(False)
@@ -5360,11 +5398,20 @@ class EALauncherDialog(QDialog):
 
             prev_fields = pf.fields()
             for pfld in prev_fields:
-                val = pf.attribute(pfld.name())
+                pf_name = pfld.name()
+                if pf_name.lower() in ("fid", "ogc_fid", "ogcfid"):
+                    continue
+                val = pf.attribute(pf_name)
                 if val is not None and val != NULL:
-                    idx = target_layer.fields().lookupField(pfld.name())
+                    idx = target_layer.fields().lookupField(pf_name)
                     if idx != -1:
                         new_feat.setAttribute(idx, val)
+
+            # Ensure primary key / fid field is explicitly NULL so OGR autoincrements a new unique fid
+            for fid_name in ("fid", "ogc_fid", "ogcfid"):
+                f_idx = target_layer.fields().lookupField(fid_name)
+                if f_idx != -1:
+                    new_feat.setAttribute(f_idx, NULL)
 
             # Ensure baseline hhcount and bldgcount from pf are preserved
             for base_col in ("hhcount", "bldgcount"):
@@ -5401,16 +5448,21 @@ class EALauncherDialog(QDialog):
                         else:
                             inside_hh_float += 1.0
 
-            if bldg_spatial_index:
-                inside_hh = int(round(inside_hh_float))
-            else:
-                inside_hh = int(round(float(pf.attribute("hhcount") or pf.attribute("hh_count") or 0.0)))
-                inside_bldg = int(round(float(pf.attribute("bldgcount") or pf.attribute("bldg_count") or 0.0)))
+            # When unmerged, hh_count strictly copies baseline hhcount
+            base_hh = pf.attribute("hhcount")
+            if base_hh is None or base_hh == NULL or str(base_hh).strip() == "":
+                base_hh = pf.attribute("hh_count")
+            if (base_hh is None or base_hh == NULL or str(base_hh).strip() == "") and bldg_spatial_index:
+                base_hh = inside_hh_float
+            try:
+                unmerged_hh = int(round(float(base_hh or 0.0)))
+            except Exception:
+                unmerged_hh = 0
 
             # ONLY update calculated hh_count, leave baseline hhcount unchanged
             hh_idx = target_layer.fields().lookupField("hh_count")
             if hh_idx != -1:
-                new_feat.setAttribute(hh_idx, inside_hh)
+                new_feat.setAttribute(hh_idx, unmerged_hh)
 
             # ONLY update calculated bldg_count, leave baseline bldgcount unchanged
             bldg_idx = target_layer.fields().lookupField("bldg_count")
