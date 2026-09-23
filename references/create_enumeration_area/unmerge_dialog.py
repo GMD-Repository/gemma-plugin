@@ -581,6 +581,8 @@ class UnmergeEADialog(QDialog):
                     prev_fields = pf.fields()
                     for pfld in prev_fields:
                         pf_name = pfld.name()
+                        if pf_name.lower() in ("fid", "ogc_fid", "ogcfid"):
+                            continue
                         val = pf.attribute(pf_name)
                         if val is not None and val != NULL:
                             # Match case-insensitively to merged_layer fields
@@ -588,6 +590,12 @@ class UnmergeEADialog(QDialog):
                                 if mfld.name().lower() == pf_name.lower():
                                     new_feat.setAttribute(mfld.name(), val)
                                     break
+
+                    # Ensure primary key / fid field is explicitly NULL so OGR autoincrements a new unique fid
+                    for fid_name in ("fid", "ogc_fid", "ogcfid"):
+                        f_idx = merged_fields.lookupField(fid_name)
+                        if f_idx != -1:
+                            new_feat.setAttribute(f_idx, NULL)
 
                     # Recalculate bldg_count and hh_count from building points inside pg
                     inside_bldg_count = 0
@@ -615,13 +623,34 @@ class UnmergeEADialog(QDialog):
                                     inside_hh_float += 1.0
 
                     inside_hh_count = int(math.ceil(inside_hh_float))
+                    if not bldg_spatial_index:
+                        base_hh = pf.attribute("hhcount")
+                        if base_hh is None or base_hh == NULL or str(base_hh).strip() == "":
+                            base_hh = pf.attribute("hh_count") or 0.0
+                        try:
+                            inside_hh_count = int(round(float(base_hh)))
+                        except Exception:
+                            inside_hh_count = 0
 
-                    # Set calculated counts in new feature
+                    # Ensure baseline hhcount and bldgcount are preserved from pf
+                    for base_col in ("hhcount", "bldgcount"):
+                        m_idx = merged_fields.lookupField(base_col)
+                        if m_idx != -1 and (new_feat.attribute(m_idx) is None or new_feat.attribute(m_idx) == NULL):
+                            p_idx = prev_fields.lookupField(base_col)
+                            if p_idx == -1:
+                                alt_name = "hh_count" if base_col == "hhcount" else "bldg_count"
+                                p_idx = prev_fields.lookupField(alt_name)
+                            if p_idx != -1:
+                                p_val = pf.attribute(p_idx)
+                                if p_val is not None and p_val != NULL:
+                                    new_feat.setAttribute(m_idx, p_val)
+
+                    # ONLY update calculated hh_count and bldg_count, leaving baseline hhcount/bldgcount unchanged
                     for mfld in merged_fields:
                         m_name_lower = mfld.name().lower()
-                        if m_name_lower in ("hh_count", "hhcount", "household"):
+                        if m_name_lower == "hh_count":
                             new_feat.setAttribute(mfld.name(), inside_hh_count)
-                        elif m_name_lower in ("bldg_count", "bldgcount"):
+                        elif m_name_lower == "bldg_count":
                             new_feat.setAttribute(mfld.name(), inside_bldg_count)
                         elif m_name_lower in ("ea_type", "eatype", "type"):
                             if new_feat.attribute(mfld.name()) in (None, NULL, ""):

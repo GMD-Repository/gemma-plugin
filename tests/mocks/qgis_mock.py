@@ -548,6 +548,9 @@ class QgsGeometry:
     def centroid(self):
         c = self.boundingBox().center()
         return QgsGeometry.fromPointXY(c)
+
+    def pointOnSurface(self):
+        return self.centroid()
     def asPoint(self): return getattr(self, '_point', QgsPointXY(0.0, 0.0))
 
     def boundingBox(self):
@@ -1738,7 +1741,7 @@ def setup_qgis_mock_if_needed():
         def setObjectName(self, name): self._object_name = str(name)
         def objectName(self): return getattr(self, '_object_name', "")
         def setLayout(self, layout): pass
-        def setSizePolicy(self, *args): pass
+        def setSizePolicy(self, *args, **kwargs): pass
         def sizePolicy(self): return MockGenericClass()
         def setMinimumSize(self, *args): pass
         def setMinimumWidth(self, *args): pass
@@ -2057,6 +2060,12 @@ def setup_qgis_mock_if_needed():
             if not hasattr(self, '_data'):
                 self._data = {}
             self._data[role] = value
+
+        def setToolTip(self, tip):
+            self._tooltip = str(tip)
+
+        def toolTip(self):
+            return getattr(self, '_tooltip', "")
 
         def data(self, role):
             if not hasattr(self, '_data'):

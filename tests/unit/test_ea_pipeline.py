@@ -30,6 +30,9 @@ from references.create_enumeration_area.phases.phase6_merge import (
     is_delineation_candidate as phase6_is_delin,
     is_merge_candidate as phase6_is_merge,
 )
+from references.create_enumeration_area.phases.phase7_compliance import (
+    run_phase_7,
+)
 from references.create_enumeration_area.phases.phase8_output import (
     refine_split_line,
 )
@@ -509,12 +512,91 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
             delineation_candidate_ids=delin_ids
         )
 
-        # 6 small EAs (90 HH total) should merge into 1 EA (90 HH), leaving the delineation candidate separate (total 2 EAs)
-        self.assertEqual(len(result), 2, "6 small EAs should merge into 1, leaving delineation candidate separate.")
-        merged_item = [item for item in result if item.get('from_merge', False)][0]
-        self.assertEqual(merged_item['hh_count'], 90.0, "Merged chain should have 90 HH.")
+        # Under the 1-partner-only rule, 6 small EAs (15 HH each) merge pairwise into 3 distinct merged EAs (30 HH each),
+        # and the delineation candidate remains separate (total 4 EAs). No EA is forwarded to merge with a 3rd/4th partner.
+        self.assertEqual(len(result), 4, "6 small EAs must merge pairwise into 3 distinct EAs, leaving delineation candidate separate.")
+        merged_items = [item for item in result if item.get('from_merge', False)]
+        self.assertEqual(len(merged_items), 3, "There should be exactly 3 pairwise merged EAs.")
+        for m in merged_items:
+            self.assertEqual(m['hh_count'], 30.0, "Each pairwise merged EA should have 30 HH (15 + 15).")
         delin_item = [item for item in result if item.get('original_id') == 607][0]
         self.assertFalse(delin_item.get('from_merge', False), "Delineation candidate must NOT be merged.")
+
+    def test_candidate_merge_strictly_one_partner_no_further_iterations(self):
+        """Verify that after merging with 1 partner, an EA is never sent to another iteration even if still under threshold."""
+        feedback = MockFeedback()
+
+        # 3 contiguous EAs: EA 1 (40 HH), EA 2 (35 HH), EA 3 (50 HH)
+        # Minimum threshold: 100 HH.
+        # EA 1 merges with adjacent EA 2 -> Combined: 75 HH.
+        # Even though 75 <= 100 HH, EA 1+2 must NOT merge with EA 3 in iteration 1.
+        ea1 = {
+            'geom': make_square_geom(0, 0, 10),
+            'buildings': [],
+            'hh_count': 40.0,
+            'original_hhcount': 40.0,
+            'bldg_count': 1,
+            'attributes': [1, "EA 001"],
+            'original_id': 701,
+            'original_code': "01737001",
+            'is_new': False,
+            'split_by': 'none',
+            'from_merge': False,
+            'from_split': False,
+            'is_special_ea': False,
+            'parent_barangay': "01737"
+        }
+        ea2 = {
+            'geom': make_square_geom(10, 0, 10),
+            'buildings': [],
+            'hh_count': 35.0,
+            'original_hhcount': 35.0,
+            'bldg_count': 1,
+            'attributes': [2, "EA 002"],
+            'original_id': 702,
+            'original_code': "01737002",
+            'is_new': False,
+            'split_by': 'none',
+            'from_merge': False,
+            'from_split': False,
+            'is_special_ea': False,
+            'parent_barangay': "01737"
+        }
+        ea3 = {
+            'geom': make_square_geom(20, 0, 10),
+            'buildings': [],
+            'hh_count': 50.0,
+            'original_hhcount': 50.0,
+            'bldg_count': 1,
+            'attributes': [3, "EA 003"],
+            'original_id': 703,
+            'original_code': "01737003",
+            'is_new': False,
+            'split_by': 'none',
+            'from_merge': False,
+            'from_split': False,
+            'is_special_ea': False,
+            'parent_barangay': "01737"
+        }
+
+        result = process_barangay_merge(
+            bar_code="01737",
+            bar_eas=[ea1, ea2, ea3],
+            fback=feedback,
+            min_household=100.0,
+            max_household=300.0,
+            merge_candidate_ids={701, 702},
+        )
+
+        # EA 1 and EA 2 merge together (75 HH). EA 3 remains separate (50 HH).
+        # Total resulting EAs must be 2 (not 1).
+        self.assertEqual(len(result), 2)
+        merged_item = next(item for item in result if item.get('from_merge', False))
+        unmerged_item = next(item for item in result if not item.get('from_merge', False))
+
+        self.assertEqual(merged_item['hh_count'], 75.0)
+        self.assertEqual(unmerged_item['original_id'], 703)
+        self.assertEqual(unmerged_item['hh_count'], 50.0)
 
     def test_prevent_merge_exceeding_max_household(self):
         """Verify that EAs are prevented from merging if their combined count exceeds max_household (300 HH)."""
@@ -560,6 +642,75 @@ class TestEAPipelineCandidateAndMerge(unittest.TestCase):
         )
 
         self.assertEqual(len(merged), 2, "EAs exceeding 300 HH when combined must NOT be merged.")
+
+    def test_process_barangay_merge_skips_when_bar_code_is_empty_or_unknown(self):
+        """Verify that process_barangay_merge does not merge EAs if bar_code is empty or Unknown."""
+        feedback = MockFeedback()
+        geom1 = make_square_geom(0, 0, 10)
+        geom2 = make_square_geom(10, 0, 10)
+        ea1 = {
+            'geom': geom1, 'buildings': [], 'hh_count': 30.0, 'original_hhcount': 30.0,
+            'attributes': [1, "EA 001"], 'original_id': 801, 'original_code': "001",
+            'from_merge': False, 'from_split': False, 'is_special_ea': False, 'parent_barangay': ""
+        }
+        ea2 = {
+            'geom': geom2, 'buildings': [], 'hh_count': 40.0, 'original_hhcount': 40.0,
+            'attributes': [2, "EA 002"], 'original_id': 802, 'original_code': "002",
+            'from_merge': False, 'from_split': False, 'is_special_ea': False, 'parent_barangay': ""
+        }
+        res_empty = process_barangay_merge("", [ea1, ea2], feedback, min_household=100.0, max_household=300.0)
+        self.assertEqual(len(res_empty), 2, "Must not merge when bar_code is empty.")
+
+        res_unknown = process_barangay_merge("Unknown", [ea1, ea2], feedback, min_household=100.0, max_household=300.0)
+        self.assertEqual(len(res_unknown), 2, "Must not merge when bar_code is Unknown.")
+
+    def test_process_barangay_merge_skips_cross_barangay_neighbor(self):
+        """Verify that process_barangay_merge skips a neighbor if its parent_barangay differs from bar_code."""
+        feedback = MockFeedback()
+        geom1 = make_square_geom(0, 0, 10)
+        geom2 = make_square_geom(10, 0, 10)
+        ea1 = {
+            'geom': geom1, 'buildings': [], 'hh_count': 30.0, 'original_hhcount': 30.0,
+            'attributes': [1, "EA 001"], 'original_id': 801, 'original_code': "001",
+            'from_merge': False, 'from_split': False, 'is_special_ea': False, 'parent_barangay': "01701001"
+        }
+        ea2 = {
+            'geom': geom2, 'buildings': [], 'hh_count': 40.0, 'original_hhcount': 40.0,
+            'attributes': [2, "EA 002"], 'original_id': 802, 'original_code': "002",
+            'from_merge': False, 'from_split': False, 'is_special_ea': False, 'parent_barangay': "01701002"
+        }
+        # In barangay 01701001, ea2 has parent_barangay 01701002
+        res = process_barangay_merge("01701001", [ea1, ea2], feedback, min_household=100.0, max_household=300.0)
+        self.assertEqual(len(res), 2, "Must not merge when neighbor belongs to a different barangay.")
+
+    def test_phase7_compliance_sweep_skips_cross_barangay_neighbors(self):
+        """Verify that run_phase_7 compliance sweep never merges EAs across different barangays."""
+        feedback = MockFeedback()
+        multi_feedback = MockFeedback()
+        multi_feedback.setCurrentStep = lambda step: None
+        multi_feedback.setProgressText = lambda txt: None
+        multi_feedback.setProgress = lambda pct: None
+
+        geom1 = make_square_geom(0, 0, 10)
+        geom2 = make_square_geom(10, 0, 10)
+        ea1 = {
+            'geom': geom1, 'buildings': [], 'hh_count': 30.0, 'original_hhcount': 30.0,
+            'attributes': [1, "EA 001"], 'original_id': 901, 'original_code': "001",
+            'from_merge': False, 'from_split': False, 'is_special_ea': False,
+            'parent_barangay': "01701001"
+        }
+        ea2 = {
+            'geom': geom2, 'buildings': [], 'hh_count': 40.0, 'original_hhcount': 40.0,
+            'attributes': [2, "EA 002"], 'original_id': 902, 'original_code': "002",
+            'from_merge': False, 'from_split': False, 'is_special_ea': False,
+            'parent_barangay': "01701002"
+        }
+        p1 = {"min_household": 100.0, "max_household": 300.0, "eadel_indi_col_idx": -1}
+        p2 = {"full_ea_by_id": {}, "delineation_candidate_ids": set(), "merge_candidate_ids": {901, 902}}
+        p6 = {"merged_eas": [ea1, ea2]}
+
+        res = run_phase_7(None, {}, None, feedback, multi_feedback, p1, p2, p6)
+        self.assertEqual(len(res["eas"]), 2, "Compliance sweep must not merge EAs with different parent_barangay.")
 
     def test_single_ea_barangay_no_merge(self):
         """Verify that an isolated single-EA barangay under min_household remains unmerged."""
