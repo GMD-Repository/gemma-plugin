@@ -559,7 +559,7 @@ def run_phase_8(
                 val_str = str(val).strip()
                 if val_str.endswith(".0"):
                     val_str = val_str[:-2]
-                if val_str == bar_str or (len(val_str) >= 9 and len(bar_str) >= 9 and val_str[:9] == bar_str[:9]):
+                if val_str == bar_str or (len(val_str) >= 8 and len(bar_str) >= 8 and val_str[:8] == bar_str[:8]):
                     parent_bgy_feat = b_feat
                     break
         if parent_bgy_feat is None and isinstance(bar, int) and bar in barangay_by_id:
@@ -968,7 +968,7 @@ def run_phase_8(
                         val_str = str(val).strip()
                         if val_str.endswith(".0"):
                             val_str = val_str[:-2]
-                        if val_str == bar_str or (len(val_str) >= 9 and len(bar_str) >= 9 and val_str[:9] == bar_str[:9]):
+                        if val_str == bar_str or (len(val_str) >= 8 and len(bar_str) >= 8 and val_str[:8] == bar_str[:8]):
                             parent_bgy_feat = b_feat
                             break
                 if parent_bgy_feat is None and isinstance(bar, int) and bar in barangay_by_id:
@@ -1578,7 +1578,7 @@ def run_phase_8(
                 if _code_idx != -1:
                     _gap_feat.setAttribute(_code_idx, _sp_ean)
                 if _geocode_idx != -1:
-                    _gc_prefix = _bar_geocode if len(_bar_geocode) <= 9 else _bar_geocode[:9]
+                    _gc_prefix = _bar_geocode if len(_bar_geocode) <= 8 else _bar_geocode[:8]
                     _gap_feat.setAttribute(_geocode_idx, _gc_prefix + _sp_ean)
                 if _ea_type_idx != -1:
                     _gap_feat.setAttribute(_ea_type_idx, "GAP")
@@ -1644,7 +1644,7 @@ def run_phase_8(
                 if _code_idx != -1:
                     _ov_feat.setAttribute(_code_idx, _sp_ean)
                 if _geocode_idx != -1:
-                    _gc_prefix = _bar_geocode if len(_bar_geocode) <= 9 else _bar_geocode[:9]
+                    _gc_prefix = _bar_geocode if len(_bar_geocode) <= 8 else _bar_geocode[:8]
                     _ov_feat.setAttribute(_geocode_idx, _gc_prefix + _sp_ean)
                 if _ea_type_idx != -1:
                     _ov_feat.setAttribute(_ea_type_idx, "OVERLAP")

@@ -788,7 +788,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                         val_str = str(val).strip()
                         if val_str.endswith(".0"):
                             val_str = val_str[:-2]
-                        if val_str == parent_bar or (len(val_str) >= 9 and len(parent_bar) >= 9 and val_str[:9] == parent_bar[:9]):
+                        if val_str == parent_bar or (len(val_str) >= 8 and len(parent_bar) >= 8 and val_str[:8] == parent_bar[:8]):
                             parent_bgy_feat = b_feat
                             break
 
@@ -958,8 +958,8 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                 nb_feat = full_ea_by_id[cid]
                 if geom.touches(nb_feat.geometry()) or geom.intersects(nb_feat.geometry()):
                     nb_parent_bar_geo = resolve_ea_parent_barangay(nb_feat)
-                    p_bar = parent_bar_geo[:9] if len(parent_bar_geo) >= 9 else parent_bar_geo
-                    nb_bar = nb_parent_bar_geo[:9] if len(nb_parent_bar_geo) >= 9 else nb_parent_bar_geo
+                    p_bar = parent_bar_geo[:8] if len(parent_bar_geo) >= 8 else parent_bar_geo
+                    nb_bar = nb_parent_bar_geo[:8] if len(nb_parent_bar_geo) >= 8 else nb_parent_bar_geo
                     if p_bar and nb_bar and p_bar == nb_bar:
                         nb_ean = nb_feat.attribute(ea_id_field)
                         nb_ean_str = str(nb_ean).strip() if nb_ean is not None else ""
