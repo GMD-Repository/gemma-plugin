@@ -2475,6 +2475,23 @@ class PackageDialog(QDialog, DialogUi):
             summary = f"Batch Run Cancelled\n\nProcessed: {processed_count}\nLast processed: {last_geocode_processed or 'none'}"
         else:
             summary = f"Total geocodes processed: {processed_count}\nLast processed: {last_geocode_processed or 'none'}"
+
+        if errors:
+            preview = "\n".join(f"  • {e}" for e in errors[:5])
+            if len(errors) > 5:
+                preview += f"\n  ...and {len(errors) - 5} more"
+            summary += (
+                f"\n\nErrors ({len(errors)} failed):\n{preview}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"WHAT TO LOOK FOR:\n"
+                f"• Missing satellite imagery (.gpkg/.mbtiles) matching the municipality code in the satellite directory.\n"
+                f"• Boundary layer features with NULL, empty, or invalid geometries.\n"
+                f"• Export directory file locks or permission issues (e.g., project open in another app).\n\n"
+                f"WHAT TO FIX:\n"
+                f"• Verify that the Satellite Image Directory in settings contains matching imagery files.\n"
+                f"• Run Processing Toolbox > 'Fix Geometries' on the boundary layer.\n"
+                f"• Ensure the export directory is writable and close any running QField or QGIS instances accessing it."
+            )
         
         # Store results for display
         self.batch_summary = summary
@@ -2747,11 +2764,12 @@ class PackageDialog(QDialog, DialogUi):
 
 
     def package_project(self):
+        from qgis.core import QgsMessageLog, Qgis
+
         # Synchronize layer visibility check states and group structure (without re-applying QML styles)
         try:
             self._on_apply_layer_groups(apply_qml=False)
         except Exception as e:
-            from qgis.core import QgsMessageLog, Qgis
             QgsMessageLog.logMessage(f"Auto-sync layer visibility before package: {e}", "GMD Pipeline", Qgis.Warning)
 
         # EA Level uses a dedicated batch export that iterates all EA features.
@@ -4014,11 +4032,12 @@ class PackageDialog(QDialog, DialogUi):
           3. Package the filtered project as a QField .qgz into
              ``{ExportDir}/{ea_geocode}/``.
         """
+        from qgis.core import QgsMessageLog, Qgis
+
         # Synchronize layer visibility check states and group structure (without re-applying QML styles)
         try:
             self._on_apply_layer_groups(apply_qml=False)
         except Exception as e:
-            from qgis.core import QgsMessageLog, Qgis
             QgsMessageLog.logMessage(f"Auto-sync layer visibility before EA batch export: {e}", "GMD Pipeline", Qgis.Warning)
 
         # --- Validate inputs ---
@@ -4281,10 +4300,21 @@ class PackageDialog(QDialog, DialogUi):
                 f"Total packaged: {processed_count} of {len(geocodes)}"
             )
         if errors:
-            preview = "\n".join(errors[:5])
+            preview = "\n".join(f"  • {e}" for e in errors[:5])
             if len(errors) > 5:
-                preview += f"\n...and {len(errors) - 5} more"
-            summary += f"\n\nErrors:\n{preview}"
+                preview += f"\n  ...and {len(errors) - 5} more"
+            summary += (
+                f"\n\nErrors ({len(errors)} failed):\n{preview}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"WHAT TO LOOK FOR:\n"
+                f"• Missing satellite imagery (.gpkg/.mbtiles) matching the 5-digit municipality code in the satellite directory.\n"
+                f"• EA boundary layer features with NULL, empty, or invalid geometries.\n"
+                f"• Export directory file locks or permission issues (e.g., project open in another app).\n\n"
+                f"WHAT TO FIX:\n"
+                f"• Verify that the Satellite Image Directory in settings contains matching imagery files.\n"
+                f"• Run Processing Toolbox > 'Fix Geometries' on the EA boundary layer.\n"
+                f"• Ensure the export directory is writable and close any running QField or QGIS instances accessing it."
+            )
 
         self.batch_summary = summary
         self._reload_project_after_ea_batch = True
@@ -5712,11 +5742,12 @@ class PackageDialog(QDialog, DialogUi):
           3. Package the filtered project as a QField .qgz into
              ``{ExportDir}/{bgy_geocode}/{bgy_geocode}.qgz``.
         """
+        from qgis.core import QgsMessageLog, Qgis
+
         # Synchronize layer visibility check states and group structure (without re-applying QML styles)
         try:
             self._on_apply_layer_groups(apply_qml=False)
         except Exception as e:
-            from qgis.core import QgsMessageLog, Qgis
             QgsMessageLog.logMessage(f"Auto-sync layer visibility before BGY batch export: {e}", "GMD Pipeline", Qgis.Warning)
 
         # --- Validate inputs ---
@@ -5971,10 +6002,21 @@ class PackageDialog(QDialog, DialogUi):
                 f"Total packaged: {processed_count} of {len(geocodes)}"
             )
         if errors:
-            preview = "\n".join(errors[:5])
+            preview = "\n".join(f"  • {e}" for e in errors[:5])
             if len(errors) > 5:
-                preview += f"\n...and {len(errors) - 5} more"
-            summary += f"\n\nErrors:\n{preview}"
+                preview += f"\n  ...and {len(errors) - 5} more"
+            summary += (
+                f"\n\nErrors ({len(errors)} failed):\n{preview}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"WHAT TO LOOK FOR:\n"
+                f"• Missing satellite imagery (.gpkg/.mbtiles) matching the 5-digit municipality code in the satellite directory.\n"
+                f"• Barangay boundary layer features with NULL, empty, or invalid geometries.\n"
+                f"• Export directory file locks or permission issues (e.g., project open in another app).\n\n"
+                f"WHAT TO FIX:\n"
+                f"• Verify that the Satellite Image Directory in settings contains matching imagery files.\n"
+                f"• Run Processing Toolbox > 'Fix Geometries' on the Barangay boundary layer.\n"
+                f"• Ensure the export directory is writable and close any running QField or QGIS instances accessing it."
+            )
 
         self.batch_summary = summary
         QTimer.singleShot(100, self._show_batch_completion_and_close)
