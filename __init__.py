@@ -7,14 +7,11 @@ __copyright__ = '(C) 2026, Geospatial Management Division'
 import pathlib
 import sys
 
-# Add libqfieldsync wheel to sys.path before any imports that need it
+# Add vendor package path (contains gemma_sync) to sys.path
 src_dir = pathlib.Path(__file__).parent.resolve()
 unzipped_whl = src_dir / "references" / "package_qfield" / "unzipped_whl"
-libqfieldsync_whl = src_dir / "references" / "package_qfield" / "libqfieldsync.whl"
 if unzipped_whl.exists() and str(unzipped_whl) not in sys.path:
-    sys.path.insert(0, str(unzipped_whl))
-elif libqfieldsync_whl.exists() and str(libqfieldsync_whl) not in sys.path:
-    sys.path.append(str(libqfieldsync_whl))
+    sys.path.append(str(unzipped_whl))
 
 
 def classFactory(iface):
