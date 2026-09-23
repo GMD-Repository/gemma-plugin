@@ -59,6 +59,7 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
     SLIVER_THRESHOLD = "SLIVER_THRESHOLD"
     PREVIEW_ONLY = "PREVIEW_ONLY"
     PREVIEW = "PREVIEW"
+    EXECUTION_MODE = "EXECUTION_MODE"
     # New optional linear layer parameters
     ROAD_INPUT = "ROAD_INPUT"
     RIVER_INPUT = "RIVER_INPUT"
@@ -415,6 +416,21 @@ class EADMCandidatesAlgorithm(QgsProcessingAlgorithm):
                 self.PREVIEW_ONLY,
                 "Preview Candidates Only (Exit early after creating candidate layers)",
                 defaultValue=False,
+            )
+        )
+
+        # Candidate Extraction Mode (All vs Delineation Only vs Merging Only)
+        self.addParameter(
+            QgsProcessingParameterEnum(
+                self.EXECUTION_MODE,
+                "Candidate Extraction Mode",
+                options=[
+                    "All Candidates (Delineation and Merging)",
+                    "Delineation Candidates Only",
+                    "Merge Candidates Only",
+                ],
+                defaultValue=0,
+                optional=True,
             )
         )
 
