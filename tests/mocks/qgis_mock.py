@@ -1738,7 +1738,7 @@ def setup_qgis_mock_if_needed():
         def setObjectName(self, name): self._object_name = str(name)
         def objectName(self): return getattr(self, '_object_name', "")
         def setLayout(self, layout): pass
-        def setSizePolicy(self, *args): pass
+        def setSizePolicy(self, *args, **kwargs): pass
         def sizePolicy(self): return MockGenericClass()
         def setMinimumSize(self, *args): pass
         def setMinimumWidth(self, *args): pass
@@ -2130,6 +2130,11 @@ def setup_qgis_mock_if_needed():
         def setAlternatingRowColors(self, val): pass
         def setMinimumHeight(self, h): pass
         def setSizePolicy(self, h, v): pass
+        def setHorizontalScrollBarPolicy(self, policy): pass
+        def setVerticalScrollBarPolicy(self, policy): pass
+        def columnWidth(self, col): return 100
+        def setColumnWidth(self, col, w): pass
+        def viewport(self): return MockGenericClass()
 
     qtcore_mod.QCoreApplication = MockQCoreApplication
     qtcore_mod.QThread = MockQThread

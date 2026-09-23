@@ -217,8 +217,13 @@ class MergeActionWidget(QPushButton):
         super().__init__(parent)
         self.btn_preview = btn_preview
         self.btn_merge = btn_merge
-        self.setMinimumWidth(150)
-        self.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
+        if hasattr(self, 'setMinimumWidth'):
+            self.setMinimumWidth(150)
+        if hasattr(self, 'setSizePolicy'):
+            try:
+                self.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
+            except Exception:
+                pass
         layout = QHBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(4)
@@ -301,7 +306,7 @@ class EALauncherDialog(QDialog):
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
-        self.setMinimumSize(960, 620)
+        self.setMinimumSize(860, 540)
         self.resize(1120, 720)
         self.setWindowFlags(
             Qt.Window |
@@ -2430,7 +2435,7 @@ class EALauncherDialog(QDialog):
         hdr.setSectionResizeMode(QHeaderView.Interactive)
         hdr.setHighlightSections(True)
         hdr.setMinimumSectionSize(60)
-        if hasattr(table, 'setHorizontalScrollBarPolicy'):
+        if hasattr(table, "setHorizontalScrollBarPolicy") and hasattr(Qt, "ScrollBarAsNeeded"):
             table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -2932,6 +2937,15 @@ class EALauncherDialog(QDialog):
         road_keywords     = ["road", "highway", "street", "way", "route"]
         river_keywords    = ["river", "stream", "water", "drainage", "creek"]
 
+        detected_merge = None
+        if hasattr(self, 'auto_detect_merge_ea_layer') and callable(self.auto_detect_merge_ea_layer):
+            try:
+                res = self.auto_detect_merge_ea_layer()
+                if isinstance(res, QgsVectorLayer):
+                    detected_merge = res
+            except Exception:
+                detected_merge = None
+
         # Candidates: first match per slot wins (order of iteration = layer panel order)
         candidates = {
             "bar":      None,
@@ -2939,7 +2953,7 @@ class EALauncherDialog(QDialog):
             "prev_ea":  None,
             "road":     None,
             "river":    None,
-            "merge_ea": None,
+            "merge_ea": detected_merge,
         }
 
         for layer in layers:
@@ -3954,17 +3968,25 @@ class EALauncherDialog(QDialog):
         for col_idx in range(table.columnCount()):
             hdr.setSectionResizeMode(col_idx, QHeaderView.Interactive)
 
-        # Enforce minimum sensible column widths so columns don't truncate on small screens
-        min_widths = [85, 120, 95, 110, 130, 160, 100, 160]
-        for col_idx, min_w in enumerate(min_widths[:table.columnCount()]):
-            if table.columnWidth(col_idx) < min_w:
-                table.setColumnWidth(col_idx, min_w)
+        if hasattr(table, 'columnWidth') and hasattr(table, 'setColumnWidth'):
+            # Enforce minimum sensible column widths so columns don't truncate on small screens
+            min_widths = [85, 120, 95, 110, 130, 160, 100, 160]
+            for col_idx, min_w in enumerate(min_widths[:table.columnCount()]):
+                try:
+                    if table.columnWidth(col_idx) < min_w:
+                        table.setColumnWidth(col_idx, min_w)
+                except Exception:
+                    pass
 
-        # On wider viewports, distribute extra available space to Barangay (col 1) while remaining Interactive
-        total_col_w = sum(table.columnWidth(c) for c in range(table.columnCount()))
-        viewport_w = table.viewport().width()
-        if viewport_w > total_col_w and table.columnCount() > 1:
-            table.setColumnWidth(1, table.columnWidth(1) + (viewport_w - total_col_w))
+            # On wider viewports, distribute extra available space to Barangay (col 1) while remaining Interactive
+            try:
+                if hasattr(table, 'viewport') and hasattr(table.viewport(), 'width'):
+                    total_col_w = sum(table.columnWidth(c) for c in range(table.columnCount()))
+                    viewport_w = table.viewport().width()
+                    if viewport_w > total_col_w and table.columnCount() > 1:
+                        table.setColumnWidth(1, table.columnWidth(1) + (viewport_w - total_col_w))
+            except Exception:
+                pass
 
     def _make_individual_preview_handler(self, cand_ean, partner_combo=None, bgy_name=None, cand_layer=None, cand_fid=None):
         """Factory for individual row preview (zoom to feature) button handlers."""
