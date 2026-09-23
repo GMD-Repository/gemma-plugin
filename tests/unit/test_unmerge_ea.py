@@ -105,6 +105,8 @@ class TestUnmergeEADialog(unittest.TestCase):
             QgsField("ean", QVariant.String),
             QgsField("code", QVariant.String),
             QgsField("barangay", QVariant.String),
+            QgsField("hhcount", QVariant.Double),
+            QgsField("bldgcount", QVariant.Double),
         ])
         prev_layer.updateFields()
 
@@ -117,6 +119,8 @@ class TestUnmergeEADialog(unittest.TestCase):
         f1.setAttribute("ean", "01728001")
         f1.setAttribute("code", "001")
         f1.setAttribute("barangay", "Sample Bar")
+        f1.setAttribute("hhcount", 45.0)
+        f1.setAttribute("bldgcount", 20.0)
 
         # Polygon 2: [5,0] to [10,10]
         p2_geom = QgsGeometry.fromPolygonXY([[
@@ -127,6 +131,8 @@ class TestUnmergeEADialog(unittest.TestCase):
         f2.setAttribute("ean", "01728002")
         f2.setAttribute("code", "002")
         f2.setAttribute("barangay", "Sample Bar")
+        f2.setAttribute("hhcount", 55.0)
+        f2.setAttribute("bldgcount", 25.0)
 
         dp_prev.addFeatures([f1, f2])
         prev_layer.updateExtents()
@@ -138,6 +144,8 @@ class TestUnmergeEADialog(unittest.TestCase):
             QgsField("ean", QVariant.String),
             QgsField("code", QVariant.String),
             QgsField("barangay", QVariant.String),
+            QgsField("hhcount", QVariant.Double),
+            QgsField("bldgcount", QVariant.Double),
             QgsField("hh_count", QVariant.Int),
             QgsField("bldg_count", QVariant.Int),
         ])
@@ -151,6 +159,8 @@ class TestUnmergeEADialog(unittest.TestCase):
         fm.setAttribute("ean", "01728001")
         fm.setAttribute("code", "001")
         fm.setAttribute("barangay", "Sample Bar")
+        fm.setAttribute("hhcount", 45.0)
+        fm.setAttribute("bldgcount", 20.0)
         fm.setAttribute("hh_count", 15)
         fm.setAttribute("bldg_count", 5)
 
@@ -217,10 +227,16 @@ class TestUnmergeEADialog(unittest.TestCase):
         # In EA 001: 2 building points, sum(est_hhcount) = 2.0 + 4.0 = 6
         self.assertEqual(feat_001.attribute("bldg_count"), 2)
         self.assertEqual(feat_001.attribute("hh_count"), 6)
+        # Baseline hhcount and bldgcount must remain unchanged after unmerge
+        self.assertEqual(feat_001.attribute("hhcount"), 45.0)
+        self.assertEqual(feat_001.attribute("bldgcount"), 20.0)
 
         # In EA 002: 3 building points, sum(est_hhcount) = 3.0 + 1.0 + 5.0 = 9
         self.assertEqual(feat_002.attribute("bldg_count"), 3)
         self.assertEqual(feat_002.attribute("hh_count"), 9)
+        # Baseline hhcount and bldgcount must remain unchanged after unmerge
+        self.assertEqual(feat_002.attribute("hhcount"), 55.0)
+        self.assertEqual(feat_002.attribute("bldgcount"), 25.0)
 
     def test_run_unmerge_selected_features_only(self, *mocks):
         """Verify run_unmerge respects 'Selected features only' checkbox."""

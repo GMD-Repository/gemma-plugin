@@ -1575,6 +1575,8 @@ class TestMergePreviewThresholdAndIndividualMerge(unittest.TestCase):
             QgsField("ean", QVariant.String),
             QgsField("geocode", QVariant.String),
             QgsField("barangay", QVariant.String),
+            QgsField("hhcount", QVariant.Double),
+            QgsField("bldgcount", QVariant.Double),
             QgsField("hh_count", QVariant.Double),
             QgsField("bldg_count", QVariant.Int),
             QgsField("new_ean", QVariant.String),
@@ -1584,11 +1586,11 @@ class TestMergePreviewThresholdAndIndividualMerge(unittest.TestCase):
         prev_ea_layer.updateFields()
 
         f_cand = QgsFeature(prev_ea_layer.fields())
-        f_cand.setAttributes(["01701001099", "01701001", "Poblacion", 40.0, 30, "01701001099", "RETAINED", ""])
+        f_cand.setAttributes(["01701001099", "01701001", "Poblacion", 40.0, 30.0, 40.0, 30, "01701001099", "RETAINED", ""])
         f_cand.setGeometry(QgsGeometry.fromRect(QgsRectangle(0, 0, 1, 1)))
 
         f_partner = QgsFeature(prev_ea_layer.fields())
-        f_partner.setAttributes(["01701001001", "01701001", "Poblacion", 80.0, 60, "01701001001", "RETAINED", ""])
+        f_partner.setAttributes(["01701001001", "01701001", "Poblacion", 80.0, 60.0, 80.0, 60, "01701001001", "RETAINED", ""])
         f_partner.setGeometry(QgsGeometry.fromRect(QgsRectangle(1, 0, 2, 1)))
 
         pr.addFeatures([f_cand, f_partner])
@@ -1634,9 +1636,16 @@ class TestMergePreviewThresholdAndIndividualMerge(unittest.TestCase):
         self.assertIn("01701001099", eans_in_layer)
         self.assertIn("01701001001", eans_in_layer)
 
-        # All restored features must have ea_type RETAINED
+        # All restored features must have ea_type RETAINED and baseline hhcount/bldgcount strictly preserved
         for f in merged_lyr.getFeatures():
             self.assertEqual(f["ea_type"], "RETAINED")
+
+        feat_cand = next(f for f in merged_lyr.getFeatures() if f["ean"] == "01701001099")
+        feat_partner = next(f for f in merged_lyr.getFeatures() if f["ean"] == "01701001001")
+        self.assertEqual(feat_cand["hhcount"], 40.0)
+        self.assertEqual(feat_cand["bldgcount"], 30.0)
+        self.assertEqual(feat_partner["hhcount"], 80.0)
+        self.assertEqual(feat_partner["bldgcount"], 60.0)
 
         # Session tracking should no longer contain candidate or partner
         self.assertNotIn("01701001099", mock_dlg._session_merged_eans)

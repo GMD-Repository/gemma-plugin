@@ -616,12 +616,25 @@ class UnmergeEADialog(QDialog):
 
                     inside_hh_count = int(math.ceil(inside_hh_float))
 
-                    # Set calculated counts in new feature
+                    # Ensure baseline hhcount and bldgcount are preserved from pf
+                    for base_col in ("hhcount", "bldgcount"):
+                        m_idx = merged_fields.lookupField(base_col)
+                        if m_idx != -1 and (new_feat.attribute(m_idx) is None or new_feat.attribute(m_idx) == NULL):
+                            p_idx = prev_fields.lookupField(base_col)
+                            if p_idx == -1:
+                                alt_name = "hh_count" if base_col == "hhcount" else "bldg_count"
+                                p_idx = prev_fields.lookupField(alt_name)
+                            if p_idx != -1:
+                                p_val = pf.attribute(p_idx)
+                                if p_val is not None and p_val != NULL:
+                                    new_feat.setAttribute(m_idx, p_val)
+
+                    # ONLY update calculated hh_count and bldg_count, leaving baseline hhcount/bldgcount unchanged
                     for mfld in merged_fields:
                         m_name_lower = mfld.name().lower()
-                        if m_name_lower in ("hh_count", "hhcount", "household"):
+                        if m_name_lower == "hh_count":
                             new_feat.setAttribute(mfld.name(), inside_hh_count)
-                        elif m_name_lower in ("bldg_count", "bldgcount"):
+                        elif m_name_lower == "bldg_count":
                             new_feat.setAttribute(mfld.name(), inside_bldg_count)
                         elif m_name_lower in ("ea_type", "eatype", "type"):
                             if new_feat.attribute(mfld.name()) in (None, NULL, ""):

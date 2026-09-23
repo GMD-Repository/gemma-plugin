@@ -4839,7 +4839,7 @@ class EALauncherDialog(QDialog):
 
             for fname in ["bldg_count", "bldgcount", "building_count", "buildings"]:
                 idx = target_layer.fields().lookupField(fname)
-                if idx != -1:
+                if idx != -1 and fname != "bldgcount":
                     fld = target_layer.fields().at(idx)
                     try:
                         val = fld.convertCompatible(total_bldg)
@@ -4895,7 +4895,7 @@ class EALauncherDialog(QDialog):
 
             for fname in ["bldg_count", "bldgcount", "building_count", "buildings"]:
                 idx = target_layer.fields().lookupField(fname)
-                if idx != -1:
+                if idx != -1 and fname != "bldgcount":
                     fld = target_layer.fields().at(idx)
                     try:
                         val = fld.convertCompatible(total_bldg)
@@ -4935,7 +4935,7 @@ class EALauncherDialog(QDialog):
                 target_layer.rollBack()
 
         else:
-            # Neither exists in target_layer yet, add new feature (preserving partner_feat's original ean and hhcount)
+            # Neither exists in target_layer yet, add new feature (preserving partner_feat's original ean and baseline hhcount)
             new_feat = QgsFeature(target_layer.fields())
             new_feat.setGeometry(merged_geom)
             for fld in prev_fields:
@@ -4945,7 +4945,7 @@ class EALauncherDialog(QDialog):
             # ONLY update hh_count, leave hhcount unchanged
             _safe_set_feat_attribute(new_feat, target_layer.fields(), "hh_count", total_hh)
             for fname in ["bldg_count", "bldgcount", "building_count", "buildings"]:
-                if target_layer.fields().lookupField(fname) != -1:
+                if target_layer.fields().lookupField(fname) != -1 and fname != "bldgcount":
                     _safe_set_feat_attribute(new_feat, target_layer.fields(), fname, total_bldg)
             _safe_set_feat_attribute(new_feat, target_layer.fields(), "new_ean", highest_ean)
             for cand_type in ["ea_type", "eatype", "type"]:
@@ -4973,7 +4973,7 @@ class EALauncherDialog(QDialog):
             # ONLY update hh_count, leave hhcount unchanged
             _safe_set_feat_attribute(new_feat, target_layer.fields(), "hh_count", total_hh)
             for fname in ["bldg_count", "bldgcount", "building_count", "buildings"]:
-                if target_layer.fields().lookupField(fname) != -1:
+                if target_layer.fields().lookupField(fname) != -1 and fname != "bldgcount":
                     _safe_set_feat_attribute(new_feat, target_layer.fields(), fname, total_bldg)
             _safe_set_feat_attribute(new_feat, target_layer.fields(), "new_ean", highest_ean)
             for cand_type in ["ea_type", "eatype", "type"]:
@@ -5333,6 +5333,17 @@ class EALauncherDialog(QDialog):
         if prev_ea_layer.crs().isValid() and target_layer.crs().isValid() and prev_ea_layer.crs() != target_layer.crs():
             xform_prev_to_target = QgsCoordinateTransform(prev_ea_layer.crs(), target_layer.crs(), QgsProject.instance())
 
+        # Ensure target_layer has 'hh_count' and 'bldg_count' fields if missing
+        t_fnames = [f.name().lower() for f in target_layer.fields()]
+        t_missing_attrs = []
+        if "hh_count" not in t_fnames:
+            t_missing_attrs.append(create_qgs_field("hh_count", QVariant.Int))
+        if "bldg_count" not in t_fnames and "bldgcount" not in t_fnames:
+            t_missing_attrs.append(create_qgs_field("bldg_count", QVariant.Int))
+        if t_missing_attrs:
+            target_layer.dataProvider().addAttributes(t_missing_attrs)
+            target_layer.updateFields()
+
         if not target_layer.isEditable():
             target_layer.startEditing()
 
@@ -5354,6 +5365,19 @@ class EALauncherDialog(QDialog):
                     idx = target_layer.fields().lookupField(pfld.name())
                     if idx != -1:
                         new_feat.setAttribute(idx, val)
+
+            # Ensure baseline hhcount and bldgcount from pf are preserved
+            for base_col in ("hhcount", "bldgcount"):
+                t_idx = target_layer.fields().lookupField(base_col)
+                if t_idx != -1 and (new_feat.attribute(t_idx) is None or new_feat.attribute(t_idx) == NULL):
+                    p_idx = prev_fields.lookupField(base_col)
+                    if p_idx == -1:
+                        alt_name = "hh_count" if base_col == "hhcount" else "bldg_count"
+                        p_idx = prev_fields.lookupField(alt_name)
+                    if p_idx != -1:
+                        p_val = pf.attribute(p_idx)
+                        if p_val is not None and p_val != NULL:
+                            new_feat.setAttribute(t_idx, p_val)
 
             inside_bldg = 0
             inside_hh_float = 0.0
@@ -5383,15 +5407,15 @@ class EALauncherDialog(QDialog):
                 inside_hh = int(round(float(pf.attribute("hhcount") or pf.attribute("hh_count") or 0.0)))
                 inside_bldg = int(round(float(pf.attribute("bldgcount") or pf.attribute("bldg_count") or 0.0)))
 
-            for fn in ["hh_count", "hhcount"]:
-                idx = target_layer.fields().lookupField(fn)
-                if idx != -1:
-                    new_feat.setAttribute(idx, inside_hh)
+            # ONLY update calculated hh_count, leave baseline hhcount unchanged
+            hh_idx = target_layer.fields().lookupField("hh_count")
+            if hh_idx != -1:
+                new_feat.setAttribute(hh_idx, inside_hh)
 
-            for fn in ["bldg_count", "bldgcount"]:
-                idx = target_layer.fields().lookupField(fn)
-                if idx != -1:
-                    new_feat.setAttribute(idx, inside_bldg)
+            # ONLY update calculated bldg_count, leave baseline bldgcount unchanged
+            bldg_idx = target_layer.fields().lookupField("bldg_count")
+            if bldg_idx != -1:
+                new_feat.setAttribute(bldg_idx, inside_bldg)
 
             for fn in ["ea_type", "eatype", "type"]:
                 idx = target_layer.fields().lookupField(fn)
