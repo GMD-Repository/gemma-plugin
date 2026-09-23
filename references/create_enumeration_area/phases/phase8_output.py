@@ -1776,7 +1776,7 @@ def run_phase_8(
                     'city_mun': line_cm,
                     'barangay': line_bgy,
                     'indicator': "",
-                    'remarks': p_line.get('remarks') or "Proposed delineation line",
+                    'remarks': "",
                     'split_by': p_line.get('split_by', 'voronoi'),
                     'num_parts': p_line.get('num_parts', 2),
                     'part_hh_counts': p_line.get('part_hh_counts', []),
@@ -1882,7 +1882,7 @@ def run_phase_8(
                     'city_mun': line_cm,
                     'barangay': line_bgy,
                     'indicator': "",
-                    'remarks': str(parent_feat.attribute(remarks_idx)) if remarks_idx != -1 and parent_feat.attribute(remarks_idx) is not None else "",
+                    'remarks': "",
                 }
 
                 all_splitting_lines.append((merged, attrs))

@@ -6528,15 +6528,21 @@ class EALauncherDialog(QDialog):
                         continue
                     else:
                         has_splitting_lines = True
-                        # Ensure indicator values are removed in eadel_update layer
+                        # Ensure indicator and remarks values are removed in eadel_update layer
                         try:
                             indi_idx = proj_layer.fields().indexOf("indicator")
-                            if indi_idx != -1 and proj_layer.featureCount() > 0:
+                            rem_idx = proj_layer.fields().indexOf("remarks")
+                            if (indi_idx != -1 or rem_idx != -1) and proj_layer.featureCount() > 0:
                                 proj_layer.startEditing()
                                 for f in proj_layer.getFeatures():
-                                    val = f.attribute(indi_idx)
-                                    if val is not None and str(val).strip() != "":
-                                        proj_layer.changeAttributeValue(f.id(), indi_idx, "")
+                                    if indi_idx != -1:
+                                        val = f.attribute(indi_idx)
+                                        if val is not None and str(val).strip() != "":
+                                            proj_layer.changeAttributeValue(f.id(), indi_idx, "")
+                                    if rem_idx != -1:
+                                        rval = f.attribute(rem_idx)
+                                        if rval is not None and str(rval).strip() != "":
+                                            proj_layer.changeAttributeValue(f.id(), rem_idx, "")
                                 proj_layer.commitChanges()
                         except Exception:
                             pass

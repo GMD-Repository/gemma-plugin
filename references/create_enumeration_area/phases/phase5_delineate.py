@@ -2246,7 +2246,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                             'split_by': split_by_str,
                             'num_parts': len(initial_parts),
                             'part_hh_counts': [p['hh_count'] for p in initial_parts],
-                            'remarks': f"Proposed cut line along {split_by_str} (Sub-threshold: requires manual review)",
+                            'remarks': "",
                             'indicator': "",
                         })
                         ea['has_proposed_split'] = True
@@ -2296,7 +2296,7 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
                             'split_by': split_by_name,
                             'num_parts': 2,
                             'part_hh_counts': [ea.get('hh_count', 0.0), 0.0],
-                            'remarks': f"Proposed cut line along {split_by_name} (Manual review required)",
+                            'remarks': "",
                             'indicator': "",
                         })
                         ea['has_proposed_split'] = True

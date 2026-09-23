@@ -543,6 +543,7 @@ class TestEASplitModes(unittest.TestCase):
         self.assertEqual(eadel_layers[0].featureCount(), 1, "eadel_update layer must have 1 proposed cut line")
         feat = next(eadel_layers[0].getFeatures())
         self.assertEqual(str(feat.attribute("indicator") or ""), "", "indicator in eadel_update layer must have empty/removed values")
+        self.assertEqual(str(feat.attribute("remarks") or ""), "", "remarks in eadel_update layer must have empty/removed values")
 
 
 if __name__ == "__main__":
