@@ -4047,11 +4047,12 @@ class EALauncherDialog(QDialog):
                         "QComboBox { background-color: %s; color: %s; "
                         "border: 1px solid #b0c4b1; border-radius: 3px; padding: 1px 4px; }" % (bg_col, fg_col)
                     )
-                    # When unmerged, hh_count column copies baseline hhcount
-                    total_text = f"{hh:.0f}"
+                    # Total HH Count shows combined total (candidate + partner) based on selected merge partner
                     initial_partner_hh = normalized_neighbors[0][1]
                     initial_nbr_gc = normalized_neighbors[0][0]
-                    total_tooltip = f"Unmerged: {hh:.0f} HH (Projected if merged with {initial_nbr_gc}: {hh + initial_partner_hh:.0f} HH)"
+                    projected_total = hh + initial_partner_hh
+                    total_text = f"{projected_total:.0f}"
+                    total_tooltip = f"Total if merged with {initial_nbr_gc}: {projected_total:.0f} HH (Candidate: {hh:.0f} + Partner: {initial_partner_hh:.0f} HH)"
                 else:
                     partner_combo.clear()
                     partner_combo.setEnabled(False)
@@ -4088,10 +4089,9 @@ class EALauncherDialog(QDialog):
                                 tot = cand_hh
                             cell = tbl.item(target_row, 6)
                             if cell:
-                                # When unmerged, column copies hhcount; tooltip indicates projected total
-                                cell.setText(f"{cand_hh:.0f}")
+                                cell.setText(f"{tot:.0f}")
                                 if hasattr(cell, "setToolTip"):
-                                    cell.setToolTip(f"Unmerged: {cand_hh:.0f} HH (Projected if merged with {partner_txt}: {tot:.0f} HH)")
+                                    cell.setToolTip(f"Total if merged with {partner_txt}: {tot:.0f} HH (Candidate: {cand_hh:.0f} + Partner: {p_hh:.0f} HH)")
                         return _handler
 
                     partner_combo.currentIndexChanged.connect(
@@ -5021,15 +5021,9 @@ class EALauncherDialog(QDialog):
                 b_hh += val_list[0]
 
             total_bldg = b_cnt
-            total_hh = int(round(b_hh))
             counted_from_bldg = True
 
-        if not counted_from_bldg or (total_bldg == 0 and total_hh == 0):
-            # Fallback: sum of candidate HH + partner HH
-            fallback_hh = cand_hh + partner_hh
-            if fallback_hh > 0:
-                total_hh = int(round(fallback_hh))
-
+        if not counted_from_bldg or total_bldg == 0:
             def _get_bldg(feat, lyr):
                 if not feat or not lyr:
                     return 0
@@ -5047,6 +5041,16 @@ class EALauncherDialog(QDialog):
             cand_bldg = _get_bldg(cand_feat, cand_layer_source)
             partner_bldg = _get_bldg(partner_feat, partner_layer_source)
             total_bldg = cand_bldg + partner_bldg
+
+        # Total HH count strictly uses the sum of Candidate HH + Partner HH so the count
+        # remains identical before and after clicking merge (matching the preview column).
+        combined_hh = cand_hh + partner_hh
+        if combined_hh > 0:
+            total_hh = int(round(combined_hh))
+        elif counted_from_bldg and b_hh > 0:
+            total_hh = int(round(b_hh))
+        else:
+            total_hh = 0
 
         total_hh = int(round(total_hh))
         total_bldg = int(round(total_bldg))

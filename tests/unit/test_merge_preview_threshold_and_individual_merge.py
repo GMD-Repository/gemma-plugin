@@ -178,8 +178,8 @@ class TestMergePreviewThresholdAndIndividualMerge(unittest.TestCase):
         self.assertEqual(combo_valid.currentText(), "01701001001")
 
         total_cell_valid = table.item(0, 6)
-        # When unmerged, Column 6 copies baseline hhcount; tooltip indicates projected total
-        self.assertEqual(total_cell_valid.text(), "80")
+        # Total HH Count shows combined total based on merge partner (80 + 100 = 180)
+        self.assertEqual(total_cell_valid.text(), "180")
         self.assertIn("180", total_cell_valid.toolTip())
 
         action_btn_enabled = table.cellWidget(0, 7)
@@ -567,12 +567,12 @@ class TestMergePreviewThresholdAndIndividualMerge(unittest.TestCase):
         # Total buildings inside merged polygon: b1, b2, b3 = 3 buildings
         self.assertEqual(out_feat["bldg_count"], 3)
         self.assertIsInstance(out_feat["bldg_count"], int)
-        # Total households from building points: 3.0 + 5.0 + 2.0 = 10 (whole number)
-        self.assertEqual(out_feat["hh_count"], 10)
+        # Total households from candidate HH (10.0) + partner HH (20.0) = 30 (matching pre-merge preview)
+        self.assertEqual(out_feat["hh_count"], 30)
         self.assertIsInstance(out_feat["hh_count"], int)
 
         log_text = mock_dlg.merge_log_console.toPlainText()
-        self.assertIn("Total HH: 10", log_text)
+        self.assertIn("Total HH: 30", log_text)
         self.assertIn("Total Buildings: 3", log_text)
 
     def test_individual_merge_imputes_candidate_ean_when_candidate_has_higher_hh(self):
@@ -2311,7 +2311,7 @@ class TestMergePreviewThresholdAndIndividualMerge(unittest.TestCase):
         )
 
         # Both feature IDs should be passed together to selectByIds
-        f_ids = [f.id() for f in [f1, f2]]
+        f_ids = [f.id() for f in layer.getFeatures()]
         layer.selectByIds.assert_called_with([f_ids[0], f_ids[1]])
         mock_canvas.setExtent.assert_called_once()
         mock_canvas.refresh.assert_called_once()
@@ -2319,31 +2319,35 @@ class TestMergePreviewThresholdAndIndividualMerge(unittest.TestCase):
     def test_description_panels_hidden_by_default(self):
         """Verify all description panels across all tabs/subtabs are hidden by default on creation."""
         dlg = EALauncherDialog()
-        self.assertFalse(dlg.pre_ea_desc_panel.isVisible())
-        self.assertFalse(dlg.help_panel.isVisible())
-        self.assertFalse(dlg.merge_help_panel.isVisible())
-        self.assertFalse(dlg.ea_merge_desc_panel.isVisible())
+        self.assertTrue(dlg.pre_ea_desc_panel.isHidden())
+        self.assertTrue(dlg.help_panel.isHidden())
+        self.assertTrue(dlg.merge_help_panel.isHidden())
+        self.assertTrue(dlg.ea_merge_desc_panel.isHidden())
         self.assertEqual(dlg.toggle_desc_btn.toolTip(), "Show Description Panel")
 
     def test_proposed_merging_toggle_help(self):
         """Verify clicking the info/guide toggle button on Proposed Merging subtab toggles merge_help_panel."""
         dlg = EALauncherDialog()
-        # Switch to Tab 2 (Create Enumeration Areas) -> Subtab 1 (Proposed Merging)
-        dlg.main_tabs.setCurrentIndex(1)
-        dlg.create_ea_sub_tabs.setCurrentIndex(1)
+        dlg.show()
+        try:
+            # Switch to Tab 2 (Create Enumeration Areas) -> Subtab 1 (Proposed Merging)
+            dlg.main_tabs.setCurrentIndex(1)
+            dlg.create_ea_sub_tabs.setCurrentIndex(1)
 
-        self.assertFalse(dlg.merge_help_panel.isVisible())
-        self.assertEqual(dlg.toggle_desc_btn.toolTip(), "Show Description Panel")
+            self.assertFalse(dlg.merge_help_panel.isVisible())
+            self.assertEqual(dlg.toggle_desc_btn.toolTip(), "Show Description Panel")
 
-        # Click toggle: should show merge_help_panel
-        dlg.toggle_desc_btn.click()
-        self.assertTrue(dlg.merge_help_panel.isVisible())
-        self.assertEqual(dlg.toggle_desc_btn.toolTip(), "Hide Description Panel")
+            # Click toggle: should show merge_help_panel
+            dlg.toggle_desc_btn.click()
+            self.assertTrue(dlg.merge_help_panel.isVisible())
+            self.assertEqual(dlg.toggle_desc_btn.toolTip(), "Hide Description Panel")
 
-        # Click toggle again: should hide merge_help_panel
-        dlg.toggle_desc_btn.click()
-        self.assertFalse(dlg.merge_help_panel.isVisible())
-        self.assertEqual(dlg.toggle_desc_btn.toolTip(), "Show Description Panel")
+            # Click toggle again: should hide merge_help_panel
+            dlg.toggle_desc_btn.click()
+            self.assertFalse(dlg.merge_help_panel.isVisible())
+            self.assertEqual(dlg.toggle_desc_btn.toolTip(), "Show Description Panel")
+        finally:
+            dlg.close()
 
     def test_generate_preview_detects_hhcount_not_hh_count(self):
         """Verify that generate_preview detects baseline hhcount rather than operational hh_count when both are present."""
@@ -2514,9 +2518,9 @@ class TestMergePreviewThresholdAndIndividualMerge(unittest.TestCase):
         col3_hh = table.item(0, 3)
         col6_total = table.item(0, 6)
 
-        # In unmerged state, Column 6 copies hhcount (45)
+        # In unmerged state, Column 6 displays combined total based on partner (45 + 53 = 98)
         self.assertEqual(col3_hh.text(), "45")
-        self.assertEqual(col6_total.text(), "45")
+        self.assertEqual(col6_total.text(), "98")
         self.assertIn("98", col6_total.toolTip())  # 45 + 53 = 98
 
         # 2. Merged candidate: constituent baseline 45.0 HH, merged total 98.0 HH
@@ -2990,7 +2994,7 @@ class TestMergePreviewThresholdAndIndividualMerge(unittest.TestCase):
         table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=True)
         EALauncherDialog._populate_table_rows(mock_dlg, table, mock_dlg.all_merged_ea_candidates, is_delineation=False)
         self.assertEqual(table.item(0, 3).text(), "45")  # Column 3: Baseline HH
-        self.assertEqual(table.item(0, 6).text(), "45")  # Column 6: Total HH Count
+        self.assertEqual(table.item(0, 6).text(), "100")  # Column 6: Total HH Count based on partner (45 + 55)
 
 
     def test_adjacent_merge_partner_detected_with_6digit_geocode_within_barangay(self):

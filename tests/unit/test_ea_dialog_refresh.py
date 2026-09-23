@@ -826,15 +826,15 @@ class TestEADialogRefresh(unittest.TestCase):
         self.assertIsInstance(combo, QComboBox)
         self.assertEqual(combo.count(), 2)
 
-        # Initial: copies baseline hhcount (50); tooltip contains projected combined total (50 + 120 = 170)
+        # Initial: shows combined total based on selected merge partner (50 + 120 = 170)
         col6_item = table.item(0, 6)
         self.assertIsNotNone(col6_item)
-        self.assertEqual(col6_item.text(), "50")
+        self.assertEqual(col6_item.text(), "170")
         self.assertIn("170", col6_item.toolTip())
 
-        # Change selection to second neighbor (200 HH): text stays 50 (copies hhcount), tooltip updates to 250
+        # Change selection to second neighbor (200 HH): text updates to 250 (50 + 200)
         combo.setCurrentIndex(1)
-        self.assertEqual(table.item(0, 6).text(), "50")
+        self.assertEqual(table.item(0, 6).text(), "250")
         self.assertIn("250", table.item(0, 6).toolTip())
 
     def test_auto_detect_layers_separates_merged_ea_and_prev_ea(self):
@@ -909,8 +909,8 @@ class TestEADialogRefresh(unittest.TestCase):
         self.assertEqual(merge_preview_table.rowCount(), 1)
         combo = merge_preview_table.cellWidget(0, 5)
         self.assertIsNotNone(combo)
-        self.assertEqual(merge_preview_table.item(0, 6).text(), "45")  # copies baseline hhcount
-        self.assertIn("145", merge_preview_table.item(0, 6).toolTip())  # 45 + 100 in tooltip
+        self.assertEqual(merge_preview_table.item(0, 6).text(), "145")  # combined total (45 + 100)
+        self.assertIn("145", merge_preview_table.item(0, 6).toolTip())
 
     def test_extract_merge_candidate_enabling_and_tooltips(self):
         """Verify that Extract Merge Candidate button (self.merge_run_btn) validates inputs and explains missing requirements."""
@@ -1075,8 +1075,8 @@ class TestEADialogRefresh(unittest.TestCase):
         self.assertIsNotNone(combo)
         self.assertTrue(combo.isEnabled())
         self.assertEqual(combo.currentText(), "017280010002")
-        self.assertEqual(table.item(0, 6).text(), "50")  # copies baseline hhcount
-        self.assertIn("170", table.item(0, 6).toolTip())  # 50 + 120 in tooltip
+        self.assertEqual(table.item(0, 6).text(), "170")  # combined total (50 + 120)
+        self.assertIn("170", table.item(0, 6).toolTip())
 
     def test_dialog_window_flags_have_minimize_button(self):
         """Verify that EALauncherDialog, SplitEADialog, UnmergeEADialog, and launcher helper have WindowMinimizeButtonHint enabled."""
