@@ -441,9 +441,17 @@ class PackageDialog(QDialog, DialogUi):
         for label, data in role_options:
             role_combo.addItem(label, data)
             
+        settings = QSettings()
+        saved_role = settings.value(f"gmd_pipeline/role_for_layer_{layer_name}", "")
+
         if preset_id is not None:
             for i in range(role_combo.count()):
                 if role_combo.itemData(i) == preset_id:
+                    role_combo.setCurrentIndex(i)
+                    break
+        elif saved_role:
+            for i in range(role_combo.count()):
+                if str(role_combo.itemData(i)) == str(saved_role):
                     role_combo.setCurrentIndex(i)
                     break
         else:
@@ -479,6 +487,15 @@ class PackageDialog(QDialog, DialogUi):
                         role_combo.setCurrentIndex(i)
                         break
 
+        def _on_role_changed(idx):
+            data = role_combo.itemData(idx)
+            s = QSettings()
+            if data is None:
+                s.remove(f"gmd_pipeline/role_for_layer_{layer_name}")
+            else:
+                s.setValue(f"gmd_pipeline/role_for_layer_{layer_name}", str(data))
+
+        role_combo.currentIndexChanged.connect(_on_role_changed)
         self.layer_groups_tree.setItemWidget(layer_item, 1, role_combo)
         return role_combo
 
@@ -1366,6 +1383,12 @@ class PackageDialog(QDialog, DialogUi):
         # Populate data sources table
         self._populate_data_sources()
 
+        # Apply configured role policies to project layers
+        try:
+            self._apply_role_policies_to_project_layers()
+        except Exception:
+            pass
+
         # Flag to control batch mode
         self.is_batch_mode = False
         # Flag to handle batch cancellation
@@ -1525,7 +1548,11 @@ class PackageDialog(QDialog, DialogUi):
         self.restore_defaults_btn.clicked.connect(self._on_restore_defaults)
         
         close_btn = QPushButton(self.tr("Close"))
+        close_btn.clicked.connect(self._save_role_policies_from_table)
+        close_btn.clicked.connect(self._apply_role_policies_to_project_layers)
         close_btn.clicked.connect(self.config_dialog.accept)
+        self.config_dialog.finished.connect(self._save_role_policies_from_table)
+        self.config_dialog.finished.connect(self._apply_role_policies_to_project_layers)
         
         btn_layout.addStretch()
         btn_layout.addWidget(self.restore_defaults_btn)
@@ -1781,7 +1808,11 @@ class PackageDialog(QDialog, DialogUi):
         table.itemChanged.connect(lambda item: self._save_popup_layer_data_sources(table))
 
         btn_box = QDialogButtonBox(QDialogButtonBox.Ok)
+        btn_box.accepted.connect(lambda: self._save_popup_layer_data_sources(table))
+        btn_box.accepted.connect(self._apply_role_policies_to_project_layers)
         btn_box.accepted.connect(dialog.accept)
+        dialog.finished.connect(lambda: self._save_popup_layer_data_sources(table))
+        dialog.finished.connect(self._apply_role_policies_to_project_layers)
         layout.addWidget(btn_box)
 
         dialog.exec_()
@@ -1814,7 +1845,7 @@ class PackageDialog(QDialog, DialogUi):
                 continue
 
             table.setRowCount(row + 1)
-            saved = saved_layer_ds.get(lyr.id(), {})
+            saved = saved_layer_ds.get(lyr.id()) or saved_layer_ds.get(lyr.name(), {})
 
             name_item = QTableWidgetItem(lyr.name())
             name_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
@@ -1899,6 +1930,7 @@ class PackageDialog(QDialog, DialogUi):
             if not item0:
                 continue
             layer_id = item0.data(Qt.UserRole)
+            layer_name = item0.text().strip()
             if not layer_id:
                 continue
 
@@ -1912,13 +1944,16 @@ class PackageDialog(QDialog, DialogUi):
             format_combo = table.cellWidget(row, 5)
             curr_fmt = format_combo.currentText() if format_combo else "(data.gpkg)"
 
-            layer_ds[layer_id] = {
+            entry = {
                 "action": curr_action,
                 "identifiable": ident_item.checkState() == Qt.Checked if ident_item else True,
                 "readonly": ro_item.checkState() == Qt.Checked if ro_item else False,
                 "searchable": search_item.checkState() == Qt.Checked if search_item else True,
                 "format": curr_fmt,
             }
+            layer_ds[layer_id] = entry
+            if layer_name:
+                layer_ds[layer_name] = entry
 
         settings.setValue("gmd_pipeline/layer_data_sources_dict", json.dumps(layer_ds))
 
@@ -2134,7 +2169,8 @@ class PackageDialog(QDialog, DialogUi):
                 if lyr:
                     role_id = get_item_role(item)
                     if role_id:
-                        policy = saved_policies.get(role_id, default_policies.get(role_id, {}))
+                        norm_role = str(role_id).replace("_bgy_combo_", "_ea_combo_")
+                        policy = saved_policies.get(role_id) or saved_policies.get(norm_role) or default_policies.get(norm_role, {})
                         if policy:
                             action_val = policy.get("action")
                             if action_val:
@@ -2185,8 +2221,12 @@ class PackageDialog(QDialog, DialogUi):
         except Exception:
             layer_ds_policies = {}
 
-        for layer_id, policy in layer_ds_policies.items():
-            lyr = project.mapLayer(layer_id)
+        for layer_key, policy in layer_ds_policies.items():
+            lyr = project.mapLayer(layer_key)
+            if not lyr:
+                match = project.mapLayersByName(layer_key)
+                if match:
+                    lyr = match[0]
             if not lyr or not policy:
                 continue
 
@@ -5256,10 +5296,11 @@ class PackageDialog(QDialog, DialogUi):
                     combo = self.layer_groups_tree.itemWidget(item, 1)
                     if combo and combo.currentData() is not None:
                         attr_key = str(combo.currentData())
+                        norm_attr_key = attr_key.replace("_bgy_combo_", "_ea_combo_")
                         layer_name = item.text(0)
-                        policy = role_policies.get(attr_key, {})
+                        policy = role_policies.get(attr_key) or role_policies.get(norm_attr_key, {})
                         export_fmt = policy.get("format") or policy.get("export_format") or "(data.gpkg)"
-                        suffix = attr_to_suffix.get(attr_key, f"_{self._normalized_layer_name(layer_name)}")
+                        suffix = attr_to_suffix.get(attr_key, attr_to_suffix.get(norm_attr_key, f"_{self._normalized_layer_name(layer_name)}"))
                         layer_role_info[layer_name] = {
                             "attr_key": attr_key,
                             "export_format": export_fmt,
@@ -5283,8 +5324,8 @@ class PackageDialog(QDialog, DialogUi):
             info = layer_role_info.get(lname, layer_role_info.get(norm_name, {}))
             fmt = info.get("export_format")
 
-            # Per-layer data source override takes priority
-            layer_ds_override = layer_ds_policies.get(layer.id(), {})
+            # Per-layer data source override takes priority (check ID and Name)
+            layer_ds_override = layer_ds_policies.get(layer.id()) or layer_ds_policies.get(layer.name(), {})
             if layer_ds_override.get("format"):
                 fmt = layer_ds_override["format"]
 
