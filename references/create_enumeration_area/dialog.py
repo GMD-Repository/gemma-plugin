@@ -2483,6 +2483,11 @@ class EALauncherDialog(QDialog):
         table.setAlternatingRowColors(True)
         table.setMinimumHeight(150)
         table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        if hasattr(table, "setToolTip"):
+            try:
+                table.setToolTip("Double-click any row to zoom to the feature on the map canvas.")
+            except Exception:
+                pass
         return table
 
     # ── Live Candidate Preview Logic ────────────────────────────────────────
@@ -3941,34 +3946,15 @@ class EALauncherDialog(QDialog):
                         _make_handler(row_idx, hh, partner_combo, table)
                     )
 
-                # Column 7: Action (Preview and Merge buttons)
+                # Column 7: Action (Merge / Unmerge button)
                 if has_action_col:
-                    btn_preview = QPushButton("Preview")
-                    btn_preview.setFixedHeight(24)
-                    btn_preview.setMinimumWidth(65)
-                    btn_preview.setToolTip(f"Zoom map canvas to candidate EA {ean_str} and selected merge partner.")
-                    btn_preview.setStyleSheet(
-                        "QPushButton { background-color: #0969da; color: white; font-weight: bold; "
-                        "border-radius: 3px; padding: 2px 8px; border: 1px solid #0550ae; } "
-                        "QPushButton:hover { background-color: #0550ae; }"
-                    )
-                    btn_preview.clicked.connect(
-                        self._make_individual_preview_handler(
-                            ean_str,
-                            partner_combo,
-                            bgy_name=bgy_name_str,
-                            cand_layer=table_source_layer,
-                            cand_fid=feat_id,
-                        )
-                    )
-
                     btn_merge = QPushButton("Merge")
                     btn_merge.setFixedHeight(24)
-                    btn_merge.setMinimumWidth(65)
+                    btn_merge.setMinimumWidth(70)
                     if is_merged_row:
                         btn_merge.setEnabled(True)
                         btn_merge.setText("Unmerge")
-                        btn_merge.setMinimumWidth(72)
+                        btn_merge.setMinimumWidth(75)
                         btn_merge.setToolTip(f"Unmerge {ean_str} to restore original boundaries and re-enable merging with another partner.")
                         btn_merge.setStyleSheet(
                             "QPushButton { background-color: #d97706; color: white; font-weight: bold; "
@@ -4000,8 +3986,7 @@ class EALauncherDialog(QDialog):
                             "border-radius: 3px; padding: 2px 8px; border: 1px solid #d1d5da; }"
                         )
 
-                    action_widget = MergeActionWidget(btn_preview, btn_merge)
-                    table.setCellWidget(row_idx, 7, action_widget)
+                    table.setCellWidget(row_idx, 7, btn_merge)
 
         table.resizeColumnsToContents()
         hdr = table.horizontalHeader()
@@ -4010,7 +3995,7 @@ class EALauncherDialog(QDialog):
 
         if hasattr(table, 'columnWidth') and hasattr(table, 'setColumnWidth'):
             # Enforce minimum sensible column widths so columns don't truncate on small screens
-            min_widths = [85, 120, 95, 110, 130, 160, 100, 160]
+            min_widths = [85, 120, 95, 110, 130, 160, 100, 90]
             for col_idx, min_w in enumerate(min_widths[:table.columnCount()]):
                 try:
                     if table.columnWidth(col_idx) < min_w:
