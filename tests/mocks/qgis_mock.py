@@ -1752,6 +1752,8 @@ def setup_qgis_mock_if_needed():
         def hide(self): self.setVisible(False)
         def setStyleSheet(self, style): pass
         def setFont(self, font): pass
+        def setToolTip(self, text): self._tooltip = str(text)
+        def toolTip(self): return getattr(self, '_tooltip', "")
         def setWindowFlags(self, flags): self._window_flags = flags
         def windowFlags(self): return getattr(self, '_window_flags', 0)
         def setWindowIcon(self, icon): pass
