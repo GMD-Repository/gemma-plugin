@@ -5677,12 +5677,20 @@ class EALauncherDialog(QDialog):
             'PREVIEW_ONLY': False,
             'EXECUTION_MODE': exec_mode_val,
             
-            # Temporary scratch sinks during processing execution
-            'DELINEATED_OUTPUT': 'TEMPORARY_OUTPUT',
-            'MERGED_OUTPUT': 'TEMPORARY_OUTPUT',
-            'DELINEATION_CANDIDATE_OUTPUT': 'TEMPORARY_OUTPUT',
-            'EXTRACTED_BUILDINGS_OUTPUT': 'TEMPORARY_OUTPUT',
+            # Temporary scratch sinks during processing execution based on active mode
         }
+        if mode == "delineation":
+            parameters['DELINEATED_OUTPUT'] = 'TEMPORARY_OUTPUT'
+            parameters['DELINEATION_CANDIDATE_OUTPUT'] = 'TEMPORARY_OUTPUT'
+            parameters['EXTRACTED_BUILDINGS_OUTPUT'] = 'TEMPORARY_OUTPUT'
+        elif mode == "merging":
+            parameters['MERGED_OUTPUT'] = 'TEMPORARY_OUTPUT'
+            parameters['EXTRACTED_BUILDINGS_OUTPUT'] = 'TEMPORARY_OUTPUT'
+        else: # "all"
+            parameters['DELINEATED_OUTPUT'] = 'TEMPORARY_OUTPUT'
+            parameters['MERGED_OUTPUT'] = 'TEMPORARY_OUTPUT'
+            parameters['DELINEATION_CANDIDATE_OUTPUT'] = 'TEMPORARY_OUTPUT'
+            parameters['EXTRACTED_BUILDINGS_OUTPUT'] = 'TEMPORARY_OUTPUT'
 
         # Clear UI state and set banners according to mode
         if mode in ("delineation", "all"):
@@ -5746,7 +5754,8 @@ class EALauncherDialog(QDialog):
             extra_progress_bars=extra_progs,
             extra_cancel_buttons=extra_cancels,
         )
-        self.feedback.progressChanged.connect(lambda val: self.feedback.helper.set_val.emit(int(val)))
+        if hasattr(self.feedback, 'progressChanged') and hasattr(self.feedback.progressChanged, 'connect'):
+            self.feedback.progressChanged.connect(lambda val: self.feedback.helper.set_val.emit(int(val)))
         context = QgsProcessingContext()
 
         # Execute using QGIS Processing framework
@@ -5992,6 +6001,8 @@ class EALauncherDialog(QDialog):
                                 pass
                         skip_msg = f"<span style='color:#7F8C8D;'>[INFO] Splitting lines layer '{target_line_name}' has 0 features; skipping layer generation.</span>"
                         _log_msg(skip_msg)
+                    elif mode == "merging":
+                        continue
                     else:
                         has_splitting_lines = True
                         # Convert in-memory splitting line layer to permanent GeoPackage on disk

@@ -326,6 +326,11 @@ def run_phase_6(alg, parameters, context, feedback, multi_feedback, p1, p2, p5):
 
     split_eas = p5["split_eas"]
 
+    exec_mode = p1.get("execution_mode", "all")
+    if exec_mode == "delineation":
+        feedback.pushInfo("[Phase 6] Skipping EA merging (delineation execution mode).")
+        return {"merged_eas": split_eas}
+
     barangay_split_groups = {}
     for ea in split_eas:
         bar = ea['parent_barangay']

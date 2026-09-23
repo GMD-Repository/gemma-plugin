@@ -625,6 +625,11 @@ def run_phase_5(alg, parameters, context, feedback, multi_feedback, p1, p2, p3, 
 
     eas = p4["eas"]
 
+    exec_mode = p1.get("execution_mode", "all")
+    if exec_mode == "merging":
+        feedback.pushInfo("[Phase 5] Skipping EA delineation/splitting (merging execution mode).")
+        return {"split_eas": eas}
+
     def is_parent_delineation_candidate(ea_item):
         orig_id = ea_item.get('original_id')
         if orig_id is None or orig_id not in delineation_candidate_ids:

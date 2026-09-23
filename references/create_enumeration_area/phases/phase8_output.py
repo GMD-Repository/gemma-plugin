@@ -400,6 +400,7 @@ def run_phase_8(
 
     road_geoms = p3["road_geoms"]
     river_geoms = p3["river_geoms"]
+    exec_mode = p1.get("execution_mode", "all")
 
     # Memory-only registry of all EA codes per delineation-candidate barangay (from Phase 4)
     barangay_sibling_ean_codes = p4.get("barangay_sibling_ean_codes", {})
@@ -1703,7 +1704,7 @@ def run_phase_8(
     all_splitting_lines = []
     proposed_lines = p7.get("proposed_lines", [])
 
-    if proposed_lines:
+    if exec_mode != "merging" and proposed_lines:
         for p_line in proposed_lines:
             cand_id = p_line.get('ea_id')
             line_geom = p_line.get('geom')
@@ -1922,30 +1923,31 @@ def run_phase_8(
             ])
             features_to_add.append(f)
 
-        line_layer = QgsVectorLayer(uri, layer_name, "memory")
-        if line_layer.isValid():
-            if features_to_add:
-                pr = line_layer.dataProvider()
-                pr.addFeatures(features_to_add)
-                line_layer.updateExtents()
+        if exec_mode != "merging":
+            line_layer = QgsVectorLayer(uri, layer_name, "memory")
+            if line_layer.isValid():
+                if features_to_add:
+                    pr = line_layer.dataProvider()
+                    pr.addFeatures(features_to_add)
+                    line_layer.updateExtents()
 
-            apply_qml_to_layer(line_layer, "eadel_update_lines.qml")
+                apply_qml_to_layer(line_layer, "eadel_update_lines.qml")
 
-            project = QgsProject.instance()
-            if project:
-                project.addMapLayer(line_layer)
-            if features_to_add:
-                feedback.pushInfo(
-                    f"Created line layer '{layer_name}' with {len(features_to_add)} "
-                    f"feature(s) ({len(all_splitting_lines)} candidate(s) processed)."
-                )
+                project = QgsProject.instance()
+                if project:
+                    project.addMapLayer(line_layer)
+                if features_to_add:
+                    feedback.pushInfo(
+                        f"Created line layer '{layer_name}' with {len(features_to_add)} "
+                        f"feature(s) ({len(all_splitting_lines)} candidate(s) processed)."
+                    )
+                else:
+                    feedback.pushInfo(
+                        f"Created empty proposed cut lines layer '{layer_name}' for {len(delineation_candidate_ids)} "
+                        f"delineation candidate(s) (Ready for manual digitizing/editing in QGIS)."
+                    )
             else:
-                feedback.pushInfo(
-                    f"Created empty proposed cut lines layer '{layer_name}' for {len(delineation_candidate_ids)} "
-                    f"delineation candidate(s) (Ready for manual digitizing/editing in QGIS)."
-                )
-        else:
-            feedback.reportError(f"Failed to create memory layer for {layer_name}")
+                feedback.reportError(f"Failed to create memory layer for {layer_name}")
 
     feedback.pushInfo("Successfully created and structured Enumeration Areas.")
 
@@ -2043,13 +2045,13 @@ def run_phase_8(
     )
 
     final_outputs = {}
-    if delineated_feat_count > 0 and delineated_dest_id is not None:
+    if exec_mode != "merging" and delineated_feat_count > 0 and delineated_dest_id is not None:
         final_outputs[getattr(alg, 'DELINEATED_OUTPUT', 'DELINEATED_OUTPUT')] = delineated_dest_id
-    if merged_feat_count > 0 and merged_dest_id is not None:
+    if exec_mode != "delineation" and merged_feat_count > 0 and merged_dest_id is not None:
         final_outputs[getattr(alg, 'MERGED_OUTPUT', 'MERGED_OUTPUT')] = merged_dest_id
     if special_ea_feat_count > 0 and special_ea_dest_id is not None:
         final_outputs[getattr(alg, 'SPECIAL_EA_OUTPUT', 'SPECIAL_EA_OUTPUT')] = special_ea_dest_id
-    if delin_candidate_feat_count > 0 and delin_candidate_dest_id is not None:
+    if exec_mode != "merging" and delin_candidate_feat_count > 0 and delin_candidate_dest_id is not None:
         final_outputs[getattr(alg, 'DELINEATION_CANDIDATE_OUTPUT', 'DELINEATION_CANDIDATE_OUTPUT')] = delin_candidate_dest_id
     if extracted_bldg_feat_count > 0 and extracted_buildings_dest_id is not None:
         final_outputs[getattr(alg, 'EXTRACTED_BUILDINGS_OUTPUT', 'EXTRACTED_BUILDINGS_OUTPUT')] = extracted_buildings_dest_id

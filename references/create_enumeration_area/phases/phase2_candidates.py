@@ -58,7 +58,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     preview_only = p1["preview_only"]
     barangay_index = p1["barangay_index"]
     barangay_by_id = p1["barangay_by_id"]
-    _dc_geo_idx = p1["_dc_geo_idx"]
+    _dc_geo_idx = p1.get("_dc_geo_idx", -1)
 
     def get_parent_barangay(ea_geom, b_index=None, b_by_id=None):
         idx = b_index if b_index is not None else barangay_index
@@ -175,11 +175,13 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
         if merged_export_fields.indexOf(fname) == -1:
             merged_export_fields.append(create_qgs_field(fname, QVariant.String))
 
+    exec_mode = p1.get("execution_mode", "all")
+
     out_wkb_type = QgsWkbTypes.multiType(previous_ea_source.wkbType())
 
     delineated_sink = None
     delineated_dest_id = None
-    if alg.DELINEATED_OUTPUT in parameters and parameters[alg.DELINEATED_OUTPUT] is not None:
+    if exec_mode != "merging" and alg.DELINEATED_OUTPUT in parameters and parameters[alg.DELINEATED_OUTPUT] is not None:
         (delineated_sink, delineated_dest_id) = alg.parameterAsSink(
             parameters,
             alg.DELINEATED_OUTPUT,
@@ -191,7 +193,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
 
     merged_sink = None
     merged_dest_id = None
-    if alg.MERGED_OUTPUT in parameters and parameters[alg.MERGED_OUTPUT] is not None:
+    if exec_mode != "delineation" and alg.MERGED_OUTPUT in parameters and parameters[alg.MERGED_OUTPUT] is not None:
         (merged_sink, merged_dest_id) = alg.parameterAsSink(
             parameters,
             alg.MERGED_OUTPUT,
@@ -257,7 +259,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
 
     delin_candidate_sink = None
     delin_candidate_dest_id = None
-    if alg.DELINEATION_CANDIDATE_OUTPUT in parameters and parameters[alg.DELINEATION_CANDIDATE_OUTPUT] is not None:
+    if exec_mode != "merging" and alg.DELINEATION_CANDIDATE_OUTPUT in parameters and parameters[alg.DELINEATION_CANDIDATE_OUTPUT] is not None:
         delin_cand_fields = QgsFields(out_fields)
         if delin_cand_fields.indexOf("hhcount") == -1:
             delin_cand_fields.append(create_qgs_field("hhcount", QVariant.Double))
