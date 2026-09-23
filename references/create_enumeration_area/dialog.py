@@ -41,6 +41,46 @@ from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication, QThread, QObject, pyqt
 
 from .helpers.constants import create_qgs_field
 
+try:
+    from qgis.PyQt import sip
+except ImportError:
+    try:
+        import sip
+    except ImportError:
+        sip = None
+
+
+def is_layer_alive(layer: Any) -> bool:
+    """Safely verify whether a QgsMapLayer wrapper points to a live C++ object."""
+    if layer is None:
+        return False
+    if sip is not None and hasattr(sip, 'isdeleted'):
+        try:
+            if sip.isdeleted(layer) is True:
+                return False
+        except Exception:
+            pass
+    try:
+        # Accessing .name() will raise RuntimeError if the C++ object has been deleted
+        _ = layer.name()
+        return True
+    except (RuntimeError, ReferenceError):
+        return False
+
+
+def get_safe_project_layer(layer_id: str) -> Optional[QgsMapLayer]:
+    """Retrieve layer by ID from QgsProject only if it exists and is alive in C++."""
+    if not layer_id:
+        return None
+    try:
+        lyr = QgsProject.instance().mapLayer(layer_id)
+    except Exception:
+        return None
+    if not is_layer_alive(lyr):
+        return None
+    return lyr
+
+
 # Module-level regex for Tab 3 input validation — compiled once, reused on every
 # combo-box change event instead of being re-compiled inside the hot-path method.
 _EA_MERGE_8DIGIT_RE = re.compile(r"^\d{8}(_|$)")
@@ -2259,16 +2299,16 @@ class EALauncherDialog(QDialog):
         if combo is None:
             return None
         if isinstance(combo, QgsVectorLayer):
-            return combo
+            return combo if is_layer_alive(combo) else None
         try:
-            from qgis.PyQt import sip
-            if not sip.isdeleted(combo):
-                if hasattr(combo, 'currentLayer'):
-                    return combo.currentLayer()
-                return combo
+            if sip is not None and sip.isdeleted(combo):
+                return None
+            if hasattr(combo, 'currentLayer'):
+                lyr = combo.currentLayer()
+                return lyr if is_layer_alive(lyr) else None
+            return combo if is_layer_alive(combo) else None
         except (RuntimeError, AttributeError, TypeError):
             return None
-        return None
 
     def _toggle_thresholds(self, checked: bool):
         if hasattr(self, 'min_hh_label'):
@@ -4084,7 +4124,7 @@ class EALauncherDialog(QDialog):
         target_name = f"{geo5}_merged_ea2026" if geo5 else "merged_ea2026"
         target_layer = None
         for lyr in QgsProject.instance().mapLayersByName(target_name):
-            if isinstance(lyr, QgsVectorLayer) and lyr.isValid():
+            if is_layer_alive(lyr) and isinstance(lyr, QgsVectorLayer) and lyr.isValid():
                 target_layer = lyr
                 break
 
@@ -5726,10 +5766,11 @@ class EALauncherDialog(QDialog):
         alg_to_run = QgsApplication.processingRegistry().algorithmById(self.ALGORITHM_ID) or self.algo
 
         # Record pre-existing splitting lines layers to prevent duplicates
-        pre_existing_eadel_ids = {
-            layer_id for layer_id, lyr in QgsProject.instance().mapLayers().items()
-            if lyr.name().endswith("_eadel_update")
-        }
+        pre_existing_eadel_ids = set()
+        for layer_id in list(QgsProject.instance().mapLayers().keys()):
+            lyr = get_safe_project_layer(layer_id)
+            if lyr and lyr.name().endswith("_eadel_update"):
+                pre_existing_eadel_ids.add(layer_id)
 
         try:
             results = processing.runAndLoadResults(
@@ -5823,25 +5864,33 @@ class EALauncherDialog(QDialog):
                                 layer_ref = results[out_key]
                                 layer = None
                                 if isinstance(layer_ref, str):
-                                    layer = QgsProject.instance().mapLayer(layer_ref)
+                                    layer = get_safe_project_layer(layer_ref)
                                 elif hasattr(layer_ref, 'id') or isinstance(layer_ref, QgsMapLayer):
-                                    layer = layer_ref
+                                    if is_layer_alive(layer_ref):
+                                        layer = layer_ref
                                 if layer:
-                                    QgsProject.instance().removeMapLayer(layer.id())
+                                    try:
+                                        QgsProject.instance().removeMapLayer(layer.id())
+                                    except Exception:
+                                        pass
                             continue
 
                         if out_key in results:
                             layer_ref = results[out_key]
                             layer = None
                             if isinstance(layer_ref, str):
-                                layer = QgsProject.instance().mapLayer(layer_ref)
+                                layer = get_safe_project_layer(layer_ref)
                             elif hasattr(layer_ref, 'id') or isinstance(layer_ref, QgsMapLayer):
-                                layer = layer_ref
+                                if is_layer_alive(layer_ref):
+                                    layer = layer_ref
                             
-                            if layer:
+                            if layer and is_layer_alive(layer):
                                 if layer.featureCount() == 0:
                                     # If 0 features, do NOT create a permanent file and do not keep on canvas
-                                    QgsProject.instance().removeMapLayer(layer.id())
+                                    try:
+                                        QgsProject.instance().removeMapLayer(layer.id())
+                                    except Exception:
+                                        pass
                                     if f_path and os.path.exists(f_path):
                                         try:
                                             os.remove(f_path)
@@ -5859,7 +5908,10 @@ class EALauncherDialog(QDialog):
                                             perm_layer = QgsVectorLayer(f_path, target_name, "ogr")
                                         
                                         if perm_layer.isValid():
-                                            QgsProject.instance().removeMapLayer(layer.id())
+                                            try:
+                                                QgsProject.instance().removeMapLayer(layer.id())
+                                            except Exception:
+                                                pass
                                             QgsProject.instance().addMapLayer(perm_layer, False)
                                             apply_qml_to_layer(perm_layer, qml_filename)
                                             target_group.addLayer(perm_layer)
@@ -5870,89 +5922,124 @@ class EALauncherDialog(QDialog):
                                             _log_msg(save_msg)
                                             continue
 
-                                layer.setName(target_name)
-                                if out_key == 'EXTRACTED_BUILDINGS_OUTPUT' and hasattr(layer, 'fields'):
-                                    role_idx = layer.fields().indexOf("merge_role")
-                                    if role_idx != -1 and hasattr(layer, 'setSubsetString'):
-                                        if mode == "delineation":
-                                            layer.setSubsetString('"merge_role" NOT IN (\'Candidate\', \'Merge Partner\')')
-                                        elif mode == "merging":
-                                            layer.setSubsetString('"merge_role" IN (\'Candidate\', \'Merge Partner\', \'Merged\')')
-                                apply_qml_to_layer(layer, qml_filename)
-                                lnode = root.findLayer(layer.id())
-                                if lnode:
-                                    if lnode.parent() != target_group:
-                                        clone = lnode.clone()
-                                        target_group.addChildNode(clone)
-                                        lnode.parent().removeChildNode(lnode)
+                                if is_layer_alive(layer):
+                                    layer.setName(target_name)
+                                    if out_key == 'EXTRACTED_BUILDINGS_OUTPUT' and hasattr(layer, 'fields'):
+                                        role_idx = layer.fields().indexOf("merge_role")
+                                        if role_idx != -1 and hasattr(layer, 'setSubsetString'):
+                                            if mode == "delineation":
+                                                layer.setSubsetString('"merge_role" NOT IN (\'Candidate\', \'Merge Partner\')')
+                                            elif mode == "merging":
+                                                layer.setSubsetString('"merge_role" IN (\'Candidate\', \'Merge Partner\', \'Merged\')')
+                                    apply_qml_to_layer(layer, qml_filename)
+                                    lnode = root.findLayer(layer.id())
+                                    if lnode:
+                                        if lnode.parent() != target_group:
+                                            clone = lnode.clone()
+                                            target_group.addChildNode(clone)
+                                            lnode.parent().removeChildNode(lnode)
                         else:
                             # Not in results dictionary (0 features produced)
                             skip_msg = f"<span style='color:#7F8C8D;'>[INFO] Output layer '{target_name}' has 0 features; skipping layer generation.</span>"
                             _log_msg(skip_msg)
                             # Remove any dangling layer with target_name if loaded with 0 features
-                            for lyr_id, lyr_obj in list(QgsProject.instance().mapLayers().items()):
-                                if lyr_obj.name() == target_name and lyr_obj.featureCount() == 0:
-                                    QgsProject.instance().removeMapLayer(lyr_id)
+                            for lyr_id in list(QgsProject.instance().mapLayers().keys()):
+                                lyr_obj = get_safe_project_layer(lyr_id)
+                                if lyr_obj and lyr_obj.name() == target_name:
+                                    try:
+                                        if lyr_obj.featureCount() == 0:
+                                            QgsProject.instance().removeMapLayer(lyr_id)
+                                    except (RuntimeError, ReferenceError):
+                                        pass
 
                 # Group and persist any generated splitting line layers (ending with _eadel_update) into Splitting Lines
                 has_splitting_lines = False
                 processed_line_names = set()
-                for layer_id, proj_layer in list(QgsProject.instance().mapLayers().items()):
-                    if proj_layer.name().endswith("_eadel_update"):
-                        target_line_name = proj_layer.name()
 
-                        if mode == "merging" and layer_id not in pre_existing_eadel_ids:
-                            # In merging mode, discard newly spawned scratch splitting line layers
-                            # so that pre-existing delineation splitting lines are not duplicated.
-                            QgsProject.instance().removeMapLayer(layer_id)
-                            continue
+                # Collect candidate splitting line layer IDs safely to prevent accessing deleted C++ layer wrappers
+                candidate_line_ids = []
+                for lid in list(QgsProject.instance().mapLayers().keys()):
+                    lyr = get_safe_project_layer(lid)
+                    if lyr and lyr.name().endswith("_eadel_update"):
+                        candidate_line_ids.append(lid)
 
-                        if target_line_name in processed_line_names:
-                            # Remove duplicate layers with the same name
-                            QgsProject.instance().removeMapLayer(layer_id)
-                            continue
+                for layer_id in candidate_line_ids:
+                    proj_layer = get_safe_project_layer(layer_id)
+                    if not proj_layer:
+                        continue
 
-                        processed_line_names.add(target_line_name)
-                        line_gpkg_path = os.path.normpath(os.path.join(out_folder, f"{target_line_name}.gpkg")).replace("\\", "/") if out_folder else ""
-                        if mode == "merging" and proj_layer.featureCount() == 0:
-                            # In merging mode, do not keep empty splitting line layers
+                    target_line_name = proj_layer.name()
+
+                    if mode == "merging" and layer_id not in pre_existing_eadel_ids:
+                        # In merging mode, discard newly spawned scratch splitting line layers
+                        # so that pre-existing delineation splitting lines are not duplicated.
+                        try:
                             QgsProject.instance().removeMapLayer(layer_id)
-                            if line_gpkg_path and os.path.exists(line_gpkg_path):
-                                try:
-                                    os.remove(line_gpkg_path)
-                                except Exception:
-                                    pass
-                            skip_msg = f"<span style='color:#7F8C8D;'>[INFO] Splitting lines layer '{target_line_name}' has 0 features; skipping layer generation.</span>"
-                            _log_msg(skip_msg)
-                        else:
-                            has_splitting_lines = True
-                            # Convert in-memory splitting line layer to permanent GeoPackage on disk
-                            if line_gpkg_path and not proj_layer.source().lower().endswith(".gpkg"):
-                                if self._export_layer_to_gpkg(proj_layer, line_gpkg_path, target_line_name):
-                                    perm_line_layer = QgsVectorLayer(f"{line_gpkg_path}|layername={target_line_name}", target_line_name, "ogr")
-                                    if not perm_line_layer.isValid():
-                                        perm_line_layer = QgsVectorLayer(line_gpkg_path, target_line_name, "ogr")
-                                    if perm_line_layer.isValid():
+                        except Exception:
+                            pass
+                        continue
+
+                    if target_line_name in processed_line_names:
+                        # Remove duplicate layers with the same name
+                        try:
+                            QgsProject.instance().removeMapLayer(layer_id)
+                        except Exception:
+                            pass
+                        continue
+
+                    processed_line_names.add(target_line_name)
+                    line_gpkg_path = os.path.normpath(os.path.join(out_folder, f"{target_line_name}.gpkg")).replace("\\", "/") if out_folder else ""
+                    if mode == "merging" and proj_layer.featureCount() == 0:
+                        # In merging mode, do not keep empty splitting line layers
+                        try:
+                            QgsProject.instance().removeMapLayer(layer_id)
+                        except Exception:
+                            pass
+                        if line_gpkg_path and os.path.exists(line_gpkg_path):
+                            try:
+                                os.remove(line_gpkg_path)
+                            except Exception:
+                                pass
+                        skip_msg = f"<span style='color:#7F8C8D;'>[INFO] Splitting lines layer '{target_line_name}' has 0 features; skipping layer generation.</span>"
+                        _log_msg(skip_msg)
+                    else:
+                        has_splitting_lines = True
+                        # Convert in-memory splitting line layer to permanent GeoPackage on disk
+                        if line_gpkg_path and not proj_layer.source().lower().endswith(".gpkg"):
+                            if self._export_layer_to_gpkg(proj_layer, line_gpkg_path, target_line_name):
+                                perm_line_layer = QgsVectorLayer(f"{line_gpkg_path}|layername={target_line_name}", target_line_name, "ogr")
+                                if not perm_line_layer.isValid():
+                                    perm_line_layer = QgsVectorLayer(line_gpkg_path, target_line_name, "ogr")
+                                if perm_line_layer.isValid():
+                                    try:
                                         QgsProject.instance().removeMapLayer(layer_id)
-                                        # Remove any other existing layer with target_line_name to ensure no duplicates
-                                        for old_id, old_lyr in list(QgsProject.instance().mapLayers().items()):
-                                            if old_id != perm_line_layer.id() and old_lyr.name() == target_line_name:
-                                                QgsProject.instance().removeMapLayer(old_id)
-                                        QgsProject.instance().addMapLayer(perm_line_layer, False)
-                                        apply_qml_to_layer(perm_line_layer, "eadel_update_lines.qml")
-                                        splitting_lines_group.addLayer(perm_line_layer)
-                                        feat_desc = (
-                                            f"{perm_line_layer.featureCount()} feature(s)"
-                                            if perm_line_layer.featureCount() > 0
-                                            else "0 features; ready for manual editing"
-                                        )
-                                        save_msg = (
-                                            f"<span style='color:#0969da; font-weight:bold;'>[INFO]</span> "
-                                            f"Permanent GeoPackage layer (.gpkg) saved: {target_line_name} ({feat_desc}) ({line_gpkg_path})"
-                                        )
-                                        _log_msg(save_msg)
-                                        continue
+                                    except Exception:
+                                        pass
+                                    # Remove any other existing layer with target_line_name to ensure no duplicates
+                                    for old_id in list(QgsProject.instance().mapLayers().keys()):
+                                        if old_id != perm_line_layer.id():
+                                            old_lyr = get_safe_project_layer(old_id)
+                                            if old_lyr and old_lyr.name() == target_line_name:
+                                                try:
+                                                    QgsProject.instance().removeMapLayer(old_id)
+                                                except Exception:
+                                                    pass
+                                    QgsProject.instance().addMapLayer(perm_line_layer, False)
+                                    apply_qml_to_layer(perm_line_layer, "eadel_update_lines.qml")
+                                    splitting_lines_group.addLayer(perm_line_layer)
+                                    feat_desc = (
+                                        f"{perm_line_layer.featureCount()} feature(s)"
+                                        if perm_line_layer.featureCount() > 0
+                                        else "0 features; ready for manual editing"
+                                    )
+                                    save_msg = (
+                                        f"<span style='color:#0969da; font-weight:bold;'>[INFO]</span> "
+                                        f"Permanent GeoPackage layer (.gpkg) saved: {target_line_name} ({feat_desc}) ({line_gpkg_path})"
+                                    )
+                                    _log_msg(save_msg)
+                                    continue
 
+                        if is_layer_alive(proj_layer):
                             apply_qml_to_layer(proj_layer, "eadel_update_lines.qml")
                             lnode = root.findLayer(layer_id)
                             if lnode and lnode.parent() != splitting_lines_group:
