@@ -1103,6 +1103,100 @@ class TestEADialogRefresh(unittest.TestCase):
         launcher_flags = dlg_launcher.windowFlags()
         self.assertTrue(bool(launcher_flags & Qt.WindowMinimizeButtonHint))
 
+    def test_live_preview_merge_table_includes_merge_partner_column(self):
+        """Verify that merge_table in Live Preview has 6 columns (with Merge Partner dropdown, no Action or Total HH) and generate_preview resolves merge partners."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+        from qgis.core import QgsVectorLayer, QgsField, QgsFeature, QgsGeometry
+        from qgis.PyQt.QtCore import QVariant
+
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.delineation_table = MagicMock()
+        mock_dlg.merge_table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=True, include_action=False, include_total_hh=False)
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.merge_prev_ea_combo = MagicMock()
+        mock_dlg.merge_ea_combo = MagicMock()
+        mock_dlg.all_delineation_candidates = []
+        mock_dlg.all_merge_candidates = []
+        mock_dlg.all_merged_ea_candidates = []
+        mock_dlg.min_hh_spin = MagicMock()
+        mock_dlg.min_hh_spin.value.return_value = 100
+        mock_dlg.max_hh_spin = MagicMock()
+        mock_dlg.max_hh_spin.value.return_value = 300
+        mock_dlg.kpi_delin_val = MagicMock()
+        mock_dlg.kpi_merge_val = MagicMock()
+        mock_dlg.kpi_merged_ea_val = MagicMock()
+        mock_dlg.filter_previews = MagicMock()
+        mock_dlg.output_folder_widget = MagicMock()
+        mock_dlg.output_folder_widget.filePath.return_value = "C:/test"
+        mock_dlg.merge_output_folder_widget = MagicMock()
+        mock_dlg.merge_output_folder_widget.filePath.return_value = ""
+        mock_dlg._get_ea_name = lambda feat, ean, fields: f"EA {ean}"
+        mock_dlg.auto_detect_merge_ea_layer = MagicMock(return_value=None)
+        mock_dlg.current_theme = "light"
+
+        # 1. Verify merge_table has 6 columns (Merge Partner dropdown, no Action or Total HH column)
+        self.assertEqual(mock_dlg.merge_table.columnCount(), 6)
+        headers = [mock_dlg.merge_table.horizontalHeaderItem(i).text() for i in range(6)]
+        self.assertEqual(headers[0], "Geocode")
+        self.assertEqual(headers[1], "Barangay")
+        self.assertEqual(headers[2], "EA Name")
+        self.assertEqual(headers[3], "Household Count")
+        self.assertEqual(headers[4], "Role / Status")
+        self.assertEqual(headers[5], "Merge Partner (Geocode)")
+        self.assertNotIn("Total HH Count", headers)
+        self.assertNotIn("Action", headers)
+
+        # 2. Previous EA layer with two adjacent EAs in the same barangay
+        prev_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Prev_EAs", "memory")
+        prev_ea_layer.dataProvider().addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        prev_ea_layer.updateFields()
+
+        # EA 001: 40 HH (under-threshold candidate)
+        f1 = QgsFeature(prev_ea_layer.fields())
+        f1.setAttributes(["001", "017280010001", "Barangay Alpha", 40.0])
+        f1.setGeometry(QgsGeometry.fromWkt("POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"))
+
+        # EA 002: 120 HH (adjacent partner)
+        f2 = QgsFeature(prev_ea_layer.fields())
+        f2.setAttributes(["002", "017280010002", "Barangay Alpha", 120.0])
+        f2.setGeometry(QgsGeometry.fromWkt("POLYGON((1 0, 2 0, 2 1, 1 1, 1 0))"))
+
+        prev_ea_layer.dataProvider().addFeatures([f1, f2])
+
+        mock_dlg._safe_get_layer.side_effect = lambda combo: (
+            prev_ea_layer if combo in (mock_dlg.prev_ea_combo, mock_dlg.merge_prev_ea_combo)
+            else None
+        )
+
+        EALauncherDialog.generate_preview(mock_dlg)
+
+        # Verify all_merge_candidates has EA 001 and detected neighbor EA 002
+        self.assertEqual(len(mock_dlg.all_merge_candidates), 1)
+        cand = mock_dlg.all_merge_candidates[0]
+        self.assertEqual(cand[0], "001")
+        self.assertEqual(len(cand[5]), 1)
+        self.assertEqual(cand[5][0][0], "017280010002")
+        self.assertEqual(cand[5][0][1], 120.0)
+
+        # 3. Populate merge_table rows and verify dropdown widget in column 5
+        EALauncherDialog._populate_table_rows(mock_dlg, mock_dlg.merge_table, mock_dlg.all_merge_candidates, is_delineation=False)
+        self.assertEqual(mock_dlg.merge_table.rowCount(), 1)
+        # Column 0 displays the full Geocode value, not the short EAN code
+        self.assertEqual(mock_dlg.merge_table.item(0, 0).text(), "017280010001")
+        combo = mock_dlg.merge_table.cellWidget(0, 5)
+        self.assertIsNotNone(combo)
+        self.assertTrue(combo.isEnabled())
+        self.assertEqual(combo.currentText(), "017280010002")
+        # Ensure no Total HH or Action cells exist (table has strictly 6 columns)
+        self.assertIsNone(mock_dlg.merge_table.item(0, 6))
+        self.assertIsNone(mock_dlg.merge_table.cellWidget(0, 6))
+        self.assertIsNone(mock_dlg.merge_table.cellWidget(0, 7))
+
 
 if __name__ == "__main__":
     unittest.main()
