@@ -81,18 +81,21 @@ def run_phase_7(
             if i in removed:
                 continue
             ea = eas[i]
-            if ea.get("from_split", False) or ea.get("is_special_ea", False):
+            if ea.get("from_split", False) or ea.get("is_special_ea", False) or ea.get("from_merge", False):
                 continue
-            bar = ea["parent_barangay"]
+            bar = ea.get("parent_barangay")
+            if not bar or str(bar).strip().lower() in ("", "none", "unknown", "null"):
+                continue
 
             best_j = -1
             best_score = float("inf")
             for j, nb in enumerate(eas):
                 if j == i or j in removed:
                     continue
-                if nb.get("from_split", False) or nb.get("is_special_ea", False):
+                if nb.get("from_split", False) or nb.get("is_special_ea", False) or nb.get("from_merge", False):
                     continue
-                if nb["parent_barangay"] != bar:
+                nb_bar = nb.get("parent_barangay")
+                if not nb_bar or str(nb_bar).strip().lower() in ("", "none", "unknown", "null") or nb_bar != bar:
                     continue
                 if is_delineation_candidate(nb, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
                     continue

@@ -16,7 +16,7 @@ console interface.
 import os
 import re
 import math
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from qgis.core import (
     Qgis, QgsMessageLog,
     QgsApplication, QgsProject, QgsVectorLayer, QgsMapLayer, QgsCoordinateTransform, QgsSpatialIndex,
@@ -3338,8 +3338,9 @@ class EALauncherDialog(QDialog):
         for i in range(fields.count()):
             name_lower = fields.at(i).name().lower()
             if name_lower in [
-                "bgy_geocode", "bgy_code", "brgy_code", "barangay_geocode",
-                "psgc", "psgc_code", "adm4_pcode", "geocode",
+                "parent_barangay", "parent_bgy", "parent_bgy_code",
+                "bgy_geocode", "bgy_code", "brgy_code", "barangay_geocode", "barangay_code",
+                "bgy_c", "brgy_c",
             ]:
                 bgy_geocode_idx = i
                 break
@@ -3387,17 +3388,7 @@ class EALauncherDialog(QDialog):
             total_hh += hh
             ea_count += 1
 
-            bgy_geocode = ""
-            if bgy_geocode_idx != -1:
-                _gc_val = feat.attribute(bgy_geocode_idx)
-                if _gc_val is not None and _gc_val != NULL:
-                    bgy_geocode = str(_gc_val).strip()
-                    if bgy_geocode.endswith(".0"):
-                        bgy_geocode = bgy_geocode[:-2]
-            if not bgy_geocode and len(ean_str) >= 9:
-                bgy_geocode = ean_str[:9]
-
-            # Resolve partner geocode value (show geocode value instead of 6-digit EAN code in dropdown)
+            # Resolve EA geocode value
             raw_gc = ""
             if ea_geocode_idx != -1:
                 _v = feat.attribute(ea_geocode_idx)
@@ -3405,6 +3396,20 @@ class EALauncherDialog(QDialog):
                     raw_gc = str(_v).strip()
                     if raw_gc.endswith(".0"):
                         raw_gc = raw_gc[:-2]
+
+            bgy_geocode = ""
+            if bgy_geocode_idx != -1:
+                _gc_val = feat.attribute(bgy_geocode_idx)
+                if _gc_val is not None and _gc_val != NULL:
+                    bgy_geocode = str(_gc_val).strip()
+                    if bgy_geocode.endswith(".0"):
+                        bgy_geocode = bgy_geocode[:-2]
+            if not bgy_geocode:
+                for cand_val in [raw_gc, ean_str]:
+                    cand_digits = "".join(c for c in str(cand_val) if c.isdigit())
+                    if len(cand_digits) >= 8:
+                        bgy_geocode = cand_digits[:8]
+                        break
 
             ea_gc_digits = "".join(c for c in raw_gc if c.isdigit())
             ean_digits = "".join(c for c in ean_str if c.isdigit())
@@ -3414,7 +3419,7 @@ class EALauncherDialog(QDialog):
                 nbr_geocode = ean_str
             elif bgy_geocode and ean_str and len(ean_digits) <= 6:
                 nbr_geocode = f"{bgy_geocode}{ean_str}"
-            elif raw_gc and ean_str and len(ean_digits) <= 6:
+            elif raw_gc and len(ea_gc_digits) in (8, 9) and ean_str and len(ean_digits) <= 6:
                 nbr_geocode = f"{raw_gc}{ean_str}"
             elif raw_gc:
                 nbr_geocode = raw_gc
@@ -3495,7 +3500,11 @@ class EALauncherDialog(QDialog):
             m_bgy_geocode_idx = -1
             for i in range(m_fields.count()):
                 name_lower = m_fields.at(i).name().lower()
-                if name_lower in ["bgy_geocode", "bgy_code", "brgy_code", "barangay_geocode", "psgc", "psgc_code", "adm4_pcode", "geocode"]:
+                if name_lower in [
+                    "parent_barangay", "parent_bgy", "parent_bgy_code",
+                    "bgy_geocode", "bgy_code", "brgy_code", "barangay_geocode", "barangay_code",
+                    "bgy_c", "brgy_c",
+                ]:
                     m_bgy_geocode_idx = i
                     break
 
@@ -3576,7 +3585,7 @@ class EALauncherDialog(QDialog):
                             r_text = str(cf.attribute(cl_rem_idx) or "")
                             for part in r_text.replace("+", " ").replace(":", " ").replace(",", " ").split():
                                 part_digits = "".join(c for c in part if c.isdigit())
-                                if len(part_digits) >= 9:
+                                if len(part_digits) >= 8:
                                     merged_eans_set.add(part_digits)
 
             for idx, feat in enumerate(merge_ea_layer.getFeatures()):
@@ -3613,16 +3622,6 @@ class EALauncherDialog(QDialog):
                         except Exception:
                             pass
 
-                bgy_geocode = ""
-                if m_bgy_geocode_idx != -1:
-                    _gc_val = feat.attribute(m_bgy_geocode_idx)
-                    if _gc_val is not None and _gc_val != NULL:
-                        bgy_geocode = str(_gc_val).strip()
-                        if bgy_geocode.endswith(".0"):
-                            bgy_geocode = bgy_geocode[:-2]
-                if not bgy_geocode and len(ean_str) >= 9:
-                    bgy_geocode = ean_str[:9]
-
                 cand_raw_gc = ""
                 if m_gc_idx != -1:
                     _cg_val = feat.attribute(m_gc_idx)
@@ -3630,6 +3629,20 @@ class EALauncherDialog(QDialog):
                         cand_raw_gc = str(_cg_val).strip()
                         if cand_raw_gc.endswith(".0"):
                             cand_raw_gc = cand_raw_gc[:-2]
+
+                bgy_geocode = ""
+                if m_bgy_geocode_idx != -1:
+                    _gc_val = feat.attribute(m_bgy_geocode_idx)
+                    if _gc_val is not None and _gc_val != NULL:
+                        bgy_geocode = str(_gc_val).strip()
+                        if bgy_geocode.endswith(".0"):
+                            bgy_geocode = bgy_geocode[:-2]
+                if not bgy_geocode:
+                    for cand_val in [cand_raw_gc, ean_str]:
+                        cand_digits = "".join(c for c in str(cand_val) if c.isdigit())
+                        if len(cand_digits) >= 8:
+                            bgy_geocode = cand_digits[:8]
+                            break
 
                 feat_geom = feat.geometry()
                 if feat_geom and not feat_geom.isEmpty():
@@ -3703,19 +3716,15 @@ class EALauncherDialog(QDialog):
                                 if _nbr_geocode and _nbr_geocode in merged_eans_set:
                                     continue
 
-                            # Same-barangay verification: check barangay names first, then geocode prefix
-                            if (bgy_name_str and _nbr_bgy_name
-                                    and bgy_name_str.strip().lower() not in ("unknown", "", "null")
-                                    and _nbr_bgy_name.strip().lower() not in ("unknown", "", "null")):
-                                if bgy_name_str.strip().lower() != _nbr_bgy_name.strip().lower():
-                                    continue
-                            elif bgy_geocode and _nbr_bgy_gc:
-                                d1 = "".join(c for c in str(bgy_geocode) if c.isdigit())
-                                d2 = "".join(c for c in str(_nbr_bgy_gc) if c.isdigit())
-                                p1 = d1[:9] if len(d1) >= 9 else d1
-                                p2 = d2[:9] if len(d2) >= 9 else d2
-                                if p1 and p2 and p1 != p2:
-                                    continue
+                            # Same-barangay verification: candidate and partner must strictly belong to the same barangay
+                            bar_layer_input = self._safe_get_layer(getattr(self, 'bar_combo', None)) or self._safe_get_layer(getattr(self, 'merge_bar_combo', None))
+                            if not self._are_in_same_barangay(
+                                feat, _nbr_feat,
+                                name_a=bgy_name_str, gc_a=bgy_geocode,
+                                name_b=_nbr_bgy_name, gc_b=_nbr_bgy_gc,
+                                bar_layer=bar_layer_input
+                            ):
+                                continue
 
                             # Threshold Check: combined total household count must not exceed maximum threshold
                             if (hh + _nbr_hh) > merge_max_hh:
@@ -3943,7 +3952,7 @@ class EALauncherDialog(QDialog):
                         "QComboBox { background-color: %s; color: #999999; "
                         "border: 1px solid #cccccc; border-radius: 3px; padding: 1px 4px; }" % bg_col
                     )
-                    total_text = "—"
+                    total_text = f"{hh:.0f}"
                     total_tooltip = f"Unmerged: {hh:.0f} HH (No eligible contiguous partner within threshold)"
 
                 table.setCellWidget(row_idx, 5, partner_combo)
@@ -4336,14 +4345,245 @@ class EALauncherDialog(QDialog):
 
     @staticmethod
     def _is_full_geocode(s: str) -> bool:
-        """Return True if *s* contains at least 9 digit characters.
+        """Return True if *s* contains at least 8 digit characters.
 
-        Philippine PSGC geocodes at the barangay level are 9 digits and are
-        nationally unique.  Short EAN codes (3–6 digits such as ``001000``)
-        are only unique within a single barangay and must never be used for
-        cross-barangay merge exclusion tracking.
+        Geocodes at the barangay level use the 8-digit code starting from the left.
+        Short EAN codes (3–6 digits such as ``001000``) are only unique within a single
+        barangay and must never be used for cross-barangay merge exclusion tracking.
         """
-        return sum(1 for c in str(s) if c.isdigit()) >= 9
+        return sum(1 for c in str(s) if c.isdigit()) >= 8
+
+    @classmethod
+    def _extract_bgy_geocode_prefix(cls, val: Any, is_explicit_bgy_field: bool = False) -> str:
+        """Extract standardized barangay geocode digits or code.
+
+        Uses the 8 digit code in the geocode starting from the left (digits[:8])
+        to reference the barangay. If is_explicit_bgy_field is True (e.g. bgy_code,
+        parent_barangay, bgy_geocode), short codes (1-7 digits such as '001') are
+        also accepted as authoritative barangay codes.
+        """
+        if val is None or val == NULL:
+            return ""
+        s = str(val).strip()
+        if s.endswith(".0"):
+            s = s[:-2]
+        digits = "".join(c for c in s if c.isdigit())
+        if len(digits) >= 8:
+            return digits[:8]
+        elif is_explicit_bgy_field and len(digits) >= 1:
+            return digits
+        return ""
+
+    @classmethod
+    def _normalize_bgy_name(cls, val: Any) -> str:
+        """Normalize barangay name string."""
+        if val is None or val == NULL:
+            return ""
+        s = str(val).strip().lower()
+        if s.endswith(".0"):
+            s = s[:-2]
+        if s in ("unknown", "null", "none", "nan", "—", "-"):
+            return ""
+        s = s.replace(".", " ").replace(",", " ").replace("-", " ")
+        parts = s.split()
+        filtered = [p for p in parts if p not in ("brgy", "bgy", "barangay")]
+        return " ".join(filtered) if filtered else s
+
+    @classmethod
+    def _extract_bgy_info_from_feature(
+        cls,
+        feat: Optional[QgsFeature],
+        bgy_name_hint: str = "",
+        bgy_gc_hint: str = ""
+    ) -> Tuple[str, str]:
+        """Extract (norm_bgy_name, bgy_geocode_prefix) from a feature and/or hints."""
+        norm_name = cls._normalize_bgy_name(bgy_name_hint)
+        gc_prefix = cls._extract_bgy_geocode_prefix(bgy_gc_hint, is_explicit_bgy_field=False)
+
+        if not feat or not hasattr(feat, 'fields'):
+            return norm_name, gc_prefix
+
+        fields = feat.fields()
+        f_count = fields.count()
+
+        if not norm_name:
+            for cand in [
+                "barangay", "bgy", "brgy", "barangay_name", "bgy_name", "brgy_name",
+                "barangay_n", "bgy_n", "brgy_n", "parent_barangay", "parent_bgy"
+            ]:
+                for i in range(f_count):
+                    if fields.at(i).name().lower() == cand:
+                        v = feat.attribute(i)
+                        n = cls._normalize_bgy_name(v)
+                        if n:
+                            norm_name = n
+                            break
+                if norm_name:
+                    break
+
+        if not gc_prefix:
+            bgy_field_names = [
+                "parent_barangay", "parent_bgy", "parent_bgy_code",
+                "bgy_geocode", "bgy_code", "brgy_code", "barangay_geocode", "barangay_code",
+                "bgy_c", "brgy_c"
+            ]
+            for cand in bgy_field_names:
+                for i in range(f_count):
+                    if fields.at(i).name().lower() == cand:
+                        v = feat.attribute(i)
+                        p = cls._extract_bgy_geocode_prefix(v, is_explicit_bgy_field=True)
+                        if p:
+                            gc_prefix = p
+                            break
+                if gc_prefix:
+                    break
+
+        if not gc_prefix:
+            full_gc_field_names = ["psgc", "psgc_code", "adm4_pcode", "geocode", "ea_geocode", "geo_code"]
+            for cand in full_gc_field_names:
+                for i in range(f_count):
+                    if fields.at(i).name().lower() == cand:
+                        v = feat.attribute(i)
+                        p = cls._extract_bgy_geocode_prefix(v, is_explicit_bgy_field=False)
+                        if p:
+                            gc_prefix = p
+                            break
+                if gc_prefix:
+                    break
+
+        return norm_name, gc_prefix
+
+    @classmethod
+    def _check_same_parent_barangay_spatial(
+        cls,
+        feat_a: QgsFeature,
+        feat_b: QgsFeature,
+        bar_layer: QgsVectorLayer,
+        crs_ea: Optional[Any] = None
+    ) -> Optional[bool]:
+        """Check if two EA features spatially belong to the same polygon in bar_layer."""
+        if not feat_a or not feat_b or not bar_layer or not bar_layer.isValid():
+            return None
+        geom_a = feat_a.geometry()
+        geom_b = feat_b.geometry()
+        if not geom_a or not geom_b or geom_a.isEmpty() or geom_b.isEmpty():
+            return None
+
+        bar_crs = bar_layer.crs()
+        xform = None
+        if crs_ea and hasattr(crs_ea, 'isValid') and crs_ea.isValid() and bar_crs.isValid() and crs_ea != bar_crs:
+            try:
+                xform = QgsCoordinateTransform(crs_ea, bar_crs, QgsProject.instance())
+            except Exception:
+                xform = None
+
+        def _get_bgy_id(g):
+            if xform:
+                try:
+                    g = QgsGeometry(g)
+                    g.transform(xform)
+                except Exception:
+                    pass
+            pt = None
+            if hasattr(g, 'pointOnSurface'):
+                pt = g.pointOnSurface()
+            elif hasattr(g, 'centroid'):
+                pt = g.centroid()
+            best_fid = None
+            max_area = -1.0
+            req = QgsFeatureRequest().setFilterRect(g.boundingBox())
+            for bf in bar_layer.getFeatures(req):
+                bg = bf.geometry()
+                if not bg or bg.isEmpty():
+                    continue
+                if pt and not pt.isEmpty() and bg.contains(pt):
+                    return bf.id()
+                if bg.intersects(g):
+                    overlap = bg.intersection(g).area()
+                    if overlap > max_area:
+                        max_area = overlap
+                        best_fid = bf.id()
+            return best_fid
+
+        fid_a = _get_bgy_id(geom_a)
+        fid_b = _get_bgy_id(geom_b)
+        if fid_a is not None and fid_b is not None:
+            return fid_a == fid_b
+        return None
+
+    def _are_in_same_barangay(
+        self,
+        feat_a: Optional[QgsFeature],
+        feat_b: Optional[QgsFeature],
+        name_a: str = "",
+        gc_a: str = "",
+        name_b: str = "",
+        gc_b: str = "",
+        bar_layer: Optional[QgsVectorLayer] = None
+    ) -> bool:
+        """Strictly determine if two EA features belong to the same barangay.
+
+        Evaluates:
+        1. Authoritative geocode prefixes (8 or 9 digits, or explicit bgy codes): if both have geocodes, they must match.
+        2. Normalized barangay names: if both have names, they must match.
+        3. Spatial containment: if attributes are missing/ambiguous and a Barangay polygon layer
+           is available, validates that both EAs reside within the same parent barangay polygon.
+        Returns False if any check indicates different barangays.
+        """
+        name_a_norm, gc_a_pfx = self._extract_bgy_info_from_feature(feat_a, name_a, gc_a)
+        name_b_norm, gc_b_pfx = self._extract_bgy_info_from_feature(feat_b, name_b, gc_b)
+
+        # 1. Geocode comparison (Authoritative PSGC prefix or bgy code)
+        if gc_a_pfx and gc_b_pfx:
+            if gc_a_pfx != gc_b_pfx:
+                return False
+            if name_a_norm and name_b_norm and name_a_norm != name_b_norm:
+                return False
+            return True
+
+        # 2. Barangay name comparison
+        if name_a_norm and name_b_norm:
+            if name_a_norm != name_b_norm:
+                return False
+            if not bar_layer and hasattr(self, '_safe_get_layer'):
+                bar_layer = self._safe_get_layer(getattr(self, 'bar_combo', None)) or self._safe_get_layer(getattr(self, 'merge_bar_combo', None))
+            if bar_layer and bar_layer.isValid() and feat_a and feat_b:
+                crs_ea = None
+                if hasattr(self, '_safe_get_layer'):
+                    ea_lyr = self._safe_get_layer(getattr(self, 'merge_ea_combo', None)) or self._safe_get_layer(getattr(self, 'prev_ea_combo', None))
+                    if ea_lyr and ea_lyr.isValid():
+                        crs_ea = ea_lyr.crs()
+                sp_match = self._check_same_parent_barangay_spatial(feat_a, feat_b, bar_layer, crs_ea=crs_ea)
+                if sp_match is not None:
+                    return sp_match
+            return True
+
+        # 3. Spatial fallback using Barangay Layer
+        if not bar_layer and hasattr(self, '_safe_get_layer'):
+            bar_layer = self._safe_get_layer(getattr(self, 'bar_combo', None)) or self._safe_get_layer(getattr(self, 'merge_bar_combo', None))
+
+        if bar_layer and bar_layer.isValid() and feat_a and feat_b:
+            crs_ea = None
+            if hasattr(self, '_safe_get_layer'):
+                ea_lyr = self._safe_get_layer(getattr(self, 'merge_ea_combo', None)) or self._safe_get_layer(getattr(self, 'prev_ea_combo', None))
+                if ea_lyr and ea_lyr.isValid():
+                    crs_ea = ea_lyr.crs()
+            sp_match = self._check_same_parent_barangay_spatial(feat_a, feat_b, bar_layer, crs_ea=crs_ea)
+            if sp_match is not None:
+                return sp_match
+
+        # 4. If one has explicit info and the other has conflicting explicit info:
+        if (gc_a_pfx and not gc_b_pfx and name_b_norm) or (gc_b_pfx and not gc_a_pfx and name_a_norm):
+            return False
+
+        # 5. Default when no features provided or empty/unknown hints given:
+        if not feat_a or not feat_b:
+            return False
+
+        # 6. Fallback for homogeneous / single-barangay EA layers:
+        # When neither feature has explicit barangay name or code, and no barangay layer exists,
+        # contiguous features within the same layer are permitted to merge (no conflicting barangays exist).
+        return True
 
     @staticmethod
     def _find_feature_in_layer(layer: QgsVectorLayer, target_str: str, bgy_name: Optional[str] = None) -> Optional[QgsFeature]:
@@ -4545,6 +4785,31 @@ class EALauncherDialog(QDialog):
                             self.merge_log_console.append(err_msg)
                         QMessageBox.warning(self, "EA Already Merged", f"EA '{label_str}' is already marked as MERGED and cannot be merged again.")
                         return
+
+        # Guard: Candidate and partner must belong to the exact same barangay
+        bar_layer_check = self._safe_get_layer(getattr(self, 'bar_combo', None)) or self._safe_get_layer(getattr(self, 'merge_bar_combo', None))
+        if not self._are_in_same_barangay(
+            cand_feat, partner_feat,
+            name_a=bgy_name_str,
+            bar_layer=bar_layer_check
+        ):
+            c_name, c_gc = self._extract_bgy_info_from_feature(cand_feat, bgy_name_str)
+            p_name, p_gc = self._extract_bgy_info_from_feature(partner_feat)
+            c_desc = f"{c_name} ({c_gc})" if c_name and c_gc else (c_name or c_gc or "Unknown")
+            p_desc = f"{p_name} ({p_gc})" if p_name and p_gc else (p_name or p_gc or "Unknown")
+            err_msg = (
+                f"<span style='color:red;'>[ERROR] Cannot merge: Candidate EA '{cand_ean}' and partner EA '{partner_ean}' "
+                f"belong to different barangays ('{c_desc}' vs '{p_desc}'). EAs can only be merged within the same barangay.</span>"
+            )
+            if hasattr(self, 'merge_log_console') and self.merge_log_console:
+                self.merge_log_console.append(err_msg)
+            QMessageBox.warning(
+                self,
+                "Cross-Barangay Merge Prevented",
+                f"Candidate EA '{cand_ean}' and partner EA '{partner_ean}' belong to different barangays "
+                f"('{c_desc}' vs '{p_desc}').\n\nEAs can only be merged within the same barangay."
+            )
+            return
 
         # Combine geometries
         c_geom = QgsGeometry(cand_feat.geometry())
@@ -5449,20 +5714,31 @@ class EALauncherDialog(QDialog):
                             inside_hh_float += 1.0
 
             # When unmerged, hh_count strictly copies baseline hhcount
-            base_hh = pf.attribute("hhcount")
-            if base_hh is None or base_hh == NULL or str(base_hh).strip() == "":
-                base_hh = pf.attribute("hh_count")
-            if (base_hh is None or base_hh == NULL or str(base_hh).strip() == "") and bldg_spatial_index:
+            base_hh = None
+            for cand in ["hhcount", "new_hhcount", "household", "household_count", "pop", "population", "hh_count"]:
+                idx = pf.fields().lookupField(cand)
+                if idx != -1:
+                    v = pf.attribute(idx)
+                    if v is not None and v != NULL and str(v).strip() != "":
+                        try:
+                            base_hh = float(v)
+                            break
+                        except Exception:
+                            pass
+            if base_hh is None and bldg_spatial_index:
                 base_hh = inside_hh_float
             try:
                 unmerged_hh = int(round(float(base_hh or 0.0)))
             except Exception:
                 unmerged_hh = 0
 
-            # ONLY update calculated hh_count, leave baseline hhcount unchanged
+            # Synchronize both calculated hh_count and baseline hhcount to unmerged_hh
             hh_idx = target_layer.fields().lookupField("hh_count")
             if hh_idx != -1:
                 new_feat.setAttribute(hh_idx, unmerged_hh)
+            hhcount_idx = target_layer.fields().lookupField("hhcount")
+            if hhcount_idx != -1:
+                new_feat.setAttribute(hhcount_idx, unmerged_hh)
 
             # ONLY update calculated bldg_count, leave baseline bldgcount unchanged
             bldg_idx = target_layer.fields().lookupField("bldg_count")
@@ -5474,9 +5750,10 @@ class EALauncherDialog(QDialog):
                 if idx != -1:
                     new_feat.setAttribute(idx, "RETAINED")
 
-            rem_idx = target_layer.fields().lookupField("remarks")
-            if rem_idx != -1:
-                new_feat.setAttribute(rem_idx, "")
+            for fn in ["remarks", "remark", "status", "action"]:
+                idx = target_layer.fields().lookupField(fn)
+                if idx != -1:
+                    new_feat.setAttribute(idx, "")
 
             ean_idx = target_layer.fields().lookupField("ean")
             orig_ean = new_feat.attribute(ean_idx) if ean_idx != -1 else None
@@ -5562,15 +5839,64 @@ class EALauncherDialog(QDialog):
             except Exception:
                 pass
 
+        # Collect all possible identifier representations for candidate and partner
+        ids_to_discard = set()
+        for x in [cand_clean, partner_ean, cand_ean]:
+            if x:
+                s = str(x).strip()
+                if s.endswith(".0"):
+                    s = s[:-2]
+                ids_to_discard.add(s)
+        if merged_feat:
+            for fn in ["ean", "ea_number", "ea_code", "geocode", "ea_geocode", "new_ean", "psgc", "adm4_pcode"]:
+                idx = merged_feat.fields().lookupField(fn)
+                if idx != -1:
+                    v = merged_feat.attribute(idx)
+                    if v is not None and v != NULL and str(v).strip() and str(v).strip().upper() not in ("NULL", "NONE"):
+                        s = str(v).strip()
+                        if s.endswith(".0"):
+                            s = s[:-2]
+                        ids_to_discard.add(s)
+            rem_idx = merged_feat.fields().lookupField("remarks")
+            if rem_idx != -1:
+                r_text = str(merged_feat.attribute(rem_idx) or "")
+                for part in r_text.replace("+", " ").replace(":", " ").replace(",", " ").split():
+                    d = "".join(c for c in part if c.isdigit())
+                    if d:
+                        ids_to_discard.add(d)
+        for cf in constituent_prev_feats:
+            for fn in ["ean", "ea_number", "ea_code", "geocode", "ea_geocode", "new_ean", "psgc", "adm4_pcode"]:
+                idx = cf.fields().lookupField(fn)
+                if idx != -1:
+                    v = cf.attribute(idx)
+                    if v is not None and v != NULL and str(v).strip() and str(v).strip().upper() not in ("NULL", "NONE"):
+                        s = str(v).strip()
+                        if s.endswith(".0"):
+                            s = s[:-2]
+                        ids_to_discard.add(s)
+
         # Cleanup session tracking
         if hasattr(self, "_session_merged_eans"):
-            for e in [cand_clean, partner_ean]:
-                if e:
-                    self._session_merged_eans.discard(str(e).strip())
+            for d in list(self._session_merged_eans):
+                if d in ids_to_discard:
+                    self._session_merged_eans.discard(d)
+                else:
+                    for item in ids_to_discard:
+                        if len(item) >= 6 and (d.endswith(item) or item.endswith(d)):
+                            self._session_merged_eans.discard(d)
+                            break
         if hasattr(self, "_merge_history"):
-            self._merge_history.pop(cand_clean, None)
-            if partner_ean:
-                self._merge_history.pop(partner_ean, None)
+            for item in list(ids_to_discard):
+                self._merge_history.pop(item, None)
+
+        # Ensure merge_ea_combo references the updated target_layer
+        if hasattr(self, 'merge_ea_combo') and self.merge_ea_combo:
+            curr_lyr = self._safe_get_layer(self.merge_ea_combo)
+            if curr_lyr != target_layer:
+                if hasattr(self, '_safe_set_layer'):
+                    self._safe_set_layer(self.merge_ea_combo, target_layer)
+                else:
+                    self.merge_ea_combo.setLayer(target_layer)
 
         if hasattr(self, "_reconcile_session_merged_eans"):
             self._reconcile_session_merged_eans(target_layer)
@@ -7127,7 +7453,7 @@ class EALauncherDialog(QDialog):
                     r_text = str(f.attribute(rem_idx) or "")
                     for part in r_text.replace("+", " ").replace(":", " ").replace(",", " ").split():
                         part_digits = "".join(c for c in part if c.isdigit())
-                        if len(part_digits) >= 9:
+                        if len(part_digits) >= 8:
                             active_merged_eans.add(part_digits)
 
         self._session_merged_eans = {e for e in self._session_merged_eans if e in active_merged_eans}

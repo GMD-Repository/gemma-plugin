@@ -548,6 +548,9 @@ class QgsGeometry:
     def centroid(self):
         c = self.boundingBox().center()
         return QgsGeometry.fromPointXY(c)
+
+    def pointOnSurface(self):
+        return self.centroid()
     def asPoint(self): return getattr(self, '_point', QgsPointXY(0.0, 0.0))
 
     def boundingBox(self):

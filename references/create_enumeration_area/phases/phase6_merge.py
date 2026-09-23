@@ -56,7 +56,7 @@ def is_merge_candidate(ea_item, min_household, merge_candidate_ids=None):
     if ea_item.get('is_special_ea', False):
         return False
     if ea_item.get('from_merge', False):
-        return ea_item.get('hh_count', 0.0) <= min_household
+        return False
     orig_id = ea_item.get('original_id')
     merge_set = merge_candidate_ids or set()
     return (orig_id in merge_set) or (ea_item.get('hh_count', 0.0) <= min_household)
@@ -77,6 +77,9 @@ def process_barangay_merge(
     full_ea_by_id = full_ea_by_id or {}
     delineation_candidate_ids = delineation_candidate_ids or set()
     merge_candidate_ids = merge_candidate_ids or set()
+
+    if not bar_code or str(bar_code).strip().lower() in ("", "none", "unknown", "null"):
+        return bar_eas
 
     iteration = 0
     max_iterations = 10
@@ -105,7 +108,7 @@ def process_barangay_merge(
 
             ea = bar_eas[idx]
 
-            if ea.get('from_split', False) or ea.get('is_special_ea', False):
+            if ea.get('from_split', False) or ea.get('is_special_ea', False) or ea.get('from_merge', False):
                 new_eas.append(ea)
                 continue
 
@@ -118,7 +121,9 @@ def process_barangay_merge(
                         continue
 
                     neighbor = bar_eas[j]
-                    if neighbor.get('from_split', False) or neighbor.get('is_special_ea', False):
+                    if neighbor.get('from_split', False) or neighbor.get('is_special_ea', False) or neighbor.get('from_merge', False):
+                        continue
+                    if neighbor.get('parent_barangay') != bar_code or ea.get('parent_barangay') != bar_code:
                         continue
                     if is_delineation_candidate(neighbor, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
                         continue
@@ -174,6 +179,7 @@ def process_barangay_merge(
                         'is_new': False,
                         'split_by': ea.get('split_by', 'none'),
                         'from_merge': True,
+                        'merge_partner_count': 1,
                         'ea_type': 'MERGED',
                         'parent_barangay': bar_code
                     }
@@ -204,7 +210,9 @@ def process_barangay_merge(
                         continue
 
                     neighbor = bar_eas[j]
-                    if neighbor.get('from_split', False) or neighbor.get('is_special_ea', False):
+                    if neighbor.get('from_split', False) or neighbor.get('is_special_ea', False) or neighbor.get('from_merge', False):
+                        continue
+                    if neighbor.get('parent_barangay') != bar_code or ea.get('parent_barangay') != bar_code:
                         continue
                     if is_delineation_candidate(neighbor, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
                         continue
@@ -271,6 +279,7 @@ def process_barangay_merge(
                         'is_new': False,
                         'split_by': ea.get('split_by', 'none'),
                         'from_merge': True,
+                        'merge_partner_count': 1,
                         'ea_type': 'MERGED',
                         'parent_barangay': bar_code
                     }
@@ -345,7 +354,8 @@ def run_phase_6(alg, parameters, context, feedback, multi_feedback, p1, p2, p5):
 
     merge_bar_keys = [
         bar_code for bar_code in sorted_split_bar_keys
-        if any(is_merge_candidate(ea, min_household, merge_candidate_ids) or ea['hh_count'] == 0 for ea in barangay_split_groups[bar_code])
+        if bar_code and str(bar_code).strip().lower() not in ("", "none", "unknown", "null")
+        and any(is_merge_candidate(ea, min_household, merge_candidate_ids) or ea['hh_count'] == 0 for ea in barangay_split_groups[bar_code])
     ]
 
     multi_feedback.setCurrentStep(5)

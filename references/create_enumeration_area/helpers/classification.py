@@ -58,6 +58,6 @@ def is_merge_candidate(
     if ea_item.get('is_special_ea', False):
         return False
     if ea_item.get('from_merge', False):
-        return ea_item.get('hh_count', 0.0) <= min_household
+        return False
     orig_id = ea_item.get('original_id')
     return (orig_id in merge_candidate_ids) or (ea_item.get('hh_count', 0.0) <= min_household)
