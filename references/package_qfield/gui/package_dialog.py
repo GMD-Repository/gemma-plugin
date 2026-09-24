@@ -23,14 +23,14 @@ import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from libqfieldsync.layer import LayerSource, SyncAction
-from libqfieldsync.offline_converter import ExportType, OfflineConverter, PackagingCanceledError
+from gemma_sync.layer import LayerSource, SyncAction
+from gemma_sync.offline_converter import ExportType, OfflineConverter, PackagingCanceledError
 import sip
 import sys
 from qgis import utils
 # TODO this try/catch was added due to module structure changes in QFS 4.8.0. Remove this as enough time has passed since March 2024.
 try:
-    from libqfieldsync.offliners import QgisCoreOffliner
+    from gemma_sync.offliners import QgisCoreOffliner
 except ModuleNotFoundError:
     from qgis.PyQt.QtCore import QCoreApplication, QTimer
     from qgis.PyQt.QtWidgets import QMessageBox
@@ -42,10 +42,10 @@ except ModuleNotFoundError:
             "AuQCBMS", "To finalize the AuQCBMS upgrade, please restart QGIS."
         ),
     )
-from libqfieldsync.project import ProjectConfiguration
-from libqfieldsync.project_checker import ProjectChecker
-from libqfieldsync.utils.file_utils import fileparts
-from libqfieldsync.utils.qgis import get_project_title
+from gemma_sync.project import ProjectConfiguration
+from gemma_sync.project_checker import ProjectChecker
+from gemma_sync.utils.file_utils import fileparts
+from gemma_sync.utils.qgis import get_project_title
 from qgis.core import Qgis, QgsApplication, QgsProject, QgsLayerTreeGroup, QgsLayerTreeLayer, QgsVectorLayer, QgsRasterLayer, QgsVectorFileWriter, QgsTask, QgsTaskManager, QgsSnappingConfig, QgsTolerance, QgsGeometry, QgsFeatureRequest, QgsCoordinateTransform, QgsMapLayer, NULL
 from qgis.PyQt.QtCore import QDir, Qt, QUrl, QTimer, QEvent, QVariant, QSettings
 from qgis.PyQt.QtGui import QIcon, QBrush, QPixmap, QImage, QPainter
