@@ -1,7 +1,7 @@
 # ----------------------------------------------------------------------
 # MBI Gaps / Overlaps / Disputed Areas Checker
-# Last updated: 2026-09-14
-# Version: v18
+# Last updated: 2026-09-23
+# Version: v19
 #
 # Changelog:
 #   v1 - Initial Gaps/Overlaps detection between LGU and PSA polygons.
@@ -129,6 +129,16 @@
 #         returns anything non-polygonal is discarded rather than written,
 #         so the output layer's geometry type never changes. The number of
 #         repaired findings is reported in the log.
+#   v19 - Bug fix: a Contested polygon commonly shares its geocode with the
+#         barangay it disputes (that's how it registers as a claim over that
+#         area). merge_by_geocode() keyed purely on geocode + source, so such
+#         a Contested feature was silently unioned into the barangay it
+#         disputes and lost as a distinct record. Contested features
+#         (boundary = 'Contested') are now always routed to passthrough in
+#         merge_by_geocode(), the same as a feature with no geocode, so they
+#         are never merged with anything else — including other Contested
+#         features that happen to share a geocode. Each Contested submission
+#         now survives 2026_province_boundary exactly as digitized.
 # ----------------------------------------------------------------------
 
 __author__ = 'Geospatial Management Division'
@@ -363,7 +373,11 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             "per source in the output. This covers both a barangay submitted twice "
             "(the rows overlap, so the union is that same area) and a barangay whose "
             "islet was stored as its own row (the rows are disjoint, so the islet is "
-            "kept as a second part rather than discarded). "
+            "kept as a second part rather than discarded). A polygon tagged "
+            "<i>boundary = Contested</i> is excluded from this merge entirely — even "
+            "against another Contested row sharing its geocode — since it commonly "
+            "shares its geocode with the barangay it disputes and must survive as its "
+            "own distinct record rather than being unioned away. "
             "(2) LGU vs PSA precedence is then resolved per <i>city_mun</i>: the LGU "
             "layer is treated as the latest submission, so wherever at least one LGU "
             "polygon exists for a city_mun, that city_mun's PSA polygon(s) are excluded "
@@ -614,16 +628,29 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             geocode for the same barangay; merging those here would pre-empt
             resolve_boundary_precedence(), which is what decides which of
             the two actually wins.
+
+            A Contested feature (boundary = 'Contested') is excluded from
+            this grouping entirely, even against another Contested feature
+            sharing its geocode. A Contested polygon commonly carries the
+            SAME geocode as the barangay it disputes — that is how it
+            registers as a claim over that area — so grouping it by geocode
+            would union it straight into that barangay (or another Contested
+            claim) and erase it as a distinct record. It is treated like a
+            row with no geocode: always kept as-is.
             """
             order       = []
             grouped     = {}
             passthrough = []
 
             for feat in layer.getFeatures():
-                geocode = txt(get_attr(feat, ['geocode', 'GEOCODE']))
-                source  = txt(get_attr(feat, ['source', 'SOURCE', 'Source'])).upper()
-                if not geocode:
-                    # Nothing to key on — keep the row exactly as it is.
+                geocode  = txt(get_attr(feat, ['geocode', 'GEOCODE']))
+                source   = txt(get_attr(feat, ['source', 'SOURCE', 'Source'])).upper()
+                boundary = txt(get_attr(feat, ['boundary', 'BOUNDARY', 'Boundary'])).lower()
+                if not geocode or boundary == 'contested':
+                    # No geocode to key on, or a Contested claim — a Contested
+                    # polygon commonly shares its geocode with the barangay it
+                    # disputes, but must never be unioned into that (or any
+                    # other) feature. Keep it exactly as submitted.
                     passthrough.append(feat)
                     continue
                 key = (geocode, source)
@@ -1363,7 +1390,7 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             results['OUTPUT'] = None
 
         feedback.setProgress(100)
-        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v18.")
+        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v19.")
         return results
 
 

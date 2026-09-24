@@ -16,7 +16,7 @@ console interface.
 import os
 import re
 import math
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from qgis.core import (
     Qgis, QgsMessageLog,
     QgsApplication, QgsProject, QgsVectorLayer, QgsMapLayer, QgsCoordinateTransform, QgsSpatialIndex,
@@ -40,6 +40,51 @@ from qgis.PyQt.QtGui import QFont, QPixmap, QColor, QIcon, QTextCursor
 from qgis.PyQt.QtCore import Qt, QSize, QCoreApplication, QThread, QObject, pyqtSignal, QVariant, QTimer
 
 from .helpers.constants import create_qgs_field
+
+try:
+    from qgis.PyQt import sip
+except ImportError:
+    try:
+        import sip
+    except ImportError:
+        sip = None
+
+
+def is_layer_alive(layer: Any) -> bool:
+    """Safely verify whether a QgsMapLayer wrapper points to a live C++ object."""
+    if layer is None:
+        return False
+    if sip is not None and hasattr(sip, 'isdeleted'):
+        try:
+            if sip.isdeleted(layer) is True:
+                return False
+        except Exception:
+            pass
+    try:
+        # Accessing .name() will raise RuntimeError if the C++ object has been deleted
+        _ = layer.name()
+        return True
+    except (RuntimeError, ReferenceError):
+        return False
+
+
+def get_safe_project_layer(layer_id: str) -> Optional[QgsMapLayer]:
+    """Retrieve layer by ID from QgsProject only if it exists and is alive in C++."""
+    if not layer_id:
+        return None
+    try:
+        proj = QgsProject.instance()
+        map_layers = proj.mapLayers() if hasattr(proj, 'mapLayers') else None
+        if isinstance(map_layers, dict) and layer_id in map_layers:
+            lyr = map_layers[layer_id]
+        else:
+            lyr = proj.mapLayer(layer_id)
+    except Exception:
+        return None
+    if not is_layer_alive(lyr):
+        return None
+    return lyr
+
 
 # Module-level regex for Tab 3 input validation — compiled once, reused on every
 # combo-box change event instead of being re-compiled inside the hot-path method.
@@ -217,8 +262,13 @@ class MergeActionWidget(QPushButton):
         super().__init__(parent)
         self.btn_preview = btn_preview
         self.btn_merge = btn_merge
-        self.setMinimumWidth(150)
-        self.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
+        if hasattr(self, 'setMinimumWidth'):
+            self.setMinimumWidth(150)
+        if hasattr(self, 'setSizePolicy'):
+            try:
+                self.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
+            except Exception:
+                pass
         layout = QHBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(4)
@@ -402,12 +452,12 @@ class EALauncherDialog(QDialog):
         )
         self.toggle_desc_btn = QToolButton()
         self.toggle_desc_btn.setIcon(
-            QIcon(hide_icon_path) if os.path.exists(hide_icon_path)
-            else QgsApplication.getThemeIcon("/mActionHideAllLayers.svg")
+            QIcon(show_icon_path) if os.path.exists(show_icon_path)
+            else QgsApplication.getThemeIcon("/mActionShowAllLayers.svg")
         )
         self.toggle_desc_btn.setIconSize(QSize(20, 20))
         self.toggle_desc_btn.setFixedSize(28, 28)
-        self.toggle_desc_btn.setToolTip("Show / Hide Description Panel")
+        self.toggle_desc_btn.setToolTip("Show Description Panel")
         self.toggle_desc_btn.setCursor(Qt.PointingHandCursor)
         self.toggle_desc_btn.setStyleSheet("""
             QToolButton {
@@ -471,11 +521,12 @@ class EALauncherDialog(QDialog):
     def _toggle_current_tab_description(self):
         """Toggle the description panel for whichever main tab is currently active."""
         idx = self.main_tabs.currentIndex()
-        if idx == 0:
+        tab_text = self.main_tabs.tabText(idx).lower() if idx >= 0 else ""
+        if "preprocessing" in tab_text or (idx == 0 and "create" not in tab_text):
             self._pre_ea_toggle_description()
-        elif idx == 1:
+        elif "create" in tab_text or (idx == 1 and "merge" != tab_text):
             self.toggle_help()
-        elif idx == 2:
+        elif "merge" in tab_text or idx == 2:
             self._ea_merge_toggle_description()
 
     def _on_main_tab_changed(self, index):
@@ -483,24 +534,31 @@ class EALauncherDialog(QDialog):
         show_icon = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "icons", "show_description.svg"))
         hide_icon = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "icons", "hide_description.svg"))
         
-        if index == 0:
-            is_vis = self.pre_ea_desc_panel.isVisible()
-        elif index == 1:
-            is_vis = self.help_panel.isVisible()
-        elif index == 2:
+        tab_text = self.main_tabs.tabText(index).lower() if index >= 0 else ""
+        if "preprocessing" in tab_text or (index == 0 and "create" not in tab_text):
+            is_vis = self.pre_ea_desc_panel.isVisible() if hasattr(self, 'pre_ea_desc_panel') else False
+        elif "create" in tab_text or (index == 1 and "merge" != tab_text):
+            sub_idx = self.create_ea_sub_tabs.currentIndex() if hasattr(self, 'create_ea_sub_tabs') else 0
+            if sub_idx == 1 and hasattr(self, 'merge_help_panel'):
+                is_vis = self.merge_help_panel.isVisible()
+            elif hasattr(self, 'help_panel'):
+                is_vis = self.help_panel.isVisible()
+            else:
+                is_vis = False
+        elif "merge" in tab_text or index == 2:
             is_vis = self.ea_merge_desc_panel.isVisible() if hasattr(self, 'ea_merge_desc_panel') else False
             self._ea_merge_auto_detect_ea_layer()
         else:
             is_vis = False
 
-        self.toggle_desc_btn.setEnabled(True)
-
-        if is_vis:
-            self.toggle_desc_btn.setIcon(QIcon(hide_icon))
-            self.toggle_desc_btn.setToolTip("Hide Description Panel")
-        else:
-            self.toggle_desc_btn.setIcon(QIcon(show_icon))
-            self.toggle_desc_btn.setToolTip("Show Description Panel")
+        if hasattr(self, 'toggle_desc_btn'):
+            self.toggle_desc_btn.setEnabled(True)
+            if is_vis:
+                self.toggle_desc_btn.setIcon(QIcon(hide_icon))
+                self.toggle_desc_btn.setToolTip("Hide Description Panel")
+            else:
+                self.toggle_desc_btn.setIcon(QIcon(show_icon))
+                self.toggle_desc_btn.setToolTip("Show Description Panel")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Tab 1 — EA Preprocessing
@@ -778,6 +836,7 @@ class EALauncherDialog(QDialog):
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
         splitter.setSizes([300, 540, 240])
+        self.pre_ea_desc_panel.setVisible(False)
 
         tab_layout.addWidget(splitter, 1)
 
@@ -983,8 +1042,20 @@ class EALauncherDialog(QDialog):
 
     def _pre_ea_toggle_description(self) -> None:
         """Show or hide the Pre-EA description panel."""
+        if not hasattr(self, 'pre_ea_desc_panel'):
+            return
         is_visible = not self.pre_ea_desc_panel.isVisible()
         self.pre_ea_desc_panel.setVisible(is_visible)
+        if is_visible:
+            splitter = self.pre_ea_desc_panel.parent()
+            if isinstance(splitter, QSplitter):
+                sizes = splitter.sizes()
+                if len(sizes) >= 3 and sizes[2] < 100:
+                    total = sum(sizes)
+                    left = 300
+                    right = 240
+                    mid = max(100, total - left - right)
+                    splitter.setSizes([left, mid, right])
 
         show_icon_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "..", "icons", "show_description.svg")
@@ -992,14 +1063,16 @@ class EALauncherDialog(QDialog):
         hide_icon_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "..", "icons", "hide_description.svg")
         )
-        if is_visible:
-            icon = QIcon(hide_icon_path) if os.path.exists(hide_icon_path) else QIcon()
-            self.pre_ea_toggle_desc_btn.setIcon(icon)
-            self.pre_ea_toggle_desc_btn.setToolTip("Hide Description Panel")
-        else:
-            icon = QIcon(show_icon_path) if os.path.exists(show_icon_path) else QIcon()
-            self.pre_ea_toggle_desc_btn.setIcon(icon)
-            self.pre_ea_toggle_desc_btn.setToolTip("Show Description Panel")
+        btn = getattr(self, 'toggle_desc_btn', None) or getattr(self, 'pre_ea_toggle_desc_btn', None)
+        if btn:
+            if is_visible:
+                icon = QIcon(hide_icon_path) if os.path.exists(hide_icon_path) else QIcon()
+                btn.setIcon(icon)
+                btn.setToolTip("Hide Description Panel")
+            else:
+                icon = QIcon(show_icon_path) if os.path.exists(show_icon_path) else QIcon()
+                btn.setIcon(icon)
+                btn.setToolTip("Show Description Panel")
 
     @staticmethod
     def _pre_ea_help_html() -> str:
@@ -1597,6 +1670,7 @@ class EALauncherDialog(QDialog):
         main_splitter.setStretchFactor(1, 1)
         main_splitter.setStretchFactor(2, 0)
         main_splitter.setSizes([330, 530, 240])
+        self.help_panel.setVisible(False)
         root.addWidget(main_splitter, 1)
 
         # ── Bottom Bar (Progress, Run, Cancel & Status Banner) ───────────
@@ -1870,8 +1944,8 @@ class EALauncherDialog(QDialog):
         self.merge_search_edit.textChanged.connect(self.filter_previews)
         merge_preview_tab_layout.addWidget(self.merge_search_edit)
 
-        # Reborn Live Preview Table — standard 5-column variant
-        self.merge_table = self._create_preview_table(include_merge_partner=False)
+        # Live Preview Table — 8-column variant with Merge Partner dropdown (no action column)
+        self.merge_table = self._create_preview_table(include_merge_partner=True, include_action=False, include_total_hh=False)
         self.merge_table.cellDoubleClicked.connect(self._on_merge_table_double_clicked)
         merge_preview_tab_layout.addWidget(self.merge_table)
 
@@ -1968,6 +2042,7 @@ class EALauncherDialog(QDialog):
         merge_splitter.setStretchFactor(1, 1)
         merge_splitter.setStretchFactor(2, 0)
         merge_splitter.setSizes([330, 530, 240])
+        self.merge_help_panel.setVisible(False)
         root.addWidget(merge_splitter, 1)
 
         # ── Bottom Bar (Progress, Run, Cancel & Status Banner) ───────────
@@ -2228,13 +2303,17 @@ class EALauncherDialog(QDialog):
     def _safe_get_layer(self, combo):
         if combo is None:
             return None
+        if isinstance(combo, QgsVectorLayer):
+            return combo if is_layer_alive(combo) else None
         try:
-            from qgis.PyQt import sip
-            if not sip.isdeleted(combo):
-                return combo.currentLayer()
+            if sip is not None and sip.isdeleted(combo):
+                return None
+            if hasattr(combo, 'currentLayer'):
+                lyr = combo.currentLayer()
+                return lyr if is_layer_alive(lyr) else None
+            return combo if is_layer_alive(combo) else None
         except (RuntimeError, AttributeError, TypeError):
             return None
-        return None
 
     def _toggle_thresholds(self, checked: bool):
         if hasattr(self, 'min_hh_label'):
@@ -2262,21 +2341,53 @@ class EALauncherDialog(QDialog):
 
     def toggle_help(self):
         """Toggle the visibility of the description help panel across Tab 2 sub-tabs."""
-        is_visible = not self.help_panel.isVisible() if hasattr(self, 'help_panel') else False
+        sub_idx = self.create_ea_sub_tabs.currentIndex() if hasattr(self, 'create_ea_sub_tabs') else 0
+        if sub_idx == 1 and hasattr(self, 'merge_help_panel'):
+            is_visible = not self.merge_help_panel.isVisible()
+        elif hasattr(self, 'help_panel'):
+            is_visible = not self.help_panel.isVisible()
+        else:
+            is_visible = False
+
         if hasattr(self, 'help_panel'):
             self.help_panel.setVisible(is_visible)
+            if is_visible:
+                splitter = self.help_panel.parent()
+                if isinstance(splitter, QSplitter):
+                    sizes = splitter.sizes()
+                    if len(sizes) >= 3 and sizes[2] < 100:
+                        total = sum(sizes)
+                        left = 330
+                        right = 240
+                        mid = max(100, total - left - right)
+                        splitter.setSizes([left, mid, right])
+
         if hasattr(self, 'merge_help_panel'):
             self.merge_help_panel.setVisible(is_visible)
+            if is_visible:
+                splitter = self.merge_help_panel.parent()
+                if isinstance(splitter, QSplitter):
+                    sizes = splitter.sizes()
+                    if len(sizes) >= 3 and sizes[2] < 100:
+                        total = sum(sizes)
+                        left = 330
+                        right = 240
+                        mid = max(100, total - left - right)
+                        splitter.setSizes([left, mid, right])
 
         show_icon = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "icons", "show_description.svg"))
         hide_icon = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "icons", "hide_description.svg"))
 
-        if is_visible:
-            self.toggle_help_btn.setIcon(QIcon(hide_icon))
-            self.toggle_help_btn.setToolTip("Hide Description Panel")
-        else:
-            self.toggle_help_btn.setIcon(QIcon(show_icon))
-            self.toggle_help_btn.setToolTip("Show Description Panel")
+        btn = getattr(self, 'toggle_desc_btn', None) or getattr(self, 'toggle_help_btn', None)
+        if btn:
+            if is_visible:
+                icon = QIcon(hide_icon) if os.path.exists(hide_icon) else QIcon()
+                btn.setIcon(icon)
+                btn.setToolTip("Hide Description Panel")
+            else:
+                icon = QIcon(show_icon) if os.path.exists(show_icon) else QIcon()
+                btn.setIcon(icon)
+                btn.setToolTip("Show Description Panel")
 
     def _create_kpi_card(self, title, value, variant="stats"):
         card = QGroupBox(title)
@@ -2347,20 +2458,26 @@ class EALauncherDialog(QDialog):
         if path:
             line_edit.setText(path)
 
-    def _create_preview_table(self, include_merge_partner=False):
+    def _create_preview_table(self, include_merge_partner=False, include_action=True, include_total_hh=True):
         """Create a styled QTableWidget for candidate previews with resizable columns.
 
         Args:
-            include_merge_partner: When True, adds a 6th column ``Merge Partner (Geocode)``,
-                7th column ``Total HH Count``, and 8th column ``Action`` for merge candidate rows.
+            include_merge_partner: When True, adds a 6th column ``Merge Partner (Geocode)``.
+            include_action: When True (and include_merge_partner is True), adds the ``Action`` column.
+            include_total_hh: When True (and include_merge_partner is True), adds the ``Total HH Count`` column.
         """
         table = QTableWidget()
         if include_merge_partner:
-            table.setColumnCount(8)
-            table.setHorizontalHeaderLabels([
+            headers = [
                 "Geocode", "Barangay", "EA Name", "Household Count",
-                "Role / Status", "Merge Partner (Geocode)", "Total HH Count", "Action"
-            ])
+                "Role / Status", "Merge Partner (Geocode)"
+            ]
+            if include_total_hh:
+                headers.append("Total HH Count")
+            if include_action:
+                headers.append("Action")
+            table.setColumnCount(len(headers))
+            table.setHorizontalHeaderLabels(headers)
         else:
             table.setColumnCount(5)
             table.setHorizontalHeaderLabels(["Geocode", "Barangay", "EA Name", "Household Count", "Role / Status"])
@@ -2369,13 +2486,19 @@ class EALauncherDialog(QDialog):
         hdr.setSectionResizeMode(QHeaderView.Interactive)
         hdr.setHighlightSections(True)
         hdr.setMinimumSectionSize(60)
-        table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        if hasattr(table, "setHorizontalScrollBarPolicy") and hasattr(Qt, "ScrollBarAsNeeded"):
+            table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectRows)
         table.setAlternatingRowColors(True)
         table.setMinimumHeight(150)
         table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        if hasattr(table, "setToolTip"):
+            try:
+                table.setToolTip("Double-click any row to zoom to the feature on the map canvas.")
+            except Exception:
+                pass
         return table
 
     # ── Live Candidate Preview Logic ────────────────────────────────────────
@@ -2920,6 +3043,12 @@ class EALauncherDialog(QDialog):
                 elif candidates["road"] is None and any(k in name_lower for k in road_keywords):
                     candidates["road"] = layer
 
+        if candidates["merge_ea"] is None and hasattr(self, 'auto_detect_merge_ea_layer'):
+            try:
+                candidates["merge_ea"] = self.auto_detect_merge_ea_layer()
+            except Exception:
+                pass
+
         # Apply detected layers using the correct QgsMapLayerComboBox API
         if candidates["bar"]:
             self._safe_set_layer(self.bar_combo, candidates["bar"])
@@ -2989,7 +3118,7 @@ class EALauncherDialog(QDialog):
             prev_ea_text = "Previous EA Layer is required."
         else:
             fields = [f.name().lower() for f in prev_ea_layer.fields()]
-            hh_found = any(f in fields for f in ["hh_count", "hhcount", "household", "household_count", "pop", "population", "new_hhcount", "hh_cnt"])
+            hh_found = any(f in fields for f in ["hhcount", "household", "household_count", "pop", "population", "new_hhcount", "hh_cnt", "hh_count"])
             ean_found = any(f in fields for f in ["ean", "ea_number", "ea_no", "eano", "ea_code", "id", "geocode", "code", "ea"])
 
             if not hh_found:
@@ -3147,9 +3276,9 @@ class EALauncherDialog(QDialog):
 
         fields = prev_ea_layer.fields()
 
-        # Resolve household field index case-insensitively with hh_count (computed count) taking priority
+        # Resolve household field index case-insensitively with hhcount (baseline census count) taking priority
         hh_idx = -1
-        for candidate in ["hh_count", "new_hhcount", "hhcount", "household", "household_count", "pop", "population"]:
+        for candidate in ["hhcount", "new_hhcount", "household", "household_count", "pop", "population", "hh_count"]:
             for i in range(fields.count()):
                 if fields.at(i).name().lower() == candidate:
                     hh_idx = i
@@ -3215,21 +3344,42 @@ class EALauncherDialog(QDialog):
         for i in range(fields.count()):
             name_lower = fields.at(i).name().lower()
             if name_lower in [
-                "bgy_geocode", "bgy_code", "brgy_code", "barangay_geocode",
-                "psgc", "psgc_code", "adm4_pcode", "geocode",
+                "parent_barangay", "parent_bgy", "parent_bgy_code",
+                "bgy_geocode", "bgy_code", "brgy_code", "barangay_geocode", "barangay_code",
+                "bgy_c", "brgy_c",
             ]:
                 bgy_geocode_idx = i
                 break
 
-        # Resolve EA geocode field index (full EA geocode to display in partner dropdown)
+        # Resolve EA geocode field index (full EA geocode to display in partner dropdown and Geocode column)
         ea_geocode_idx = -1
-        for cand_name in ["ea_geocode", "geocode", "geo_code", "psgc", "adm4_pcode"]:
+        for cand_name in ["ea_geocode", "geocode", "geo_code", "psgc", "psgc_ea", "psgc_code", "full_geocode", "ea_id", "adm4_pcode"]:
             for i in range(fields.count()):
                 if fields.at(i).name().lower() == cand_name:
                     ea_geocode_idx = i
                     break
             if ea_geocode_idx != -1:
                 break
+
+        # Build barangay name -> barangay geocode lookup from active barangay layer if available
+        bar_layer_input = self._safe_get_layer(getattr(self, 'bar_combo', None)) or self._safe_get_layer(getattr(self, 'merge_bar_combo', None))
+        _bgy_name_to_gc = {}
+        if bar_layer_input and bar_layer_input.isValid():
+            b_fields = bar_layer_input.fields()
+            b_name_idx = -1
+            b_gc_idx = -1
+            for i in range(b_fields.count()):
+                fn = b_fields.at(i).name().lower()
+                if b_name_idx == -1 and fn in ["barangay", "bgy", "brgy", "barangay_name", "bgy_name", "brgy_name", "bgy_n"]:
+                    b_name_idx = i
+                if b_gc_idx == -1 and fn in ["bgy_geocode", "bgy_code", "brgy_code", "barangay_geocode", "barangay_code", "geocode", "adm4_pcode", "psgc"]:
+                    b_gc_idx = i
+            if b_name_idx != -1 and b_gc_idx != -1:
+                for bf in bar_layer_input.getFeatures():
+                    bn = str(bf.attribute(b_name_idx) or "").strip().lower()
+                    bgc = str(bf.attribute(b_gc_idx) or "").strip()
+                    if bn and bgc:
+                        _bgy_name_to_gc[bn] = bgc
 
         # Spatial index over every EA feature in prev_ea_layer (for contiguous-neighbor lookup)
         _ea_spatial_idx = QgsSpatialIndex()
@@ -3264,17 +3414,7 @@ class EALauncherDialog(QDialog):
             total_hh += hh
             ea_count += 1
 
-            bgy_geocode = ""
-            if bgy_geocode_idx != -1:
-                _gc_val = feat.attribute(bgy_geocode_idx)
-                if _gc_val is not None and _gc_val != NULL:
-                    bgy_geocode = str(_gc_val).strip()
-                    if bgy_geocode.endswith(".0"):
-                        bgy_geocode = bgy_geocode[:-2]
-            if not bgy_geocode and len(ean_str) >= 9:
-                bgy_geocode = ean_str[:9]
-
-            # Resolve partner geocode value (show geocode value instead of 6-digit EAN code in dropdown)
+            # Resolve EA geocode value
             raw_gc = ""
             if ea_geocode_idx != -1:
                 _v = feat.attribute(ea_geocode_idx)
@@ -3282,6 +3422,22 @@ class EALauncherDialog(QDialog):
                     raw_gc = str(_v).strip()
                     if raw_gc.endswith(".0"):
                         raw_gc = raw_gc[:-2]
+
+            bgy_geocode = ""
+            if bgy_geocode_idx != -1:
+                _gc_val = feat.attribute(bgy_geocode_idx)
+                if _gc_val is not None and _gc_val != NULL:
+                    bgy_geocode = str(_gc_val).strip()
+                    if bgy_geocode.endswith(".0"):
+                        bgy_geocode = bgy_geocode[:-2]
+            if not bgy_geocode:
+                for cand_val in [raw_gc, ean_str]:
+                    cand_digits = "".join(c for c in str(cand_val) if c.isdigit())
+                    if len(cand_digits) >= 8:
+                        bgy_geocode = cand_digits[:8]
+                        break
+            if not bgy_geocode and bgy_name_str.lower() in _bgy_name_to_gc:
+                bgy_geocode = _bgy_name_to_gc[bgy_name_str.lower()]
 
             ea_gc_digits = "".join(c for c in raw_gc if c.isdigit())
             ean_digits = "".join(c for c in ean_str if c.isdigit())
@@ -3291,7 +3447,7 @@ class EALauncherDialog(QDialog):
                 nbr_geocode = ean_str
             elif bgy_geocode and ean_str and len(ean_digits) <= 6:
                 nbr_geocode = f"{bgy_geocode}{ean_str}"
-            elif raw_gc and ean_str and len(ean_digits) <= 6:
+            elif raw_gc and len(ea_gc_digits) in (8, 9) and ean_str and len(ean_digits) <= 6:
                 nbr_geocode = f"{raw_gc}{ean_str}"
             elif raw_gc:
                 nbr_geocode = raw_gc
@@ -3313,7 +3469,7 @@ class EALauncherDialog(QDialog):
                         is_delin = True
 
             if is_delin:
-                self.all_delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, f"Delineation (> {max_hh} HH)"))
+                self.all_delineation_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, f"Delineation (> {max_hh} HH)", feat.id(), nbr_geocode))
 
             # Classify merge candidates (Sub-tab 2 Reborn Live Preview from Previous EA Layer):
             is_merge = False
@@ -3325,9 +3481,9 @@ class EALauncherDialog(QDialog):
                 is_merge = (hh <= min_hh)
 
             if is_merge:
-                self.all_merge_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, f"Initiator (<= {min_hh} HH)"))
+                self.all_merge_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, f"Initiator (<= {min_hh} HH)", [], feat.id(), nbr_geocode))
 
-        # ── Pass 2: Populate New "Merge Preview" Tab from Merged EA Layer vs Previous EA Layer ──
+        # Auto-detect merge_ea_layer early so it can be checked for existing merged EAs and partners
         merge_ea_layer = self._safe_get_layer(getattr(self, 'merge_ea_combo', None))
         if not merge_ea_layer and hasattr(self, 'auto_detect_merge_ea_layer'):
             detected_m = self.auto_detect_merge_ea_layer()
@@ -3337,15 +3493,144 @@ class EALauncherDialog(QDialog):
                 if hasattr(self, 'validate_layer_inputs'):
                     self.validate_layer_inputs()
 
+        is_geo = prev_ea_layer.crs().isGeographic()
+        search_dist = 0.0002 if is_geo else 10.0
+        merge_max_hh = self.merge_max_hh_spin.value() if hasattr(self, 'merge_max_hh_spin') else max_hh
+        merge_min_hh = self.merge_min_hh_spin.value() if hasattr(self, 'merge_min_hh_spin') and self.merge_min_hh_spin is not None else min_hh
+
+        # Collect all known merged EANs and geocodes to prevent already-merged EAs
+        # from appearing in partner dropdowns or being merged into other candidates
+        merged_eans_set = set()
+        if hasattr(self, "_session_merged_eans") and self._session_merged_eans:
+            for x in self._session_merged_eans:
+                if x:
+                    s = str(x).strip()
+                    if s.endswith(".0"):
+                        s = s[:-2]
+                    if self._is_full_geocode(s):
+                        merged_eans_set.add(s)
+
+        geo5 = self._extract_5digit_geocode() if hasattr(self, '_extract_5digit_geocode') else ""
+        target_layer_name = f"{geo5}_merged_ea2026" if geo5 else "merged_ea2026"
+        proj_target_lyr = None
+        for lyr in QgsProject.instance().mapLayersByName(target_layer_name):
+            if isinstance(lyr, QgsVectorLayer) and lyr.isValid():
+                proj_target_lyr = lyr
+                break
+
+        for check_lyr in [merge_ea_layer, proj_target_lyr]:
+            if not check_lyr or not check_lyr.isValid():
+                continue
+            cl_fields = check_lyr.fields()
+            cl_type_idx = -1
+            for cand_type in ["ea_type", "eatype", "type"]:
+                idx = cl_fields.lookupField(cand_type)
+                if idx != -1:
+                    cl_type_idx = idx
+                    break
+            cl_rem_idx = -1
+            for cand_rem in ["remarks", "remark", "status", "action"]:
+                idx = cl_fields.lookupField(cand_rem)
+                if idx != -1:
+                    cl_rem_idx = idx
+                    break
+            cl_ean_indices = [
+                cl_fields.lookupField(fn) for fn in ["ean", "ea_number", "ea_code", "geocode", "new_ean"]
+                if cl_fields.lookupField(fn) != -1
+            ]
+            for cf in check_lyr.getFeatures():
+                is_cf_merged = False
+                if cl_type_idx != -1 and str(cf.attribute(cl_type_idx) or "").strip().upper() == "MERGED":
+                    is_cf_merged = True
+                elif cl_rem_idx != -1 and "MERGED" in str(cf.attribute(cl_rem_idx) or "").strip().upper():
+                    is_cf_merged = True
+                if is_cf_merged:
+                    for eidx in cl_ean_indices:
+                        val = cf.attribute(eidx)
+                        if val is not None and str(val).strip() and str(val).strip().upper() not in ("NULL", "NONE"):
+                            s = str(val).strip()
+                            if s.endswith(".0"):
+                                s = s[:-2]
+                            if self._is_full_geocode(s):
+                                merged_eans_set.add(s)
+                    if cl_rem_idx != -1:
+                        r_text = str(cf.attribute(cl_rem_idx) or "")
+                        for part in r_text.replace("+", " ").replace(":", " ").replace(",", " ").split():
+                            part_digits = "".join(c for c in part if c.isdigit())
+                            if len(part_digits) >= 8:
+                                merged_eans_set.add(part_digits)
+
+        # Resolve contiguous same-barangay merge partners for all_merge_candidates (Sub-tab 2 Live Preview)
+        bar_layer_input = self._safe_get_layer(getattr(self, 'bar_combo', None)) or self._safe_get_layer(getattr(self, 'merge_bar_combo', None))
+        resolved_merge_cands = []
+        for cand_record in self.all_merge_candidates:
+            c_ean, c_name, c_bgy, c_hh, c_role = cand_record[:5]
+            c_fid = cand_record[6] if len(cand_record) > 6 else None
+            c_gc = cand_record[7] if len(cand_record) > 7 else ""
+            c_entry = _ea_by_fid.get(c_fid) if c_fid is not None else None
+            c_feat = c_entry[0] if c_entry else None
+            c_geom = c_feat.geometry() if c_feat else None
+            c_bgy_gc = c_entry[2] if c_entry else ""
+
+            c_neighbors = []
+            if c_feat and c_geom and not c_geom.isEmpty() and c_hh <= merge_max_hh:
+                _bbox = c_geom.boundingBox()
+                _bbox.grow(search_dist)
+                _candidate_fids = _ea_spatial_idx.intersects(_bbox)
+                for _cfid in _candidate_fids:
+                    _entry = _ea_by_fid.get(_cfid)
+                    if _entry is None:
+                        continue
+                    _nbr_feat, _nbr_ean, _nbr_bgy_gc, _nbr_bgy_name, _nbr_hh = _entry[:5]
+                    _nbr_geocode = _entry[5] if len(_entry) > 5 else (_nbr_ean or "")
+                    if (_nbr_ean and _nbr_ean == c_ean) or (c_gc and _nbr_geocode and _nbr_geocode == c_gc):
+                        continue  # skip self
+
+                    if merged_eans_set and _nbr_geocode and _nbr_geocode in merged_eans_set:
+                        continue
+
+                    if not self._are_in_same_barangay(
+                        c_feat, _nbr_feat,
+                        name_a=c_bgy, gc_a=c_bgy_gc,
+                        name_b=_nbr_bgy_name, gc_b=_nbr_bgy_gc,
+                        bar_layer=bar_layer_input
+                    ):
+                        continue
+
+                    if (c_hh + _nbr_hh) > merge_max_hh:
+                        continue
+
+                    _nbr_geom = _nbr_feat.geometry()
+                    if _nbr_geom and not _nbr_geom.isEmpty():
+                        is_contiguous = c_geom.touches(_nbr_geom) or c_geom.intersects(_nbr_geom)
+                        if is_contiguous:
+                            partner_display = _nbr_geocode or _nbr_ean
+                            if partner_display and partner_display not in [n[0] for n in c_neighbors]:
+                                c_neighbors.append((partner_display, _nbr_hh))
+
+                c_neighbors.sort(key=lambda n: n[0])
+
+            resolved_merge_cands.append((c_ean, c_name, c_bgy, c_hh, c_role, c_neighbors, c_fid, c_gc, c_hh))
+
+        self.all_merge_candidates = resolved_merge_cands
+
+        # ── Pass 2: Populate New "Merge Preview" Tab from Merged EA Layer vs Previous EA Layer ──
         if merge_ea_layer:
             m_fields = merge_ea_layer.fields()
             m_hh_idx = -1
-            for candidate in ["hh_count", "new_hhcount", "hhcount", "household", "household_count", "pop", "population"]:
+            for candidate in ["hhcount", "new_hhcount", "household", "household_count", "pop", "population", "hh_count"]:
                 for i in range(m_fields.count()):
                     if m_fields.at(i).name().lower() == candidate:
                         m_hh_idx = i
                         break
                 if m_hh_idx != -1:
+                    break
+
+            m_hh_count_idx = -1
+            for cand in ["hh_count", "total_hh", "merged_hh"]:
+                idx = m_fields.lookupField(cand)
+                if idx != -1:
+                    m_hh_count_idx = idx
                     break
 
             m_ean_idx = -1
@@ -3365,12 +3650,16 @@ class EALauncherDialog(QDialog):
             m_bgy_geocode_idx = -1
             for i in range(m_fields.count()):
                 name_lower = m_fields.at(i).name().lower()
-                if name_lower in ["bgy_geocode", "bgy_code", "brgy_code", "barangay_geocode", "psgc", "psgc_code", "adm4_pcode", "geocode"]:
+                if name_lower in [
+                    "parent_barangay", "parent_bgy", "parent_bgy_code",
+                    "bgy_geocode", "bgy_code", "brgy_code", "barangay_geocode", "barangay_code",
+                    "bgy_c", "brgy_c",
+                ]:
                     m_bgy_geocode_idx = i
                     break
 
             m_gc_idx = -1
-            for cand_name in ["ea_geocode", "geocode", "geo_code", "psgc", "adm4_pcode"]:
+            for cand_name in ["ea_geocode", "geocode", "geo_code", "psgc", "psgc_ea", "psgc_code", "full_geocode", "ea_id", "adm4_pcode"]:
                 for i in range(m_fields.count()):
                     if m_fields.at(i).name().lower() == cand_name:
                         m_gc_idx = i
@@ -3379,75 +3668,13 @@ class EALauncherDialog(QDialog):
                     break
 
             xform = None
-            if merge_ea_layer.crs().isValid() and prev_ea_layer.crs().isValid() and merge_ea_layer.crs() != prev_ea_layer.crs():
-                xform = QgsCoordinateTransform(merge_ea_layer.crs(), prev_ea_layer.crs(), QgsProject.instance())
-
-            is_geo = prev_ea_layer.crs().isGeographic()
-            search_dist = 0.0002 if is_geo else 10.0
-            merge_max_hh = self.merge_max_hh_spin.value() if hasattr(self, 'merge_max_hh_spin') else max_hh
-            merge_min_hh = self.merge_min_hh_spin.value() if hasattr(self, 'merge_min_hh_spin') and self.merge_min_hh_spin is not None else min_hh
-
-            # Collect all known merged EANs and geocodes to prevent already-merged EAs
-            # from appearing in partner dropdowns or being merged into other candidates
-            merged_eans_set = set()
-            if hasattr(self, "_session_merged_eans") and self._session_merged_eans:
-                for x in self._session_merged_eans:
-                    if x:
-                        s = str(x).strip()
-                        if s.endswith(".0"):
-                            s = s[:-2]
-                        if self._is_full_geocode(s):
-                            merged_eans_set.add(s)
-
-            geo5 = self._extract_5digit_geocode() if hasattr(self, '_extract_5digit_geocode') else ""
-            target_layer_name = f"{geo5}_merged_ea2026" if geo5 else "merged_ea2026"
-            proj_target_lyr = None
-            for lyr in QgsProject.instance().mapLayersByName(target_layer_name):
-                if isinstance(lyr, QgsVectorLayer) and lyr.isValid():
-                    proj_target_lyr = lyr
-                    break
-
-            for check_lyr in [merge_ea_layer, proj_target_lyr]:
-                if not check_lyr or not check_lyr.isValid():
-                    continue
-                cl_fields = check_lyr.fields()
-                cl_type_idx = -1
-                for cand_type in ["ea_type", "eatype", "type"]:
-                    idx = cl_fields.lookupField(cand_type)
-                    if idx != -1:
-                        cl_type_idx = idx
-                        break
-                cl_rem_idx = -1
-                for cand_rem in ["remarks", "remark", "status", "action"]:
-                    idx = cl_fields.lookupField(cand_rem)
-                    if idx != -1:
-                        cl_rem_idx = idx
-                        break
-                cl_ean_indices = [
-                    cl_fields.lookupField(fn) for fn in ["ean", "ea_number", "ea_code", "geocode", "new_ean"]
-                    if cl_fields.lookupField(fn) != -1
-                ]
-                for cf in check_lyr.getFeatures():
-                    is_cf_merged = False
-                    if cl_type_idx != -1 and str(cf.attribute(cl_type_idx) or "").strip().upper() == "MERGED":
-                        is_cf_merged = True
-                    elif cl_rem_idx != -1 and "MERGED" in str(cf.attribute(cl_rem_idx) or "").strip().upper():
-                        is_cf_merged = True
-                    if is_cf_merged:
-                        for eidx in cl_ean_indices:
-                            val = cf.attribute(eidx)
-                            if val is not None and str(val).strip() and str(val).strip().upper() not in ("NULL", "NONE"):
-                                s = str(val).strip()
-                                if s.endswith(".0"):
-                                    s = s[:-2]
-                                if self._is_full_geocode(s):
-                                    merged_eans_set.add(s)
-                        if cl_rem_idx != -1:
-                            r_text = str(cf.attribute(cl_rem_idx) or "")
-                            for part in r_text.replace("+", " ").replace(":", " ").replace(",", " ").split():
-                                part_digits = "".join(c for c in part if c.isdigit())
-                                if len(part_digits) >= 9:
-                                    merged_eans_set.add(part_digits)
+            try:
+                if (hasattr(merge_ea_layer, 'crs') and hasattr(prev_ea_layer, 'crs')
+                        and merge_ea_layer.crs().isValid() and prev_ea_layer.crs().isValid()
+                        and merge_ea_layer.crs() != prev_ea_layer.crs()):
+                    xform = QgsCoordinateTransform(merge_ea_layer.crs(), prev_ea_layer.crs(), QgsProject.instance())
+            except Exception:
+                xform = None
 
             for idx, feat in enumerate(merge_ea_layer.getFeatures()):
                 if idx > 0 and idx % 100 == 0:
@@ -3474,15 +3701,14 @@ class EALauncherDialog(QDialog):
                 except Exception:
                     hh = 0.0
 
-                bgy_geocode = ""
-                if m_bgy_geocode_idx != -1:
-                    _gc_val = feat.attribute(m_bgy_geocode_idx)
-                    if _gc_val is not None and _gc_val != NULL:
-                        bgy_geocode = str(_gc_val).strip()
-                        if bgy_geocode.endswith(".0"):
-                            bgy_geocode = bgy_geocode[:-2]
-                if not bgy_geocode and len(ean_str) >= 9:
-                    bgy_geocode = ean_str[:9]
+                merged_total_hh = hh
+                if m_hh_count_idx != -1:
+                    _mhh_val = feat.attribute(m_hh_count_idx)
+                    if _mhh_val is not None and _mhh_val != NULL:
+                        try:
+                            merged_total_hh = float(_mhh_val)
+                        except Exception:
+                            pass
 
                 cand_raw_gc = ""
                 if m_gc_idx != -1:
@@ -3491,6 +3717,37 @@ class EALauncherDialog(QDialog):
                         cand_raw_gc = str(_cg_val).strip()
                         if cand_raw_gc.endswith(".0"):
                             cand_raw_gc = cand_raw_gc[:-2]
+
+                bgy_geocode = ""
+                if m_bgy_geocode_idx != -1:
+                    _gc_val = feat.attribute(m_bgy_geocode_idx)
+                    if _gc_val is not None and _gc_val != NULL:
+                        bgy_geocode = str(_gc_val).strip()
+                        if bgy_geocode.endswith(".0"):
+                            bgy_geocode = bgy_geocode[:-2]
+                if not bgy_geocode:
+                    for cand_val in [cand_raw_gc, ean_str]:
+                        cand_digits = "".join(c for c in str(cand_val) if c.isdigit())
+                        if len(cand_digits) >= 8:
+                            bgy_geocode = cand_digits[:8]
+                            break
+                if not bgy_geocode and bgy_name_str.lower() in _bgy_name_to_gc:
+                    bgy_geocode = _bgy_name_to_gc[bgy_name_str.lower()]
+
+                m_ea_gc_digits = "".join(c for c in cand_raw_gc if c.isdigit())
+                m_ean_digits = "".join(c for c in ean_str if c.isdigit())
+                if len(m_ea_gc_digits) >= 11:
+                    m_full_geocode = cand_raw_gc
+                elif len(m_ean_digits) >= 11:
+                    m_full_geocode = ean_str
+                elif bgy_geocode and ean_str and len(m_ean_digits) <= 6:
+                    m_full_geocode = f"{bgy_geocode}{ean_str}"
+                elif cand_raw_gc and len(m_ea_gc_digits) in (8, 9) and ean_str and len(m_ean_digits) <= 6:
+                    m_full_geocode = f"{cand_raw_gc}{ean_str}"
+                elif cand_raw_gc:
+                    m_full_geocode = cand_raw_gc
+                else:
+                    m_full_geocode = ean_str
 
                 feat_geom = feat.geometry()
                 if feat_geom and not feat_geom.isEmpty():
@@ -3564,19 +3821,15 @@ class EALauncherDialog(QDialog):
                                 if _nbr_geocode and _nbr_geocode in merged_eans_set:
                                     continue
 
-                            # Same-barangay verification: check barangay names first, then geocode prefix
-                            if (bgy_name_str and _nbr_bgy_name
-                                    and bgy_name_str.strip().lower() not in ("unknown", "", "null")
-                                    and _nbr_bgy_name.strip().lower() not in ("unknown", "", "null")):
-                                if bgy_name_str.strip().lower() != _nbr_bgy_name.strip().lower():
-                                    continue
-                            elif bgy_geocode and _nbr_bgy_gc:
-                                d1 = "".join(c for c in str(bgy_geocode) if c.isdigit())
-                                d2 = "".join(c for c in str(_nbr_bgy_gc) if c.isdigit())
-                                p1 = d1[:9] if len(d1) >= 9 else d1
-                                p2 = d2[:9] if len(d2) >= 9 else d2
-                                if p1 and p2 and p1 != p2:
-                                    continue
+                            # Same-barangay verification: candidate and partner must strictly belong to the same barangay
+                            bar_layer_input = self._safe_get_layer(getattr(self, 'bar_combo', None)) or self._safe_get_layer(getattr(self, 'merge_bar_combo', None))
+                            if not self._are_in_same_barangay(
+                                feat, _nbr_feat,
+                                name_a=bgy_name_str, gc_a=bgy_geocode,
+                                name_b=_nbr_bgy_name, gc_b=_nbr_bgy_gc,
+                                bar_layer=bar_layer_input
+                            ):
+                                continue
 
                             # Threshold Check: combined total household count must not exceed maximum threshold
                             if (hh + _nbr_hh) > merge_max_hh:
@@ -3594,7 +3847,7 @@ class EALauncherDialog(QDialog):
                     # Sort contiguous neighbors deterministically by geocode
                     neighbors.sort(key=lambda n: n[0])
 
-                self.all_merged_ea_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, role_str, neighbors))
+                self.all_merged_ea_candidates.append((ean_str, ea_name_str, bgy_name_str, hh, role_str, neighbors, feat.id(), m_full_geocode, merged_total_hh))
 
         # Update KPI Dashboard Stats
         self.kpi_delin_val.setText(str(len(self.all_delineation_candidates)))
@@ -3635,12 +3888,14 @@ class EALauncherDialog(QDialog):
         
         filtered_delin = []
         for row in self.all_delineation_candidates:
-            if not query or query in row[0].lower() or query in row[1].lower() or query in row[2].lower() or (len(row) > 4 and query in row[4].lower()):
+            gc = str(row[6]).lower() if len(row) > 6 and row[6] else ""
+            if not query or query in row[0].lower() or query in row[1].lower() or query in row[2].lower() or (len(row) > 4 and query in row[4].lower()) or (gc and query in gc):
                 filtered_delin.append(row)
                 
         filtered_merge = []
         for row in self.all_merge_candidates:
-            if not query or query in row[0].lower() or query in row[1].lower() or query in row[2].lower() or (len(row) > 4 and query in row[4].lower()):
+            gc = str(row[7]).lower() if len(row) > 7 and row[7] else ""
+            if not query or query in row[0].lower() or query in row[1].lower() or query in row[2].lower() or (len(row) > 4 and query in row[4].lower()) or (gc and query in gc):
                 filtered_merge.append(row)
 
         merged_ea_query = ""
@@ -3651,7 +3906,8 @@ class EALauncherDialog(QDialog):
 
         filtered_merged_ea = []
         for row in getattr(self, 'all_merged_ea_candidates', []):
-            if not merged_ea_query or merged_ea_query in row[0].lower() or merged_ea_query in row[1].lower() or merged_ea_query in row[2].lower() or (len(row) > 4 and merged_ea_query in row[4].lower()):
+            gc = str(row[7]).lower() if len(row) > 7 and row[7] else ""
+            if not merged_ea_query or merged_ea_query in row[0].lower() or merged_ea_query in row[1].lower() or merged_ea_query in row[2].lower() or (len(row) > 4 and merged_ea_query in row[4].lower()) or (gc and merged_ea_query in gc):
                 filtered_merged_ea.append(row)
 
         if hasattr(self, 'delineation_table'):
@@ -3682,9 +3938,25 @@ class EALauncherDialog(QDialog):
         # Whether the merge-partner column is present (merge table only)
         has_partner_col = (not is_delineation and table.columnCount() >= 6)
 
+        # Determine appropriate layer for this table
+        if hasattr(self, 'merged_ea_table') and table == self.merged_ea_table:
+            table_source_layer = self._safe_get_layer(getattr(self, 'merge_ea_combo', None))
+        else:
+            table_source_layer = self._safe_get_layer(getattr(self, 'prev_ea_combo', None)) or self._safe_get_layer(getattr(self, 'merge_prev_ea_combo', None))
+
         for row_idx, record in enumerate(show_records):
             ean_str, ea_name_str, bgy_name_str, hh = record[:4]
             role_str = record[4] if len(record) > 4 else ("Delineation Candidate" if is_delineation else "Merge Candidate")
+
+            feat_id = None
+            cand_gc = None
+            if len(record) > 5:
+                if is_delineation:
+                    feat_id = record[5] if isinstance(record[5], int) else None
+                    cand_gc = record[6] if len(record) > 6 and isinstance(record[6], str) else None
+                else:
+                    feat_id = record[6] if len(record) > 6 and isinstance(record[6], int) else None
+                    cand_gc = record[7] if len(record) > 7 and isinstance(record[7], str) else None
 
             is_merged_row = (role_str == "Merged ✓")
             if is_merged_row:
@@ -3694,19 +3966,32 @@ class EALauncherDialog(QDialog):
                 row_bg = bg_col
                 row_fg = fg_col
             
-            item_ean = QTableWidgetItem(ean_str)
+            # The first column is "Geocode" — show full geocode value if present, fallback to ean_str
+            display_gc = cand_gc if cand_gc else ean_str
+            item_gc = QTableWidgetItem(display_gc)
             item_bgy = QTableWidgetItem(bgy_name_str)
             item_name = QTableWidgetItem(ea_name_str)
             item_hh = QTableWidgetItem(f"{hh:.0f}")
             item_role = QTableWidgetItem(role_str)
+
+            meta = {
+                "ean": ean_str,
+                "bgy_name": bgy_name_str,
+                "ea_name": ea_name_str,
+                "fid": feat_id,
+                "geocode": cand_gc or display_gc,
+                "layer": table_source_layer,
+            }
+            if hasattr(item_gc, "setData"):
+                item_gc.setData(Qt.UserRole, meta)
             
-            item_ean.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            item_gc.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             item_bgy.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             item_name.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             item_hh.setTextAlignment(Qt.AlignCenter)
             item_role.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             
-            for item in [item_ean, item_name, item_bgy, item_hh, item_role]:
+            for item in [item_gc, item_name, item_bgy, item_hh, item_role]:
                 item.setBackground(QColor(row_bg))
                 item.setForeground(QColor(row_fg))
 
@@ -3716,7 +4001,7 @@ class EALauncherDialog(QDialog):
                 font.setBold(True)
                 item_role.setFont(font)
             
-            table.setItem(row_idx, 0, item_ean)
+            table.setItem(row_idx, 0, item_gc)
             table.setItem(row_idx, 1, item_bgy)
             table.setItem(row_idx, 2, item_name)
             table.setItem(row_idx, 3, item_hh)
@@ -3738,6 +4023,9 @@ class EALauncherDialog(QDialog):
                 partner_combo = QComboBox()
                 has_action_col = (table.columnCount() >= 8)
 
+                merged_total_hh = record[8] if len(record) > 8 and isinstance(record[8], (int, float)) else hh
+
+                total_tooltip = ""
                 if is_merged_row:
                     partner_combo.clear()
                     partner_combo.setEnabled(False)
@@ -3746,7 +4034,8 @@ class EALauncherDialog(QDialog):
                         "QComboBox { background-color: %s; color: #8c8c8c; "
                         "border: 1px solid #d0d7de; border-radius: 3px; padding: 1px 4px; }" % row_bg
                     )
-                    total_text = f"{hh:.0f}"
+                    total_text = f"{merged_total_hh:.0f}"
+                    total_tooltip = f"Merged Total: {merged_total_hh:.0f} HH (Constituent Baseline: {hh:.0f} HH)"
                 elif normalized_neighbors:
                     for nbr_geocode, nbr_hh in normalized_neighbors:
                         partner_combo.addItem(nbr_geocode, userData=nbr_hh)
@@ -3758,9 +4047,12 @@ class EALauncherDialog(QDialog):
                         "QComboBox { background-color: %s; color: %s; "
                         "border: 1px solid #b0c4b1; border-radius: 3px; padding: 1px 4px; }" % (bg_col, fg_col)
                     )
+                    # Total HH Count shows combined total (candidate + partner) based on selected merge partner
                     initial_partner_hh = normalized_neighbors[0][1]
-                    initial_total = hh + initial_partner_hh
-                    total_text = f"{initial_total:.0f}"
+                    initial_nbr_gc = normalized_neighbors[0][0]
+                    projected_total = hh + initial_partner_hh
+                    total_text = f"{projected_total:.0f}"
+                    total_tooltip = f"Total if merged with {initial_nbr_gc}: {projected_total:.0f} HH (Candidate: {hh:.0f} + Partner: {initial_partner_hh:.0f} HH)"
                 else:
                     partner_combo.clear()
                     partner_combo.setEnabled(False)
@@ -3771,7 +4063,8 @@ class EALauncherDialog(QDialog):
                         "QComboBox { background-color: %s; color: #999999; "
                         "border: 1px solid #cccccc; border-radius: 3px; padding: 1px 4px; }" % bg_col
                     )
-                    total_text = "—"
+                    total_text = f"{hh:.0f}"
+                    total_tooltip = f"Unmerged: {hh:.0f} HH (No eligible contiguous partner within threshold)"
 
                 table.setCellWidget(row_idx, 5, partner_combo)
 
@@ -3781,48 +4074,39 @@ class EALauncherDialog(QDialog):
                     item_total_hh.setTextAlignment(Qt.AlignCenter)
                     item_total_hh.setBackground(QColor(row_bg))
                     item_total_hh.setForeground(QColor(row_fg))
+                    if total_tooltip and hasattr(item_total_hh, "setToolTip"):
+                        item_total_hh.setToolTip(total_tooltip)
                     table.setItem(row_idx, 6, item_total_hh)
 
                     def _make_handler(target_row, cand_hh, combo, tbl):
                         def _handler(idx):
                             data = combo.currentData()
+                            partner_txt = combo.currentText()
                             try:
                                 p_hh = float(data) if data is not None else 0.0
                                 tot = cand_hh + p_hh
-                                txt = f"{tot:.0f}"
                             except Exception:
-                                txt = f"{cand_hh:.0f}"
+                                tot = cand_hh
                             cell = tbl.item(target_row, 6)
                             if cell:
-                                cell.setText(txt)
+                                cell.setText(f"{tot:.0f}")
+                                if hasattr(cell, "setToolTip"):
+                                    cell.setToolTip(f"Total if merged with {partner_txt}: {tot:.0f} HH (Candidate: {cand_hh:.0f} + Partner: {p_hh:.0f} HH)")
                         return _handler
 
                     partner_combo.currentIndexChanged.connect(
                         _make_handler(row_idx, hh, partner_combo, table)
                     )
 
-                # Column 7: Action (Preview and Merge buttons)
+                # Column 7: Action (Merge / Unmerge button)
                 if has_action_col:
-                    btn_preview = QPushButton("Preview")
-                    btn_preview.setFixedHeight(24)
-                    btn_preview.setMinimumWidth(65)
-                    btn_preview.setToolTip(f"Zoom map canvas to candidate EA {ean_str} and selected merge partner.")
-                    btn_preview.setStyleSheet(
-                        "QPushButton { background-color: #0969da; color: white; font-weight: bold; "
-                        "border-radius: 3px; padding: 2px 8px; border: 1px solid #0550ae; } "
-                        "QPushButton:hover { background-color: #0550ae; }"
-                    )
-                    btn_preview.clicked.connect(
-                        self._make_individual_preview_handler(ean_str, partner_combo)
-                    )
-
                     btn_merge = QPushButton("Merge")
                     btn_merge.setFixedHeight(24)
-                    btn_merge.setMinimumWidth(65)
+                    btn_merge.setMinimumWidth(70)
                     if is_merged_row:
                         btn_merge.setEnabled(True)
                         btn_merge.setText("Unmerge")
-                        btn_merge.setMinimumWidth(72)
+                        btn_merge.setMinimumWidth(75)
                         btn_merge.setToolTip(f"Unmerge {ean_str} to restore original boundaries and re-enable merging with another partner.")
                         btn_merge.setStyleSheet(
                             "QPushButton { background-color: #d97706; color: white; font-weight: bold; "
@@ -3854,31 +4138,40 @@ class EALauncherDialog(QDialog):
                             "border-radius: 3px; padding: 2px 8px; border: 1px solid #d1d5da; }"
                         )
 
-                    action_widget = MergeActionWidget(btn_preview, btn_merge)
-                    table.setCellWidget(row_idx, 7, action_widget)
+                    table.setCellWidget(row_idx, 7, btn_merge)
 
         table.resizeColumnsToContents()
         hdr = table.horizontalHeader()
         for col_idx in range(table.columnCount()):
             hdr.setSectionResizeMode(col_idx, QHeaderView.Interactive)
 
-        # Enforce minimum sensible column widths so columns don't truncate on small screens
-        min_widths = [85, 120, 95, 110, 130, 160, 100, 160]
-        for col_idx, min_w in enumerate(min_widths[:table.columnCount()]):
-            if table.columnWidth(col_idx) < min_w:
-                table.setColumnWidth(col_idx, min_w)
+        if hasattr(table, 'columnWidth') and hasattr(table, 'setColumnWidth'):
+            # Enforce minimum sensible column widths so columns don't truncate on small screens
+            min_widths = [125, 120, 95, 110, 130, 160, 100, 90]
+            for col_idx, min_w in enumerate(min_widths[:table.columnCount()]):
+                try:
+                    if table.columnWidth(col_idx) < min_w:
+                        table.setColumnWidth(col_idx, min_w)
+                except Exception:
+                    pass
 
-        # On wider viewports, distribute extra available space to Barangay (col 1) while remaining Interactive
-        total_col_w = sum(table.columnWidth(c) for c in range(table.columnCount()))
-        viewport_w = table.viewport().width()
-        if viewport_w > total_col_w and table.columnCount() > 1:
-            table.setColumnWidth(1, table.columnWidth(1) + (viewport_w - total_col_w))
+            # On wider viewports, distribute extra available space to Barangay (col 1) while remaining Interactive
+            try:
+                if hasattr(table, 'viewport') and hasattr(table.viewport(), 'width'):
+                    total_col_w = sum(table.columnWidth(c) for c in range(table.columnCount()))
+                    viewport_w = table.viewport().width()
+                    if viewport_w > total_col_w and table.columnCount() > 1:
+                        table.setColumnWidth(1, table.columnWidth(1) + (viewport_w - total_col_w))
+            except Exception:
+                pass
 
-    def _make_individual_preview_handler(self, cand_ean, partner_combo=None):
+    def _make_individual_preview_handler(self, cand_ean, partner_combo=None, bgy_name=None, cand_layer=None, cand_fid=None):
         """Factory for individual row preview (zoom to feature) button handlers."""
         def _handler():
             p_text = partner_combo.currentText().strip() if partner_combo else None
-            self.zoom_to_candidate_feature(cand_ean, p_text)
+            self.zoom_to_candidate_feature(
+                cand_ean, p_text, bgy_name=bgy_name, preferred_layer=cand_layer, cand_fid=cand_fid
+            )
         return _handler
 
     def _on_merged_ea_table_double_clicked(self, row, col):
@@ -3887,9 +4180,20 @@ class EALauncherDialog(QDialog):
         if not item:
             return
         cand_ean = item.text().strip()
+        bgy_item = self.merged_ea_table.item(row, 1)
+        bgy_name = bgy_item.text().strip() if bgy_item else None
         partner_combo = self.merged_ea_table.cellWidget(row, 5)
         partner_ean = partner_combo.currentText().strip() if partner_combo else None
-        self.zoom_to_candidate_feature(cand_ean, partner_ean)
+
+        meta = item.data(Qt.UserRole) if hasattr(item, 'data') else None
+        cand_fid = meta.get('fid') if isinstance(meta, dict) else None
+        cand_layer = meta.get('layer') if isinstance(meta, dict) else None
+        if not cand_layer:
+            cand_layer = self._safe_get_layer(getattr(self, 'merge_ea_combo', None))
+
+        self.zoom_to_candidate_feature(
+            cand_ean, partner_ean, bgy_name=bgy_name, preferred_layer=cand_layer, cand_fid=cand_fid
+        )
 
     def _on_delin_table_double_clicked(self, row, col):
         """Double-click on any row in delineation candidate table zooms to feature."""
@@ -3897,17 +4201,47 @@ class EALauncherDialog(QDialog):
         if not item:
             return
         cand_ean = item.text().strip()
-        self.zoom_to_candidate_feature(cand_ean)
+        bgy_item = self.delineation_table.item(row, 1)
+        bgy_name = bgy_item.text().strip() if bgy_item else None
+        meta = item.data(Qt.UserRole) if hasattr(item, 'data') else None
+        cand_fid = meta.get('fid') if isinstance(meta, dict) else None
+        cand_layer = meta.get('layer') if isinstance(meta, dict) else None
+        if not cand_layer:
+            cand_layer = self._safe_get_layer(getattr(self, 'prev_ea_combo', None))
+
+        self.zoom_to_candidate_feature(
+            cand_ean, None, bgy_name=bgy_name, preferred_layer=cand_layer, cand_fid=cand_fid
+        )
 
     def _on_merge_table_double_clicked(self, row, col):
-        """Double-click on any row in merge candidate table zooms to feature."""
+        """Double-click on any row in merge candidate table zooms to feature and its merge partner."""
         item = self.merge_table.item(row, 0)
         if not item:
             return
         cand_ean = item.text().strip()
-        self.zoom_to_candidate_feature(cand_ean)
+        bgy_item = self.merge_table.item(row, 1)
+        bgy_name = bgy_item.text().strip() if bgy_item else None
+        partner_combo = self.merge_table.cellWidget(row, 5)
+        partner_ean = partner_combo.currentText().strip() if partner_combo else None
 
-    def zoom_to_candidate_feature(self, cand_ean: str, partner_ean: Optional[str] = None):
+        meta = item.data(Qt.UserRole) if hasattr(item, 'data') else None
+        cand_fid = meta.get('fid') if isinstance(meta, dict) else None
+        cand_layer = meta.get('layer') if isinstance(meta, dict) else None
+        if not cand_layer:
+            cand_layer = self._safe_get_layer(getattr(self, 'prev_ea_combo', None))
+
+        self.zoom_to_candidate_feature(
+            cand_ean, partner_ean, bgy_name=bgy_name, preferred_layer=cand_layer, cand_fid=cand_fid
+        )
+
+    def zoom_to_candidate_feature(
+        self,
+        cand_ean: str,
+        partner_ean: Optional[str] = None,
+        bgy_name: Optional[str] = None,
+        preferred_layer: Optional[QgsVectorLayer] = None,
+        cand_fid: Optional[int] = None,
+    ):
         """Zoom map canvas to candidate EA feature and its selected merge partner (if any)."""
         if not cand_ean:
             return
@@ -3917,7 +4251,7 @@ class EALauncherDialog(QDialog):
             cand_clean = cand_clean[:-2]
 
         partner_clean = None
-        if partner_ean and not partner_ean.startswith("—") and partner_ean.strip() != "":
+        if partner_ean and not partner_ean.startswith(("\u2014", "-", "—")) and partner_ean.strip() != "":
             partner_clean = str(partner_ean).strip()
             if partner_clean.endswith(".0"):
                 partner_clean = partner_clean[:-2]
@@ -3930,16 +4264,54 @@ class EALauncherDialog(QDialog):
         target_name = f"{geo5}_merged_ea2026" if geo5 else "merged_ea2026"
         target_layer = None
         for lyr in QgsProject.instance().mapLayersByName(target_name):
-            if isinstance(lyr, QgsVectorLayer) and lyr.isValid():
+            if is_layer_alive(lyr) and isinstance(lyr, QgsVectorLayer) and lyr.isValid():
                 target_layer = lyr
                 break
 
-        # Candidate feature search priority: target_layer -> merge_ea_layer -> prev_ea_layer
         cand_feat = None
         cand_layer = None
-        for lyr in [target_layer, merge_ea_layer, prev_ea_layer]:
-            if lyr and lyr.isValid():
-                f = self._find_feature_in_layer(lyr, cand_clean)
+
+        # Fast path 1: Try direct feature lookup by FID on preferred layer if provided
+        if cand_fid is not None and preferred_layer and preferred_layer.isValid():
+            try:
+                feat = preferred_layer.getFeature(cand_fid)
+                if feat and feat.isValid() and feat.geometry() and not feat.geometry().isEmpty():
+                    matched = False
+                    cand_digits = "".join(c for c in cand_clean if c.isdigit())
+                    for val in feat.attributes():
+                        if val is not None and val != NULL:
+                            s = str(val).strip()
+                            if s.endswith(".0"):
+                                s = s[:-2]
+                            if s == cand_clean:
+                                matched = True
+                                break
+                            s_digits = "".join(c for c in s if c.isdigit())
+                            if len(cand_digits) >= 3 and len(s_digits) >= 3 and (
+                                s_digits.endswith(cand_digits) or cand_digits.endswith(s_digits)
+                            ):
+                                matched = True
+                                break
+                    if matched or not cand_clean:
+                        cand_feat = feat
+                        cand_layer = preferred_layer
+            except Exception:
+                pass
+
+        # Search across layers in intelligent priority order
+        if not cand_feat:
+            search_layers = []
+            if preferred_layer and preferred_layer.isValid() and preferred_layer not in search_layers:
+                search_layers.append(preferred_layer)
+            for lyr in [target_layer, merge_ea_layer, prev_ea_layer]:
+                if lyr and lyr.isValid() and lyr not in search_layers:
+                    search_layers.append(lyr)
+
+            for lyr in search_layers:
+                try:
+                    f = self._find_feature_in_layer(lyr, cand_clean, bgy_name=bgy_name)
+                except TypeError:
+                    f = self._find_feature_in_layer(lyr, cand_clean)
                 if f:
                     cand_feat = f
                     cand_layer = lyr
@@ -3965,7 +4337,10 @@ class EALauncherDialog(QDialog):
         if partner_clean:
             for lyr in [prev_ea_layer, merge_ea_layer, target_layer]:
                 if lyr and lyr.isValid():
-                    f = self._find_feature_in_layer(lyr, partner_clean)
+                    try:
+                        f = self._find_feature_in_layer(lyr, partner_clean, bgy_name=bgy_name)
+                    except TypeError:
+                        f = self._find_feature_in_layer(lyr, partner_clean)
                     if f:
                         partner_feat = f
                         partner_layer = lyr
@@ -4022,9 +4397,12 @@ class EALauncherDialog(QDialog):
 
         # 7. Select features and flash geometries for visual feedback
         try:
-            cand_layer.selectByIds([cand_feat.id()])
-            if partner_feat and partner_layer:
-                partner_layer.selectByIds([partner_feat.id()])
+            if partner_feat and partner_layer and partner_layer == cand_layer:
+                cand_layer.selectByIds([cand_feat.id(), partner_feat.id()])
+            else:
+                cand_layer.selectByIds([cand_feat.id()])
+                if partner_feat and partner_layer:
+                    partner_layer.selectByIds([partner_feat.id()])
             if hasattr(iface, 'setActiveLayer'):
                 iface.setActiveLayer(cand_layer)
         except Exception:
@@ -4050,17 +4428,18 @@ class EALauncherDialog(QDialog):
             pass
 
         # 8. Feedback in log console
+        bgy_info = f" (Barangay: {bgy_name})" if bgy_name else ""
         if partner_feat:
             log_text = (
                 f"<span style='color:#0969da; font-weight:bold;'>"
-                f"[PREVIEW] Zoomed to Candidate EA {cand_clean} (layer: {cand_layer.name()}) "
+                f"[PREVIEW] Zoomed to Candidate EA {cand_clean}{bgy_info} (layer: {cand_layer.name()}) "
                 f"and Partner EA {partner_clean} (layer: {partner_layer.name()}) on map canvas."
                 f"</span>"
             )
         else:
             log_text = (
                 f"<span style='color:#0969da; font-weight:bold;'>"
-                f"[PREVIEW] Zoomed to Candidate EA {cand_clean} (layer: {cand_layer.name()}) on map canvas."
+                f"[PREVIEW] Zoomed to Candidate EA {cand_clean}{bgy_info} (layer: {cand_layer.name()}) on map canvas."
                 f"</span>"
             )
 
@@ -4079,18 +4458,254 @@ class EALauncherDialog(QDialog):
 
     @staticmethod
     def _is_full_geocode(s: str) -> bool:
-        """Return True if *s* contains at least 9 digit characters.
+        """Return True if *s* contains at least 8 digit characters.
 
-        Philippine PSGC geocodes at the barangay level are 9 digits and are
-        nationally unique.  Short EAN codes (3–6 digits such as ``001000``)
-        are only unique within a single barangay and must never be used for
-        cross-barangay merge exclusion tracking.
+        Geocodes at the barangay level use the 8-digit code starting from the left.
+        Short EAN codes (3–6 digits such as ``001000``) are only unique within a single
+        barangay and must never be used for cross-barangay merge exclusion tracking.
         """
-        return sum(1 for c in str(s) if c.isdigit()) >= 9
+        return sum(1 for c in str(s) if c.isdigit()) >= 8
+
+    @classmethod
+    def _extract_bgy_geocode_prefix(cls, val: Any, is_explicit_bgy_field: bool = False) -> str:
+        """Extract standardized barangay geocode digits or code.
+
+        Uses the 8 digit code in the geocode starting from the left (digits[:8])
+        to reference the barangay. If is_explicit_bgy_field is True (e.g. bgy_code,
+        parent_barangay, bgy_geocode), short codes (1-7 digits such as '001') are
+        also accepted as authoritative barangay codes.
+        """
+        if val is None or val == NULL:
+            return ""
+        s = str(val).strip()
+        if s.endswith(".0"):
+            s = s[:-2]
+        digits = "".join(c for c in s if c.isdigit())
+        if len(digits) >= 8:
+            return digits[:8]
+        elif is_explicit_bgy_field and len(digits) >= 1:
+            return digits
+        return ""
+
+    @classmethod
+    def _normalize_bgy_name(cls, val: Any) -> str:
+        """Normalize barangay name string."""
+        if val is None or val == NULL:
+            return ""
+        s = str(val).strip().lower()
+        if s.endswith(".0"):
+            s = s[:-2]
+        if s in ("unknown", "null", "none", "nan", "—", "-"):
+            return ""
+        s = s.replace(".", " ").replace(",", " ").replace("-", " ")
+        parts = s.split()
+        filtered = [p for p in parts if p not in ("brgy", "bgy", "barangay")]
+        return " ".join(filtered) if filtered else s
+
+    @classmethod
+    def _extract_bgy_info_from_feature(
+        cls,
+        feat: Optional[QgsFeature],
+        bgy_name_hint: str = "",
+        bgy_gc_hint: str = ""
+    ) -> Tuple[str, str]:
+        """Extract (norm_bgy_name, bgy_geocode_prefix) from a feature and/or hints."""
+        norm_name = cls._normalize_bgy_name(bgy_name_hint)
+        gc_prefix = cls._extract_bgy_geocode_prefix(bgy_gc_hint, is_explicit_bgy_field=False)
+
+        if not feat or not hasattr(feat, 'fields'):
+            return norm_name, gc_prefix
+
+        fields = feat.fields()
+        f_count = fields.count()
+
+        if not norm_name:
+            for cand in [
+                "barangay", "bgy", "brgy", "barangay_name", "bgy_name", "brgy_name",
+                "barangay_n", "bgy_n", "brgy_n", "parent_barangay", "parent_bgy"
+            ]:
+                for i in range(f_count):
+                    if fields.at(i).name().lower() == cand:
+                        v = feat.attribute(i)
+                        n = cls._normalize_bgy_name(v)
+                        if n:
+                            norm_name = n
+                            break
+                if norm_name:
+                    break
+
+        if not gc_prefix:
+            bgy_field_names = [
+                "parent_barangay", "parent_bgy", "parent_bgy_code",
+                "bgy_geocode", "bgy_code", "brgy_code", "barangay_geocode", "barangay_code",
+                "bgy_c", "brgy_c"
+            ]
+            for cand in bgy_field_names:
+                for i in range(f_count):
+                    if fields.at(i).name().lower() == cand:
+                        v = feat.attribute(i)
+                        p = cls._extract_bgy_geocode_prefix(v, is_explicit_bgy_field=True)
+                        if p:
+                            gc_prefix = p
+                            break
+                if gc_prefix:
+                    break
+
+        if not gc_prefix:
+            full_gc_field_names = ["psgc", "psgc_code", "adm4_pcode", "geocode", "ea_geocode", "geo_code"]
+            for cand in full_gc_field_names:
+                for i in range(f_count):
+                    if fields.at(i).name().lower() == cand:
+                        v = feat.attribute(i)
+                        p = cls._extract_bgy_geocode_prefix(v, is_explicit_bgy_field=False)
+                        if p:
+                            gc_prefix = p
+                            break
+                if gc_prefix:
+                    break
+
+        return norm_name, gc_prefix
+
+    @classmethod
+    def _check_same_parent_barangay_spatial(
+        cls,
+        feat_a: QgsFeature,
+        feat_b: QgsFeature,
+        bar_layer: QgsVectorLayer,
+        crs_ea: Optional[Any] = None
+    ) -> Optional[bool]:
+        """Check if two EA features spatially belong to the same polygon in bar_layer."""
+        if not feat_a or not feat_b or not bar_layer or not bar_layer.isValid():
+            return None
+        geom_a = feat_a.geometry()
+        geom_b = feat_b.geometry()
+        if not geom_a or not geom_b or geom_a.isEmpty() or geom_b.isEmpty():
+            return None
+
+        bar_crs = bar_layer.crs()
+        xform = None
+        if crs_ea and hasattr(crs_ea, 'isValid') and crs_ea.isValid() and bar_crs.isValid() and crs_ea != bar_crs:
+            try:
+                xform = QgsCoordinateTransform(crs_ea, bar_crs, QgsProject.instance())
+            except Exception:
+                xform = None
+
+        def _get_bgy_id(g):
+            if xform:
+                try:
+                    g = QgsGeometry(g)
+                    g.transform(xform)
+                except Exception:
+                    pass
+            pt = None
+            if hasattr(g, 'pointOnSurface'):
+                pt = g.pointOnSurface()
+            elif hasattr(g, 'centroid'):
+                pt = g.centroid()
+            best_fid = None
+            max_area = -1.0
+            req = QgsFeatureRequest().setFilterRect(g.boundingBox())
+            for bf in bar_layer.getFeatures(req):
+                bg = bf.geometry()
+                if not bg or bg.isEmpty():
+                    continue
+                if pt and not pt.isEmpty() and bg.contains(pt):
+                    return bf.id()
+                if bg.intersects(g):
+                    overlap = bg.intersection(g).area()
+                    if overlap > max_area:
+                        max_area = overlap
+                        best_fid = bf.id()
+            return best_fid
+
+        fid_a = _get_bgy_id(geom_a)
+        fid_b = _get_bgy_id(geom_b)
+        if fid_a is not None and fid_b is not None:
+            return fid_a == fid_b
+        return None
+
+    def _are_in_same_barangay(
+        self,
+        feat_a: Optional[QgsFeature],
+        feat_b: Optional[QgsFeature],
+        name_a: str = "",
+        gc_a: str = "",
+        name_b: str = "",
+        gc_b: str = "",
+        bar_layer: Optional[QgsVectorLayer] = None
+    ) -> bool:
+        """Strictly determine if two EA features belong to the same barangay.
+
+        Evaluates:
+        1. Authoritative geocode prefixes (8 or 9 digits, or explicit bgy codes): if both have geocodes, they must match.
+        2. Normalized barangay names: if both have names, they must match.
+        3. Spatial containment: if attributes are missing/ambiguous and a Barangay polygon layer
+           is available, validates that both EAs reside within the same parent barangay polygon.
+        Returns False if any check indicates different barangays.
+        """
+        name_a_norm, gc_a_pfx = self._extract_bgy_info_from_feature(feat_a, name_a, gc_a)
+        name_b_norm, gc_b_pfx = self._extract_bgy_info_from_feature(feat_b, name_b, gc_b)
+
+        # 1. Geocode comparison (Authoritative PSGC prefix or bgy code)
+        if gc_a_pfx and gc_b_pfx:
+            if gc_a_pfx != gc_b_pfx:
+                return False
+            if name_a_norm and name_b_norm and name_a_norm != name_b_norm:
+                return False
+            return True
+
+        # 2. Barangay name comparison
+        if name_a_norm and name_b_norm:
+            if name_a_norm != name_b_norm:
+                return False
+            if not bar_layer and hasattr(self, '_safe_get_layer'):
+                bar_layer = self._safe_get_layer(getattr(self, 'bar_combo', None)) or self._safe_get_layer(getattr(self, 'merge_bar_combo', None))
+            if bar_layer and bar_layer.isValid() and feat_a and feat_b:
+                crs_ea = None
+                if hasattr(self, '_safe_get_layer'):
+                    ea_lyr = self._safe_get_layer(getattr(self, 'merge_ea_combo', None)) or self._safe_get_layer(getattr(self, 'prev_ea_combo', None))
+                    if ea_lyr and ea_lyr.isValid():
+                        crs_ea = ea_lyr.crs()
+                sp_match = self._check_same_parent_barangay_spatial(feat_a, feat_b, bar_layer, crs_ea=crs_ea)
+                if sp_match is not None:
+                    return sp_match
+            return True
+
+        # 3. Spatial fallback using Barangay Layer
+        if not bar_layer and hasattr(self, '_safe_get_layer'):
+            bar_layer = self._safe_get_layer(getattr(self, 'bar_combo', None)) or self._safe_get_layer(getattr(self, 'merge_bar_combo', None))
+
+        if bar_layer and bar_layer.isValid() and feat_a and feat_b:
+            crs_ea = None
+            if hasattr(self, '_safe_get_layer'):
+                ea_lyr = self._safe_get_layer(getattr(self, 'merge_ea_combo', None)) or self._safe_get_layer(getattr(self, 'prev_ea_combo', None))
+                if ea_lyr and ea_lyr.isValid():
+                    crs_ea = ea_lyr.crs()
+            sp_match = self._check_same_parent_barangay_spatial(feat_a, feat_b, bar_layer, crs_ea=crs_ea)
+            if sp_match is not None:
+                return sp_match
+
+        # 4. If one has explicit info and the other has conflicting explicit info:
+        if (gc_a_pfx and not gc_b_pfx and name_b_norm) or (gc_b_pfx and not gc_a_pfx and name_a_norm):
+            return False
+
+        # 5. Default when no features provided or empty/unknown hints given:
+        if not feat_a or not feat_b:
+            return False
+
+        # 6. Fallback for homogeneous / single-barangay EA layers:
+        # When neither feature has explicit barangay name or code, and no barangay layer exists,
+        # contiguous features within the same layer are permitted to merge (no conflicting barangays exist).
+        return True
 
     @staticmethod
-    def _find_feature_in_layer(layer: QgsVectorLayer, target_str: str) -> Optional[QgsFeature]:
-        """Find a feature in *layer* matching *target_str* by checking EAN/geocode/ID fields flexibly."""
+    def _find_feature_in_layer(layer: QgsVectorLayer, target_str: str, bgy_name: Optional[str] = None) -> Optional[QgsFeature]:
+        """Find a feature in *layer* matching *target_str* by checking EAN/geocode/ID fields flexibly.
+
+        If *bgy_name* is provided and the layer has a barangay name field, candidate matches
+        must belong to that barangay to avoid cross-barangay false positives (since short EAN
+        codes such as '001000' or '001' repeat in every barangay).
+        """
         if not layer or not target_str:
             return None
 
@@ -4099,41 +4714,64 @@ class EALauncherDialog(QDialog):
             target_str = target_str[:-2]
 
         fields = layer.fields()
+
+        # Identify barangay column if bgy_name is specified
+        bgy_idx = -1
+        clean_bgy = str(bgy_name).strip().lower() if bgy_name else ""
+        if clean_bgy and clean_bgy not in ("unknown", "", "none", "null"):
+            for cand_bgy in ["barangay", "bgy", "brgy", "barangay_name", "bgy_name", "brgy_name", "barangay_n", "bgy_n", "brgy_n"]:
+                for i in range(fields.count()):
+                    if fields.at(i).name().lower() == cand_bgy:
+                        bgy_idx = i
+                        break
+                if bgy_idx != -1:
+                    break
+
+        def _matches_bgy(feat):
+            if bgy_idx == -1:
+                return True
+            val = feat.attribute(bgy_idx)
+            if val is None or val == NULL:
+                # Unknown barangay: not a confirmed match, but still usable as a
+                # lower-priority fallback so a correctly-tagged duplicate wins.
+                return False
+            s = str(val).strip().lower()
+            if s.endswith(".0"):
+                s = s[:-2]
+            return (s == clean_bgy) or (clean_bgy in s) or (s in clean_bgy)
+
         # Collect candidate identification field indices in order of relevance
-        id_indices = []
-        for cand_name in ["geocode", "ea_geocode", "geo_code", "psgc", "adm4_pcode", "ean", "ea_number", "ea_code", "id", "code", "map_uuid"]:
+        ea_id_indices = []
+        for cand_name in ["geocode", "ea_geocode", "geo_code", "psgc", "adm4_pcode", "ean", "ea_number", "ea_code", "new_ean"]:
             for i in range(fields.count()):
-                if fields.at(i).name().lower() == cand_name and i not in id_indices:
-                    id_indices.append(i)
+                if fields.at(i).name().lower() == cand_name and i not in ea_id_indices:
+                    ea_id_indices.append(i)
+
+        other_id_indices = []
+        for cand_name in ["id", "code", "map_uuid"]:
+            for i in range(fields.count()):
+                if fields.at(i).name().lower() == cand_name and i not in ea_id_indices and i not in other_id_indices:
+                    other_id_indices.append(i)
+
+        all_id_indices = ea_id_indices + other_id_indices
+
+        matched_fallback = None
 
         # Pass 1: Exact match on candidate ID fields
         for feat in layer.getFeatures():
-            for idx in id_indices:
+            for idx in all_id_indices:
                 val = feat.attribute(idx)
                 if val is not None and val != NULL:
                     v_str = str(val).strip()
                     if v_str.endswith(".0"):
                         v_str = v_str[:-2]
                     if v_str == target_str:
-                        return feat
-
-        # Pass 2: Suffix or Prefix match on ID fields
-        # Handles cases where one is a 14-digit geocode (e.g. 01718014001000)
-        # and the other is a 6-digit EAN (e.g. 001000), or trailing digits match
-        target_digits = "".join(c for c in target_str if c.isdigit())
-        if target_digits:
-            for feat in layer.getFeatures():
-                for idx in id_indices:
-                    val = feat.attribute(idx)
-                    if val is not None and val != NULL:
-                        v_str = str(val).strip()
-                        if v_str.endswith(".0"):
-                            v_str = v_str[:-2]
-                        v_digits = "".join(c for c in v_str if c.isdigit())
-                        if v_digits and (v_digits.endswith(target_digits) or target_digits.endswith(v_digits)):
+                        if _matches_bgy(feat):
                             return feat
+                        elif matched_fallback is None:
+                            matched_fallback = feat
 
-        # Pass 3: Check ALL fields in layer for exact match
+        # Pass 2: Exact match on ANY field in the layer
         for feat in layer.getFeatures():
             for idx in range(fields.count()):
                 val = feat.attribute(idx)
@@ -4142,9 +4780,34 @@ class EALauncherDialog(QDialog):
                     if v_str.endswith(".0"):
                         v_str = v_str[:-2]
                     if v_str == target_str:
-                        return feat
+                        if _matches_bgy(feat):
+                            return feat
+                        elif matched_fallback is None:
+                            matched_fallback = feat
 
-        return None
+        # Pass 3: Suffix or Prefix match on actual EA identification fields
+        # Handles cases where one is a 9-14 digit geocode (e.g. 01718014001000)
+        # and the other is a 3-6 digit EAN (e.g. 001000).
+        # CRITICAL: Suffix matching must ONLY run on ea_id_indices (never on generic integer 'id' columns),
+        # and requires at least 3 digits to avoid single-digit false positives.
+        target_digits = "".join(c for c in target_str if c.isdigit())
+        if len(target_digits) >= 3:
+            for feat in layer.getFeatures():
+                for idx in ea_id_indices:
+                    val = feat.attribute(idx)
+                    if val is not None and val != NULL:
+                        v_str = str(val).strip()
+                        if v_str.endswith(".0"):
+                            v_str = v_str[:-2]
+                        v_digits = "".join(c for c in v_str if c.isdigit())
+                        if len(v_digits) >= 3:
+                            if v_digits.endswith(target_digits) or target_digits.endswith(v_digits):
+                                if _matches_bgy(feat):
+                                    return feat
+                                elif matched_fallback is None:
+                                    matched_fallback = feat
+
+        return matched_fallback
 
     def _merge_individual_row(self, row_idx, cand_ean, ea_name_str, bgy_name_str, cand_hh, partner_combo, table, btn_merge):
         """Merge an individual candidate EA row with its chosen partner EA from the previous EA layer."""
@@ -4178,16 +4841,22 @@ class EALauncherDialog(QDialog):
         merge_ea_layer = self._safe_get_layer(getattr(self, 'merge_ea_combo', None))
         prev_ea_layer = self._safe_get_layer(getattr(self, 'merge_prev_ea_combo', None)) or self._safe_get_layer(getattr(self, 'prev_ea_combo', None))
 
-        if not merge_ea_layer or not prev_ea_layer:
-            QMessageBox.warning(self, "Missing Layers", "Both Merge EA Layer and Previous EA Layer must be selected.")
+        if not prev_ea_layer:
+            QMessageBox.warning(self, "Missing Layer", "Previous EA Layer must be selected.")
             return
+
+        if not merge_ea_layer:
+            merge_ea_layer = prev_ea_layer
 
         # Locate candidate feature across merge_ea_layer (with fallback to prev_ea_layer)
         cand_feat = None
         cand_layer_source = None
         for lyr in [merge_ea_layer, prev_ea_layer]:
             if lyr:
-                f = self._find_feature_in_layer(lyr, cand_ean)
+                try:
+                    f = self._find_feature_in_layer(lyr, cand_ean, bgy_name=bgy_name_str)
+                except TypeError:
+                    f = self._find_feature_in_layer(lyr, cand_ean)
                 if f:
                     cand_feat = f
                     cand_layer_source = lyr
@@ -4198,7 +4867,10 @@ class EALauncherDialog(QDialog):
         partner_layer_source = None
         for lyr in [prev_ea_layer, merge_ea_layer]:
             if lyr:
-                f = self._find_feature_in_layer(lyr, partner_ean)
+                try:
+                    f = self._find_feature_in_layer(lyr, partner_ean, bgy_name=bgy_name_str)
+                except TypeError:
+                    f = self._find_feature_in_layer(lyr, partner_ean)
                 if f:
                     partner_feat = f
                     partner_layer_source = lyr
@@ -4229,6 +4901,31 @@ class EALauncherDialog(QDialog):
                             self.merge_log_console.append(err_msg)
                         QMessageBox.warning(self, "EA Already Merged", f"EA '{label_str}' is already marked as MERGED and cannot be merged again.")
                         return
+
+        # Guard: Candidate and partner must belong to the exact same barangay
+        bar_layer_check = self._safe_get_layer(getattr(self, 'bar_combo', None)) or self._safe_get_layer(getattr(self, 'merge_bar_combo', None))
+        if not self._are_in_same_barangay(
+            cand_feat, partner_feat,
+            name_a=bgy_name_str,
+            bar_layer=bar_layer_check
+        ):
+            c_name, c_gc = self._extract_bgy_info_from_feature(cand_feat, bgy_name_str)
+            p_name, p_gc = self._extract_bgy_info_from_feature(partner_feat)
+            c_desc = f"{c_name} ({c_gc})" if c_name and c_gc else (c_name or c_gc or "Unknown")
+            p_desc = f"{p_name} ({p_gc})" if p_name and p_gc else (p_name or p_gc or "Unknown")
+            err_msg = (
+                f"<span style='color:red;'>[ERROR] Cannot merge: Candidate EA '{cand_ean}' and partner EA '{partner_ean}' "
+                f"belong to different barangays ('{c_desc}' vs '{p_desc}'). EAs can only be merged within the same barangay.</span>"
+            )
+            if hasattr(self, 'merge_log_console') and self.merge_log_console:
+                self.merge_log_console.append(err_msg)
+            QMessageBox.warning(
+                self,
+                "Cross-Barangay Merge Prevented",
+                f"Candidate EA '{cand_ean}' and partner EA '{partner_ean}' belong to different barangays "
+                f"('{c_desc}' vs '{p_desc}').\n\nEAs can only be merged within the same barangay."
+            )
+            return
 
         # Combine geometries
         c_geom = QgsGeometry(cand_feat.geometry())
@@ -4263,7 +4960,7 @@ class EALauncherDialog(QDialog):
         else:
             hh_idx = -1
             src_fields = partner_layer_source.fields()
-            for cand in ["hh_count", "new_hhcount", "hhcount", "household", "household_count"]:
+            for cand in ["hhcount", "new_hhcount", "household", "household_count", "hh_count"]:
                 for i in range(src_fields.count()):
                     if src_fields.at(i).name().lower() == cand:
                         hh_idx = i
@@ -4324,15 +5021,9 @@ class EALauncherDialog(QDialog):
                 b_hh += val_list[0]
 
             total_bldg = b_cnt
-            total_hh = int(round(b_hh))
             counted_from_bldg = True
 
-        if not counted_from_bldg or (total_bldg == 0 and total_hh == 0):
-            # Fallback: sum of candidate HH + partner HH
-            fallback_hh = cand_hh + partner_hh
-            if fallback_hh > 0:
-                total_hh = int(round(fallback_hh))
-
+        if not counted_from_bldg or total_bldg == 0:
             def _get_bldg(feat, lyr):
                 if not feat or not lyr:
                     return 0
@@ -4350,6 +5041,16 @@ class EALauncherDialog(QDialog):
             cand_bldg = _get_bldg(cand_feat, cand_layer_source)
             partner_bldg = _get_bldg(partner_feat, partner_layer_source)
             total_bldg = cand_bldg + partner_bldg
+
+        # Total HH count strictly uses the sum of Candidate HH + Partner HH so the count
+        # remains identical before and after clicking merge (matching the preview column).
+        combined_hh = cand_hh + partner_hh
+        if combined_hh > 0:
+            total_hh = int(round(combined_hh))
+        elif counted_from_bldg and b_hh > 0:
+            total_hh = int(round(b_hh))
+        else:
+            total_hh = 0
 
         total_hh = int(round(total_hh))
         total_bldg = int(round(total_bldg))
@@ -4551,7 +5252,7 @@ class EALauncherDialog(QDialog):
 
             for fname in ["bldg_count", "bldgcount", "building_count", "buildings"]:
                 idx = target_layer.fields().lookupField(fname)
-                if idx != -1:
+                if idx != -1 and fname != "bldgcount":
                     fld = target_layer.fields().at(idx)
                     try:
                         val = fld.convertCompatible(total_bldg)
@@ -4607,7 +5308,7 @@ class EALauncherDialog(QDialog):
 
             for fname in ["bldg_count", "bldgcount", "building_count", "buildings"]:
                 idx = target_layer.fields().lookupField(fname)
-                if idx != -1:
+                if idx != -1 and fname != "bldgcount":
                     fld = target_layer.fields().at(idx)
                     try:
                         val = fld.convertCompatible(total_bldg)
@@ -4647,17 +5348,22 @@ class EALauncherDialog(QDialog):
                 target_layer.rollBack()
 
         else:
-            # Neither exists in target_layer yet, add new feature (preserving partner_feat's original ean and hhcount)
+            # Neither exists in target_layer yet, add new feature (preserving partner_feat's original ean and baseline hhcount)
             new_feat = QgsFeature(target_layer.fields())
             new_feat.setGeometry(merged_geom)
             for fld in prev_fields:
                 fname = fld.name()
-                if fname.lower() != "fid" and target_layer.fields().lookupField(fname) != -1:
+                if fname.lower() not in ("fid", "ogc_fid", "ogcfid") and target_layer.fields().lookupField(fname) != -1:
                     _safe_set_feat_attribute(new_feat, target_layer.fields(), fname, partner_feat.attribute(fname))
+            # Ensure primary key / fid field is explicitly NULL so OGR autoincrements a new unique fid
+            for fid_name in ("fid", "ogc_fid", "ogcfid"):
+                f_idx = target_layer.fields().lookupField(fid_name)
+                if f_idx != -1:
+                    new_feat.setAttribute(f_idx, NULL)
             # ONLY update hh_count, leave hhcount unchanged
             _safe_set_feat_attribute(new_feat, target_layer.fields(), "hh_count", total_hh)
             for fname in ["bldg_count", "bldgcount", "building_count", "buildings"]:
-                if target_layer.fields().lookupField(fname) != -1:
+                if target_layer.fields().lookupField(fname) != -1 and fname != "bldgcount":
                     _safe_set_feat_attribute(new_feat, target_layer.fields(), fname, total_bldg)
             _safe_set_feat_attribute(new_feat, target_layer.fields(), "new_ean", highest_ean)
             for cand_type in ["ea_type", "eatype", "type"]:
@@ -4680,12 +5386,16 @@ class EALauncherDialog(QDialog):
             new_feat.setGeometry(merged_geom)
             for fld in prev_fields:
                 fname = fld.name()
-                if fname.lower() != "fid" and target_layer.fields().lookupField(fname) != -1:
+                if fname.lower() not in ("fid", "ogc_fid", "ogcfid") and target_layer.fields().lookupField(fname) != -1:
                     _safe_set_feat_attribute(new_feat, target_layer.fields(), fname, partner_feat.attribute(fname))
+            for fid_name in ("fid", "ogc_fid", "ogcfid"):
+                f_idx = target_layer.fields().lookupField(fid_name)
+                if f_idx != -1:
+                    new_feat.setAttribute(f_idx, NULL)
             # ONLY update hh_count, leave hhcount unchanged
             _safe_set_feat_attribute(new_feat, target_layer.fields(), "hh_count", total_hh)
             for fname in ["bldg_count", "bldgcount", "building_count", "buildings"]:
-                if target_layer.fields().lookupField(fname) != -1:
+                if target_layer.fields().lookupField(fname) != -1 and fname != "bldgcount":
                     _safe_set_feat_attribute(new_feat, target_layer.fields(), fname, total_bldg)
             _safe_set_feat_attribute(new_feat, target_layer.fields(), "new_ean", highest_ean)
             for cand_type in ["ea_type", "eatype", "type"]:
@@ -4829,6 +5539,7 @@ class EALauncherDialog(QDialog):
         total_item = table.item(row_idx, 6)
         if total_item:
             total_item.setText(f"{int(total_hh)}")
+            total_item.setToolTip(f"Merged Total: {int(total_hh)} HH")
 
         partner_combo.clear()
         partner_combo.setEnabled(False)
@@ -5045,6 +5756,17 @@ class EALauncherDialog(QDialog):
         if prev_ea_layer.crs().isValid() and target_layer.crs().isValid() and prev_ea_layer.crs() != target_layer.crs():
             xform_prev_to_target = QgsCoordinateTransform(prev_ea_layer.crs(), target_layer.crs(), QgsProject.instance())
 
+        # Ensure target_layer has 'hh_count' and 'bldg_count' fields if missing
+        t_fnames = [f.name().lower() for f in target_layer.fields()]
+        t_missing_attrs = []
+        if "hh_count" not in t_fnames:
+            t_missing_attrs.append(create_qgs_field("hh_count", QVariant.Int))
+        if "bldg_count" not in t_fnames and "bldgcount" not in t_fnames:
+            t_missing_attrs.append(create_qgs_field("bldg_count", QVariant.Int))
+        if t_missing_attrs:
+            target_layer.dataProvider().addAttributes(t_missing_attrs)
+            target_layer.updateFields()
+
         if not target_layer.isEditable():
             target_layer.startEditing()
 
@@ -5061,11 +5783,33 @@ class EALauncherDialog(QDialog):
 
             prev_fields = pf.fields()
             for pfld in prev_fields:
-                val = pf.attribute(pfld.name())
+                pf_name = pfld.name()
+                if pf_name.lower() in ("fid", "ogc_fid", "ogcfid"):
+                    continue
+                val = pf.attribute(pf_name)
                 if val is not None and val != NULL:
-                    idx = target_layer.fields().lookupField(pfld.name())
+                    idx = target_layer.fields().lookupField(pf_name)
                     if idx != -1:
                         new_feat.setAttribute(idx, val)
+
+            # Ensure primary key / fid field is explicitly NULL so OGR autoincrements a new unique fid
+            for fid_name in ("fid", "ogc_fid", "ogcfid"):
+                f_idx = target_layer.fields().lookupField(fid_name)
+                if f_idx != -1:
+                    new_feat.setAttribute(f_idx, NULL)
+
+            # Ensure baseline hhcount and bldgcount from pf are preserved
+            for base_col in ("hhcount", "bldgcount"):
+                t_idx = target_layer.fields().lookupField(base_col)
+                if t_idx != -1 and (new_feat.attribute(t_idx) is None or new_feat.attribute(t_idx) == NULL):
+                    p_idx = prev_fields.lookupField(base_col)
+                    if p_idx == -1:
+                        alt_name = "hh_count" if base_col == "hhcount" else "bldg_count"
+                        p_idx = prev_fields.lookupField(alt_name)
+                    if p_idx != -1:
+                        p_val = pf.attribute(p_idx)
+                        if p_val is not None and p_val != NULL:
+                            new_feat.setAttribute(t_idx, p_val)
 
             inside_bldg = 0
             inside_hh_float = 0.0
@@ -5089,30 +5833,47 @@ class EALauncherDialog(QDialog):
                         else:
                             inside_hh_float += 1.0
 
-            if bldg_spatial_index:
-                inside_hh = int(round(inside_hh_float))
-            else:
-                inside_hh = int(round(float(pf.attribute("hhcount") or pf.attribute("hh_count") or 0.0)))
-                inside_bldg = int(round(float(pf.attribute("bldgcount") or pf.attribute("bldg_count") or 0.0)))
-
-            for fn in ["hh_count", "hhcount"]:
-                idx = target_layer.fields().lookupField(fn)
+            # When unmerged, hh_count strictly copies baseline hhcount
+            base_hh = None
+            for cand in ["hhcount", "new_hhcount", "household", "household_count", "pop", "population", "hh_count"]:
+                idx = pf.fields().lookupField(cand)
                 if idx != -1:
-                    new_feat.setAttribute(idx, inside_hh)
+                    v = pf.attribute(idx)
+                    if v is not None and v != NULL and str(v).strip() != "":
+                        try:
+                            base_hh = float(v)
+                            break
+                        except Exception:
+                            pass
+            if base_hh is None and bldg_spatial_index:
+                base_hh = inside_hh_float
+            try:
+                unmerged_hh = int(round(float(base_hh or 0.0)))
+            except Exception:
+                unmerged_hh = 0
 
-            for fn in ["bldg_count", "bldgcount"]:
-                idx = target_layer.fields().lookupField(fn)
-                if idx != -1:
-                    new_feat.setAttribute(idx, inside_bldg)
+            # Synchronize both calculated hh_count and baseline hhcount to unmerged_hh
+            hh_idx = target_layer.fields().lookupField("hh_count")
+            if hh_idx != -1:
+                new_feat.setAttribute(hh_idx, unmerged_hh)
+            hhcount_idx = target_layer.fields().lookupField("hhcount")
+            if hhcount_idx != -1:
+                new_feat.setAttribute(hhcount_idx, unmerged_hh)
+
+            # ONLY update calculated bldg_count, leave baseline bldgcount unchanged
+            bldg_idx = target_layer.fields().lookupField("bldg_count")
+            if bldg_idx != -1:
+                new_feat.setAttribute(bldg_idx, inside_bldg)
 
             for fn in ["ea_type", "eatype", "type"]:
                 idx = target_layer.fields().lookupField(fn)
                 if idx != -1:
                     new_feat.setAttribute(idx, "RETAINED")
 
-            rem_idx = target_layer.fields().lookupField("remarks")
-            if rem_idx != -1:
-                new_feat.setAttribute(rem_idx, "")
+            for fn in ["remarks", "remark", "status", "action"]:
+                idx = target_layer.fields().lookupField(fn)
+                if idx != -1:
+                    new_feat.setAttribute(idx, "")
 
             ean_idx = target_layer.fields().lookupField("ean")
             orig_ean = new_feat.attribute(ean_idx) if ean_idx != -1 else None
@@ -5198,15 +5959,64 @@ class EALauncherDialog(QDialog):
             except Exception:
                 pass
 
+        # Collect all possible identifier representations for candidate and partner
+        ids_to_discard = set()
+        for x in [cand_clean, partner_ean, cand_ean]:
+            if x:
+                s = str(x).strip()
+                if s.endswith(".0"):
+                    s = s[:-2]
+                ids_to_discard.add(s)
+        if merged_feat:
+            for fn in ["ean", "ea_number", "ea_code", "geocode", "ea_geocode", "new_ean", "psgc", "adm4_pcode"]:
+                idx = merged_feat.fields().lookupField(fn)
+                if idx != -1:
+                    v = merged_feat.attribute(idx)
+                    if v is not None and v != NULL and str(v).strip() and str(v).strip().upper() not in ("NULL", "NONE"):
+                        s = str(v).strip()
+                        if s.endswith(".0"):
+                            s = s[:-2]
+                        ids_to_discard.add(s)
+            rem_idx = merged_feat.fields().lookupField("remarks")
+            if rem_idx != -1:
+                r_text = str(merged_feat.attribute(rem_idx) or "")
+                for part in r_text.replace("+", " ").replace(":", " ").replace(",", " ").split():
+                    d = "".join(c for c in part if c.isdigit())
+                    if d:
+                        ids_to_discard.add(d)
+        for cf in constituent_prev_feats:
+            for fn in ["ean", "ea_number", "ea_code", "geocode", "ea_geocode", "new_ean", "psgc", "adm4_pcode"]:
+                idx = cf.fields().lookupField(fn)
+                if idx != -1:
+                    v = cf.attribute(idx)
+                    if v is not None and v != NULL and str(v).strip() and str(v).strip().upper() not in ("NULL", "NONE"):
+                        s = str(v).strip()
+                        if s.endswith(".0"):
+                            s = s[:-2]
+                        ids_to_discard.add(s)
+
         # Cleanup session tracking
         if hasattr(self, "_session_merged_eans"):
-            for e in [cand_clean, partner_ean]:
-                if e:
-                    self._session_merged_eans.discard(str(e).strip())
+            for d in list(self._session_merged_eans):
+                if d in ids_to_discard:
+                    self._session_merged_eans.discard(d)
+                else:
+                    for item in ids_to_discard:
+                        if len(item) >= 6 and (d.endswith(item) or item.endswith(d)):
+                            self._session_merged_eans.discard(d)
+                            break
         if hasattr(self, "_merge_history"):
-            self._merge_history.pop(cand_clean, None)
-            if partner_ean:
-                self._merge_history.pop(partner_ean, None)
+            for item in list(ids_to_discard):
+                self._merge_history.pop(item, None)
+
+        # Ensure merge_ea_combo references the updated target_layer
+        if hasattr(self, 'merge_ea_combo') and self.merge_ea_combo:
+            curr_lyr = self._safe_get_layer(self.merge_ea_combo)
+            if curr_lyr != target_layer:
+                if hasattr(self, '_safe_set_layer'):
+                    self._safe_set_layer(self.merge_ea_combo, target_layer)
+                else:
+                    self.merge_ea_combo.setLayer(target_layer)
 
         if hasattr(self, "_reconcile_session_merged_eans"):
             self._reconcile_session_merged_eans(target_layer)
@@ -5362,6 +6172,13 @@ class EALauncherDialog(QDialog):
         delineated_file = os.path.normpath(os.path.join(out_folder, f"{geo5}_delineated_ea2026.gpkg")).replace("\\", "/")
         merged_file = os.path.normpath(os.path.join(out_folder, f"{geo5}_merged_ea2026.gpkg")).replace("\\", "/")
 
+        # Determine candidate extraction mode for algorithm
+        exec_mode_val = 0
+        if mode == "delineation":
+            exec_mode_val = 1
+        elif mode == "merging":
+            exec_mode_val = 2
+
         # Prepare parameters: Execute algorithm in-memory first; permanent .gpkg files are created ONLY if features exist
         parameters = {
             'BARANGAY_INPUT': bar_layer,
@@ -5380,13 +6197,22 @@ class EALauncherDialog(QDialog):
             'SLIVER_THRESHOLD': self.sliver_combo.currentIndex(),
             'TARGET_CRS': self.crs_widget.crs(),
             'PREVIEW_ONLY': False,
+            'EXECUTION_MODE': exec_mode_val,
             
-            # Temporary scratch sinks during processing execution
-            'DELINEATED_OUTPUT': 'TEMPORARY_OUTPUT',
-            'MERGED_OUTPUT': 'TEMPORARY_OUTPUT',
-            'DELINEATION_CANDIDATE_OUTPUT': 'TEMPORARY_OUTPUT',
-            'EXTRACTED_BUILDINGS_OUTPUT': 'TEMPORARY_OUTPUT',
+            # Temporary scratch sinks during processing execution based on active mode
         }
+        if mode == "delineation":
+            parameters['DELINEATED_OUTPUT'] = 'TEMPORARY_OUTPUT'
+            parameters['DELINEATION_CANDIDATE_OUTPUT'] = 'TEMPORARY_OUTPUT'
+            parameters['EXTRACTED_BUILDINGS_OUTPUT'] = 'TEMPORARY_OUTPUT'
+        elif mode == "merging":
+            parameters['MERGED_OUTPUT'] = 'TEMPORARY_OUTPUT'
+            parameters['EXTRACTED_BUILDINGS_OUTPUT'] = 'TEMPORARY_OUTPUT'
+        else: # "all"
+            parameters['DELINEATED_OUTPUT'] = 'TEMPORARY_OUTPUT'
+            parameters['MERGED_OUTPUT'] = 'TEMPORARY_OUTPUT'
+            parameters['DELINEATION_CANDIDATE_OUTPUT'] = 'TEMPORARY_OUTPUT'
+            parameters['EXTRACTED_BUILDINGS_OUTPUT'] = 'TEMPORARY_OUTPUT'
 
         # Clear UI state and set banners according to mode
         if mode in ("delineation", "all"):
@@ -5450,20 +6276,23 @@ class EALauncherDialog(QDialog):
             extra_progress_bars=extra_progs,
             extra_cancel_buttons=extra_cancels,
         )
-        self.feedback.progressChanged.connect(lambda val: self.feedback.helper.set_val.emit(int(val)))
+        if hasattr(self.feedback, 'progressChanged') and hasattr(self.feedback.progressChanged, 'connect'):
+            self.feedback.progressChanged.connect(lambda val: self.feedback.helper.set_val.emit(int(val)))
         context = QgsProcessingContext()
 
         # Execute using QGIS Processing framework
         from qgis import processing
         from qgis.core import QgsApplication
         
-        alg_to_run = QgsApplication.processingRegistry().algorithmById(self.ALGORITHM_ID) or self.algo
+        alg_id = self.ALGORITHM_ID if isinstance(self.ALGORITHM_ID, str) else ""
+        alg_to_run = (QgsApplication.processingRegistry().algorithmById(alg_id) if alg_id else None) or self.algo
 
         # Record pre-existing splitting lines layers to prevent duplicates
-        pre_existing_eadel_ids = {
-            layer_id for layer_id, lyr in QgsProject.instance().mapLayers().items()
-            if lyr.name().endswith("_eadel_update")
-        }
+        pre_existing_eadel_ids = set()
+        for layer_id in list(QgsProject.instance().mapLayers().keys()):
+            lyr = get_safe_project_layer(layer_id)
+            if lyr and lyr.name().endswith("_eadel_update"):
+                pre_existing_eadel_ids.add(layer_id)
 
         try:
             results = processing.runAndLoadResults(
@@ -5557,25 +6386,33 @@ class EALauncherDialog(QDialog):
                                 layer_ref = results[out_key]
                                 layer = None
                                 if isinstance(layer_ref, str):
-                                    layer = QgsProject.instance().mapLayer(layer_ref)
+                                    layer = get_safe_project_layer(layer_ref)
                                 elif hasattr(layer_ref, 'id') or isinstance(layer_ref, QgsMapLayer):
-                                    layer = layer_ref
+                                    if is_layer_alive(layer_ref):
+                                        layer = layer_ref
                                 if layer:
-                                    QgsProject.instance().removeMapLayer(layer.id())
+                                    try:
+                                        QgsProject.instance().removeMapLayer(layer.id())
+                                    except Exception:
+                                        pass
                             continue
 
                         if out_key in results:
                             layer_ref = results[out_key]
                             layer = None
                             if isinstance(layer_ref, str):
-                                layer = QgsProject.instance().mapLayer(layer_ref)
+                                layer = get_safe_project_layer(layer_ref)
                             elif hasattr(layer_ref, 'id') or isinstance(layer_ref, QgsMapLayer):
-                                layer = layer_ref
+                                if is_layer_alive(layer_ref):
+                                    layer = layer_ref
                             
-                            if layer:
+                            if layer and is_layer_alive(layer):
                                 if layer.featureCount() == 0:
                                     # If 0 features, do NOT create a permanent file and do not keep on canvas
-                                    QgsProject.instance().removeMapLayer(layer.id())
+                                    try:
+                                        QgsProject.instance().removeMapLayer(layer.id())
+                                    except Exception:
+                                        pass
                                     if f_path and os.path.exists(f_path):
                                         try:
                                             os.remove(f_path)
@@ -5593,7 +6430,10 @@ class EALauncherDialog(QDialog):
                                             perm_layer = QgsVectorLayer(f_path, target_name, "ogr")
                                         
                                         if perm_layer.isValid():
-                                            QgsProject.instance().removeMapLayer(layer.id())
+                                            try:
+                                                QgsProject.instance().removeMapLayer(layer.id())
+                                            except Exception:
+                                                pass
                                             QgsProject.instance().addMapLayer(perm_layer, False)
                                             apply_qml_to_layer(perm_layer, qml_filename)
                                             target_group.addLayer(perm_layer)
@@ -5604,82 +6444,145 @@ class EALauncherDialog(QDialog):
                                             _log_msg(save_msg)
                                             continue
 
-                                layer.setName(target_name)
-                                apply_qml_to_layer(layer, qml_filename)
-                                lnode = root.findLayer(layer.id())
-                                if lnode:
-                                    if lnode.parent() != target_group:
-                                        clone = lnode.clone()
-                                        target_group.addChildNode(clone)
-                                        lnode.parent().removeChildNode(lnode)
+                                if is_layer_alive(layer):
+                                    layer.setName(target_name)
+                                    if out_key == 'EXTRACTED_BUILDINGS_OUTPUT' and hasattr(layer, 'fields'):
+                                        role_idx = layer.fields().indexOf("merge_role")
+                                        if role_idx != -1 and hasattr(layer, 'setSubsetString'):
+                                            if mode == "delineation":
+                                                layer.setSubsetString('"merge_role" NOT IN (\'Candidate\', \'Merge Partner\')')
+                                            elif mode == "merging":
+                                                layer.setSubsetString('"merge_role" IN (\'Candidate\', \'Merge Partner\', \'Merged\')')
+                                    apply_qml_to_layer(layer, qml_filename)
+                                    lnode = root.findLayer(layer.id())
+                                    if lnode:
+                                        if lnode.parent() != target_group:
+                                            clone = lnode.clone()
+                                            target_group.addChildNode(clone)
+                                            lnode.parent().removeChildNode(lnode)
                         else:
                             # Not in results dictionary (0 features produced)
                             skip_msg = f"<span style='color:#7F8C8D;'>[INFO] Output layer '{target_name}' has 0 features; skipping layer generation.</span>"
                             _log_msg(skip_msg)
                             # Remove any dangling layer with target_name if loaded with 0 features
-                            for lyr_id, lyr_obj in list(QgsProject.instance().mapLayers().items()):
-                                if lyr_obj.name() == target_name and lyr_obj.featureCount() == 0:
-                                    QgsProject.instance().removeMapLayer(lyr_id)
+                            for lyr_id in list(QgsProject.instance().mapLayers().keys()):
+                                lyr_obj = get_safe_project_layer(lyr_id)
+                                if lyr_obj and lyr_obj.name() == target_name:
+                                    try:
+                                        if lyr_obj.featureCount() == 0:
+                                            QgsProject.instance().removeMapLayer(lyr_id)
+                                    except (RuntimeError, ReferenceError):
+                                        pass
 
                 # Group and persist any generated splitting line layers (ending with _eadel_update) into Splitting Lines
                 has_splitting_lines = False
                 processed_line_names = set()
-                for layer_id, proj_layer in list(QgsProject.instance().mapLayers().items()):
-                    if proj_layer.name().endswith("_eadel_update"):
-                        target_line_name = proj_layer.name()
 
-                        if mode == "merging" and layer_id not in pre_existing_eadel_ids:
-                            # In merging mode, discard newly spawned scratch splitting line layers
-                            # so that pre-existing delineation splitting lines are not duplicated.
-                            QgsProject.instance().removeMapLayer(layer_id)
-                            continue
+                # Collect candidate splitting line layer IDs safely to prevent accessing deleted C++ layer wrappers
+                candidate_line_ids = []
+                for lid in list(QgsProject.instance().mapLayers().keys()):
+                    lyr = get_safe_project_layer(lid)
+                    if lyr and lyr.name().endswith("_eadel_update"):
+                        candidate_line_ids.append(lid)
 
-                        if target_line_name in processed_line_names:
-                            # Remove duplicate layers with the same name
-                            QgsProject.instance().removeMapLayer(layer_id)
-                            continue
+                for layer_id in candidate_line_ids:
+                    proj_layer = get_safe_project_layer(layer_id)
+                    if not proj_layer:
+                        continue
 
-                        processed_line_names.add(target_line_name)
-                        line_gpkg_path = os.path.normpath(os.path.join(out_folder, f"{target_line_name}.gpkg")).replace("\\", "/") if out_folder else ""
-                        if mode == "merging" and proj_layer.featureCount() == 0:
-                            # In merging mode, do not keep empty splitting line layers
+                    target_line_name = proj_layer.name()
+
+                    if mode == "merging" and layer_id not in pre_existing_eadel_ids:
+                        # In merging mode, discard newly spawned scratch splitting line layers
+                        # so that pre-existing delineation splitting lines are not duplicated.
+                        try:
                             QgsProject.instance().removeMapLayer(layer_id)
-                            if line_gpkg_path and os.path.exists(line_gpkg_path):
-                                try:
-                                    os.remove(line_gpkg_path)
-                                except Exception:
-                                    pass
-                            skip_msg = f"<span style='color:#7F8C8D;'>[INFO] Splitting lines layer '{target_line_name}' has 0 features; skipping layer generation.</span>"
-                            _log_msg(skip_msg)
-                        else:
-                            has_splitting_lines = True
-                            # Convert in-memory splitting line layer to permanent GeoPackage on disk
-                            if line_gpkg_path and not proj_layer.source().lower().endswith(".gpkg"):
-                                if self._export_layer_to_gpkg(proj_layer, line_gpkg_path, target_line_name):
-                                    perm_line_layer = QgsVectorLayer(f"{line_gpkg_path}|layername={target_line_name}", target_line_name, "ogr")
-                                    if not perm_line_layer.isValid():
-                                        perm_line_layer = QgsVectorLayer(line_gpkg_path, target_line_name, "ogr")
-                                    if perm_line_layer.isValid():
+                        except Exception:
+                            pass
+                        continue
+
+                    if target_line_name in processed_line_names:
+                        # Remove duplicate layers with the same name
+                        try:
+                            QgsProject.instance().removeMapLayer(layer_id)
+                        except Exception:
+                            pass
+                        continue
+
+                    processed_line_names.add(target_line_name)
+                    line_gpkg_path = os.path.normpath(os.path.join(out_folder, f"{target_line_name}.gpkg")).replace("\\", "/") if out_folder else ""
+                    if mode == "merging" and proj_layer.featureCount() == 0:
+                        # In merging mode, do not keep empty splitting line layers
+                        try:
+                            QgsProject.instance().removeMapLayer(layer_id)
+                        except Exception:
+                            pass
+                        if line_gpkg_path and os.path.exists(line_gpkg_path):
+                            try:
+                                os.remove(line_gpkg_path)
+                            except Exception:
+                                pass
+                        skip_msg = f"<span style='color:#7F8C8D;'>[INFO] Splitting lines layer '{target_line_name}' has 0 features; skipping layer generation.</span>"
+                        _log_msg(skip_msg)
+                    elif mode == "merging":
+                        continue
+                    else:
+                        has_splitting_lines = True
+                        # Ensure indicator and remarks values are removed in eadel_update layer
+                        try:
+                            indi_idx = proj_layer.fields().indexOf("indicator")
+                            rem_idx = proj_layer.fields().indexOf("remarks")
+                            if (indi_idx != -1 or rem_idx != -1) and proj_layer.featureCount() > 0:
+                                proj_layer.startEditing()
+                                for f in proj_layer.getFeatures():
+                                    if indi_idx != -1:
+                                        val = f.attribute(indi_idx)
+                                        if val is not None and str(val).strip() != "":
+                                            proj_layer.changeAttributeValue(f.id(), indi_idx, "")
+                                    if rem_idx != -1:
+                                        rval = f.attribute(rem_idx)
+                                        if rval is not None and str(rval).strip() != "":
+                                            proj_layer.changeAttributeValue(f.id(), rem_idx, "")
+                                proj_layer.commitChanges()
+                        except Exception:
+                            pass
+
+                        # Convert in-memory splitting line layer to permanent GeoPackage on disk
+                        if line_gpkg_path and not proj_layer.source().lower().endswith(".gpkg"):
+                            if self._export_layer_to_gpkg(proj_layer, line_gpkg_path, target_line_name):
+                                perm_line_layer = QgsVectorLayer(f"{line_gpkg_path}|layername={target_line_name}", target_line_name, "ogr")
+                                if not perm_line_layer.isValid():
+                                    perm_line_layer = QgsVectorLayer(line_gpkg_path, target_line_name, "ogr")
+                                if perm_line_layer.isValid():
+                                    try:
                                         QgsProject.instance().removeMapLayer(layer_id)
-                                        # Remove any other existing layer with target_line_name to ensure no duplicates
-                                        for old_id, old_lyr in list(QgsProject.instance().mapLayers().items()):
-                                            if old_id != perm_line_layer.id() and old_lyr.name() == target_line_name:
-                                                QgsProject.instance().removeMapLayer(old_id)
-                                        QgsProject.instance().addMapLayer(perm_line_layer, False)
-                                        apply_qml_to_layer(perm_line_layer, "eadel_update_lines.qml")
-                                        splitting_lines_group.addLayer(perm_line_layer)
-                                        feat_desc = (
-                                            f"{perm_line_layer.featureCount()} feature(s)"
-                                            if perm_line_layer.featureCount() > 0
-                                            else "0 features; ready for manual editing"
-                                        )
-                                        save_msg = (
-                                            f"<span style='color:#0969da; font-weight:bold;'>[INFO]</span> "
-                                            f"Permanent GeoPackage layer (.gpkg) saved: {target_line_name} ({feat_desc}) ({line_gpkg_path})"
-                                        )
-                                        _log_msg(save_msg)
-                                        continue
+                                    except Exception:
+                                        pass
+                                    # Remove any other existing layer with target_line_name to ensure no duplicates
+                                    for old_id in list(QgsProject.instance().mapLayers().keys()):
+                                        if old_id != perm_line_layer.id():
+                                            old_lyr = get_safe_project_layer(old_id)
+                                            if old_lyr and old_lyr.name() == target_line_name:
+                                                try:
+                                                    QgsProject.instance().removeMapLayer(old_id)
+                                                except Exception:
+                                                    pass
+                                    QgsProject.instance().addMapLayer(perm_line_layer, False)
+                                    apply_qml_to_layer(perm_line_layer, "eadel_update_lines.qml")
+                                    splitting_lines_group.addLayer(perm_line_layer)
+                                    feat_desc = (
+                                        f"{perm_line_layer.featureCount()} feature(s)"
+                                        if perm_line_layer.featureCount() > 0
+                                        else "0 features; ready for manual editing"
+                                    )
+                                    save_msg = (
+                                        f"<span style='color:#0969da; font-weight:bold;'>[INFO]</span> "
+                                        f"Permanent GeoPackage layer (.gpkg) saved: {target_line_name} ({feat_desc}) ({line_gpkg_path})"
+                                    )
+                                    _log_msg(save_msg)
+                                    continue
 
+                        if is_layer_alive(proj_layer):
                             apply_qml_to_layer(proj_layer, "eadel_update_lines.qml")
                             lnode = root.findLayer(layer_id)
                             if lnode and lnode.parent() != splitting_lines_group:
@@ -6088,6 +6991,7 @@ class EALauncherDialog(QDialog):
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
         splitter.setSizes([300, 540, 240])
+        self.ea_merge_desc_panel.setVisible(False)
 
         tab_layout.addWidget(splitter, 1)
 
@@ -6140,6 +7044,16 @@ class EALauncherDialog(QDialog):
             return
         is_visible = not self.ea_merge_desc_panel.isVisible()
         self.ea_merge_desc_panel.setVisible(is_visible)
+        if is_visible:
+            splitter = self.ea_merge_desc_panel.parent()
+            if isinstance(splitter, QSplitter):
+                sizes = splitter.sizes()
+                if len(sizes) >= 3 and sizes[2] < 100:
+                    total = sum(sizes)
+                    left = 300
+                    right = 240
+                    mid = max(100, total - left - right)
+                    splitter.setSizes([left, mid, right])
 
         show_icon_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "..", "icons", "show_description.svg")
@@ -6147,14 +7061,16 @@ class EALauncherDialog(QDialog):
         hide_icon_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "..", "icons", "hide_description.svg")
         )
-        if is_visible:
-            icon = QIcon(hide_icon_path) if os.path.exists(hide_icon_path) else QIcon()
-            self.toggle_desc_btn.setIcon(icon)
-            self.toggle_desc_btn.setToolTip("Hide Description Panel")
-        else:
-            icon = QIcon(show_icon_path) if os.path.exists(show_icon_path) else QIcon()
-            self.toggle_desc_btn.setIcon(icon)
-            self.toggle_desc_btn.setToolTip("Show Description Panel")
+        btn = getattr(self, 'toggle_desc_btn', None)
+        if btn:
+            if is_visible:
+                icon = QIcon(hide_icon_path) if os.path.exists(hide_icon_path) else QIcon()
+                btn.setIcon(icon)
+                btn.setToolTip("Hide Description Panel")
+            else:
+                icon = QIcon(show_icon_path) if os.path.exists(show_icon_path) else QIcon()
+                btn.setIcon(icon)
+                btn.setToolTip("Show Description Panel")
 
     @staticmethod
     def _ea_merge_help_html() -> str:
@@ -6677,7 +7593,7 @@ class EALauncherDialog(QDialog):
                     r_text = str(f.attribute(rem_idx) or "")
                     for part in r_text.replace("+", " ").replace(":", " ").replace(",", " ").split():
                         part_digits = "".join(c for c in part if c.isdigit())
-                        if len(part_digits) >= 9:
+                        if len(part_digits) >= 8:
                             active_merged_eans.add(part_digits)
 
         self._session_merged_eans = {e for e in self._session_merged_eans if e in active_merged_eans}

@@ -1083,7 +1083,7 @@ class SplitEADialog(QDialog):
                     parent_split_groups.append({"parent": poly_feat, "parts": [poly_geom]})
                     continue
 
-                # Upfront Gate: If parent EA total households < 2 * min_hh_threshold, splitting cannot produce valid sub-EAs
+                # Informational notice if parent household count is below 2 * min_hh_threshold (do not block split)
                 min_hh_threshold = self.min_hh_spin.value() if hasattr(self, "min_hh_spin") else 99
                 if bldg_spatial_index:
                     parent_8digit = ""
@@ -1094,13 +1094,10 @@ class SplitEADialog(QDialog):
                     parent_bldg_cnt, parent_hh_cnt = _calculate_geom_counts(poly_geom, target_8digit_code=parent_8digit)
                     if parent_hh_cnt < 2 * min_hh_threshold:
                         self._log(
-                            f"Notice: Cannot split EA '{parent_code_6}' — total household count ({parent_hh_cnt}) "
-                            f"is less than twice the minimum threshold ({min_hh_threshold} * 2 = {min_hh_threshold * 2} HH). EA preserved whole.",
-                            "WARNING",
+                            f"Notice: Parent EA '{parent_code_6}' total household count ({parent_hh_cnt}) "
+                            f"is below twice the reference threshold ({min_hh_threshold * 2} HH). Proceeding with split based on cut lines.",
+                            "INFO",
                         )
-                        exploded_features.append(poly_feat)
-                        parent_split_groups.append({"parent": poly_feat, "parts": [poly_geom]})
-                        continue
 
                 # Find cut lines that intersect this specific polygon
                 if use_selected_lines:
@@ -1461,43 +1458,26 @@ class SplitEADialog(QDialog):
                             "area": parent_feat.geometry().area() if parent_feat.geometry() else 0.0,
                         }]
 
-                # ── Enforce Minimum Household Threshold strictly based on eadel_update cut lines ──
-                min_hh_threshold = self.min_hh_spin.value() if hasattr(self, "min_hh_spin") else 99
-                if bldg_spatial_index and len(part_data) > 1:
-                    under_threshold = [p for p in part_data if p["hh_count"] < min_hh_threshold]
-                    if under_threshold:
-                        min_hh_found = min(p["hh_count"] for p in part_data)
-                        self._log(
-                            f"Warning: Cannot split EA '{parent_code_6}' using 'eadel_update' — resulting sub-EA has "
-                            f"{min_hh_found} households, which falls below the minimum threshold of {min_hh_threshold} HH. "
-                            f"Split rejected; EA preserved whole.",
-                            "WARNING",
-                        )
-                        orig_hh = _safe_parent_attr(parent_feat, "hh_count", 0)
-                        orig_bldg = _safe_parent_attr(parent_feat, "bldg_count", 0)
-                        try:
-                            orig_hh = int(orig_hh) if orig_hh is not None and orig_hh != NULL else 0
-                        except (ValueError, TypeError):
-                            orig_hh = 0
-                        try:
-                            orig_bldg = int(orig_bldg) if orig_bldg is not None and orig_bldg != NULL else 0
-                        except (ValueError, TypeError):
-                            orig_bldg = 0
-
-                        parent_bldg_cnt, parent_hh_cnt = _calculate_geom_counts(parent_feat.geometry())
-                        part_data = [{
-                            "geom": parent_feat.geometry(),
-                            "hh_count": parent_hh_cnt if parent_hh_cnt > 0 else orig_hh,
-                            "bldg_count": parent_bldg_cnt if parent_bldg_cnt > 0 else orig_bldg,
-                            "area": parent_feat.geometry().area() if parent_feat.geometry() else 0.0,
-                        }]
-                    else:
-                        part_data.sort(key=lambda item: (item["hh_count"], item["area"]), reverse=True)
-                        self._log(
-                            f"Success: EA '{parent_code_6}' successfully split into {len(part_data)} sub-EAs using 'eadel_update' "
-                            f"(HH counts: {[p['hh_count'] for p in part_data]}).",
-                            "SUCCESS",
-                        )
+                # ── Process sub-EAs and log threshold notice without rejecting split ──
+                if len(part_data) > 1:
+                    part_data.sort(key=lambda item: (item["hh_count"], item["area"]), reverse=True)
+                    min_hh_threshold = self.min_hh_spin.value() if hasattr(self, "min_hh_spin") else 99
+                    if bldg_spatial_index:
+                        under_threshold = [p for p in part_data if p["hh_count"] < min_hh_threshold]
+                        if under_threshold:
+                            min_hh_found = min(p["hh_count"] for p in part_data)
+                            self._log(
+                                f"Notice: EA '{parent_code_6}' split into {len(part_data)} sub-EAs using 'eadel_update' "
+                                f"(HH counts: {[p['hh_count'] for p in part_data]}). "
+                                f"Sub-EA has {min_hh_found} households (below reference threshold of {min_hh_threshold} HH).",
+                                "WARNING",
+                            )
+                        else:
+                            self._log(
+                                f"Success: EA '{parent_code_6}' successfully split into {len(part_data)} sub-EAs using 'eadel_update' "
+                                f"(HH counts: {[p['hh_count'] for p in part_data]}).",
+                                "SUCCESS",
+                            )
 
                 for idx, p_item in enumerate(part_data):
                     inside_hh_count = p_item["hh_count"]

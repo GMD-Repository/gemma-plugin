@@ -47,7 +47,7 @@ from libqfieldsync.project_checker import ProjectChecker
 from libqfieldsync.utils.file_utils import fileparts
 from libqfieldsync.utils.qgis import get_project_title
 from qgis.core import Qgis, QgsApplication, QgsProject, QgsLayerTreeGroup, QgsLayerTreeLayer, QgsVectorLayer, QgsRasterLayer, QgsVectorFileWriter, QgsTask, QgsTaskManager, QgsSnappingConfig, QgsTolerance, QgsGeometry, QgsFeatureRequest, QgsCoordinateTransform, QgsMapLayer, NULL
-from qgis.PyQt.QtCore import QDir, Qt, QUrl, QTimer, QEvent, QVariant
+from qgis.PyQt.QtCore import QDir, Qt, QUrl, QTimer, QEvent, QVariant, QSettings
 from qgis.PyQt.QtGui import QIcon, QBrush, QPixmap, QImage, QPainter
 from qgis.PyQt.QtSvg import QSvgRenderer
 from qgis.PyQt.QtWidgets import QApplication, QDialog, QDialogButtonBox, QMessageBox, QLabel, QListWidget, QListWidgetItem, QWidget, QHBoxLayout, QPushButton, QComboBox, QGridLayout, QGroupBox, QSizePolicy, QScrollArea, QFrame, QVBoxLayout, QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView, QTreeWidget, QTreeWidgetItem, QTabWidget, QLineEdit, QInputDialog, QFileDialog, QToolButton, QAbstractItemView
@@ -441,9 +441,17 @@ class PackageDialog(QDialog, DialogUi):
         for label, data in role_options:
             role_combo.addItem(label, data)
             
+        settings = QSettings()
+        saved_role = settings.value(f"gmd_pipeline/role_for_layer_{layer_name}", "")
+
         if preset_id is not None:
             for i in range(role_combo.count()):
                 if role_combo.itemData(i) == preset_id:
+                    role_combo.setCurrentIndex(i)
+                    break
+        elif saved_role:
+            for i in range(role_combo.count()):
+                if str(role_combo.itemData(i)) == str(saved_role):
                     role_combo.setCurrentIndex(i)
                     break
         else:
@@ -479,6 +487,15 @@ class PackageDialog(QDialog, DialogUi):
                         role_combo.setCurrentIndex(i)
                         break
 
+        def _on_role_changed(idx):
+            data = role_combo.itemData(idx)
+            s = QSettings()
+            if data is None:
+                s.remove(f"gmd_pipeline/role_for_layer_{layer_name}")
+            else:
+                s.setValue(f"gmd_pipeline/role_for_layer_{layer_name}", str(data))
+
+        role_combo.currentIndexChanged.connect(_on_role_changed)
         self.layer_groups_tree.setItemWidget(layer_item, 1, role_combo)
         return role_combo
 
@@ -1366,6 +1383,12 @@ class PackageDialog(QDialog, DialogUi):
         # Populate data sources table
         self._populate_data_sources()
 
+        # Apply configured role policies to project layers
+        try:
+            self._apply_role_policies_to_project_layers()
+        except Exception:
+            pass
+
         # Flag to control batch mode
         self.is_batch_mode = False
         # Flag to handle batch cancellation
@@ -1444,8 +1467,19 @@ class PackageDialog(QDialog, DialogUi):
         main_layout.addWidget(export_group)
         
         def _on_config_folder_selected():
-            self.manualDir_btn.click() 
-            self.config_export_dir.setText(self.manualDir.text())
+            curr_dir = self.manualDir.text() or self.config_export_dir.text()
+            folder = QFileDialog.getExistingDirectory(
+                self.config_dialog, self.tr("Select Export Directory"), curr_dir
+            )
+            if folder:
+                native_folder = QDir.toNativeSeparators(folder)
+                self.manualDir.setText(native_folder)
+                self.config_export_dir.setText(native_folder)
+                QSettings().setValue("exportDirectoryManual", native_folder)
+                try:
+                    self.qfield_preferences.set_value("exportDirectoryManual", native_folder)
+                except Exception:
+                    pass
             
         self.config_export_dir_btn.clicked.connect(_on_config_folder_selected)
         
@@ -1514,7 +1548,11 @@ class PackageDialog(QDialog, DialogUi):
         self.restore_defaults_btn.clicked.connect(self._on_restore_defaults)
         
         close_btn = QPushButton(self.tr("Close"))
+        close_btn.clicked.connect(self._save_role_policies_from_table)
+        close_btn.clicked.connect(self._apply_role_policies_to_project_layers)
         close_btn.clicked.connect(self.config_dialog.accept)
+        self.config_dialog.finished.connect(self._save_role_policies_from_table)
+        self.config_dialog.finished.connect(self._apply_role_policies_to_project_layers)
         
         btn_layout.addStretch()
         btn_layout.addWidget(self.restore_defaults_btn)
@@ -1770,7 +1808,11 @@ class PackageDialog(QDialog, DialogUi):
         table.itemChanged.connect(lambda item: self._save_popup_layer_data_sources(table))
 
         btn_box = QDialogButtonBox(QDialogButtonBox.Ok)
+        btn_box.accepted.connect(lambda: self._save_popup_layer_data_sources(table))
+        btn_box.accepted.connect(self._apply_role_policies_to_project_layers)
         btn_box.accepted.connect(dialog.accept)
+        dialog.finished.connect(lambda: self._save_popup_layer_data_sources(table))
+        dialog.finished.connect(self._apply_role_policies_to_project_layers)
         layout.addWidget(btn_box)
 
         dialog.exec_()
@@ -1803,7 +1845,7 @@ class PackageDialog(QDialog, DialogUi):
                 continue
 
             table.setRowCount(row + 1)
-            saved = saved_layer_ds.get(lyr.id(), {})
+            saved = saved_layer_ds.get(lyr.id()) or saved_layer_ds.get(lyr.name(), {})
 
             name_item = QTableWidgetItem(lyr.name())
             name_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
@@ -1888,6 +1930,7 @@ class PackageDialog(QDialog, DialogUi):
             if not item0:
                 continue
             layer_id = item0.data(Qt.UserRole)
+            layer_name = item0.text().strip()
             if not layer_id:
                 continue
 
@@ -1901,13 +1944,16 @@ class PackageDialog(QDialog, DialogUi):
             format_combo = table.cellWidget(row, 5)
             curr_fmt = format_combo.currentText() if format_combo else "(data.gpkg)"
 
-            layer_ds[layer_id] = {
+            entry = {
                 "action": curr_action,
                 "identifiable": ident_item.checkState() == Qt.Checked if ident_item else True,
                 "readonly": ro_item.checkState() == Qt.Checked if ro_item else False,
                 "searchable": search_item.checkState() == Qt.Checked if search_item else True,
                 "format": curr_fmt,
             }
+            layer_ds[layer_id] = entry
+            if layer_name:
+                layer_ds[layer_name] = entry
 
         settings.setValue("gmd_pipeline/layer_data_sources_dict", json.dumps(layer_ds))
 
@@ -2123,7 +2169,8 @@ class PackageDialog(QDialog, DialogUi):
                 if lyr:
                     role_id = get_item_role(item)
                     if role_id:
-                        policy = saved_policies.get(role_id, default_policies.get(role_id, {}))
+                        norm_role = str(role_id).replace("_bgy_combo_", "_ea_combo_")
+                        policy = saved_policies.get(role_id) or saved_policies.get(norm_role) or default_policies.get(norm_role, {})
                         if policy:
                             action_val = policy.get("action")
                             if action_val:
@@ -2174,8 +2221,12 @@ class PackageDialog(QDialog, DialogUi):
         except Exception:
             layer_ds_policies = {}
 
-        for layer_id, policy in layer_ds_policies.items():
-            lyr = project.mapLayer(layer_id)
+        for layer_key, policy in layer_ds_policies.items():
+            lyr = project.mapLayer(layer_key)
+            if not lyr:
+                match = project.mapLayersByName(layer_key)
+                if match:
+                    lyr = match[0]
             if not lyr or not policy:
                 continue
 
@@ -2464,6 +2515,23 @@ class PackageDialog(QDialog, DialogUi):
             summary = f"Batch Run Cancelled\n\nProcessed: {processed_count}\nLast processed: {last_geocode_processed or 'none'}"
         else:
             summary = f"Total geocodes processed: {processed_count}\nLast processed: {last_geocode_processed or 'none'}"
+
+        if errors:
+            preview = "\n".join(f"  • {e}" for e in errors[:5])
+            if len(errors) > 5:
+                preview += f"\n  ...and {len(errors) - 5} more"
+            summary += (
+                f"\n\nErrors ({len(errors)} failed):\n{preview}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"WHAT TO LOOK FOR:\n"
+                f"• Missing satellite imagery (pppmm_img.gpkg/.mbtiles) matching the municipality code in the satellite directory.\n"
+                f"• Boundary layer features with NULL, empty, or invalid geometries.\n"
+                f"• Export directory file locks or permission issues (e.g., project open in another app).\n\n"
+                f"WHAT TO FIX:\n"
+                f"• Verify that the Satellite Image Directory in settings contains matching imagery files.\n"
+                f"• Run Processing Toolbox > 'Fix Geometries' on the boundary layer.\n"
+                f"• Ensure the export directory is writable and close any running QField or QGIS instances accessing it."
+            )
         
         # Store results for display
         self.batch_summary = summary
@@ -2530,44 +2598,73 @@ class PackageDialog(QDialog, DialogUi):
 
     def setup_gui(self):
         """Populate gui and connect signals of the push dialog"""
-        # Restore the last manually selected export directory if available
-        try:
-            manual_export_dir = self.qfield_preferences.value("exportDirectoryManual")
-        except NameError:
-            manual_export_dir = None
-        if manual_export_dir:
+        # Restore the last manually selected export directory if available (persisted across sessions)
+        settings = QSettings()
+        manual_export_dir = settings.value("exportDirectoryManual", "", type=str)
+        if not manual_export_dir or not os.path.isdir(manual_export_dir):
+            try:
+                manual_export_dir = self.qfield_preferences.value("exportDirectoryManual")
+            except Exception:
+                manual_export_dir = None
+
+        if manual_export_dir and os.path.isdir(manual_export_dir):
             export_dirname = manual_export_dir
         else:
             try:
                 export_dirname = self.qfield_preferences.value("exportDirectoryProject")
-            except NameError:
+            except Exception:
                 export_dirname = None
             
             # Extract parent directory from the subfolder path created during export
-            # This ensures we always show the directory the user selected, not the export subfolder
             if export_dirname:
                 parent_path = str(Path(export_dirname).parent)
                 # Use parent if it's different from current (i.e., current is a subfolder)
                 if os.path.isdir(parent_path) and parent_path != export_dirname:
                     export_dirname = parent_path
             
-            if not export_dirname:
-                export_dirname = os.path.join(
-                    self.qfield_preferences.value("exportDirectory"),
-                    fileparts(QgsProject.instance().fileName())[1],
-                )
+            if not export_dirname or not os.path.isdir(export_dirname):
+                default_base = self.qfield_preferences.value("exportDirectory")
+                proj_file = QgsProject.instance().fileName()
+                proj_name = fileparts(proj_file)[1] if proj_file else "project"
+                export_dirname = os.path.join(default_base, proj_name) if default_base else ""
 
         self.manualDir.setText(QDir.toNativeSeparators(str(export_dirname)))
+
+        # Auto-save whenever manualDir text changes
+        def _on_manual_dir_changed(text):
+            if text and os.path.isdir(text):
+                QSettings().setValue("exportDirectoryManual", text)
+                try:
+                    self.qfield_preferences.set_value("exportDirectoryManual", text)
+                except Exception:
+                    pass
+
+        try:
+            self.manualDir.textChanged.disconnect()
+        except Exception:
+            pass
+        self.manualDir.textChanged.connect(_on_manual_dir_changed)
+
         # Connect folder selector and save selection to preferences
         def select_folder():
-            make_folder_selector(self.manualDir)()
-            try:
-                self.qfield_preferences.set_value("exportDirectoryManual", self.manualDir.text())
-            except NameError:
-                if hasattr(self.qfield_preferences, "register_setting"):
-                    self.qfield_preferences.register_setting("exportDirectoryManual", self.manualDir.text())
-                else:
+            folder = QFileDialog.getExistingDirectory(
+                self, self.tr("Select Export Directory"), self.manualDir.text()
+            )
+            if folder:
+                native_folder = QDir.toNativeSeparators(folder)
+                self.manualDir.setText(native_folder)
+                if hasattr(self, 'config_export_dir'):
+                    self.config_export_dir.setText(native_folder)
+                QSettings().setValue("exportDirectoryManual", native_folder)
+                try:
+                    self.qfield_preferences.set_value("exportDirectoryManual", native_folder)
+                except Exception:
                     pass
+
+        try:
+            self.manualDir_btn.clicked.disconnect()
+        except Exception:
+            pass
         self.manualDir_btn.clicked.connect(select_folder)
         self.update_info_visibility()
 
@@ -2707,11 +2804,12 @@ class PackageDialog(QDialog, DialogUi):
 
 
     def package_project(self):
+        from qgis.core import QgsMessageLog, Qgis
+
         # Synchronize layer visibility check states and group structure (without re-applying QML styles)
         try:
             self._on_apply_layer_groups(apply_qml=False)
         except Exception as e:
-            from qgis.core import QgsMessageLog, Qgis
             QgsMessageLog.logMessage(f"Auto-sync layer visibility before package: {e}", "GMD Pipeline", Qgis.Warning)
 
         # EA Level uses a dedicated batch export that iterates all EA features.
@@ -3418,15 +3516,27 @@ class PackageDialog(QDialog, DialogUi):
             QApplication.processEvents()
 
             if not raster_file or not os.path.exists(raster_file):
-                return False, "Invalid raster file."
+                return False, (
+                    f"[SATELLITE_IMAGE_MISSING] Source raster file not found: '{raster_file}'\n"
+                    f"  • WHAT TO LOOK FOR: Missing source imagery ({code_digits[:5]}_img.gpkg / .mbtiles) in satellite directory.\n"
+                    f"  • WHAT TO FIX: Verify the Satellite Image Directory path in settings and ensure matching imagery files exist."
+                )
 
             if not isinstance(selected_layer, QgsVectorLayer):
-                return False, "Invalid vector layer."
+                return False, (
+                    f"[INVALID_VECTOR_LAYER] Selected boundary layer is invalid or not a vector layer.\n"
+                    f"  • WHAT TO LOOK FOR: Layer removed or corrupted in QGIS project.\n"
+                    f"  • WHAT TO FIX: Re-select the boundary layer in the Layer dropdown."
+                )
 
             # Guard check: Ensure boundary vector layer has features before buffering
             if selected_layer.featureCount() == 0:
                 print(f"[RASTER CLIP WARNING] Layer '{selected_layer.name()}' has 0 features for area code '{code_digits}'. Skipping raster clip.")
-                return False, f"No boundary features found for area {code_digits}."
+                return False, (
+                    f"[NO_BOUNDARY_FEATURES] 0 features found for '{code_digits}' in layer '{selected_layer.name()}'.\n"
+                    f"  • WHAT TO LOOK FOR: Geocode '{code_digits}' missing from the 'geocode'/'ea_geocode' attribute column.\n"
+                    f"  • WHAT TO FIX: Open '{selected_layer.name()}' Attribute Table and verify that area code '{code_digits}' exists."
+                )
 
             self.update_total(30, 100, "Creating buffer mask...")
             self.update_task(30, 100)
@@ -3445,13 +3555,24 @@ class PackageDialog(QDialog, DialogUi):
             }, "Creating buffer mask...")
             
             if not success or not os.path.exists(buffer_output):
-                return False, "Buffer creation failed."
+                return False, (
+                    f"[BUFFER_MASK_FAILED] Failed to generate buffer polygon for '{code_digits}'.\n"
+                    f"  • WHAT TO LOOK FOR: Geometry topological error, invalid coordinates, or temp directory lock.\n"
+                    f"  • WHAT TO FIX: Run Processing Toolbox > 'Fix Geometries' on '{selected_layer.name()}'."
+                )
 
             # Guard check: Verify buffered mask layer contains valid cutline features before GDAL warp
             mask_check = QgsVectorLayer(buffer_output, "mask_check")
             if not mask_check.isValid() or mask_check.featureCount() == 0:
                 print(f"[RASTER CLIP WARNING] Buffered mask layer for '{code_digits}' contains 0 cutline features. Skipping GDAL clip.")
-                return False, f"Mask layer contains 0 cutline features for area {code_digits}."
+                return False, (
+                    f"[CUTLINE_MASK_EMPTY] Mask layer contains 0 cutline features for '{code_digits}'.\n"
+                    f"  • WHAT TO LOOK FOR: NULL, empty, or self-intersecting polygon geometry for area '{code_digits}' in '{selected_layer.name()}'.\n"
+                    f"  • WHAT TO FIX:\n"
+                    f"     1. Open '{selected_layer.name()}' Attribute Table and locate row '{code_digits}'.\n"
+                    f"     2. Right-click and choose 'Zoom to Feature' to check if geometry is visible.\n"
+                    f"     3. Run Processing Toolbox > 'Fix Geometries' on '{selected_layer.name()}' to repair invalid polygons."
+                )
 
             self.update_total(60, 100, "Clipping raster...")
             self.update_task(60, 100)
@@ -3472,7 +3593,7 @@ class PackageDialog(QDialog, DialogUi):
                 "SET_RESOLUTION": False,
                 "X_RESOLUTION": None,
                 "Y_RESOLUTION": None,
-                "MULTITHREADING": False,
+                "MULTITHREADING": True,
                 "OPTIONS": "",
                 "DATA_TYPE": 0,
                 "EXTRA": "",
@@ -3480,7 +3601,11 @@ class PackageDialog(QDialog, DialogUi):
             }, "Clipping raster by mask layer...")
             
             if not success or not os.path.exists(output_raster):
-                return False, "Clipped output file was not created."
+                return False, (
+                    f"[RASTER_CLIP_FAILED] Clipped GeoTIFF was not generated for '{code_digits}'.\n"
+                    f"  • WHAT TO LOOK FOR: GDAL execution error, coordinate reference system (CRS) mismatch, or disk write error.\n"
+                    f"  • WHAT TO FIX: Ensure destination folder '{parent_export_path}' has write permissions and sufficient disk space."
+                )
 
             self.update_total(90, 100, "Building pyramids...")
             self.update_task(90, 100)
@@ -3947,11 +4072,12 @@ class PackageDialog(QDialog, DialogUi):
           3. Package the filtered project as a QField .qgz into
              ``{ExportDir}/{ea_geocode}/``.
         """
+        from qgis.core import QgsMessageLog, Qgis
+
         # Synchronize layer visibility check states and group structure (without re-applying QML styles)
         try:
             self._on_apply_layer_groups(apply_qml=False)
         except Exception as e:
-            from qgis.core import QgsMessageLog, Qgis
             QgsMessageLog.logMessage(f"Auto-sync layer visibility before EA batch export: {e}", "GMD Pipeline", Qgis.Warning)
 
         # --- Validate inputs ---
@@ -3960,14 +4086,27 @@ class PackageDialog(QDialog, DialogUi):
         if isinstance(selected_data, str):
             selected_layer = QgsProject.instance().mapLayer(selected_data)
         if selected_layer is None:
-            QMessageBox.warning(self, "Selection Error", "Please select a valid EA layer.")
+            QMessageBox.warning(
+                self, "Selection Error",
+                "Please select a valid EA layer.\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "WHAT TO LOOK FOR:\n"
+                "• No layer selected in the Layer Dropdown, or the selected layer is not a valid vector layer.\n\n"
+                "WHAT TO FIX:\n"
+                "• Choose your EA boundary layer (ending in '_ea') from the Layer dropdown."
+            )
             return
 
         ea_geocode_index = selected_layer.fields().indexOf("ea_geocode")
         if ea_geocode_index == -1:
             QMessageBox.warning(
                 self, "Field Error",
-                "The selected EA layer must have an 'ea_geocode' field.",
+                f"The selected EA layer '{selected_layer.name()}' must have an 'ea_geocode' field.\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "WHAT TO LOOK FOR:\n"
+                "• Missing or misnamed 'ea_geocode' column in the attribute table.\n\n"
+                "WHAT TO FIX:\n"
+                "• Open the layer attribute table and ensure a field named 'ea_geocode' exists (or rename your code column to 'ea_geocode')."
             )
             return
 
@@ -3975,7 +4114,12 @@ class PackageDialog(QDialog, DialogUi):
         if not satellite_dir or not os.path.isdir(satellite_dir):
             QMessageBox.warning(
                 self, "Directory Error",
-                "Please select a valid satellite image directory before exporting.",
+                "Please select a valid satellite image directory before exporting.\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "WHAT TO LOOK FOR:\n"
+                "• Empty or invalid folder path in the Satellite Image Directory setting.\n\n"
+                "WHAT TO FIX:\n"
+                "• Click Browse next to Satellite Image Directory and select the folder containing your .gpkg or .mbtiles images."
             )
             return
 
@@ -3989,14 +4133,26 @@ class PackageDialog(QDialog, DialogUi):
                 self, "Missing Required Layers",
                 "The following required layers are not assigned:\n\n"
                 + "\n".join(f"  • {l}" for l in missing_required)
-                + "\n\nPlease assign them in the Layer Assignment panel.",
+                + "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                + "WHAT TO LOOK FOR:\n"
+                + "• Unassigned layer dropdowns in the Layer Assignment panel.\n\n"
+                + "WHAT TO FIX:\n"
+                + "• Open the Layer Assignment panel and assign the required layers to their matching project layers.",
             )
             return
 
         # Use the checked items from the EA list widget
         geocodes = self._get_checked_ea_geocodes()
         if not geocodes:
-            QMessageBox.warning(self, "No Selection", "Please check at least one EA geocode to process.")
+            QMessageBox.warning(
+                self, "No Selection",
+                "Please check at least one EA geocode to process.\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "WHAT TO LOOK FOR:\n"
+                "• No checkboxes are checked in the EA selection list.\n\n"
+                "WHAT TO FIX:\n"
+                "• Expand the tree and check the checkboxes for the EAs you want to export, or click 'Select All'."
+            )
             return
 
         export_folder = Path(self.manualDir.text())
@@ -4184,10 +4340,21 @@ class PackageDialog(QDialog, DialogUi):
                 f"Total packaged: {processed_count} of {len(geocodes)}"
             )
         if errors:
-            preview = "\n".join(errors[:5])
+            preview = "\n".join(f"  • {e}" for e in errors[:5])
             if len(errors) > 5:
-                preview += f"\n...and {len(errors) - 5} more"
-            summary += f"\n\nErrors:\n{preview}"
+                preview += f"\n  ...and {len(errors) - 5} more"
+            summary += (
+                f"\n\nErrors ({len(errors)} failed):\n{preview}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"WHAT TO LOOK FOR:\n"
+                f"• Missing satellite imagery (pppmm_img.gpkg/.mbtiles) matching the 5-digit municipality code in the satellite directory.\n"
+                f"• EA boundary layer features with NULL, empty, or invalid geometries.\n"
+                f"• Export directory file locks or permission issues (e.g., project open in another app).\n\n"
+                f"WHAT TO FIX:\n"
+                f"• Verify that the Satellite Image Directory in settings contains matching imagery files.\n"
+                f"• Run Processing Toolbox > 'Fix Geometries' on the EA boundary layer.\n"
+                f"• Ensure the export directory is writable and close any running QField or QGIS instances accessing it."
+            )
 
         self.batch_summary = summary
         self._reload_project_after_ea_batch = True
@@ -5129,10 +5296,11 @@ class PackageDialog(QDialog, DialogUi):
                     combo = self.layer_groups_tree.itemWidget(item, 1)
                     if combo and combo.currentData() is not None:
                         attr_key = str(combo.currentData())
+                        norm_attr_key = attr_key.replace("_bgy_combo_", "_ea_combo_")
                         layer_name = item.text(0)
-                        policy = role_policies.get(attr_key, {})
+                        policy = role_policies.get(attr_key) or role_policies.get(norm_attr_key, {})
                         export_fmt = policy.get("format") or policy.get("export_format") or "(data.gpkg)"
-                        suffix = attr_to_suffix.get(attr_key, f"_{self._normalized_layer_name(layer_name)}")
+                        suffix = attr_to_suffix.get(attr_key, attr_to_suffix.get(norm_attr_key, f"_{self._normalized_layer_name(layer_name)}"))
                         layer_role_info[layer_name] = {
                             "attr_key": attr_key,
                             "export_format": export_fmt,
@@ -5156,8 +5324,8 @@ class PackageDialog(QDialog, DialogUi):
             info = layer_role_info.get(lname, layer_role_info.get(norm_name, {}))
             fmt = info.get("export_format")
 
-            # Per-layer data source override takes priority
-            layer_ds_override = layer_ds_policies.get(layer.id(), {})
+            # Per-layer data source override takes priority (check ID and Name)
+            layer_ds_override = layer_ds_policies.get(layer.id()) or layer_ds_policies.get(layer.name(), {})
             if layer_ds_override.get("format"):
                 fmt = layer_ds_override["format"]
 
@@ -5165,9 +5333,6 @@ class PackageDialog(QDialog, DialogUi):
                 if norm_name.endswith("_special_ea"):
                     fmt = ".gpkg"
                     suffix = "_special_ea"
-                elif norm_name.endswith(("_ea_update", "_bgy_update", "_geocode", "_geotag")) or "geotag" in norm_name or "update" in norm_name:
-                    fmt = ".shp"
-                    suffix = ""
                 elif norm_name.endswith(("_bldg_point", "_bldgpts", "_bldg_points")):
                     fmt = ".geojson"
                     suffix = "_bldg_point"
@@ -5618,11 +5783,12 @@ class PackageDialog(QDialog, DialogUi):
           3. Package the filtered project as a QField .qgz into
              ``{ExportDir}/{bgy_geocode}/{bgy_geocode}.qgz``.
         """
+        from qgis.core import QgsMessageLog, Qgis
+
         # Synchronize layer visibility check states and group structure (without re-applying QML styles)
         try:
             self._on_apply_layer_groups(apply_qml=False)
         except Exception as e:
-            from qgis.core import QgsMessageLog, Qgis
             QgsMessageLog.logMessage(f"Auto-sync layer visibility before BGY batch export: {e}", "GMD Pipeline", Qgis.Warning)
 
         # --- Validate inputs ---
@@ -5631,14 +5797,27 @@ class PackageDialog(QDialog, DialogUi):
         if isinstance(selected_data, str):
             selected_layer = QgsProject.instance().mapLayer(selected_data)
         if selected_layer is None:
-            QMessageBox.warning(self, "Selection Error", "Please select a valid Barangay layer.")
+            QMessageBox.warning(
+                self, "Selection Error",
+                "Please select a valid Barangay layer.\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "WHAT TO LOOK FOR:\n"
+                "• No layer selected in the Layer Dropdown, or the selected layer is not a valid vector layer.\n\n"
+                "WHAT TO FIX:\n"
+                "• Choose your Barangay boundary layer (ending in '_bgy') from the Layer dropdown."
+            )
             return
 
         geocode_index = selected_layer.fields().indexOf("geocode")
         if geocode_index == -1:
             QMessageBox.warning(
                 self, "Field Error",
-                "The selected Barangay layer must have a 'geocode' field.",
+                f"The selected Barangay layer '{selected_layer.name()}' must have a 'geocode' field.\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "WHAT TO LOOK FOR:\n"
+                "• Missing or misnamed 'geocode' column in the attribute table.\n\n"
+                "WHAT TO FIX:\n"
+                "• Open the layer attribute table and ensure a field named 'geocode' exists (or rename your code column to 'geocode')."
             )
             return
 
@@ -5646,7 +5825,12 @@ class PackageDialog(QDialog, DialogUi):
         if not satellite_dir or not os.path.isdir(satellite_dir):
             QMessageBox.warning(
                 self, "Directory Error",
-                "Please select a valid satellite image directory before exporting.",
+                "Please select a valid satellite image directory before exporting.\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "WHAT TO LOOK FOR:\n"
+                "• Empty or invalid folder path in the Satellite Image Directory setting.\n\n"
+                "WHAT TO FIX:\n"
+                "• Click Browse next to Satellite Image Directory and select the folder containing your .gpkg or .mbtiles images."
             )
             return
 
@@ -5660,14 +5844,26 @@ class PackageDialog(QDialog, DialogUi):
                 self, "Missing Required Layers",
                 "The following required layers are not assigned:\n\n"
                 + "\n".join(f"  • {l}" for l in missing_required)
-                + "\n\nPlease assign them in the Layer Assignment panel.",
+                + "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                + "WHAT TO LOOK FOR:\n"
+                + "• Unassigned layer dropdowns in the Layer Assignment panel.\n\n"
+                + "WHAT TO FIX:\n"
+                + "• Open the Layer Assignment panel and assign the required layers to their matching project layers.",
             )
             return
 
         # Use the checked items from the BGY list widget
         geocodes = self._get_checked_bgy_geocodes()
         if not geocodes:
-            QMessageBox.warning(self, "No Selection", "Please check at least one BGY geocode to process.")
+            QMessageBox.warning(
+                self, "No Selection",
+                "Please check at least one BGY geocode to process.\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "WHAT TO LOOK FOR:\n"
+                "• No checkboxes are checked in the Barangay selection list.\n\n"
+                "WHAT TO FIX:\n"
+                "• Expand the tree and check the checkboxes for the Barangays you want to export, or click 'Select All'."
+            )
             return
 
         export_folder = Path(self.manualDir.text())
@@ -5847,10 +6043,21 @@ class PackageDialog(QDialog, DialogUi):
                 f"Total packaged: {processed_count} of {len(geocodes)}"
             )
         if errors:
-            preview = "\n".join(errors[:5])
+            preview = "\n".join(f"  • {e}" for e in errors[:5])
             if len(errors) > 5:
-                preview += f"\n...and {len(errors) - 5} more"
-            summary += f"\n\nErrors:\n{preview}"
+                preview += f"\n  ...and {len(errors) - 5} more"
+            summary += (
+                f"\n\nErrors ({len(errors)} failed):\n{preview}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"WHAT TO LOOK FOR:\n"
+                f"• Missing satellite imagery (pppmm_img.gpkg/.mbtiles) matching the 5-digit municipality code in the satellite directory.\n"
+                f"• Barangay boundary layer features with NULL, empty, or invalid geometries.\n"
+                f"• Export directory file locks or permission issues (e.g., project open in another app).\n\n"
+                f"WHAT TO FIX:\n"
+                f"• Verify that the Satellite Image Directory in settings contains matching imagery files.\n"
+                f"• Run Processing Toolbox > 'Fix Geometries' on the Barangay boundary layer.\n"
+                f"• Ensure the export directory is writable and close any running QField or QGIS instances accessing it."
+            )
 
         self.batch_summary = summary
         QTimer.singleShot(100, self._show_batch_completion_and_close)
@@ -7705,6 +7912,16 @@ class RasterClipWorker(QThread):
 
         except Exception as e:
             self.finished.emit(False, str(e))
+
+
+
+
+
+
+
+
+
+
 
 
 

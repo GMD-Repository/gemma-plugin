@@ -548,6 +548,9 @@ class QgsGeometry:
     def centroid(self):
         c = self.boundingBox().center()
         return QgsGeometry.fromPointXY(c)
+
+    def pointOnSurface(self):
+        return self.centroid()
     def asPoint(self): return getattr(self, '_point', QgsPointXY(0.0, 0.0))
 
     def boundingBox(self):
@@ -1221,6 +1224,7 @@ class QgsProcessingParameterDefinition:
     def __init__(self, name="", description="", *args, **kwargs):
         self._name = str(name)
         self._description = str(description)
+        self._metadata = {}
 
     def name(self):
         return self._name
@@ -1228,13 +1232,29 @@ class QgsProcessingParameterDefinition:
     def description(self):
         return self._description
 
+    def setMetadata(self, metadata):
+        self._metadata = metadata or {}
+
+    def metadata(self):
+        return self._metadata
+
 
 class QgsProcessingParameterMultipleLayers(QgsProcessingParameterDefinition):
     pass
 
 
 class QgsProcessingParameterEnum(QgsProcessingParameterDefinition):
-    pass
+    def __init__(self, name="", description="", options=None, defaultValue=0, optional=False, *args, **kwargs):
+        super().__init__(name, description, *args, **kwargs)
+        self._options = options or []
+        self._default_value = defaultValue
+        self._optional = optional
+
+    def defaultValue(self):
+        return self._default_value
+
+    def options(self):
+        return self._options
 
 
 class QgsProcessingParameterVectorLayer(QgsProcessingParameterDefinition):
@@ -1258,7 +1278,8 @@ class QgsProcessingParameterBoolean(QgsProcessingParameterDefinition):
 
 
 class QgsProcessingParameterNumber(QgsProcessingParameterDefinition):
-    pass
+    Integer = 0
+    Double = 1
 
 
 class QgsProcessingAlgorithm:
@@ -1507,7 +1528,13 @@ class MockQObject:
 
 
 class MockQWidget(MockGenericClass):
-    def __init__(self, parent=None): super().__init__()
+    def __init__(self, parent=None):
+        super().__init__()
+        self._visible = True
+    def setVisible(self, visible): self._visible = bool(visible)
+    def isVisible(self): return getattr(self, '_visible', True)
+    def show(self): self.setVisible(True)
+    def hide(self): self.setVisible(False)
     def setObjectName(self, name): self._object_name = str(name)
     def objectName(self): return getattr(self, '_object_name', "")
     def setWindowFlags(self, flags): self._window_flags = flags
@@ -1703,24 +1730,33 @@ def setup_qgis_mock_if_needed():
         def __init__(self, parent=None, *args, **kwargs):
             self._parent = parent
             self._enabled = True
+            self._visible = True
         def setParent(self, parent): self._parent = parent
         def parent(self): return self._parent
         def setEnabled(self, enabled): self._enabled = bool(enabled)
         def isEnabled(self): return bool(self._enabled)
+        def setVisible(self, visible): self._visible = bool(visible)
+        def isVisible(self): return getattr(self, '_visible', True)
         def setWindowTitle(self, title): pass
         def setObjectName(self, name): self._object_name = str(name)
         def objectName(self): return getattr(self, '_object_name', "")
         def setLayout(self, layout): pass
+        def setSizePolicy(self, *args, **kwargs): pass
+        def sizePolicy(self): return MockGenericClass()
         def setMinimumSize(self, *args): pass
         def setMinimumWidth(self, *args): pass
         def setMinimumHeight(self, *args): pass
         def setMaximumHeight(self, *args): pass
         def setFixedHeight(self, *args): pass
+        def setFixedWidth(self, *args): pass
+        def setFixedSize(self, *args): pass
         def resize(self, *args): pass
-        def show(self): pass
-        def hide(self): pass
+        def show(self): self.setVisible(True)
+        def hide(self): self.setVisible(False)
         def setStyleSheet(self, style): pass
         def setFont(self, font): pass
+        def setToolTip(self, text): self._tooltip = str(text)
+        def toolTip(self): return getattr(self, '_tooltip', "")
         def setWindowFlags(self, flags): self._window_flags = flags
         def windowFlags(self): return getattr(self, '_window_flags', 0)
         def setWindowIcon(self, icon): pass
@@ -1872,11 +1908,37 @@ def setup_qgis_mock_if_needed():
         def toolTip(self):
             return getattr(self, '_tooltip', "")
 
+        def click(self):
+            if self._enabled:
+                self.clicked.emit()
+
         def setStyleSheet(self, style):
             self._style = style
 
         def styleSheet(self):
             return getattr(self, '_style', "")
+
+        def setIcon(self, icon): pass
+        def setIconSize(self, size): pass
+        def setCursor(self, cursor): pass
+
+    class MockQToolButton(MockQPushButton):
+        def __init__(self, parent=None):
+            super().__init__("", parent)
+            self._checkable = False
+            self._checked = False
+
+        def setCheckable(self, checkable):
+            self._checkable = bool(checkable)
+
+        def isCheckable(self):
+            return self._checkable
+
+        def setChecked(self, checked):
+            self._checked = bool(checked)
+
+        def isChecked(self):
+            return self._checked
 
     class MockQTextEdit(MockQWidget):
         def __init__(self, text="", parent=None):
@@ -1897,6 +1959,69 @@ def setup_qgis_mock_if_needed():
             self._read_only = ro
         def isReadOnly(self):
             return self._read_only
+
+    class MockQTabBar(MockQWidget):
+        def setElideMode(self, mode): pass
+        def setUsesScrollButtons(self, use): pass
+
+    class MockQTabWidget(MockQWidget):
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self._tabs = []  # list of (widget, text)
+            self._current_index = -1
+            self._tab_bar = MockQTabBar(self)
+            self.currentChanged = MockSignal()
+
+        def tabBar(self):
+            return self._tab_bar
+
+        def addTab(self, widget, text=""):
+            self._tabs.append((widget, str(text)))
+            if self._current_index == -1:
+                self._current_index = 0
+                self.currentChanged.emit(0)
+            return len(self._tabs) - 1
+
+        def insertTab(self, index, widget, text=""):
+            self._tabs.insert(index, (widget, str(text)))
+            if self._current_index == -1:
+                self._current_index = 0
+                self.currentChanged.emit(0)
+            return index
+
+        def currentIndex(self):
+            return self._current_index
+
+        def setCurrentIndex(self, index):
+            if index != self._current_index:
+                self._current_index = index
+                self.currentChanged.emit(index)
+
+        def currentWidget(self):
+            if 0 <= self._current_index < len(self._tabs):
+                return self._tabs[self._current_index][0]
+            return None
+
+        def widget(self, index):
+            if 0 <= index < len(self._tabs):
+                return self._tabs[index][0]
+            return None
+
+        def count(self):
+            return len(self._tabs)
+
+        def tabText(self, index):
+            if 0 <= index < len(self._tabs):
+                return self._tabs[index][1]
+            return ""
+
+        def setTabText(self, index, text):
+            if 0 <= index < len(self._tabs):
+                w, _ = self._tabs[index]
+                self._tabs[index] = (w, str(text))
+
+        def setTabEnabled(self, index, enabled): pass
+        def setTabToolTip(self, index, tip): pass
 
     class MockQTableWidgetItem:
         def __init__(self, text=""):
@@ -1931,6 +2056,22 @@ def setup_qgis_mock_if_needed():
 
         def setFont(self, font): pass
 
+        def setData(self, role, value):
+            if not hasattr(self, '_data'):
+                self._data = {}
+            self._data[role] = value
+
+        def setToolTip(self, tip):
+            self._tooltip = str(tip)
+
+        def toolTip(self):
+            return getattr(self, '_tooltip', "")
+
+        def data(self, role):
+            if not hasattr(self, '_data'):
+                self._data = {}
+            return self._data.get(role, None)
+
     class MockQTableWidget(MockQWidget):
         def __init__(self, rows=0, cols=0, parent=None):
             super().__init__(parent)
@@ -1939,6 +2080,8 @@ def setup_qgis_mock_if_needed():
             self._items = {}
             self._cellWidgets = {}
             self._horizontalHeader = MockGenericClass()
+            self.cellDoubleClicked = MockSignal()
+            self.cellClicked = MockSignal()
 
         def setRowCount(self, count):
             self._rowCount = count
@@ -1964,6 +2107,9 @@ def setup_qgis_mock_if_needed():
         def cellWidget(self, row, col):
             return self._cellWidgets.get((row, col), None)
 
+        def setHorizontalScrollBarPolicy(self, policy): pass
+        def setVerticalScrollBarPolicy(self, policy): pass
+
         NoEditTriggers = 0
         SelectRows = 1
 
@@ -1974,6 +2120,16 @@ def setup_qgis_mock_if_needed():
             return self._horizontalHeader
 
         def resizeColumnsToContents(self): pass
+        def columnWidth(self, col):
+            return getattr(self, '_col_widths', {}).get(col, 100)
+        def setColumnWidth(self, col, width):
+            if not hasattr(self, '_col_widths'):
+                self._col_widths = {}
+            self._col_widths[col] = width
+        def viewport(self):
+            m = MockGenericClass()
+            m.width = lambda: 800
+            return m
         def setHorizontalHeaderLabels(self, labels):
             self._headerLabels = list(labels)
         def horizontalHeaderItem(self, col):
@@ -1985,6 +2141,11 @@ def setup_qgis_mock_if_needed():
         def setAlternatingRowColors(self, val): pass
         def setMinimumHeight(self, h): pass
         def setSizePolicy(self, h, v): pass
+        def setHorizontalScrollBarPolicy(self, policy): pass
+        def setVerticalScrollBarPolicy(self, policy): pass
+        def columnWidth(self, col): return 100
+        def setColumnWidth(self, col, w): pass
+        def viewport(self): return MockGenericClass()
 
     qtcore_mod.QCoreApplication = MockQCoreApplication
     qtcore_mod.QThread = MockQThread
@@ -2000,6 +2161,8 @@ def setup_qgis_mock_if_needed():
     qtgui_mod.QDoubleSpinBox = MockQDoubleSpinBox
     qtgui_mod.QComboBox = MockQComboBox
     qtgui_mod.QPushButton = MockQPushButton
+    qtgui_mod.QToolButton = MockQToolButton
+    qtgui_mod.QTabWidget = MockQTabWidget
     qtgui_mod.QTableWidget = MockQTableWidget
     qtgui_mod.QTableWidgetItem = MockQTableWidgetItem
     qtgui_mod.QTextEdit = MockQTextEdit
@@ -2060,6 +2223,8 @@ def setup_qgis_mock_if_needed():
         pyqt5_qtgui_mod.QDoubleSpinBox = MockQDoubleSpinBox
         pyqt5_qtgui_mod.QComboBox = MockQComboBox
         pyqt5_qtgui_mod.QPushButton = MockQPushButton
+        pyqt5_qtgui_mod.QToolButton = MockQToolButton
+        pyqt5_qtgui_mod.QTabWidget = MockQTabWidget
         pyqt5_qtgui_mod.QTableWidget = MockQTableWidget
         pyqt5_qtgui_mod.QTableWidgetItem = MockQTableWidgetItem
         pyqt5_qtgui_mod.QTextEdit = MockQTextEdit
