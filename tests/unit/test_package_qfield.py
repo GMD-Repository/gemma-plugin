@@ -285,7 +285,7 @@ class TestPackageQfield(unittest.TestCase):
 
     def test_offline_converter_on_offline_editing_next_layer_bounds(self):
         """Verify _on_offline_editing_next_layer safely handles 0, negative, out-of-range, and empty layer lists."""
-        from libqfieldsync.offline_converter import OfflineConverter
+        from gemma_sync.offline_converter import OfflineConverter
 
         converter = OfflineConverter.__new__(OfflineConverter)
         converter.trUtf8 = lambda s: s
