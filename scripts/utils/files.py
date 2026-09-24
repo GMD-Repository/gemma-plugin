@@ -96,8 +96,10 @@ def append_step_summary(content: str) -> None:
     """
     summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
     if not summary_file:
-        logger.warning("GITHUB_STEP_SUMMARY not set — printing summary to stdout")
-        print(content)
+        try:
+            print(content)
+        except UnicodeEncodeError:
+            print(content.encode("ascii", errors="replace").decode("ascii"))
         return
 
     with open(summary_file, "a", encoding="utf-8") as f:

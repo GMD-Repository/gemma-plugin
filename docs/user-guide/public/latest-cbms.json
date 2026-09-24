@@ -1,0 +1,10 @@
+{
+  "version": "1.0.2-cbms-r1636",
+  "revision": "r1636",
+  "tag": "cbms-r1636",
+  "releaseDate": "2026-09-24",
+  "repositoryUrl": "https://raw.githubusercontent.com/GMD-Repository/gemma-plugin/cbms_main/docs/user-guide/public/gemma-cbms.xml",
+  "downloadUrl": "https://github.com/GMD-Repository/gemma-plugin-closed-preview/releases/download/cbms-r1636/gemma-cbmsbeta-r1636.zip",
+  "releaseUrl": "https://github.com/GMD-Repository/gemma-plugin-closed-preview/releases/tag/cbms-r1636",
+  "branch": "cbms_main"
+}
