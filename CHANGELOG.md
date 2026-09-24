@@ -5,6 +5,31 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.9] - 2026-09-24
+
+### Added
+- Added EA delineation line generation, candidate merge guards, dialog refresh, and unmerge workflow ([@pacoleslaw](https://github.com/pacoleslaw)) ([#300](https://github.com/GMD-Repository/gemma-plugin/pull/300))
+- Implemented enumeration area creation pipeline phases, dialog, and unit tests ([@pacoleslaw](https://github.com/pacoleslaw))
+
+### Changed
+- Replaced in-row preview button with row double-click zoom functionality ([@pacoleslaw](https://github.com/pacoleslaw)) ([#287](https://github.com/GMD-Repository/gemma-plugin/pull/287))
+- Enhanced individual merge workflow by filtering extracted buildings based on execution mode ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#285](https://github.com/GMD-Repository/gemma-plugin/pull/285))
+- Isolated bundled libqfieldsync into gemma_sync namespace ([@velascojasper0](https://github.com/velascojasper0)) ([#299](https://github.com/GMD-Repository/gemma-plugin/pull/299))
+- Enabled GDAL multithreaded raster clipping and removed hardcoded .shp export fallback ([@nbacquiano-ui](https://github.com/nbacquiano-ui)) ([#297](https://github.com/GMD-Repository/gemma-plugin/pull/297))
+- Added QGIS style for delineated EA lines and QField package preference and dialog modules ([@nbacquiano-ui](https://github.com/nbacquiano-ui))
+- Preserved data source during various operations ([@nbacquiano-ui](https://github.com/nbacquiano-ui))
+
+### Fixed
+- Prevented access to deleted C++ layer in pipeline splitting lines cleanup ([@pacoleslaw](https://github.com/pacoleslaw))
+- Restored candidate preview and map canvas zoom in candidate tables ([@pacoleslaw](https://github.com/pacoleslaw))
+- Kept Contested boundary polygons out of geocode deduplication process ([@ftating19](https://github.com/ftating19)) ([#289](https://github.com/GMD-Repository/gemma-plugin/pull/289))
+
+### Removed
+- Removed 255-character cap from remarks/involved_bgys fields ([@ftating19](https://github.com/ftating19)) ([#290](https://github.com/GMD-Repository/gemma-plugin/pull/290))
+
+### Documentation
+- Added EA delineation and merging dialog implementation along with user guide documentation ([@pacoleslaw](https://github.com/pacoleslaw))
+
 ## [1.0.8] - 2026-09-21
 
 ### Added
