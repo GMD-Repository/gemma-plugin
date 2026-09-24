@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <?xml-stylesheet type="text/xsl" href=""?>
 <plugins>
-  <pyqgis_plugin name="GEMMA (CBMS Beta)" version="1.0.2-cbms-r1636">
-    <version>1.0.2-cbms-r1636</version>
+  <pyqgis_plugin name="GEMMA (CBMS Beta)" version="1.0.2-cbms-r1638">
+    <version>1.0.2-cbms-r1638</version>
     <description>GIS Extension for Map Management and Analysis (CBMS Beta Channel)</description>
     <about>This plugin is developed by the Geospatial Management Division to provide a comprehenive set of tools that could be used for map management and analyses for different sorts of activities. (CBMS Beta Channel)</about>
     <author>Geospatial Management Division</author>
     <author_name>Geospatial Management Division</author_name>
     <qgis_minimum_version>3.0</qgis_minimum_version>
     <homepage>https://github.com/GMD-Repository/gemma-plugin/tree/cbms_main</homepage>
-    <download_url>https://github.com/GMD-Repository/gemma-plugin-closed-preview/releases/download/cbms-r1636/gemma-cbmsbeta-r1636.zip</download_url>
+    <download_url>https://github.com/GMD-Repository/gemma-plugin-closed-preview/releases/download/cbms-r1638/gemma-cbmsbeta-r1638.zip</download_url>
     <icon>https://raw.githubusercontent.com/GMD-Repository/gemma-plugin/cbms_main/icons/icon.png</icon>
     <file_name>gemma-cbmsbeta.zip</file_name>
     <upload_date>2026-09-24</upload_date>
