@@ -312,6 +312,7 @@ def prune_old_releases(
     repo: str,
     token: str,
     keep_count: int = 10,
+    tag_prefix: str | None = None,
 ) -> None:
     """Delete older GitHub releases and their associated tags, keeping only the latest `keep_count` releases.
 
@@ -320,6 +321,8 @@ def prune_old_releases(
         repo: Repository name.
         token: GitHub API token.
         keep_count: Number of latest releases to retain (default: 10).
+        tag_prefix: Optional prefix filter (e.g. 'cbms-' or 'r'). If specified, only
+            releases whose tag_name starts with this prefix will be counted and pruned.
     """
     headers = {
         "Accept": "application/vnd.github+json",
@@ -334,12 +337,25 @@ def prune_old_releases(
         return
 
     releases = resp.json()
+    if tag_prefix:
+        releases = [r for r in releases if r.get("tag_name", "").startswith(tag_prefix)]
+
     if len(releases) <= keep_count:
-        logger.info("Found %d releases (<= %d limit). No cleanup needed.", len(releases), keep_count)
+        logger.info(
+            "Found %d release(s)%s (<= %d limit). No cleanup needed.",
+            len(releases),
+            f" matching '{tag_prefix}*'" if tag_prefix else "",
+            keep_count,
+        )
         return
 
     releases_to_delete = releases[keep_count:]
-    logger.info("Pruning %d old release(s), retaining latest %d...", len(releases_to_delete), keep_count)
+    logger.info(
+        "Pruning %d old release(s)%s, retaining latest %d...",
+        len(releases_to_delete),
+        f" matching '{tag_prefix}*'" if tag_prefix else "",
+        keep_count,
+    )
 
     for rel in releases_to_delete:
         rel_id = rel["id"]

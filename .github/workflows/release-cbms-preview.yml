@@ -1,0 +1,78 @@
+name: Publish CBMS Preview Release
+
+on:
+  push:
+    branches:
+      - cbms_main
+    paths-ignore:
+      - 'docs/**'
+      - 'metadata.txt'
+      - 'CHANGELOG.md'
+      - 'README.md'
+      - '.github/**'
+  workflow_dispatch:
+
+concurrency:
+  group: cbms-preview-release
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  build-and-release-cbms:
+    name: Build & Release CBMS Preview
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Generate Gemma Bot Token ──────────────────────────────────
+      - name: Generate Gemma Bot Token
+        id: generate-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      # ── 2. Checkout ──────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ steps.generate-token.outputs.token || secrets.PREVIEW_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      # ── 3. Setup Python ──────────────────────────────────────────────
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # ── 4. Install dependencies ──────────────────────────────────────
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+
+      # ── 5. Run CBMS release pipeline ─────────────────────────────────
+      - name: Run CBMS release pipeline
+        id: cbms_preview
+        env:
+          GITHUB_TOKEN: ${{ steps.generate-token.outputs.token || secrets.PREVIEW_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/release/release_cbms.py \
+            --branch "${{ github.ref_name }}"
+
+      # ── 6. Commit CBMS channel files directly ────────────────────────
+      - name: Commit CBMS channel files directly
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token || secrets.PREVIEW_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "Gemma Release[bot]"
+          git config user.email "gemma-release[bot]@users.noreply.github.com"
+          git add docs/user-guide/public/gemma-cbms.xml docs/user-guide/public/latest-cbms.json
+          if ! git diff --quiet || ! git diff --staged --quiet; then
+            git commit -m "chore: update CBMS beta channel files for preview ${{ steps.cbms_preview.outputs.revision }} [skip ci]"
+            git push https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git HEAD:${{ github.ref_name }}
+          else
+            echo "No changes to CBMS channel files to commit."
+          fi
