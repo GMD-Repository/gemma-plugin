@@ -94,6 +94,14 @@ class CbmsMvReviewDock(QDockWidget):
         self.current_index = 0
         self.error_features: List[Dict[str, Any]] = []
 
+        # Theme detection: detect from parent_dialog or application palette
+        if parent_dialog and hasattr(parent_dialog, "current_theme"):
+            self.current_theme = parent_dialog.current_theme
+        else:
+            palette = self.palette()
+            bg_color = palette.color(palette.Window)
+            self.current_theme = "dark" if bg_color.lightness() < 128 else "light"
+
         self.setAllowedAreas(
             Qt.LeftDockWidgetArea
             | Qt.RightDockWidgetArea
@@ -139,11 +147,83 @@ class CbmsMvReviewDock(QDockWidget):
                 "feature": feat,
             })
 
+    @property
+    def is_dark(self) -> bool:
+        """Return True if running in dark mode/theme."""
+        return getattr(self, "current_theme", "light") == "dark"
+
+    def _get_theme_colors(self) -> Dict[str, str]:
+        """Return semantic color palette adapted for light or dark mode."""
+        if self.is_dark:
+            return {
+                "dock_bg": "#202124",
+                "card_bg": "#292A2D",
+                "surface_elevated": "#35363A",
+                "surface_hover": "#3C4043",
+                "border": "#484F58",
+                "border_focus": "#58A6FF",
+                "text_primary": "#E8EAED",
+                "text_secondary": "#9AA0A6",
+                "title": "#8AB4F8",
+                "accent": "#1A73E8",
+                "accent_hover": "#1765CC",
+                "accent_light": "#1C355E",
+                "accent_light_text": "#8AB4F8",
+                "danger_bg": "#3D1F1F",
+                "danger_text": "#FC8181",
+                "danger_border": "#6E2B2B",
+                "danger_hover": "#502828",
+                "danger_active_bg": "#4E2323",
+                "danger_active_text": "#FEB2B2",
+                "success_bg": "#133A1E",
+                "success_text": "#3FB950",
+                "success_border": "#236E35",
+                "success_hover": "#1B4D28",
+                "disabled_bg": "#2D3139",
+                "disabled_text": "#5F6368",
+                "disabled_border": "#3C4043",
+                "btn_return_bg": "#4A5568",
+                "btn_return_hover": "#2D3748",
+            }
+        else:
+            return {
+                "dock_bg": "#F8F9FA",
+                "card_bg": "#FFFFFF",
+                "surface_elevated": "#EDF2F7",
+                "surface_hover": "#E2E8F0",
+                "border": "#E2E8F0",
+                "border_focus": "#3182CE",
+                "text_primary": "#2D3748",
+                "text_secondary": "#718096",
+                "title": "#1A365D",
+                "accent": "#2B6CB0",
+                "accent_hover": "#2C5282",
+                "accent_light": "#EBF8FF",
+                "accent_light_text": "#2B6CB0",
+                "danger_bg": "#FFF5F5",
+                "danger_text": "#C53030",
+                "danger_border": "#FEB2B2",
+                "danger_hover": "#FED7D7",
+                "danger_active_bg": "#FED7D7",
+                "danger_active_text": "#9B2C2C",
+                "success_bg": "#27AE60",
+                "success_text": "#FFFFFF",
+                "success_border": "#27AE60",
+                "success_hover": "#219653",
+                "disabled_bg": "#F7FAFC",
+                "disabled_text": "#A0AEC0",
+                "disabled_border": "#E2E8F0",
+                "btn_return_bg": "#718096",
+                "btn_return_hover": "#4A5568",
+            }
+
     # -----------------------------------------------------------------------
     # UI Layout Construction
     # -----------------------------------------------------------------------
     def _init_ui(self):
         """Assemble the compact navigation panel with native QGIS Feature Form launcher."""
+        colors = self._get_theme_colors()
+
         main_widget = QWidget(self)
         layout = QVBoxLayout(main_widget)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -157,12 +237,12 @@ class CbmsMvReviewDock(QDockWidget):
         header_layout.setSpacing(2)
 
         lbl_rule_id = QLabel(f"🔴  {self.val_id}")
-        lbl_rule_id.setStyleSheet("font-size: 11.5px; font-weight: bold; color: #C53030;")
+        lbl_rule_id.setStyleSheet(f"font-size: 11.5px; font-weight: bold; color: {colors['danger_text']};")
         lbl_rule_id.setFont(QFont("Consolas", 9, QFont.Bold))
 
         lbl_check_name = QLabel(self.check_name)
         lbl_check_name.setWordWrap(True)
-        lbl_check_name.setStyleSheet("font-size: 10.5px; color: #4A5568;")
+        lbl_check_name.setStyleSheet(f"font-size: 10.5px; color: {colors['text_secondary']};")
 
         header_layout.addWidget(lbl_rule_id)
         header_layout.addWidget(lbl_check_name)
@@ -185,7 +265,7 @@ class CbmsMvReviewDock(QDockWidget):
 
         self.lbl_counter = QLabel("0 of 0")
         self.lbl_counter.setAlignment(Qt.AlignCenter)
-        self.lbl_counter.setStyleSheet("font-weight: bold; font-size: 11.5px; color: #1A365D;")
+        self.lbl_counter.setStyleSheet(f"font-weight: bold; font-size: 11.5px; color: {colors['title']};")
 
         self.btn_next = QPushButton("Next  ▶")
         self.btn_next.setObjectName("btnNavNext")
@@ -201,7 +281,7 @@ class CbmsMvReviewDock(QDockWidget):
         combo_row = QHBoxLayout()
         combo_row.setSpacing(6)
         lbl_jump = QLabel("Jump:")
-        lbl_jump.setStyleSheet("font-size: 10.5px; color: #718096;")
+        lbl_jump.setStyleSheet(f"font-size: 10.5px; color: {colors['text_secondary']};")
         self.feature_combo = QComboBox()
         self.feature_combo.setObjectName("featureCombo")
 
@@ -219,7 +299,7 @@ class CbmsMvReviewDock(QDockWidget):
         # Active Feature Info
         self.lbl_feat_info = QLabel("Target: —")
         self.lbl_feat_info.setStyleSheet(
-            "font-size: 10px; color: #2D3748; padding: 3px 6px; background-color: #EDF2F7; border-radius: 3px;"
+            f"font-size: 10px; color: {colors['text_primary']}; padding: 3px 6px; background-color: {colors['surface_elevated']}; border-radius: 3px;"
         )
         self.lbl_feat_info.setFont(QFont("Consolas", 9))
         self.lbl_feat_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -315,37 +395,7 @@ class CbmsMvReviewDock(QDockWidget):
             info_parts.append(f"UUID: {current_uuid}")
         if is_del:
             info_parts.append("🔴 [DELETED]")
-            if hasattr(self, "btn_delete_feat"):
-                self.btn_delete_feat.setText("Deleted")
-                self.btn_delete_feat.setStyleSheet("""
-                    QPushButton {
-                        background-color: #FED7D7;
-                        color: #9B2C2C;
-                        font-weight: 600;
-                        padding: 6px 10px;
-                        border-radius: 4px;
-                        border: 1px solid #FEB2B2;
-                        font-size: 11px;
-                    }
-                """)
-        else:
-            if hasattr(self, "btn_delete_feat"):
-                self.btn_delete_feat.setText("Delete")
-                self.btn_delete_feat.setStyleSheet("""
-                    QPushButton {
-                        background-color: #FFF5F5;
-                        color: #C53030;
-                        font-weight: 600;
-                        padding: 6px 10px;
-                        border-radius: 4px;
-                        border: 1px solid #FEB2B2;
-                        font-size: 11px;
-                    }
-                    QPushButton:hover {
-                        background-color: #FED7D7;
-                        color: #9B2C2C;
-                    }
-                """)
+        self._style_delete_button(is_deleted=is_del)
         self.lbl_feat_info.setText(" | ".join(info_parts))
 
         # Synchronize QGIS map canvas
@@ -661,109 +711,153 @@ class CbmsMvReviewDock(QDockWidget):
 
         event.accept()
 
-    # -----------------------------------------------------------------------
+    # ---------------------------------------------------------    # -----------------------------------------------------------------------
     # Styling
     # -----------------------------------------------------------------------
+    def _style_delete_button(self, is_deleted: bool = False):
+        """Apply theme-aware styling to the Delete button based on deleted state."""
+        if not hasattr(self, "btn_delete_feat"):
+            return
+        colors = self._get_theme_colors()
+        if is_deleted:
+            self.btn_delete_feat.setText("Deleted")
+            self.btn_delete_feat.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {colors['danger_active_bg']};
+                    color: {colors['danger_active_text']};
+                    font-weight: 600;
+                    padding: 6px 10px;
+                    border-radius: 4px;
+                    border: 1px solid {colors['danger_border']};
+                    font-size: 11px;
+                }}
+            """)
+        else:
+            self.btn_delete_feat.setText("Delete")
+            self.btn_delete_feat.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {colors['danger_bg']};
+                    color: {colors['danger_text']};
+                    font-weight: 600;
+                    padding: 6px 10px;
+                    border-radius: 4px;
+                    border: 1px solid {colors['danger_border']};
+                    font-size: 11px;
+                }}
+                QPushButton:hover {{
+                    background-color: {colors['danger_hover']};
+                    color: {colors['danger_active_text']};
+                }}
+            """)
+
     def _apply_styling(self):
         """Apply modern, compact styling conforming to GEMMA plugin standards."""
-        self.setStyleSheet("""
-            QDockWidget {
+        colors = self._get_theme_colors()
+        self.setStyleSheet(f"""
+            QDockWidget {{
                 font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Roboto", sans-serif;
                 font-size: 11px;
-                color: #2D3748;
-            }
-            #dockHeaderFrame {
-                background-color: #FFFFFF;
-                border: 1px solid #E2E8F0;
-                border-left: 4px solid #E53E3E;
+                color: {colors['text_primary']};
+            }}
+            #dockHeaderFrame {{
+                background-color: {colors['card_bg']};
+                border: 1px solid {colors['border']};
+                border-left: 4px solid {colors['danger_text']};
                 border-radius: 5px;
-            }
-            #dockNavFrame {
-                background-color: #FFFFFF;
-                border: 1px solid #E2E8F0;
+            }}
+            #dockNavFrame {{
+                background-color: {colors['card_bg']};
+                border: 1px solid {colors['border']};
                 border-radius: 5px;
-            }
-            #dockActionFrame {
-                background-color: #FFFFFF;
-                border: 1px solid #E2E8F0;
+            }}
+            #dockActionFrame {{
+                background-color: {colors['card_bg']};
+                border: 1px solid {colors['border']};
                 border-radius: 5px;
-            }
-            #btnNavPrev, #btnNavNext {
-                background-color: #EDF2F7;
-                color: #2B6CB0;
+            }}
+            #btnNavPrev, #btnNavNext {{
+                background-color: {colors['surface_elevated']};
+                color: {colors['accent_light_text']};
                 font-weight: 600;
                 padding: 5px 10px;
                 border-radius: 4px;
-                border: 1px solid #CBD5E0;
+                border: 1px solid {colors['border']};
                 font-size: 11px;
-            }
-            #btnNavPrev:hover, #btnNavNext:hover {
-                background-color: #E2E8F0;
-                color: #1A365D;
-            }
-            #btnNavPrev:disabled, #btnNavNext:disabled {
-                background-color: #F7FAFC;
-                color: #A0AEC0;
-                border-color: #E2E8F0;
-            }
-            #btnEditForm {
-                background-color: #2B6CB0;
+            }}
+            #btnNavPrev:hover, #btnNavNext:hover {{
+                background-color: {colors['surface_hover']};
+                color: {colors['title']};
+            }}
+            #btnNavPrev:disabled, #btnNavNext:disabled {{
+                background-color: {colors['disabled_bg']};
+                color: {colors['disabled_text']};
+                border-color: {colors['disabled_border']};
+            }}
+            #btnEditForm {{
+                background-color: {colors['accent']};
                 color: #FFFFFF;
                 font-weight: 600;
                 padding: 6px 10px;
                 border-radius: 4px;
                 border: none;
                 font-size: 11px;
-            }
-            #btnEditForm:hover {
-                background-color: #2C5282;
-            }
-            #btnDeleteFeat {
-                background-color: #FFF5F5;
-                color: #C53030;
+            }}
+            #btnEditForm:hover {{
+                background-color: {colors['accent_hover']};
+            }}
+            #btnDeleteFeat {{
+                background-color: {colors['danger_bg']};
+                color: {colors['danger_text']};
                 font-weight: 600;
                 padding: 6px 10px;
                 border-radius: 4px;
-                border: 1px solid #FEB2B2;
+                border: 1px solid {colors['danger_border']};
                 font-size: 11px;
-            }
-            #btnDeleteFeat:hover {
-                background-color: #FED7D7;
-                color: #9B2C2C;
-            }
-            #btnSaveLayer {
-                background-color: #27AE60;
+            }}
+            #btnDeleteFeat:hover {{
+                background-color: {colors['danger_hover']};
+                color: {colors['danger_active_text']};
+            }}
+            #btnSaveLayer {{
+                background-color: {colors['success_bg'] if self.is_dark else '#27AE60'};
+                color: {colors['success_text'] if self.is_dark else '#FFFFFF'};
+                font-weight: 600;
+                padding: 6px 10px;
+                border-radius: 4px;
+                border: {'1px solid ' + colors['success_border'] if self.is_dark else 'none'};
+                font-size: 11px;
+            }}
+            #btnSaveLayer:hover {{
+                background-color: {colors['success_hover'] if self.is_dark else '#219653'};
+            }}
+            #btnReturn {{
+                background-color: {colors['btn_return_bg']};
                 color: #FFFFFF;
                 font-weight: 600;
                 padding: 6px 10px;
                 border-radius: 4px;
                 border: none;
                 font-size: 11px;
-            }
-            #btnSaveLayer:hover {
-                background-color: #219653;
-            }
-            #btnReturn {
-                background-color: #718096;
-                color: #FFFFFF;
-                font-weight: 600;
-                padding: 6px 10px;
-                border-radius: 4px;
-                border: none;
-                font-size: 11px;
-            }
-            #btnReturn:hover {
-                background-color: #4A5568;
-            }
-            QComboBox {
-                background-color: #FFFFFF;
-                border: 1px solid #CBD5E0;
+            }}
+            #btnReturn:hover {{
+                background-color: {colors['btn_return_hover']};
+            }}
+            QComboBox {{
+                background-color: {colors['card_bg']};
+                border: 1px solid {colors['border']};
                 border-radius: 4px;
                 padding: 3px 6px;
-                color: #2D3748;
+                color: {colors['text_primary']};
                 font-size: 11px;
-            }
-            QComboBox:focus {
-                border: 1.5px solid #3182CE;
-            }
+            }}
+            QComboBox:focus {{
+                border: 1.5px solid {colors['border_focus']};
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {colors['card_bg']};
+                color: {colors['text_primary']};
+                selection-background-color: {colors['accent_light']};
+                selection-color: {colors['accent_light_text']};
+            }}
         """)
+        self._style_delete_button(is_deleted=False)

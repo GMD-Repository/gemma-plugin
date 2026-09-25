@@ -39,7 +39,7 @@ from qgis.core import (
 )
 from qgis.gui import QgsFileWidget
 from qgis.PyQt.QtCore import Qt, QTimer, pyqtSignal, QSize, QEvent, QObject, QVariant
-from qgis.PyQt.QtGui import QIcon, QColor, QFont, QTextCursor, QKeySequence
+from qgis.PyQt.QtGui import QIcon, QColor, QFont, QTextCursor, QKeySequence, QPalette
 from qgis.PyQt.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -303,6 +303,11 @@ class CbmsmvDialog(QDialog):
         self.offline_editing = offline_editing
         self.settings = QgsSettings()
 
+        # Theme detection: check application / widget palette brightness
+        palette = self.palette()
+        bg_color = palette.color(palette.Window)
+        self.current_theme = "dark" if bg_color.lightness() < 128 else "light"
+
         # Resolve path to gmd_scripts/cbms_mv
         self.cbms_mv_dir = os.path.normpath(
             os.path.join(os.path.dirname(__file__), "..", "..", "gmd_scripts", "cbms_mv")
@@ -350,6 +355,214 @@ class CbmsmvDialog(QDialog):
         was_docked = self.settings.value("cbms_mv/is_docked", False, type=bool)
         if was_docked and self.iface and hasattr(self.iface, "addDockWidget"):
             QTimer.singleShot(50, self.dock_window)
+
+    @property
+    def is_dark(self) -> bool:
+        """Return True if running in dark mode/theme."""
+        return getattr(self, "current_theme", "light") == "dark"
+
+    def _get_theme_colors(self) -> Dict[str, str]:
+        """Return semantic color palette adapted for light or dark mode."""
+        if self.is_dark:
+            return {
+                "dialog_bg": "#202124",
+                "surface_bg": "#292A2D",
+                "surface_elevated": "#35363A",
+                "surface_hover": "#3C4043",
+                "border": "#484F58",
+                "border_subtle": "#3C4043",
+                "border_focus": "#58A6FF",
+                "text_primary": "#E8EAED",
+                "text_secondary": "#9AA0A6",
+                "text_muted": "#80868B",
+                "title": "#8AB4F8",
+                "accent": "#1A73E8",
+                "accent_hover": "#1765CC",
+                "accent_pressed": "#1557B0",
+                "accent_light": "#1C355E",
+                "accent_light_text": "#8AB4F8",
+                "accent_light_border": "#284E88",
+                "success_bg": "#133A1E",
+                "success_text": "#3FB950",
+                "success_border": "#236E35",
+                "success_hover": "#1B4D28",
+                "danger_bg": "#3D1F1F",
+                "danger_text": "#FF6B6B",
+                "danger_border": "#6E2B2B",
+                "danger_hover": "#502828",
+                "danger_active_bg": "#4E2323",
+                "danger_active_text": "#FEB2B2",
+                "warning_bg": "#3D3300",
+                "warning_text": "#FAF089",
+                "warning_border": "#665400",
+                "table_grid": "#3C4043",
+                "table_header_bg": "#303134",
+                "card_bg": "#292A2D",
+                "card_hover_bg": "#303134",
+                "console_bg": "#1A202C",
+                "console_border": "#2D3748",
+                "console_text": "#E2E8F0",
+                "disabled_bg": "#2D3139",
+                "disabled_text": "#5F6368",
+                "disabled_border": "#3C4043",
+                "selected_item_bg": "#17385E",
+                "selected_item_text": "#8AB4F8",
+            }
+        else:
+            return {
+                "dialog_bg": "#F8F9FA",
+                "surface_bg": "#FFFFFF",
+                "surface_elevated": "#EDF2F7",
+                "surface_hover": "#E2E8F0",
+                "border": "#CBD5E0",
+                "border_subtle": "#E2E8F0",
+                "border_focus": "#3182CE",
+                "text_primary": "#2D3748",
+                "text_secondary": "#718096",
+                "text_muted": "#A0AEC0",
+                "title": "#1A365D",
+                "accent": "#2B6CB0",
+                "accent_hover": "#2C5282",
+                "accent_pressed": "#1A365D",
+                "accent_light": "#EBF8FF",
+                "accent_light_text": "#2B6CB0",
+                "accent_light_border": "#BEE3F8",
+                "success_bg": "#F0FFF4",
+                "success_text": "#22543D",
+                "success_border": "#C6F6D5",
+                "success_hover": "#C6F6D5",
+                "danger_bg": "#FFF5F5",
+                "danger_text": "#C53030",
+                "danger_border": "#FEB2B2",
+                "danger_hover": "#FED7D7",
+                "danger_active_bg": "#FED7D7",
+                "danger_active_text": "#9B2C2C",
+                "warning_bg": "#FEFCBF",
+                "warning_text": "#2D3748",
+                "warning_border": "#F6E05E",
+                "table_grid": "#EDF2F7",
+                "table_header_bg": "#EDF2F7",
+                "card_bg": "#FFFFFF",
+                "card_hover_bg": "#F7FAFC",
+                "console_bg": "#1A202C",
+                "console_border": "#2D3748",
+                "console_text": "#E2E8F0",
+                "disabled_bg": "#F7FAFC",
+                "disabled_text": "#A0AEC0",
+                "disabled_border": "#E2E8F0",
+                "selected_item_bg": "#EBF8FF",
+                "selected_item_text": "#2B6CB0",
+            }
+
+    def _style_row_edit_button(self, btn: QPushButton):
+        """Apply theme-aware styling to an Edit button in the feature table."""
+        colors = self._get_theme_colors()
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {colors['accent_light']};
+                color: {colors['accent_light_text']};
+                font-weight: 600;
+                padding: 2px 7px;
+                border-radius: 3px;
+                border: 1px solid {colors['accent_light_border']};
+                font-size: 10.5px;
+            }}
+            QPushButton:hover {{
+                background-color: {colors['surface_hover']};
+                color: {colors['title']};
+            }}
+        """)
+
+    def _style_row_fix_button(self, btn: QPushButton, enabled: bool = True, fixed: bool = False):
+        """Apply theme-aware styling to a Fix button in the feature table."""
+        colors = self._get_theme_colors()
+        if fixed:
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {colors['success_bg']};
+                    color: {colors['success_text']};
+                    font-weight: bold;
+                    padding: 2px 7px;
+                    border-radius: 3px;
+                    border: 1px solid {colors['success_border']};
+                    font-size: 10.5px;
+                }}
+            """)
+        elif enabled:
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {colors['success_bg']};
+                    color: {colors['success_text']};
+                    font-weight: 600;
+                    padding: 2px 7px;
+                    border-radius: 3px;
+                    border: 1px solid {colors['success_border']};
+                    font-size: 10.5px;
+                }}
+                QPushButton:hover {{
+                    background-color: {colors['success_hover']};
+                    color: {colors['success_text']};
+                }}
+            """)
+        else:
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {colors['disabled_bg']};
+                    color: {colors['disabled_text']};
+                    padding: 2px 7px;
+                    border-radius: 3px;
+                    border: 1px solid {colors['disabled_border']};
+                    font-size: 10.5px;
+                }}
+            """)
+
+    def _style_row_delete_button(self, btn: QPushButton, is_deleted: bool = False):
+        """Apply theme-aware styling to a Delete button in the feature table."""
+        colors = self._get_theme_colors()
+        if is_deleted:
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {colors['danger_active_bg']};
+                    color: {colors['danger_active_text']};
+                    font-weight: 600;
+                    padding: 2px 7px;
+                    border-radius: 3px;
+                    border: 1px solid {colors['danger_border']};
+                    font-size: 10.5px;
+                }}
+            """)
+        else:
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {colors['danger_bg']};
+                    color: {colors['danger_text']};
+                    font-weight: 600;
+                    padding: 2px 7px;
+                    border-radius: 3px;
+                    border: 1px solid {colors['danger_border']};
+                    font-size: 10.5px;
+                }}
+                QPushButton:hover {{
+                    background-color: {colors['danger_hover']};
+                    color: {colors['danger_active_text']};
+                }}
+            """)
+
+    def _style_table_cell(self, item: QTableWidgetItem, state: str = "normal"):
+        """Apply theme-aware background and foreground colors to a table cell."""
+        colors = self._get_theme_colors()
+        if state == "deleted":
+            item.setBackground(QColor(colors["danger_active_bg"]))
+            item.setForeground(QColor(colors["danger_active_text"]))
+        elif state == "modified":
+            item.setBackground(QColor(colors["warning_bg"]))
+            item.setForeground(QColor(colors["warning_text"]))
+        elif state == "fixed":
+            item.setBackground(QColor(colors["success_bg"]))
+            item.setForeground(QColor(colors["success_text"]))
+        else:
+            item.setBackground(QColor(colors["surface_bg"]))
+            item.setForeground(QColor(colors["text_primary"]))
 
     # -----------------------------------------------------------------------
     # Setup & Icons
@@ -420,7 +633,8 @@ class CbmsmvDialog(QDialog):
 
         # Title badge
         lbl_title = QLabel("🗺️  CBMS Form 2 Map Validation")
-        lbl_title.setStyleSheet("font-size: 12px; font-weight: bold; color: #1A365D;")
+        lbl_title.setObjectName("lblDialogTitle")
+        lbl_title.setStyleSheet(f"font-size: 12px; font-weight: bold; color: {self._get_theme_colors()['title']};")
         bar_layout.addWidget(lbl_title)
 
         bar_layout.addStretch()
@@ -491,7 +705,8 @@ class CbmsmvDialog(QDialog):
         top_bar.setContentsMargins(4, 2, 4, 4)
 
         lbl_title = QLabel("⚙️  Configuration & Validation Rules")
-        lbl_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #1A365D;")
+        lbl_title.setObjectName("lblConfigTitle")
+        lbl_title.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {self._get_theme_colors()['title']};")
         top_bar.addWidget(lbl_title)
         top_bar.addStretch()
         layout.addLayout(top_bar)
@@ -542,17 +757,11 @@ class CbmsmvDialog(QDialog):
         layout.setAlignment(Qt.AlignCenter)
         layout.setContentsMargins(30, 40, 30, 40)
 
+        colors = self._get_theme_colors()
+
         card = QFrame()
         card.setObjectName("emptyStateCard")
         card.setMaximumWidth(620)
-        card.setStyleSheet("""
-            #emptyStateCard {
-                background-color: #FFFFFF;
-                border: 2px dashed #CBD5E0;
-                border-radius: 12px;
-                padding: 32px;
-            }
-        """)
         card_layout = QVBoxLayout(card)
         card_layout.setSpacing(14)
         card_layout.setAlignment(Qt.AlignCenter)
@@ -563,8 +772,9 @@ class CbmsmvDialog(QDialog):
         card_layout.addWidget(icon_lbl)
 
         title_lbl = QLabel("No Validation Results Yet")
+        title_lbl.setObjectName("lblEmptyStateTitle")
         title_lbl.setAlignment(Qt.AlignCenter)
-        title_lbl.setStyleSheet("font-size: 16px; font-weight: 600; color: #1A365D;")
+        title_lbl.setStyleSheet(f"font-size: 16px; font-weight: 600; color: {colors['title']};")
         card_layout.addWidget(title_lbl)
 
         desc_lbl = QLabel(
@@ -572,9 +782,10 @@ class CbmsmvDialog(QDialog):
             "and select validation rules in Configuration, then click Run Validation.\n\n"
             "Flagged issues will be displayed here in separate tabs with full attribute inspection and QGIS canvas zoom."
         )
+        desc_lbl.setObjectName("lblEmptyStateDesc")
         desc_lbl.setAlignment(Qt.AlignCenter)
         desc_lbl.setWordWrap(True)
-        desc_lbl.setStyleSheet("font-size: 11.5px; color: #718096; line-height: 1.5;")
+        desc_lbl.setStyleSheet(f"font-size: 11.5px; color: {colors['text_secondary']}; line-height: 1.5;")
         card_layout.addWidget(desc_lbl)
 
         btn_row = QHBoxLayout()
@@ -582,37 +793,39 @@ class CbmsmvDialog(QDialog):
         btn_row.setAlignment(Qt.AlignCenter)
 
         btn_cfg = QPushButton("  ⚙️  Open Configuration  ")
-        btn_cfg.setStyleSheet("""
-            QPushButton {
-                background-color: #EDF2F7;
-                color: #2D3748;
+        btn_cfg.setObjectName("btnEmptyStateConfig")
+        btn_cfg.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {colors['surface_elevated']};
+                color: {colors['text_primary']};
                 font-weight: 600;
                 padding: 8px 16px;
                 border-radius: 6px;
-                border: 1px solid #CBD5E0;
+                border: 1px solid {colors['border']};
                 font-size: 11.5px;
-            }
-            QPushButton:hover {
-                background-color: #E2E8F0;
-                color: #1A202C;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {colors['surface_hover']};
+                color: {colors['title']};
+            }}
         """)
         btn_cfg.clicked.connect(lambda: self._switch_to_config(0))
 
         btn_quick_run = QPushButton("  ▶  Run Validation  ")
-        btn_quick_run.setStyleSheet("""
-            QPushButton {
-                background-color: #2B6CB0;
+        btn_quick_run.setObjectName("btnEmptyStateRun")
+        btn_quick_run.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {colors['accent']};
                 color: #FFFFFF;
                 font-weight: 600;
                 padding: 8px 20px;
                 border-radius: 6px;
                 border: none;
                 font-size: 11.5px;
-            }
-            QPushButton:hover {
-                background-color: #2C5282;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {colors['accent_hover']};
+            }}
         """)
         btn_quick_run.clicked.connect(self.run_validation)
 
@@ -676,11 +889,19 @@ class CbmsmvDialog(QDialog):
         total_flags = sum(s.get("features_flagged", 0) for s in execution_summary)
         error_rules = total_rules - flagged_rules - clean_rules
 
+        colors = self._get_theme_colors()
+
         # Scorecards with click-to-filter capability
-        self._create_kpi_card(kpi_row, "Rules Tested", str(total_rules), "#2980B9", on_click=lambda: combo_filter.setCurrentIndex(0))
-        self._create_kpi_card(kpi_row, "Passed (Clean)", str(clean_rules), "#27AE60", on_click=lambda: combo_filter.setCurrentIndex(2))
-        self._create_kpi_card(kpi_row, "Rules Flagged", str(flagged_rules), "#E53E3E", on_click=lambda: combo_filter.setCurrentIndex(1))
-        self._create_kpi_card(kpi_row, "Total Issues", f"{total_flags:,}", "#C53030", on_click=lambda: combo_sort.setCurrentIndex(1))
+        kpi_colors = {
+            "tested": "#4DA3FF" if self.is_dark else "#2980B9",
+            "passed": "#48BB78" if self.is_dark else "#27AE60",
+            "flagged": "#F56565" if self.is_dark else "#E53E3E",
+            "total": "#FC8181" if self.is_dark else "#C53030",
+        }
+        self._create_kpi_card(kpi_row, "Rules Tested", str(total_rules), kpi_colors["tested"], on_click=lambda: combo_filter.setCurrentIndex(0))
+        self._create_kpi_card(kpi_row, "Passed (Clean)", str(clean_rules), kpi_colors["passed"], on_click=lambda: combo_filter.setCurrentIndex(2))
+        self._create_kpi_card(kpi_row, "Rules Flagged", str(flagged_rules), kpi_colors["flagged"], on_click=lambda: combo_filter.setCurrentIndex(1))
+        self._create_kpi_card(kpi_row, "Total Issues", f"{total_flags:,}", kpi_colors["total"], on_click=lambda: combo_sort.setCurrentIndex(1))
 
         layout.addLayout(kpi_row)
 
@@ -692,17 +913,18 @@ class CbmsmvDialog(QDialog):
         search_edit = QLineEdit()
         search_edit.setPlaceholderText("🔍  Search validation ID or check name...")
         search_edit.setClearButtonEnabled(True)
-        search_edit.setStyleSheet("""
-            QLineEdit {
-                border: 1px solid #CBD5E0;
+        search_edit.setStyleSheet(f"""
+            QLineEdit {{
+                border: 1px solid {colors['border']};
                 border-radius: 4px;
                 padding: 4px 8px;
-                background-color: #FFFFFF;
+                background-color: {colors['surface_bg']};
+                color: {colors['text_primary']};
                 font-size: 11px;
-            }
-            QLineEdit:focus {
-                border-color: #3182CE;
-            }
+            }}
+            QLineEdit:focus {{
+                border-color: {colors['border_focus']};
+            }}
         """)
         filter_bar.addWidget(search_edit, stretch=2)
 
@@ -713,15 +935,22 @@ class CbmsmvDialog(QDialog):
         combo_filter.addItem(f"🟢  Clean Only ({clean_rules})", "clean")
         if error_rules > 0:
             combo_filter.addItem(f"⚠️  Errors Only ({error_rules})", "error")
-        combo_filter.setStyleSheet("""
-            QComboBox {
-                border: 1px solid #CBD5E0;
+        combo_filter.setStyleSheet(f"""
+            QComboBox {{
+                border: 1px solid {colors['border']};
                 border-radius: 4px;
                 padding: 4px 10px;
-                background-color: #FFFFFF;
+                background-color: {colors['surface_bg']};
+                color: {colors['text_primary']};
                 font-size: 11px;
                 min-width: 140px;
-            }
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {colors['surface_bg']};
+                color: {colors['text_primary']};
+                selection-background-color: {colors['selected_item_bg']};
+                selection-color: {colors['selected_item_text']};
+            }}
         """)
         filter_bar.addWidget(combo_filter)
 
@@ -733,21 +962,28 @@ class CbmsmvDialog(QDialog):
         combo_sort.addItem("Sort: Status (Flagged First)", (0, Qt.AscendingOrder))
         combo_sort.addItem("Sort: Validation ID (A → Z)", (1, Qt.AscendingOrder))
         combo_sort.addItem("Sort: Check Name (A → Z)", (2, Qt.AscendingOrder))
-        combo_sort.setStyleSheet("""
-            QComboBox {
-                border: 1px solid #CBD5E0;
+        combo_sort.setStyleSheet(f"""
+            QComboBox {{
+                border: 1px solid {colors['border']};
                 border-radius: 4px;
                 padding: 4px 10px;
-                background-color: #FFFFFF;
+                background-color: {colors['surface_bg']};
+                color: {colors['text_primary']};
                 font-size: 11px;
                 min-width: 165px;
-            }
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {colors['surface_bg']};
+                color: {colors['text_primary']};
+                selection-background-color: {colors['selected_item_bg']};
+                selection-color: {colors['selected_item_text']};
+            }}
         """)
         filter_bar.addWidget(combo_sort)
 
         # 4. Visible count label
         lbl_visible_count = QLabel(f"Showing {total_rules} of {total_rules} rules")
-        lbl_visible_count.setStyleSheet("color: #718096; font-size: 10.5px; font-weight: 500;")
+        lbl_visible_count.setStyleSheet(f"color: {colors['text_secondary']}; font-size: 10.5px; font-weight: 500;")
         filter_bar.addWidget(lbl_visible_count)
 
         layout.addLayout(filter_bar)
@@ -782,15 +1018,15 @@ class CbmsmvDialog(QDialog):
             # 0. Status Badge
             if flags > 0:
                 status_item = SortableTableWidgetItem(" 🔴 Flagged ")
-                status_item.setForeground(QColor("#C53030"))
+                status_item.setForeground(QColor("#FC8181" if self.is_dark else "#C53030"))
                 status_item.setData(Qt.UserRole, 0)
             elif str(status).startswith(("Error", "Failed")):
                 status_item = SortableTableWidgetItem(" ⚠️ Error ")
-                status_item.setForeground(QColor("#DD6B20"))
+                status_item.setForeground(QColor("#F6AD55" if self.is_dark else "#DD6B20"))
                 status_item.setData(Qt.UserRole, 1)
             else:
                 status_item = SortableTableWidgetItem(" 🟢 Clean ")
-                status_item.setForeground(QColor("#27AE60"))
+                status_item.setForeground(QColor("#48BB78" if self.is_dark else "#27AE60"))
                 status_item.setData(Qt.UserRole, 2)
             status_item.setFont(QFont("Segoe UI", 9, QFont.Bold))
             status_item.setTextAlignment(Qt.AlignCenter)
@@ -812,18 +1048,18 @@ class CbmsmvDialog(QDialog):
             flags_item.setTextAlignment(Qt.AlignCenter)
             flags_item.setData(Qt.UserRole, int(flags))
             if flags > 0:
-                flags_item.setForeground(QColor("#C53030"))
+                flags_item.setForeground(QColor("#FC8181" if self.is_dark else "#C53030"))
                 flags_item.setFont(QFont("Segoe UI", 9, QFont.Bold))
             else:
-                flags_item.setForeground(QColor("#27AE60"))
+                flags_item.setForeground(QColor("#48BB78" if self.is_dark else "#27AE60"))
             table.setItem(row, 3, flags_item)
 
             # 4. Action Item (clickable item avoids setCellWidget detachment bug during sorting)
             if flags > 0 and has_layer:
                 act_item = SortableTableWidgetItem("View Tab ➔")
                 act_item.setTextAlignment(Qt.AlignCenter)
-                act_item.setForeground(QColor("#2B6CB0"))
-                act_item.setBackground(QColor("#EBF8FF"))
+                act_item.setForeground(QColor(colors["accent_light_text"]))
+                act_item.setBackground(QColor(colors["accent_light"]))
                 act_item.setFont(QFont("Segoe UI", 9, QFont.Bold))
                 act_item.setData(Qt.UserRole, 0)
                 act_item.setToolTip(f"Click or double-click to switch to '{val_id}' results tab")
@@ -831,7 +1067,7 @@ class CbmsmvDialog(QDialog):
             else:
                 empty_act = SortableTableWidgetItem("—")
                 empty_act.setTextAlignment(Qt.AlignCenter)
-                empty_act.setForeground(QColor("#A0AEC0"))
+                empty_act.setForeground(QColor(colors["text_muted"]))
                 empty_act.setData(Qt.UserRole, 1)
                 table.setItem(row, 4, empty_act)
 
@@ -942,20 +1178,24 @@ class CbmsmvDialog(QDialog):
         # Title & count
         title_box = QVBoxLayout()
         title_box.setSpacing(1)
+        colors = self._get_theme_colors()
         lbl_vname = QLabel(f"<b>{check_name}</b>")
         lbl_vname.setToolTip(f"Validation ID: {val_id}")
-        lbl_vname.setStyleSheet("font-size: 11px; color: #1A365D;")
+        lbl_vname.setStyleSheet(f"font-size: 11px; color: {colors['title']};")
+        
+        success_col = "#3FB950" if self.is_dark else "#2F855A"
+        danger_col = "#FC8181" if self.is_dark else "#C53030"
         if count == 0:
             lbl_vcount = QLabel(
-                "<span style='color: #2F855A; font-weight: bold;'>✓ 0 flagged features.</span> "
+                f"<span style='color: {success_col}; font-weight: bold;'>✓ 0 flagged features.</span> "
                 "All issues for this validation check are resolved!"
             )
         else:
             lbl_vcount = QLabel(
-                f"<span style='color: #C53030; font-weight: bold;'>{count:,}</span> flagged feature(s) detected. "
+                f"<span style='color: {danger_col}; font-weight: bold;'>{count:,}</span> flagged feature(s) detected. "
                 f"Click row to zoom; double-click cell to edit in-place."
             )
-        lbl_vcount.setStyleSheet("font-size: 10px; color: #4A5568;")
+        lbl_vcount.setStyleSheet(f"font-size: 10px; color: {colors['text_secondary']};")
         title_box.addWidget(lbl_vname)
         title_box.addWidget(lbl_vcount)
         toolbar.addLayout(title_box, stretch=1)
@@ -970,20 +1210,20 @@ class CbmsmvDialog(QDialog):
         # Select All / None toggle
         btn_select_all = QPushButton("☑  Select All")
         btn_select_all.setToolTip("Toggle select all or none of visible rows")
-        btn_select_all.setStyleSheet("""
-            QPushButton {
-                background-color: #EDF2F7;
-                color: #2D3748;
+        btn_select_all.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {colors['surface_elevated']};
+                color: {colors['text_primary']};
                 font-weight: 600;
                 padding: 5px 10px;
                 border-radius: 4px;
-                border: 1px solid #CBD5E0;
+                border: 1px solid {colors['border']};
                 font-size: 11px;
-            }
-            QPushButton:hover {
-                background-color: #E2E8F0;
-                color: #1A202C;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {colors['surface_hover']};
+                color: {colors['title']};
+            }}
         """)
         toolbar.addWidget(btn_select_all)
 
@@ -994,25 +1234,25 @@ class CbmsmvDialog(QDialog):
         btn_fix_selected.setToolTip(
             f"Apply automated fix to checked rows ({val_id})" if has_auto_fix else f"No automated fix available for '{val_id}'"
         )
-        btn_fix_selected.setStyleSheet("""
-            QPushButton:enabled {
-                background-color: #F0FFF4;
-                color: #22543D;
+        btn_fix_selected.setStyleSheet(f"""
+            QPushButton:enabled {{
+                background-color: {colors['success_bg']};
+                color: {colors['success_text']};
                 font-weight: bold;
                 padding: 5px 12px;
                 border-radius: 4px;
-                border: 1px solid #C6F6D5;
+                border: 1px solid {colors['success_border']};
                 font-size: 11px;
-            }
-            QPushButton:hover:enabled {
-                background-color: #C6F6D5;
-                color: #1C4532;
-            }
-            QPushButton:disabled {
-                background-color: #F7FAFC;
-                color: #A0AEC0;
-                border: 1px solid #E2E8F0;
-            }
+            }}
+            QPushButton:hover:enabled {{
+                background-color: {colors['success_hover']};
+                color: {colors['success_text']};
+            }}
+            QPushButton:disabled {{
+                background-color: {colors['disabled_bg']};
+                color: {colors['disabled_text']};
+                border: 1px solid {colors['disabled_border']};
+            }}
         """)
         toolbar.addWidget(btn_fix_selected)
 
@@ -1020,46 +1260,46 @@ class CbmsmvDialog(QDialog):
         btn_delete_selected = QPushButton("🗑️  Delete Selected (0)")
         btn_delete_selected.setEnabled(False)
         btn_delete_selected.setToolTip("Mark all checked features as 'deleted' in status column")
-        btn_delete_selected.setStyleSheet("""
-            QPushButton:enabled {
-                background-color: #FFF5F5;
-                color: #C53030;
+        btn_delete_selected.setStyleSheet(f"""
+            QPushButton:enabled {{
+                background-color: {colors['danger_bg']};
+                color: {colors['danger_text']};
                 font-weight: bold;
                 padding: 5px 12px;
                 border-radius: 4px;
-                border: 1px solid #FEB2B2;
+                border: 1px solid {colors['danger_border']};
                 font-size: 11px;
-            }
-            QPushButton:hover:enabled {
-                background-color: #FED7D7;
-                color: #9B2C2C;
-            }
-            QPushButton:disabled {
-                background-color: #F7FAFC;
-                color: #A0AEC0;
-                border: 1px solid #E2E8F0;
+            }}
+            QPushButton:hover:enabled {{
+                background-color: {colors['danger_hover']};
+                color: {colors['danger_text']};
+            }}
+            QPushButton:disabled {{
+                background-color: {colors['disabled_bg']};
+                color: {colors['disabled_text']};
+                border: 1px solid {colors['disabled_border']};
                 font-size: 11px;
-            }
+            }}
         """)
         toolbar.addWidget(btn_delete_selected)
 
         # Save Layer Changes
         btn_save_changes = QPushButton("💾  Save Changes")
         btn_save_changes.setToolTip("Commit edits on GeoJSON and JSON to disk and re-run check (Ctrl+S)")
-        btn_save_changes.setStyleSheet("""
-            QPushButton {
-                background-color: #EBF8FF;
-                color: #2B6CB0;
+        btn_save_changes.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {colors['accent_light']};
+                color: {colors['accent_light_text']};
                 font-weight: bold;
                 padding: 5px 12px;
                 border-radius: 4px;
-                border: 1px solid #BEE3F8;
+                border: 1px solid {colors['accent_light_border']};
                 font-size: 11px;
-            }
-            QPushButton:hover {
-                background-color: #BEE3F8;
-                color: #1A365D;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {colors['surface_hover']};
+                color: {colors['title']};
+            }}
         """)
         btn_save_changes.clicked.connect(lambda checked=False, v=val_id: self._save_changes(v))
         toolbar.addWidget(btn_save_changes)
@@ -1153,8 +1393,7 @@ class CbmsmvDialog(QDialog):
                     fn_lower = fname.lower()
                     if fn_lower in ("status", "sf_status") and val_str.strip().lower() == "deleted":
                         is_row_deleted = True
-                        item.setBackground(QColor("#FED7D7"))
-                        item.setForeground(QColor("#9B2C2C"))
+                        self._style_table_cell(item, "deleted")
                     elif fn_lower in ("fid", "sf_fid", "df_fid", "ref_fid"):
                         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                         item.setToolTip("Record FID (read-only primary key anchor)")
@@ -1182,21 +1421,7 @@ class CbmsmvDialog(QDialog):
 
                 btn_row_edit = QPushButton("Edit")
                 btn_row_edit.setToolTip(f"Open Navigation Review Dock / Feature Form for feature #{row_idx + 1}")
-                btn_row_edit.setStyleSheet("""
-                    QPushButton {
-                        background-color: #EBF8FF;
-                        color: #2B6CB0;
-                        font-weight: 600;
-                        padding: 2px 7px;
-                        border-radius: 3px;
-                        border: 1px solid #BEE3F8;
-                        font-size: 10.5px;
-                    }
-                    QPushButton:hover {
-                        background-color: #BEE3F8;
-                        color: #1A365D;
-                    }
-                """)
+                self._style_row_edit_button(btn_row_edit)
                 btn_row_edit.clicked.connect(
                     lambda checked=False, s_id=source_fid, u=uuid_str: self._launch_review_dock(
                         val_id, check_name, layer, target_fid=s_id, target_uuid=u
@@ -1207,21 +1432,7 @@ class CbmsmvDialog(QDialog):
                 btn_row_fix = QPushButton("Fix")
                 if has_auto_fix:
                     btn_row_fix.setToolTip(f"Run automated fix for feature #{row_idx + 1} ({val_id})")
-                    btn_row_fix.setStyleSheet("""
-                        QPushButton {
-                            background-color: #F0FFF4;
-                            color: #22543D;
-                            font-weight: 600;
-                            padding: 2px 7px;
-                            border-radius: 3px;
-                            border: 1px solid #C6F6D5;
-                            font-size: 10.5px;
-                        }
-                        QPushButton:hover {
-                            background-color: #C6F6D5;
-                            color: #1C4532;
-                        }
-                    """)
+                    self._style_row_fix_button(btn_row_fix, enabled=True, fixed=False)
                     btn_row_fix.clicked.connect(
                         lambda checked=False, s_id=source_fid, u=uuid_str, r=row_idx: self._execute_fix(
                             val_id, layer, table, target_fids=[s_id], target_uuids=[u], target_rows=[r]
@@ -1230,49 +1441,13 @@ class CbmsmvDialog(QDialog):
                 else:
                     btn_row_fix.setEnabled(False)
                     btn_row_fix.setToolTip(f"No automated fix registered for '{val_id}'")
-                    btn_row_fix.setStyleSheet("""
-                        QPushButton {
-                            background-color: #F7FAFC;
-                            color: #A0AEC0;
-                            padding: 2px 7px;
-                            border-radius: 3px;
-                            border: 1px solid #E2E8F0;
-                            font-size: 10.5px;
-                        }
-                    """)
+                    self._style_row_fix_button(btn_row_fix, enabled=False, fixed=False)
                 action_layout.addWidget(btn_row_fix)
 
                 # Delete Button (sets 'deleted' in status column)
                 btn_row_delete = QPushButton("Deleted" if is_row_deleted else "Delete")
                 btn_row_delete.setToolTip(f"Mark feature #{row_idx + 1} as 'deleted' in status column")
-                if is_row_deleted:
-                    btn_row_delete.setStyleSheet("""
-                        QPushButton {
-                            background-color: #FED7D7;
-                            color: #9B2C2C;
-                            font-weight: 600;
-                            padding: 2px 7px;
-                            border-radius: 3px;
-                            border: 1px solid #FEB2B2;
-                            font-size: 10.5px;
-                        }
-                    """)
-                else:
-                    btn_row_delete.setStyleSheet("""
-                        QPushButton {
-                            background-color: #FFF5F5;
-                            color: #C53030;
-                            font-weight: 600;
-                            padding: 2px 7px;
-                            border-radius: 3px;
-                            border: 1px solid #FEB2B2;
-                            font-size: 10.5px;
-                        }
-                        QPushButton:hover {
-                            background-color: #FED7D7;
-                            color: #9B2C2C;
-                        }
-                    """)
+                self._style_row_delete_button(btn_row_delete, is_deleted=is_row_deleted)
                 btn_row_delete.clicked.connect(
                     lambda checked=False, s_id=source_fid, u=uuid_str, e_id=err_fid, btn=btn_row_delete: self._mark_feature_deleted(
                         val_id, layer, table, source_fid=s_id, map_uuid=u, err_fid=e_id, button=btn
@@ -1436,49 +1611,16 @@ class CbmsmvDialog(QDialog):
         # If status column was edited directly, update cell style and Delete button in that row
         if fn_lower in ("status", "sf_status"):
             is_del = (new_val_str.lower() == "deleted")
-            if is_del:
-                item.setBackground(QColor("#FED7D7"))
-                item.setForeground(QColor("#9B2C2C"))
-            else:
-                item.setBackground(QColor("#FEFCBF"))
-                item.setForeground(QColor("#2D3748"))
+            self._style_table_cell(item, "deleted" if is_del else "modified")
             act_w = table.cellWidget(row, table.columnCount() - 1)
             if act_w:
                 for child in act_w.findChildren(QPushButton):
                     if child.text() in ("Delete", "Deleted"):
-                        if is_del:
-                            child.setText("Deleted")
-                            child.setStyleSheet("""
-                                QPushButton {
-                                    background-color: #FED7D7;
-                                    color: #9B2C2C;
-                                    font-weight: 600;
-                                    padding: 2px 7px;
-                                    border-radius: 3px;
-                                    border: 1px solid #FEB2B2;
-                                    font-size: 10.5px;
-                                }
-                            """)
-                        else:
-                            child.setText("Delete")
-                            child.setStyleSheet("""
-                                QPushButton {
-                                    background-color: #FFF5F5;
-                                    color: #C53030;
-                                    font-weight: 600;
-                                    padding: 2px 7px;
-                                    border-radius: 3px;
-                                    border: 1px solid #FEB2B2;
-                                    font-size: 10.5px;
-                                }
-                                QPushButton:hover {
-                                    background-color: #FED7D7;
-                                    color: #9B2C2C;
-                                }
-                            """)
+                        child.setText("Deleted" if is_del else "Delete")
+                        self._style_row_delete_button(child, is_deleted=is_del)
         else:
             # Subtle highlight to show cell was manually modified
-            item.setBackground(QColor("#FEFCBF"))
+            self._style_table_cell(item, "modified")
 
     def _find_main_feature(
         self,
@@ -1830,7 +1972,7 @@ class CbmsmvDialog(QDialog):
                                 new_text = str(col_updates[fname])
                                 c_item.setText(new_text)
                                 # Highlight fixed cell in green
-                                c_item.setBackground(QColor("#C6F6D5"))
+                                self._style_table_cell(c_item, "fixed")
                                 # Also update result layer
                                 f_idx = layer.fields().indexOf(fname)
                                 if f_idx != -1:
@@ -1858,17 +2000,7 @@ class CbmsmvDialog(QDialog):
                             if btn.text() == "Fix":
                                 btn.setText("✓ Fixed")
                                 btn.setEnabled(False)
-                                btn.setStyleSheet("""
-                                    QPushButton {
-                                        background-color: #C6F6D5;
-                                        color: #22543D;
-                                        font-weight: bold;
-                                        padding: 2px 7px;
-                                        border-radius: 3px;
-                                        border: 1px solid #9AE6B4;
-                                        font-size: 10.5px;
-                                    }
-                                """)
+                                self._style_row_fix_button(btn, enabled=False, fixed=True)
         finally:
             table.setProperty("is_populating", False)
 
@@ -1983,11 +2115,9 @@ class CbmsmvDialog(QDialog):
             try:
                 cell_item.setText(new_status)
                 if new_status.lower() == "deleted":
-                    cell_item.setBackground(QColor("#FED7D7"))
-                    cell_item.setForeground(QColor("#9B2C2C"))
+                    self._style_table_cell(cell_item, "deleted")
                 else:
-                    cell_item.setBackground(QColor("#FFFFFF"))
-                    cell_item.setForeground(QColor("#2D3748"))
+                    self._style_table_cell(cell_item, "normal")
             finally:
                 table.setProperty("is_populating", False)
 
@@ -2045,36 +2175,9 @@ class CbmsmvDialog(QDialog):
                         break
 
         if button:
-            if new_status.lower() == "deleted":
-                button.setText("Deleted")
-                button.setStyleSheet("""
-                    QPushButton {
-                        background-color: #FED7D7;
-                        color: #9B2C2C;
-                        font-weight: 600;
-                        padding: 2px 7px;
-                        border-radius: 3px;
-                        border: 1px solid #FEB2B2;
-                        font-size: 10.5px;
-                    }
-                """)
-            else:
-                button.setText("Delete")
-                button.setStyleSheet("""
-                    QPushButton {
-                        background-color: #FFF5F5;
-                        color: #C53030;
-                        font-weight: 600;
-                        padding: 2px 7px;
-                        border-radius: 3px;
-                        border: 1px solid #FEB2B2;
-                        font-size: 10.5px;
-                    }
-                    QPushButton:hover {
-                        background-color: #FED7D7;
-                        color: #9B2C2C;
-                    }
-                """)
+            is_del = (new_status.lower() == "deleted")
+            button.setText("Deleted" if is_del else "Delete")
+            self._style_row_delete_button(button, is_deleted=is_del)
 
         # 8. Update Footer Status
         if new_status.lower() == "deleted":
@@ -2130,11 +2233,9 @@ class CbmsmvDialog(QDialog):
                                         if cell_item:
                                             cell_item.setText(new_status)
                                             if new_status.lower() == "deleted":
-                                                cell_item.setBackground(QColor("#FED7D7"))
-                                                cell_item.setForeground(QColor("#9B2C2C"))
+                                                self._style_table_cell(cell_item, "deleted")
                                             else:
-                                                cell_item.setBackground(QColor("#FFFFFF"))
-                                                cell_item.setForeground(QColor("#2D3748"))
+                                                self._style_table_cell(cell_item, "normal")
                                     finally:
                                         table.setProperty("is_populating", False)
 
@@ -2142,36 +2243,9 @@ class CbmsmvDialog(QDialog):
                                 if act_w:
                                     for child in act_w.findChildren(QPushButton):
                                         if child.text() in ("Delete", "Deleted"):
-                                            if new_status.lower() == "deleted":
-                                                child.setText("Deleted")
-                                                child.setStyleSheet("""
-                                                    QPushButton {
-                                                        background-color: #FED7D7;
-                                                        color: #9B2C2C;
-                                                        font-weight: 600;
-                                                        padding: 2px 7px;
-                                                        border-radius: 3px;
-                                                        border: 1px solid #FEB2B2;
-                                                        font-size: 10.5px;
-                                                    }
-                                                """)
-                                            else:
-                                                child.setText("Delete")
-                                                child.setStyleSheet("""
-                                                    QPushButton {
-                                                        background-color: #FFF5F5;
-                                                        color: #C53030;
-                                                        font-weight: 600;
-                                                        padding: 2px 7px;
-                                                        border-radius: 3px;
-                                                        border: 1px solid #FEB2B2;
-                                                        font-size: 10.5px;
-                                                    }
-                                                    QPushButton:hover {
-                                                        background-color: #FED7D7;
-                                                        color: #9B2C2C;
-                                                    }
-                                                """)
+                                            is_del = (new_status.lower() == "deleted")
+                                            child.setText("Deleted" if is_del else "Delete")
+                                            self._style_row_delete_button(child, is_deleted=is_del)
                                 break
 
     def _on_shortcut_save(self):
@@ -3188,6 +3262,19 @@ class CbmsmvDialog(QDialog):
             # User closed the dock widget via 'X' button
             self.close()
 
+    def showEvent(self, event):
+        """Re-check theme when dialog is shown and update styling if changed."""
+        super().showEvent(event)
+        try:
+            palette = self.palette()
+            bg_color = palette.color(palette.Window)
+            new_theme = "dark" if bg_color.lightness() < 128 else "light"
+            if new_theme != getattr(self, "current_theme", None):
+                self.current_theme = new_theme
+                self._apply_styling()
+        except Exception:
+            pass
+
     def closeEvent(self, event):
         """Prompt to save unsaved edits and clean up active review dock and main dock widget."""
         main_layer = self._find_existing_main_building_layer()
@@ -3252,6 +3339,7 @@ class CbmsmvDialog(QDialog):
           - Base Layers (.gpkg)
         along with output and destination settings.
         """
+        colors = self._get_theme_colors()
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -3277,7 +3365,7 @@ class CbmsmvDialog(QDialog):
 
         # 1. Form 2 Data File (.csv)
         lbl_form2 = QLabel("Form 2 Data File (.csv):")
-        lbl_form2.setStyleSheet("font-weight: bold; color: #2C3E50;")
+        lbl_form2.setStyleSheet(f"font-weight: bold; color: {colors['title']};")
         self.file_form2 = QgsFileWidget()
         self.file_form2.setDialogTitle("Select Form 2 Data File (.csv)")
         self.file_form2.setFilter("CBMS Form 2 CSV Files (*.csv *.CSV);;JSON Files (*.json *.JSON);;All Files (*.*)")
@@ -3294,7 +3382,7 @@ class CbmsmvDialog(QDialog):
 
         # 2. Geotagged Building Points (.geojson)
         lbl_points = QLabel("Form 2 Geotagged Building Points (.geojson):")
-        lbl_points.setStyleSheet("font-weight: bold; color: #2C3E50;")
+        lbl_points.setStyleSheet(f"font-weight: bold; color: {colors['title']};")
         self.file_points = QgsFileWidget()
         self.file_points.setDialogTitle("Select Form 2 Geotagged Building Points (.geojson)")
         self.file_points.setFilter("GeoJSON Vector Files (*.geojson);;All Files (*.*)")
@@ -3311,7 +3399,7 @@ class CbmsmvDialog(QDialog):
 
         # 3. Base Layers (.gpkg)
         lbl_base = QLabel("Base Layers (.gpkg):")
-        lbl_base.setStyleSheet("font-weight: bold; color: #2C3E50;")
+        lbl_base.setStyleSheet(f"font-weight: bold; color: {colors['title']};")
         self.file_base = QgsFileWidget()
         self.file_base.setDialogTitle("Select Base Layers (.gpkg)")
         self.file_base.setFilter("GeoPackage Database Files (*.gpkg);;All Files (*.*)")
@@ -3349,7 +3437,7 @@ class CbmsmvDialog(QDialog):
         # Output Mode: In-Memory vs GeoPackage
         mode_layout = QHBoxLayout()
         lbl_mode = QLabel("Output Destination:")
-        lbl_mode.setStyleSheet("font-weight: bold; color: #2C3E50;")
+        lbl_mode.setStyleSheet(f"font-weight: bold; color: {colors['title']};")
         self.radio_memory = QRadioButton("Temporary In-Memory Layers (Recommended)")
         self.radio_memory.setChecked(True)
         self.radio_file = QRadioButton("Export Results to GeoPackage")
@@ -3370,7 +3458,7 @@ class CbmsmvDialog(QDialog):
         gpkg_layout = QHBoxLayout(self.gpkg_widget)
         gpkg_layout.setContentsMargins(0, 0, 0, 0)
         lbl_gpkg = QLabel("Output GeoPackage:")
-        lbl_gpkg.setStyleSheet("font-weight: bold; color: #2C3E50;")
+        lbl_gpkg.setStyleSheet(f"font-weight: bold; color: {colors['title']};")
         self.file_widget_gpkg = QgsFileWidget()
         self.file_widget_gpkg.setStorageMode(QgsFileWidget.SaveFile)
         self.file_widget_gpkg.setFilter("GeoPackage Files (*.gpkg)")
@@ -3540,9 +3628,10 @@ class CbmsmvDialog(QDialog):
 
         layout.addWidget(self.rules_table, stretch=1)
 
+        colors = self._get_theme_colors()
         # Rule counts label
         self.lbl_rules_count = QLabel("")
-        self.lbl_rules_count.setStyleSheet("font-size: 11px; color: #555;")
+        self.lbl_rules_count.setStyleSheet(f"font-size: 11px; color: {colors['text_secondary']};")
         layout.addWidget(self.lbl_rules_count)
 
         return tab
@@ -3674,6 +3763,7 @@ class CbmsmvDialog(QDialog):
     # -----------------------------------------------------------------------
     def _create_tab_execution_logs(self) -> QWidget:
         """Create the Execution Logs tab with metrics, progress bar, and console."""
+        colors = self._get_theme_colors()
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -3683,9 +3773,9 @@ class CbmsmvDialog(QDialog):
         kpi_layout = QHBoxLayout()
         kpi_layout.setSpacing(10)
 
-        self.lbl_kpi_rules = self._create_kpi_card(kpi_layout, "Rules Queued", "0", "#2980B9")
-        self.lbl_kpi_flagged = self._create_kpi_card(kpi_layout, "Issues Flagged", "0", "#C0392B")
-        self.lbl_kpi_layers = self._create_kpi_card(kpi_layout, "Result Layers", "0", "#27AE60")
+        self.lbl_kpi_rules = self._create_kpi_card(kpi_layout, "Rules Queued", "0", colors["title"])
+        self.lbl_kpi_flagged = self._create_kpi_card(kpi_layout, "Issues Flagged", "0", colors["danger_text"])
+        self.lbl_kpi_layers = self._create_kpi_card(kpi_layout, "Result Layers", "0", colors["success_text"])
 
         layout.addLayout(kpi_layout)
 
@@ -3694,7 +3784,7 @@ class CbmsmvDialog(QDialog):
         progress_box.setSpacing(4)
 
         self.lbl_progress_status = QLabel("Status: Idle — Ready to run validation")
-        self.lbl_progress_status.setStyleSheet("font-weight: bold; font-size: 11px; color: #2C3E50;")
+        self.lbl_progress_status.setStyleSheet(f"font-weight: bold; font-size: 11px; color: {colors['title']};")
         progress_box.addWidget(self.lbl_progress_status)
 
         self.progress_bar = QProgressBar()
@@ -3709,7 +3799,7 @@ class CbmsmvDialog(QDialog):
         # Log Console Header & Utilities
         log_header = QHBoxLayout()
         log_title = QLabel("Execution Log Console:")
-        log_title.setStyleSheet("font-weight: bold; color: #2C3E50;")
+        log_title.setStyleSheet(f"font-weight: bold; color: {colors['title']};")
         log_header.addWidget(log_title)
         log_header.addStretch()
 
@@ -3770,8 +3860,9 @@ class CbmsmvDialog(QDialog):
         lbl_val.setStyleSheet(f"font-size: 22px; font-weight: 700; color: {color_hex};")
         lbl_val.setAlignment(Qt.AlignCenter)
 
+        colors = self._get_theme_colors()
         lbl_title = QLabel(title)
-        lbl_title.setStyleSheet("font-size: 9.5px; color: #718096; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;")
+        lbl_title.setStyleSheet(f"font-size: 9.5px; color: {colors['text_secondary']}; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;")
         lbl_title.setAlignment(Qt.AlignCenter)
 
         vbox.addWidget(lbl_val)
@@ -3785,6 +3876,7 @@ class CbmsmvDialog(QDialog):
     # -----------------------------------------------------------------------
     def _create_bottom_action_bar(self) -> QWidget:
         """Create the bottom footer action bar."""
+        colors = self._get_theme_colors()
         footer = QFrame()
         footer.setObjectName("bottomBar")
         layout = QHBoxLayout(footer)
@@ -3792,7 +3884,7 @@ class CbmsmvDialog(QDialog):
         layout.setSpacing(10)
 
         self.lbl_footer_status = QLabel("Ready")
-        self.lbl_footer_status.setStyleSheet("color: #555; font-size: 11px;")
+        self.lbl_footer_status.setStyleSheet(f"color: {colors['text_secondary']}; font-size: 11px;")
         layout.addWidget(self.lbl_footer_status, stretch=1)
 
         self.btn_reset = QPushButton("Reset Form")
@@ -3817,185 +3909,213 @@ class CbmsmvDialog(QDialog):
     # -----------------------------------------------------------------------
     def _apply_styling(self):
         """Apply modern, polished stylesheets conforming to Gemma plugin standards."""
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #F8F9FA;
+        colors = self._get_theme_colors()
+        qss = f"""
+            QDialog {{
+                background-color: {colors['dialog_bg']};
                 font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Roboto", "Helvetica Neue", sans-serif;
                 font-size: 11.5px;
-                color: #2D3748;
-            }
-            QWidget {
+                color: {colors['text_primary']};
+            }}
+            QWidget {{
                 font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Roboto", "Helvetica Neue", sans-serif;
-            }
-            #topNavBar {
+                color: {colors['text_primary']};
+            }}
+            #topNavBar {{
                 background-color: transparent;
                 border: none;
-            }
-            #btnHeaderConfig {
-                background-color: #EDF2F7;
-                color: #2B6CB0;
+            }}
+            #btnHeaderConfig {{
+                background-color: {colors['surface_elevated']};
+                color: {colors['title']};
                 font-weight: 600;
                 padding: 6px 14px;
                 border-radius: 5px;
-                border: 1px solid #CBD5E0;
+                border: 1px solid {colors['border']};
                 font-size: 11px;
-            }
-            QPushButton#btnHeaderConfig:hover {
-                background-color: #E2E8F0;
-                color: #1A365D;
-                border: 1px solid #A0AEC0;
-            }
-            #btnDock {
-                background-color: #EDF2F7;
-                color: #2B6CB0;
+            }}
+            QPushButton#btnHeaderConfig:hover {{
+                background-color: {colors['surface_hover']};
+                color: {colors['accent']};
+                border: 1px solid {colors['border_focus']};
+            }}
+            #btnDock {{
+                background-color: {colors['surface_elevated']};
+                color: {colors['title']};
                 font-weight: 600;
                 padding: 6px 14px;
                 border-radius: 5px;
-                border: 1px solid #CBD5E0;
+                border: 1px solid {colors['border']};
                 font-size: 11px;
-            }
-            QPushButton#btnDock:hover {
-                background-color: #E2E8F0;
-                color: #1A365D;
-                border: 1px solid #A0AEC0;
-            }
-            QDockWidget {
+            }}
+            QPushButton#btnDock:hover {{
+                background-color: {colors['surface_hover']};
+                color: {colors['accent']};
+                border: 1px solid {colors['border_focus']};
+            }}
+            QDockWidget {{
                 font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Roboto", "Helvetica Neue", sans-serif;
                 font-size: 11px;
-                color: #2D3748;
-            }
-            QDockWidget::title {
-                background-color: #EDF2F7;
+                color: {colors['text_primary']};
+                background-color: {colors['dialog_bg']};
+            }}
+            QDockWidget::title {{
+                background-color: {colors['surface_elevated']};
                 padding: 6px 10px;
-                border-bottom: 1px solid #CBD5E0;
+                border-bottom: 1px solid {colors['border']};
                 font-weight: bold;
-                color: #1A365D;
-            }
-            #sectionGroup {
+                color: {colors['title']};
+            }}
+            #sectionGroup {{
                 font-weight: 600;
                 font-size: 12px;
-                color: #1A365D;
-                border: 1px solid #D0D7DE;
+                color: {colors['title']};
+                border: 1px solid {colors['border']};
                 border-radius: 6px;
                 margin-top: 10px;
                 padding-top: 12px;
-                background-color: #FFFFFF;
-            }
-            #sectionGroup::title {
+                background-color: {colors['surface_bg']};
+            }}
+            #sectionGroup::title {{
                 subcontrol-origin: margin;
                 subcontrol-position: top left;
                 padding: 0 8px;
-                color: #1A365D;
-            }
-            #kpiCard {
-                background-color: #FFFFFF;
-                border: 1px solid #E2E8F0;
+                color: {colors['title']};
+            }}
+            #kpiCard {{
+                background-color: {colors['card_bg']};
+                border: 1px solid {colors['border_subtle']};
                 border-radius: 6px;
-            }
-            #kpiCard:hover {
-                border-color: #CBD5E0;
-                background-color: #F7FAFC;
-            }
-            #validationProgressBar {
-                border: 1px solid #CBD5E0;
+            }}
+            #kpiCard:hover {{
+                border-color: {colors['border']};
+                background-color: {colors['card_hover_bg']};
+            }}
+            #validationProgressBar {{
+                border: 1px solid {colors['border']};
                 border-radius: 4px;
                 text-align: center;
-                background-color: #EDF2F7;
+                background-color: {colors['surface_elevated']};
+                color: {colors['text_primary']};
                 height: 18px;
                 font-size: 10px;
                 font-weight: 600;
-            }
-            #validationProgressBar::chunk {
+            }}
+            #validationProgressBar::chunk {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #3182CE, stop:1 #63B3ED);
+                    stop:0 {colors['accent']}, stop:1 {colors['title']});
                 border-radius: 3px;
-            }
-            #consoleLog {
-                background-color: #1A202C;
-                color: #E2E8F0;
-                border: 1px solid #2D3748;
+            }}
+            #consoleLog {{
+                background-color: {colors['console_bg']};
+                color: {colors['console_text']};
+                border: 1px solid {colors['console_border']};
                 border-radius: 6px;
                 padding: 8px;
                 font-family: "Consolas", "Cascadia Code", monospace;
                 font-size: 10.5px;
                 line-height: 1.4;
-            }
-            #btnRun {
-                background-color: #2B6CB0;
+            }}
+            #btnRun {{
+                background-color: {colors['accent']};
                 color: #FFFFFF;
                 font-weight: 600;
                 padding: 7px 18px;
                 border-radius: 5px;
                 border: none;
                 font-size: 11.5px;
-            }
-            #btnRun:hover {
-                background-color: #2C5282;
-            }
-            #btnRun:pressed {
-                background-color: #1A365D;
-            }
-            #btnRun:disabled {
-                background-color: #A0AEC0;
-            }
-            QTableWidget {
-                background-color: #FFFFFF;
-                border: 1px solid #E2E8F0;
+            }}
+            #btnRun:hover {{
+                background-color: {colors['accent_hover']};
+            }}
+            #btnRun:pressed {{
+                background-color: {colors['accent_pressed']};
+            }}
+            #btnRun:disabled {{
+                background-color: {colors['disabled_bg']};
+                color: {colors['disabled_text']};
+            }}
+            QTableWidget {{
+                background-color: {colors['surface_bg']};
+                border: 1px solid {colors['border']};
                 border-radius: 4px;
-                gridline-color: #EDF2F7;
+                gridline-color: {colors['table_grid']};
                 font-size: 11px;
-                color: #2D3748;
-            }
-            QTableWidget::item:selected {
-                background-color: #EBF8FF;
-                color: #2B6CB0;
-            }
-            QHeaderView::section {
-                background-color: #EDF2F7;
-                color: #2D3748;
+                color: {colors['text_primary']};
+            }}
+            QTableWidget::item:selected {{
+                background-color: {colors['selected_item_bg']};
+                color: {colors['selected_item_text']};
+            }}
+            QHeaderView::section {{
+                background-color: {colors['table_header_bg']};
+                color: {colors['text_primary']};
                 font-size: 11px;
                 font-weight: 600;
                 padding: 6px 8px;
                 border: none;
-                border-bottom: 1px solid #CBD5E0;
-            }
-            QTabWidget::pane {
-                border: 1px solid #E2E8F0;
-                background-color: #FFFFFF;
+                border-bottom: 1px solid {colors['border']};
+            }}
+            QTabWidget::pane {{
+                border: 1px solid {colors['border']};
+                background-color: {colors['surface_bg']};
                 border-radius: 4px;
-            }
-            QTabBar::tab {
-                background-color: #EDF2F7;
-                color: #4A5568;
+            }}
+            QTabBar::tab {{
+                background-color: {colors['surface_elevated']};
+                color: {colors['text_secondary']};
                 font-size: 11px;
                 font-weight: 600;
                 padding: 6px 14px;
                 border-top-left-radius: 4px;
                 border-top-right-radius: 4px;
                 margin-right: 2px;
-            }
-            QTabBar::tab:selected {
-                background-color: #FFFFFF;
-                color: #2B6CB0;
-                border: 1px solid #E2E8F0;
-                border-bottom-color: #FFFFFF;
-            }
-            QLineEdit {
+            }}
+            QTabBar::tab:selected {{
+                background-color: {colors['surface_bg']};
+                color: {colors['title']};
+                border: 1px solid {colors['border']};
+                border-bottom-color: {colors['surface_bg']};
+            }}
+            QLineEdit {{
                 font-size: 11px;
                 padding: 4px 8px;
-                border: 1px solid #CBD5E0;
+                border: 1px solid {colors['border']};
                 border-radius: 4px;
-                background-color: #FFFFFF;
-                color: #2D3748;
-            }
-            QLineEdit:focus {
-                border-color: #3182CE;
-            }
-            QPushButton {
+                background-color: {colors['surface_bg']};
+                color: {colors['text_primary']};
+            }}
+            QLineEdit:focus {{
+                border-color: {colors['border_focus']};
+            }}
+            QPushButton {{
                 font-size: 11px;
                 font-weight: 600;
-            }
-        """)
+                border-radius: 4px;
+                padding: 5px 12px;
+            }}
+            QGroupBox {{
+                font-weight: 600;
+                border: 1px solid {colors['border']};
+                border-radius: 6px;
+                margin-top: 10px;
+                padding-top: 12px;
+                background-color: {colors['surface_bg']};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 8px;
+                color: {colors['title']};
+            }}
+            QRadioButton, QCheckBox {{
+                color: {colors['text_primary']};
+                spacing: 6px;
+            }}
+        """
+        self.setStyleSheet(qss)
+        if getattr(self, "_dock_widget", None):
+            self._dock_widget.setStyleSheet(qss)
 
     # -----------------------------------------------------------------------
     # Logging Utilities
