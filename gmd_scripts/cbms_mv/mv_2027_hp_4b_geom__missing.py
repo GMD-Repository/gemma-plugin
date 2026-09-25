@@ -28,6 +28,8 @@ from .. import gmdhelpers
 
 
 
+TARGET_FIELDS = ["sf_longitude", "sf_latitude"]
+
 class mv_2027_hp_4b_geom__missing(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"

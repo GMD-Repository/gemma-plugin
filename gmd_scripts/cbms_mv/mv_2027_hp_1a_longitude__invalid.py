@@ -29,6 +29,8 @@ from PyQt5.QtGui import QIcon
 from .. import gmdhelpers
 
 
+TARGET_FIELDS = ["sf_longitude", "sf_latitude", "df_x_current", "df_y_current", "sf_map_uuid", "df_map_uuid"]
+
 class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"

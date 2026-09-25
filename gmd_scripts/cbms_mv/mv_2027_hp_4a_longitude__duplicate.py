@@ -28,6 +28,7 @@ from qgis.core import (
 from PyQt5.QtGui import QIcon
 from .. import gmdhelpers
 
+TARGET_FIELDS = ["sf_longitude", "sf_latitude"]
 
 class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
 

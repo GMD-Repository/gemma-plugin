@@ -30,6 +30,8 @@ from .. import gmdhelpers
 
 
 
+TARGET_FIELDS = ["sf_remarks"]
+
 class mv_2027_hp_4c_remarks__invalid(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"

@@ -28,6 +28,8 @@ from .. import gmdhelpers
 
 
 
+TARGET_FIELDS = ["sf_bsn_geoid", "sf_bsn", "ref_bsn_geoid"]
+
 class mv_2027_hp_4a_bsn_geoid__invalid(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"
