@@ -122,6 +122,30 @@ except (ImportError, ValueError):
             get_fix_handler = lambda v: None
             has_fix = lambda v: False
 
+try:
+    from .cbms_mv_targets import (
+        resolve_target_columns,
+        CBMS_MV_RULE_TARGET_FIELDS,
+        CBMS_MV_CATEGORIES,
+        get_rule_category,
+        get_category_info,
+    )
+except (ImportError, ValueError):
+    try:
+        from cbms_mv_targets import (
+            resolve_target_columns,
+            CBMS_MV_RULE_TARGET_FIELDS,
+            CBMS_MV_CATEGORIES,
+            get_rule_category,
+            get_category_info,
+        )
+    except Exception:
+        resolve_target_columns = lambda v, f, c=None: []
+        CBMS_MV_RULE_TARGET_FIELDS = {}
+        CBMS_MV_CATEGORIES = {}
+        get_rule_category = lambda v: "other"
+        get_category_info = lambda k: {"label": k.title(), "desc": "", "icon": "mActionOptions.svg"}
+
 
 # ---------------------------------------------------------------------------
 # Dynamic Rule Discovery from gmd_scripts/cbms_mv
@@ -151,6 +175,7 @@ def discover_cbms_mv_rules(cbms_mv_dir: str) -> List[Dict[str, Any]]:
 
         help_str = ""
         has_base_layer = False
+        target_fields = None
 
         try:
             with open(file_path, "r", encoding="utf-8") as fh:
@@ -167,11 +192,22 @@ def discover_cbms_mv_rules(cbms_mv_dir: str) -> List[Dict[str, Any]]:
                             elif hasattr(ast, "Str") and isinstance(stmt.value, ast.Str):
                                 help_str = stmt.value.s
 
-                # Check if BASE_LAYER parameter is assigned/used
+                # Check if BASE_LAYER parameter is assigned/used or TARGET_FIELDS declared
                 if isinstance(node, ast.Assign):
                     for target in node.targets:
-                        if isinstance(target, ast.Name) and target.id == "BASE_LAYER":
-                            has_base_layer = True
+                        if isinstance(target, ast.Name):
+                            if target.id == "BASE_LAYER":
+                                has_base_layer = True
+                            elif target.id in ("TARGET_FIELDS", "TARGET_COLUMNS"):
+                                if isinstance(node.value, (ast.List, ast.Tuple)):
+                                    extracted = []
+                                    for elt in node.value.elts:
+                                        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                                            extracted.append(elt.value)
+                                        elif hasattr(ast, "Str") and isinstance(elt, ast.Str):
+                                            extracted.append(elt.s)
+                                    if extracted:
+                                        target_fields = extracted
 
         except Exception as exc:
             help_str = f"Error reading algorithm help: {exc}"
@@ -185,7 +221,9 @@ def discover_cbms_mv_rules(cbms_mv_dir: str) -> List[Dict[str, Any]]:
             "id": val_id,
             "name": first_line,
             "desc": desc,
+            "category": get_rule_category(val_id),
             "has_base": has_base_layer,
+            "target_fields": target_fields or CBMS_MV_RULE_TARGET_FIELDS.get(val_id, []),
             "file_path": file_path,
             "default": True,
         })
@@ -407,6 +445,12 @@ class CbmsmvDialog(QDialog):
                 "disabled_border": "#3C4043",
                 "selected_item_bg": "#17385E",
                 "selected_item_text": "#8AB4F8",
+                "target_col_bg": "#192738",
+                "target_col_header_bg": "#1E334D",
+                "target_col_border": "#58A6FF",
+                "target_badge_bg": "#1C355E",
+                "target_badge_text": "#8AB4F8",
+                "target_badge_border": "#284E88",
             }
         else:
             return {
@@ -452,6 +496,12 @@ class CbmsmvDialog(QDialog):
                 "disabled_border": "#E2E8F0",
                 "selected_item_bg": "#EBF8FF",
                 "selected_item_text": "#2B6CB0",
+                "target_col_bg": "#F0F7FF",
+                "target_col_header_bg": "#E1EFFF",
+                "target_col_border": "#3182CE",
+                "target_badge_bg": "#EBF8FF",
+                "target_badge_text": "#2B6CB0",
+                "target_badge_border": "#BEE3F8",
             }
 
     def _style_row_edit_button(self, btn: QPushButton):
@@ -477,6 +527,9 @@ class CbmsmvDialog(QDialog):
         """Apply theme-aware styling to a Fix button in the feature table."""
         colors = self._get_theme_colors()
         if fixed:
+            succ_ic = QgsApplication.getThemeIcon("mIconSuccess.svg")
+            if not succ_ic.isNull():
+                btn.setIcon(succ_ic)
             btn.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {colors['success_bg']};
@@ -560,9 +613,26 @@ class CbmsmvDialog(QDialog):
         elif state == "fixed":
             item.setBackground(QColor(colors["success_bg"]))
             item.setForeground(QColor(colors["success_text"]))
+        elif state == "target":
+            item.setBackground(QColor(colors["target_col_bg"]))
+            item.setForeground(QColor(colors["text_primary"]))
         else:
             item.setBackground(QColor(colors["surface_bg"]))
             item.setForeground(QColor(colors["text_primary"]))
+
+    def _scroll_to_column(self, table: QTableWidget, col_name: str, field_names: List[str]):
+        """Scroll the table horizontally to bring the target column into center view."""
+        if not table or col_name not in field_names:
+            return
+        col_idx = field_names.index(col_name) + 1  # Account for column 0 (checkbox)
+        if table.rowCount() > 0:
+            item = table.item(0, col_idx)
+            if item:
+                table.scrollToItem(item, QAbstractItemView.PositionAtCenter)
+        elif hasattr(table, "horizontalScrollBar"):
+            h_bar = table.horizontalScrollBar()
+            col_x = table.columnViewportPosition(col_idx)
+            h_bar.setValue(max(0, col_x - 100))
 
     # -----------------------------------------------------------------------
     # Setup & Icons
@@ -632,7 +702,7 @@ class CbmsmvDialog(QDialog):
         bar_layout.setSpacing(8)
 
         # Title badge
-        lbl_title = QLabel("🗺️  CBMS Form 2 Map Validation")
+        lbl_title = QLabel("CBMS Form 2 Map Validation")
         lbl_title.setObjectName("lblDialogTitle")
         lbl_title.setStyleSheet(f"font-size: 12px; font-weight: bold; color: {self._get_theme_colors()['title']};")
         bar_layout.addWidget(lbl_title)
@@ -652,8 +722,12 @@ class CbmsmvDialog(QDialog):
         bar_layout.addWidget(self.btn_dock)
 
         # View Switch Button
-        self.btn_header_config = QPushButton("⚙️  Configuration")
+        self.btn_header_config = QPushButton("Configuration")
         self.btn_header_config.setObjectName("btnHeaderConfig")
+        cfg_icon = QgsApplication.getThemeIcon("mActionOptions.svg")
+        if not cfg_icon.isNull():
+            self.btn_header_config.setIcon(cfg_icon)
+            self.btn_header_config.setIconSize(QSize(16, 16))
         self.btn_header_config.setToolTip("Configure input files, validation rules, and inspect logs")
         self.btn_header_config.clicked.connect(self._toggle_view)
         bar_layout.addWidget(self.btn_header_config)
@@ -674,7 +748,10 @@ class CbmsmvDialog(QDialog):
         """Switch to Results Workspace (Page 0)."""
         self.main_stack.setCurrentIndex(0)
         if hasattr(self, "btn_header_config"):
-            self.btn_header_config.setText("⚙️  Configuration")
+            self.btn_header_config.setText("Configuration")
+            cfg_icon = QgsApplication.getThemeIcon("mActionOptions.svg")
+            if not cfg_icon.isNull():
+                self.btn_header_config.setIcon(cfg_icon)
             self.btn_header_config.setToolTip("Configure input files, validation rules, and inspect logs")
 
     def _switch_to_config(self, tab_index: Optional[int] = None):
@@ -683,7 +760,10 @@ class CbmsmvDialog(QDialog):
         if tab_index is not None and hasattr(self, "config_tab_widget"):
             self.config_tab_widget.setCurrentIndex(tab_index)
         if hasattr(self, "btn_header_config"):
-            self.btn_header_config.setText("Home")
+            self.btn_header_config.setText("Validation Results")
+            res_icon = QgsApplication.getThemeIcon("mActionShowTable.svg")
+            if not res_icon.isNull():
+                self.btn_header_config.setIcon(res_icon)
             self.btn_header_config.setToolTip("Return to Results Workspace")
 
     # -----------------------------------------------------------------------
@@ -704,7 +784,7 @@ class CbmsmvDialog(QDialog):
         top_bar = QHBoxLayout()
         top_bar.setContentsMargins(4, 2, 4, 4)
 
-        lbl_title = QLabel("⚙️  Configuration & Validation Rules")
+        lbl_title = QLabel("Configuration & Validation Rules")
         lbl_title.setObjectName("lblConfigTitle")
         lbl_title.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {self._get_theme_colors()['title']};")
         top_bar.addWidget(lbl_title)
@@ -718,9 +798,13 @@ class CbmsmvDialog(QDialog):
         self.tab_validation_rules = self._create_tab_validation_rules()
         self.tab_execution_logs = self._create_tab_execution_logs()
 
-        self.config_tab_widget.addTab(self.tab_data_config, "📋  Data Config")
-        self.config_tab_widget.addTab(self.tab_validation_rules, "⚙️  Validation Rules")
-        self.config_tab_widget.addTab(self.tab_execution_logs, "📊  Execution Logs")
+        data_icon = QgsApplication.getThemeIcon("mActionAddOgrLayer.svg")
+        rules_icon = QgsApplication.getThemeIcon("mActionOptions.svg")
+        logs_icon = QgsApplication.getThemeIcon("mMessageLog.svg")
+
+        self.config_tab_widget.addTab(self.tab_data_config, data_icon if not data_icon.isNull() else QIcon(), "Data Config")
+        self.config_tab_widget.addTab(self.tab_validation_rules, rules_icon if not rules_icon.isNull() else QIcon(), "Validation Rules")
+        self.config_tab_widget.addTab(self.tab_execution_logs, logs_icon if not logs_icon.isNull() else QIcon(), "Execution Logs")
 
         layout.addWidget(self.config_tab_widget, stretch=1)
         return page
@@ -745,10 +829,29 @@ class CbmsmvDialog(QDialog):
         # Subpage 1: Results tabs
         self.results_tab_widget = QTabWidget()
         self.results_tab_widget.setObjectName("resultsTabWidget")
+        self.results_tab_widget.currentChanged.connect(self._on_results_tab_changed)
         self.results_stack.addWidget(self.results_tab_widget)
 
         layout.addWidget(self.results_stack, stretch=1)
         return page
+
+    def _on_results_tab_changed(self, index: int):
+        """When switching to a category tab, auto-scroll the active check's table to the first target column."""
+        if index <= 0:
+            return
+        cat_widget = self.results_tab_widget.widget(index)
+        if not cat_widget:
+            return
+        stacked = cat_widget.findChild(QStackedWidget, "stackedCategoryTables")
+        target_tab = stacked.currentWidget() if stacked else cat_widget
+        if target_tab:
+            target_cols = target_tab.property("target_cols")
+            field_names = target_tab.property("field_names")
+            if target_cols and field_names:
+                table = target_tab.findChild(QTableWidget)
+                if table:
+                    first_target = target_cols[0]
+                    QTimer.singleShot(100, lambda: self._scroll_to_column(table, first_target, field_names))
 
     def _create_empty_state_widget(self) -> QWidget:
         """Create a clean empty state card shown before any validation has been executed."""
@@ -766,9 +869,11 @@ class CbmsmvDialog(QDialog):
         card_layout.setSpacing(14)
         card_layout.setAlignment(Qt.AlignCenter)
 
-        icon_lbl = QLabel("📋")
+        icon_lbl = QLabel()
         icon_lbl.setAlignment(Qt.AlignCenter)
-        icon_lbl.setStyleSheet("font-size: 48px;")
+        tbl_icon = QgsApplication.getThemeIcon("mActionShowTable.svg")
+        if not tbl_icon.isNull():
+            icon_lbl.setPixmap(tbl_icon.pixmap(48, 48))
         card_layout.addWidget(icon_lbl)
 
         title_lbl = QLabel("No Validation Results Yet")
@@ -792,8 +897,11 @@ class CbmsmvDialog(QDialog):
         btn_row.setSpacing(12)
         btn_row.setAlignment(Qt.AlignCenter)
 
-        btn_cfg = QPushButton("  ⚙️  Open Configuration  ")
+        btn_cfg = QPushButton("Open Configuration")
         btn_cfg.setObjectName("btnEmptyStateConfig")
+        cfg_icon = QgsApplication.getThemeIcon("mActionOptions.svg")
+        if not cfg_icon.isNull():
+            btn_cfg.setIcon(cfg_icon)
         btn_cfg.setStyleSheet(f"""
             QPushButton {{
                 background-color: {colors['surface_elevated']};
@@ -811,8 +919,11 @@ class CbmsmvDialog(QDialog):
         """)
         btn_cfg.clicked.connect(lambda: self._switch_to_config(0))
 
-        btn_quick_run = QPushButton("  ▶  Run Validation  ")
+        btn_quick_run = QPushButton("Run Validation")
         btn_quick_run.setObjectName("btnEmptyStateRun")
+        run_icon = QgsApplication.getThemeIcon("mActionStart.svg")
+        if not run_icon.isNull():
+            btn_quick_run.setIcon(run_icon)
         btn_quick_run.setStyleSheet(f"""
             QPushButton {{
                 background-color: {colors['accent']};
@@ -836,6 +947,149 @@ class CbmsmvDialog(QDialog):
         layout.addWidget(card)
         return container
 
+    def _create_category_tab(
+        self,
+        cat_key: str,
+        cat_items: List[Tuple[str, Dict[str, Any]]],
+    ) -> QWidget:
+        """
+        Create a Category Tab containing a top check-selector toolbar
+        and a QStackedWidget switching between the check result tables.
+        """
+        colors = self._get_theme_colors()
+        cat_info = get_category_info(cat_key)
+
+        tab = QWidget()
+        tab.setProperty("category_key", cat_key)
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        # 1. Top Sub-Navigation Toolbar
+        nav_frame = QFrame()
+        nav_frame.setObjectName("categoryNavFrame")
+        nav_frame.setStyleSheet(f"""
+            #categoryNavFrame {{
+                background-color: {colors['card_bg']};
+                border: 1px solid {colors['border']};
+                border-radius: 5px;
+            }}
+        """)
+        nav_layout = QHBoxLayout(nav_frame)
+        nav_layout.setContentsMargins(8, 6, 8, 6)
+        nav_layout.setSpacing(8)
+
+        # Category Icon & Label
+        cat_ic = QgsApplication.getThemeIcon(cat_info["icon"])
+        if not cat_ic.isNull():
+            lbl_cat_icon = QLabel()
+            lbl_cat_icon.setPixmap(cat_ic.pixmap(16, 16))
+            nav_layout.addWidget(lbl_cat_icon)
+
+        lbl_cat_title = QLabel(f"<b>{cat_info['label']}</b>")
+        lbl_cat_title.setStyleSheet(f"font-size: 11.5px; color: {colors['title']};")
+        lbl_cat_title.setToolTip(cat_info["desc"])
+        nav_layout.addWidget(lbl_cat_title)
+
+        nav_layout.addSpacing(6)
+
+        lbl_select = QLabel("Validation Check:")
+        lbl_select.setStyleSheet(f"font-size: 11px; color: {colors['text_secondary']};")
+        nav_layout.addWidget(lbl_select)
+
+        combo_checks = QComboBox()
+        combo_checks.setObjectName("comboCategoryChecks")
+        combo_checks.setStyleSheet(f"""
+            QComboBox {{
+                border: 1px solid {colors['border']};
+                border-radius: 4px;
+                padding: 3px 8px;
+                background-color: {colors['surface_bg']};
+                color: {colors['text_primary']};
+                font-size: 11px;
+                min-width: 260px;
+            }}
+            QComboBox:focus {{
+                border-color: {colors['border_focus']};
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {colors['surface_bg']};
+                color: {colors['text_primary']};
+                selection-background-color: {colors['selected_item_bg']};
+                selection-color: {colors['selected_item_text']};
+            }}
+        """)
+
+        btn_prev_check = QToolButton()
+        prev_ic = QgsApplication.getThemeIcon("mActionPrevious.svg")
+        if not prev_ic.isNull():
+            btn_prev_check.setIcon(prev_ic)
+        else:
+            btn_prev_check.setText("◀")
+        btn_prev_check.setToolTip("Previous validation check in this category")
+
+        btn_next_check = QToolButton()
+        next_ic = QgsApplication.getThemeIcon("mActionNext.svg")
+        if not next_ic.isNull():
+            btn_next_check.setIcon(next_ic)
+        else:
+            btn_next_check.setText("▶")
+        btn_next_check.setToolTip("Next validation check in this category")
+
+        lbl_check_counter = QLabel(f"1 of {len(cat_items)} checks")
+        lbl_check_counter.setStyleSheet(f"font-size: 10.5px; color: {colors['text_secondary']}; font-weight: 500;")
+
+        nav_layout.addWidget(combo_checks, stretch=1)
+        nav_layout.addWidget(btn_prev_check)
+        nav_layout.addWidget(btn_next_check)
+        nav_layout.addWidget(lbl_check_counter)
+
+        layout.addWidget(nav_frame)
+
+        # 2. QStackedWidget containing each check's table
+        stacked_tables = QStackedWidget()
+        stacked_tables.setObjectName("stackedCategoryTables")
+
+        for idx, (val_id, item) in enumerate(cat_items):
+            layer = item["layer"]
+            rule = item["rule"]
+            count = item["count"]
+            check_name = rule["name"]
+
+            err_table_tab = self._create_result_layer_tab(val_id, check_name, layer, count, rule=rule)
+            stacked_tables.addWidget(err_table_tab)
+
+            check_ic = QgsApplication.getThemeIcon("mIconCritical.svg" if count > 0 else "mIconSuccess.svg")
+            combo_checks.addItem(
+                check_ic if not check_ic.isNull() else QIcon(),
+                f"{val_id} — {check_name} ({count:,})",
+                val_id,
+            )
+
+        def _on_check_changed(idx: int):
+            if idx < 0 or idx >= stacked_tables.count():
+                return
+            stacked_tables.setCurrentIndex(idx)
+            lbl_check_counter.setText(f"{idx + 1} of {stacked_tables.count()} checks")
+            btn_prev_check.setEnabled(idx > 0)
+            btn_next_check.setEnabled(idx < stacked_tables.count() - 1)
+            active_tab = stacked_tables.currentWidget()
+            if active_tab:
+                target_cols = active_tab.property("target_cols")
+                field_names = active_tab.property("field_names")
+                if target_cols and field_names:
+                    tbl = active_tab.findChild(QTableWidget)
+                    if tbl:
+                        QTimer.singleShot(100, lambda: self._scroll_to_column(tbl, target_cols[0], field_names))
+
+        combo_checks.currentIndexChanged.connect(_on_check_changed)
+        btn_prev_check.clicked.connect(lambda: combo_checks.setCurrentIndex(max(0, combo_checks.currentIndex() - 1)))
+        btn_next_check.clicked.connect(lambda: combo_checks.setCurrentIndex(min(combo_checks.count() - 1, combo_checks.currentIndex() + 1)))
+
+        _on_check_changed(0)
+        layout.addWidget(stacked_tables, stretch=1)
+        return tab
+
     def _populate_results_workspace(
         self,
         execution_summary: List[Dict[str, Any]],
@@ -844,25 +1098,41 @@ class CbmsmvDialog(QDialog):
         """
         Populate the Results Workspace with:
           1. Tab 0: Summary Overview (Scorecard table of all executed rules)
-          2. Dynamic Tabs: One tab per rule that produced flagged features (>0)
+          2. Category Tabs (Two-Tier layout): Grouped by error category with check-selection dropdown
         """
         self.results_tab_widget.clear()
 
         # Tab 0: Summary Overview
         summary_tab = self._create_summary_tab(execution_summary, result_layers)
-        self.results_tab_widget.addTab(summary_tab, "📊  Summary Overview")
+        sum_icon = QgsApplication.getThemeIcon("mActionShowTable.svg")
+        self.results_tab_widget.addTab(summary_tab, sum_icon if not sum_icon.isNull() else QIcon(), "Summary Overview")
 
-        # Dynamic Error Tabs
+        # Group result layers by category
+        cat_groups: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}
         for val_id, item in result_layers.items():
-            layer = item["layer"]
-            rule = item["rule"]
-            count = item["count"]
-            check_name = rule["name"]
+            cat = item["rule"].get("category") or get_rule_category(val_id)
+            cat_groups.setdefault(cat, []).append((val_id, item))
 
-            err_tab = self._create_result_layer_tab(val_id, check_name, layer, count)
-            tab_title = f"🔴  {val_id} ({count})"
-            tab_index = self.results_tab_widget.addTab(err_tab, tab_title)
-            self.results_tab_widget.setTabToolTip(tab_index, f"{check_name} — {count} flagged feature(s)")
+        # Order categories logically according to CBMS_MV_CATEGORIES order
+        ordered_cat_keys = [k for k in CBMS_MV_CATEGORIES.keys() if k in cat_groups]
+        for k in cat_groups.keys():
+            if k not in ordered_cat_keys:
+                ordered_cat_keys.append(k)
+
+        # Create Category Tabs
+        for cat_key in ordered_cat_keys:
+            cat_items = cat_groups[cat_key]
+            cat_info = get_category_info(cat_key)
+            cat_flag_count = sum(item["count"] for _, item in cat_items)
+
+            cat_tab = self._create_category_tab(cat_key, cat_items)
+            tab_title = f"{cat_info['label']} ({cat_flag_count:,})"
+            tab_icon = QgsApplication.getThemeIcon(cat_info["icon"] if cat_flag_count > 0 else "mIconSuccess.svg")
+            tab_index = self.results_tab_widget.addTab(cat_tab, tab_icon if not tab_icon.isNull() else QIcon(), tab_title)
+            self.results_tab_widget.setTabToolTip(
+                tab_index,
+                f"{cat_info['label']} — {cat_flag_count:,} flagged feature(s) across {len(cat_items)} check(s)",
+            )
 
         # Switch subpage of results_stack to show the tab widget
         self.results_stack.setCurrentIndex(1)
@@ -911,7 +1181,10 @@ class CbmsmvDialog(QDialog):
 
         # 1. Search Box
         search_edit = QLineEdit()
-        search_edit.setPlaceholderText("🔍  Search validation ID or check name...")
+        filter_icon = QgsApplication.getThemeIcon("mActionFilter.svg")
+        if not filter_icon.isNull():
+            search_edit.addAction(filter_icon, QLineEdit.LeadingPosition)
+        search_edit.setPlaceholderText("Search validation ID or check name...")
         search_edit.setClearButtonEnabled(True)
         search_edit.setStyleSheet(f"""
             QLineEdit {{
@@ -931,10 +1204,13 @@ class CbmsmvDialog(QDialog):
         # 2. Status Filter Combo
         combo_filter = QComboBox()
         combo_filter.addItem(f"Show: All Rules ({total_rules})", "all")
-        combo_filter.addItem(f"🔴  Flagged Only ({flagged_rules})", "flagged")
-        combo_filter.addItem(f"🟢  Clean Only ({clean_rules})", "clean")
+        crit_icon = QgsApplication.getThemeIcon("mIconCritical.svg")
+        combo_filter.addItem(crit_icon if not crit_icon.isNull() else QIcon(), f"Flagged Only ({flagged_rules})", "flagged")
+        succ_icon = QgsApplication.getThemeIcon("mIconSuccess.svg")
+        combo_filter.addItem(succ_icon if not succ_icon.isNull() else QIcon(), f"Clean Only ({clean_rules})", "clean")
         if error_rules > 0:
-            combo_filter.addItem(f"⚠️  Errors Only ({error_rules})", "error")
+            warn_icon = QgsApplication.getThemeIcon("mIconWarning.svg")
+            combo_filter.addItem(warn_icon if not warn_icon.isNull() else QIcon(), f"Errors Only ({error_rules})", "error")
         combo_filter.setStyleSheet(f"""
             QComboBox {{
                 border: 1px solid {colors['border']};
@@ -954,14 +1230,48 @@ class CbmsmvDialog(QDialog):
         """)
         filter_bar.addWidget(combo_filter)
 
-        # 3. Quick Sort Helper Combo
+        # 3. Category Filter Combo
+        combo_cat_filter = QComboBox()
+        combo_cat_filter.addItem("Category: All", "all")
+        used_cats = []
+        for s in execution_summary:
+            ck = s.get("category") or get_rule_category(s.get("id", ""))
+            if ck not in used_cats:
+                used_cats.append(ck)
+        ordered_cats = [k for k in CBMS_MV_CATEGORIES.keys() if k in used_cats] + [k for k in used_cats if k not in CBMS_MV_CATEGORIES]
+        for ck in ordered_cats:
+            c_info = get_category_info(ck)
+            c_count = sum(1 for s in execution_summary if (s.get("category") or get_rule_category(s.get("id", ""))) == ck)
+            c_icon = QgsApplication.getThemeIcon(c_info["icon"])
+            combo_cat_filter.addItem(c_icon if not c_icon.isNull() else QIcon(), f"{c_info['label']} ({c_count})", ck)
+        combo_cat_filter.setStyleSheet(f"""
+            QComboBox {{
+                border: 1px solid {colors['border']};
+                border-radius: 4px;
+                padding: 4px 10px;
+                background-color: {colors['surface_bg']};
+                color: {colors['text_primary']};
+                font-size: 11px;
+                min-width: 145px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {colors['surface_bg']};
+                color: {colors['text_primary']};
+                selection-background-color: {colors['selected_item_bg']};
+                selection-color: {colors['selected_item_text']};
+            }}
+        """)
+        filter_bar.addWidget(combo_cat_filter)
+
+        # 4. Quick Sort Helper Combo
         combo_sort = QComboBox()
         combo_sort.addItem("Sort: Default", (-1, Qt.AscendingOrder))
-        combo_sort.addItem("Sort: Remaining Flags (High → Low)", (3, Qt.DescendingOrder))
-        combo_sort.addItem("Sort: Remaining Flags (Low → High)", (3, Qt.AscendingOrder))
+        combo_sort.addItem("Sort: Remaining Flags (High → Low)", (4, Qt.DescendingOrder))
+        combo_sort.addItem("Sort: Remaining Flags (Low → High)", (4, Qt.AscendingOrder))
         combo_sort.addItem("Sort: Status (Flagged First)", (0, Qt.AscendingOrder))
-        combo_sort.addItem("Sort: Validation ID (A → Z)", (1, Qt.AscendingOrder))
-        combo_sort.addItem("Sort: Check Name (A → Z)", (2, Qt.AscendingOrder))
+        combo_sort.addItem("Sort: Category (A → Z)", (1, Qt.AscendingOrder))
+        combo_sort.addItem("Sort: Validation ID (A → Z)", (2, Qt.AscendingOrder))
+        combo_sort.addItem("Sort: Check Name (A → Z)", (3, Qt.AscendingOrder))
         combo_sort.setStyleSheet(f"""
             QComboBox {{
                 border: 1px solid {colors['border']};
@@ -981,7 +1291,7 @@ class CbmsmvDialog(QDialog):
         """)
         filter_bar.addWidget(combo_sort)
 
-        # 4. Visible count label
+        # 5. Visible count label
         lbl_visible_count = QLabel(f"Showing {total_rules} of {total_rules} rules")
         lbl_visible_count.setStyleSheet(f"color: {colors['text_secondary']}; font-size: 10.5px; font-weight: 500;")
         filter_bar.addWidget(lbl_visible_count)
@@ -990,9 +1300,10 @@ class CbmsmvDialog(QDialog):
 
         # Scorecard Table
         table = QTableWidget()
-        table.setColumnCount(5)
+        table.setColumnCount(6)
         table.setHorizontalHeaderLabels([
             "Status",
+            "Category",
             "Validation ID",
             "Validation Check Name",
             "Issues Flagged",
@@ -1000,9 +1311,10 @@ class CbmsmvDialog(QDialog):
         ])
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setAlternatingRowColors(True)
         table.verticalHeader().setVisible(False)
@@ -1017,33 +1329,53 @@ class CbmsmvDialog(QDialog):
 
             # 0. Status Badge
             if flags > 0:
-                status_item = SortableTableWidgetItem(" 🔴 Flagged ")
+                status_item = SortableTableWidgetItem("Flagged")
+                crit_icon = QgsApplication.getThemeIcon("mIconCritical.svg")
+                if not crit_icon.isNull():
+                    status_item.setIcon(crit_icon)
                 status_item.setForeground(QColor("#FC8181" if self.is_dark else "#C53030"))
                 status_item.setData(Qt.UserRole, 0)
             elif str(status).startswith(("Error", "Failed")):
-                status_item = SortableTableWidgetItem(" ⚠️ Error ")
+                status_item = SortableTableWidgetItem("Error")
+                warn_icon = QgsApplication.getThemeIcon("mIconWarning.svg")
+                if not warn_icon.isNull():
+                    status_item.setIcon(warn_icon)
                 status_item.setForeground(QColor("#F6AD55" if self.is_dark else "#DD6B20"))
                 status_item.setData(Qt.UserRole, 1)
             else:
-                status_item = SortableTableWidgetItem(" 🟢 Clean ")
+                status_item = SortableTableWidgetItem("Clean")
+                succ_icon = QgsApplication.getThemeIcon("mIconSuccess.svg")
+                if not succ_icon.isNull():
+                    status_item.setIcon(succ_icon)
                 status_item.setForeground(QColor("#48BB78" if self.is_dark else "#27AE60"))
                 status_item.setData(Qt.UserRole, 2)
             status_item.setFont(QFont("Segoe UI", 9, QFont.Bold))
             status_item.setTextAlignment(Qt.AlignCenter)
             table.setItem(row, 0, status_item)
 
-            # 1. Validation ID
+            # 1. Category
+            cat_key = s.get("category") or get_rule_category(val_id)
+            cat_info = get_category_info(cat_key)
+            cat_item = SortableTableWidgetItem(cat_info["label"])
+            c_ic = QgsApplication.getThemeIcon(cat_info["icon"])
+            if not c_ic.isNull():
+                cat_item.setIcon(c_ic)
+            cat_item.setData(Qt.UserRole, cat_key)
+            cat_item.setFont(QFont("Segoe UI", 9))
+            table.setItem(row, 1, cat_item)
+
+            # 2. Validation ID
             id_item = SortableTableWidgetItem(val_id)
             id_item.setFont(QFont("Consolas", 9))
             id_item.setData(Qt.UserRole, val_id)
-            table.setItem(row, 1, id_item)
+            table.setItem(row, 2, id_item)
 
-            # 2. Check Name
+            # 3. Check Name
             name_item = SortableTableWidgetItem(name)
             name_item.setData(Qt.UserRole, name.lower())
-            table.setItem(row, 2, name_item)
+            table.setItem(row, 3, name_item)
 
-            # 3. Issues Flagged (numeric comparison)
+            # 4. Issues Flagged (numeric comparison)
             flags_item = SortableTableWidgetItem(f"{flags:,}")
             flags_item.setTextAlignment(Qt.AlignCenter)
             flags_item.setData(Qt.UserRole, int(flags))
@@ -1052,39 +1384,45 @@ class CbmsmvDialog(QDialog):
                 flags_item.setFont(QFont("Segoe UI", 9, QFont.Bold))
             else:
                 flags_item.setForeground(QColor("#48BB78" if self.is_dark else "#27AE60"))
-            table.setItem(row, 3, flags_item)
+            table.setItem(row, 4, flags_item)
 
-            # 4. Action Item (clickable item avoids setCellWidget detachment bug during sorting)
+            # 5. Action Item (clickable item avoids setCellWidget detachment bug during sorting)
             if flags > 0 and has_layer:
-                act_item = SortableTableWidgetItem("View Tab ➔")
+                act_item = SortableTableWidgetItem("View Tab")
+                fwd_icon = QgsApplication.getThemeIcon("mActionForward.svg")
+                if not fwd_icon.isNull():
+                    act_item.setIcon(fwd_icon)
                 act_item.setTextAlignment(Qt.AlignCenter)
                 act_item.setForeground(QColor(colors["accent_light_text"]))
                 act_item.setBackground(QColor(colors["accent_light"]))
                 act_item.setFont(QFont("Segoe UI", 9, QFont.Bold))
                 act_item.setData(Qt.UserRole, 0)
                 act_item.setToolTip(f"Click or double-click to switch to '{val_id}' results tab")
-                table.setItem(row, 4, act_item)
+                table.setItem(row, 5, act_item)
             else:
                 empty_act = SortableTableWidgetItem("—")
                 empty_act.setTextAlignment(Qt.AlignCenter)
                 empty_act.setForeground(QColor(colors["text_muted"]))
                 empty_act.setData(Qt.UserRole, 1)
-                table.setItem(row, 4, empty_act)
+                table.setItem(row, 5, empty_act)
 
         # Filter logic
         def _apply_filter():
             search_txt = search_edit.text().strip().lower()
             mode = combo_filter.currentData()
+            sel_cat = combo_cat_filter.currentData()
             visible = 0
             for r in range(table.rowCount()):
                 st_item = table.item(r, 0)
-                id_item = table.item(r, 1)
-                name_item = table.item(r, 2)
-                flag_item = table.item(r, 3)
-                if not (st_item and id_item and name_item and flag_item):
+                cat_item = table.item(r, 1)
+                id_item = table.item(r, 2)
+                name_item = table.item(r, 3)
+                flag_item = table.item(r, 4)
+                if not (st_item and cat_item and id_item and name_item and flag_item):
                     continue
                 flags_val = flag_item.data(Qt.UserRole) or 0
                 st_rank = st_item.data(Qt.UserRole)
+                cat_val = cat_item.data(Qt.UserRole) or ""
 
                 match_mode = True
                 if mode == "flagged":
@@ -1094,11 +1432,19 @@ class CbmsmvDialog(QDialog):
                 elif mode == "error":
                     match_mode = (st_rank == 1)
 
+                match_cat = True
+                if sel_cat and sel_cat != "all":
+                    match_cat = (cat_val == sel_cat)
+
                 match_search = True
                 if search_txt:
-                    match_search = (search_txt in id_item.text().lower() or search_txt in name_item.text().lower())
+                    match_search = (
+                        search_txt in id_item.text().lower()
+                        or search_txt in name_item.text().lower()
+                        or search_txt in cat_item.text().lower()
+                    )
 
-                show = match_mode and match_search
+                show = match_mode and match_cat and match_search
                 table.setRowHidden(r, not show)
                 if show:
                     visible += 1
@@ -1107,6 +1453,7 @@ class CbmsmvDialog(QDialog):
 
         search_edit.textChanged.connect(_apply_filter)
         combo_filter.currentIndexChanged.connect(_apply_filter)
+        combo_cat_filter.currentIndexChanged.connect(_apply_filter)
 
         # Sort combo handler
         def _on_sort_changed(index):
@@ -1120,13 +1467,13 @@ class CbmsmvDialog(QDialog):
 
         # Connect cell click and double-click to jump to tab
         def _on_summary_cell_clicked(row, col):
-            if col == 4:
-                id_it = table.item(row, 1)
+            if col == 5:
+                id_it = table.item(row, 2)
                 if id_it:
                     self._jump_to_result_tab(id_it.text())
 
         def _on_summary_row_double_clicked(row, col):
-            id_it = table.item(row, 1)
+            id_it = table.item(row, 2)
             if id_it:
                 self._jump_to_result_tab(id_it.text())
 
@@ -1139,21 +1486,31 @@ class CbmsmvDialog(QDialog):
 
         # Default sort: if rules are flagged, sort by Issues Flagged descending so remaining flags appear at the top
         if flagged_rules > 0:
-            table.sortItems(3, Qt.DescendingOrder)
+            table.sortItems(4, Qt.DescendingOrder)
             combo_sort.setCurrentIndex(1)
 
         layout.addWidget(table, stretch=1)
         return tab
 
     def _jump_to_result_tab(self, val_id: str):
-        """Switch results_tab_widget to the tab matching val_id."""
+        """Switch results_tab_widget to the category tab and check matching val_id."""
         if not val_id:
             return
         target = str(val_id)
         for ti in range(1, self.results_tab_widget.count()):
+            tab_widget = self.results_tab_widget.widget(ti)
+            if not tab_widget:
+                continue
+            combo = tab_widget.findChild(QComboBox, "comboCategoryChecks")
+            if combo:
+                idx = combo.findData(target)
+                if idx >= 0:
+                    self.results_tab_widget.setCurrentIndex(ti)
+                    combo.setCurrentIndex(idx)
+                    return
             if target in self.results_tab_widget.tabText(ti):
                 self.results_tab_widget.setCurrentIndex(ti)
-                break
+                return
 
     def _create_result_layer_tab(
         self,
@@ -1161,6 +1518,7 @@ class CbmsmvDialog(QDialog):
         check_name: str,
         layer: QgsVectorLayer,
         count: int,
+        rule: Optional[Dict[str, Any]] = None,
     ) -> QWidget:
         """Create an interactive feature table tab with in-place cell editing, multiselect, and fix actions."""
         tab = QWidget()
@@ -1170,6 +1528,14 @@ class CbmsmvDialog(QDialog):
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
+
+        # Resolve target columns for highlighting, chips, and auto-scroll
+        field_names = [f.name() for f in layer.fields()] if layer and layer.isValid() else []
+        rule_target_fields = rule.get("target_fields") if rule else None
+        target_cols = resolve_target_columns(val_id, field_names, rule_target_fields)
+
+        tab.setProperty("target_cols", target_cols)
+        tab.setProperty("field_names", field_names)
 
         # Mini Toolbar
         toolbar = QHBoxLayout()
@@ -1187,7 +1553,7 @@ class CbmsmvDialog(QDialog):
         danger_col = "#FC8181" if self.is_dark else "#C53030"
         if count == 0:
             lbl_vcount = QLabel(
-                f"<span style='color: {success_col}; font-weight: bold;'>✓ 0 flagged features.</span> "
+                f"<span style='color: {success_col}; font-weight: bold;'>0 flagged features.</span> "
                 "All issues for this validation check are resolved!"
             )
         else:
@@ -1202,13 +1568,19 @@ class CbmsmvDialog(QDialog):
 
         # Search filter
         edit_filter = QLineEdit()
-        edit_filter.setPlaceholderText("🔍  Filter rows in this table...")
+        filter_icon = QgsApplication.getThemeIcon("mActionFilter.svg")
+        if not filter_icon.isNull():
+            edit_filter.addAction(filter_icon, QLineEdit.LeadingPosition)
+        edit_filter.setPlaceholderText("Filter rows in this table...")
         edit_filter.setClearButtonEnabled(True)
         edit_filter.setFixedWidth(210)
         toolbar.addWidget(edit_filter)
 
         # Select All / None toggle
-        btn_select_all = QPushButton("☑  Select All")
+        btn_select_all = QPushButton("Select All")
+        sel_icon = QgsApplication.getThemeIcon("mActionSelectAll.svg")
+        if not sel_icon.isNull():
+            btn_select_all.setIcon(sel_icon)
         btn_select_all.setToolTip("Toggle select all or none of visible rows")
         btn_select_all.setStyleSheet(f"""
             QPushButton {{
@@ -1229,7 +1601,10 @@ class CbmsmvDialog(QDialog):
 
         # Batch Fix Selected Button
         has_auto_fix = has_fix(val_id)
-        btn_fix_selected = QPushButton("⚡  Fix Selected (0)")
+        btn_fix_selected = QPushButton("Fix Selected (0)")
+        fix_icon = QgsApplication.getThemeIcon("mActionCalculateField.svg")
+        if not fix_icon.isNull():
+            btn_fix_selected.setIcon(fix_icon)
         btn_fix_selected.setEnabled(False)
         btn_fix_selected.setToolTip(
             f"Apply automated fix to checked rows ({val_id})" if has_auto_fix else f"No automated fix available for '{val_id}'"
@@ -1257,7 +1632,10 @@ class CbmsmvDialog(QDialog):
         toolbar.addWidget(btn_fix_selected)
 
         # Batch Delete Selected Button
-        btn_delete_selected = QPushButton("🗑️  Delete Selected (0)")
+        btn_delete_selected = QPushButton("Delete Selected (0)")
+        del_icon = QgsApplication.getThemeIcon("mActionDeleteSelected.svg")
+        if not del_icon.isNull():
+            btn_delete_selected.setIcon(del_icon)
         btn_delete_selected.setEnabled(False)
         btn_delete_selected.setToolTip("Mark all checked features as 'deleted' in status column")
         btn_delete_selected.setStyleSheet(f"""
@@ -1284,7 +1662,10 @@ class CbmsmvDialog(QDialog):
         toolbar.addWidget(btn_delete_selected)
 
         # Save Layer Changes
-        btn_save_changes = QPushButton("💾  Save Changes")
+        btn_save_changes = QPushButton("Save Changes")
+        save_icon = QgsApplication.getThemeIcon("mActionSaveEdits.svg")
+        if not save_icon.isNull():
+            btn_save_changes.setIcon(save_icon)
         btn_save_changes.setToolTip("Commit edits on GeoJSON and JSON to disk and re-run check (Ctrl+S)")
         btn_save_changes.setStyleSheet(f"""
             QPushButton {{
@@ -1310,6 +1691,46 @@ class CbmsmvDialog(QDialog):
         table = QTableWidget()
         enable_shift_scroll(table)
 
+        # Target Field Hint Bar with Quick Focus Chips
+        if target_cols:
+            hint_bar = QHBoxLayout()
+            hint_bar.setContentsMargins(2, 0, 2, 2)
+            hint_bar.setSpacing(6)
+
+            lbl_hint = QLabel("<b>Target Field(s) to Review/Edit:</b>")
+            lbl_hint.setStyleSheet(f"font-size: 11px; color: {colors['target_badge_text']};")
+            hint_bar.addWidget(lbl_hint)
+
+            for t_col in target_cols:
+                btn_chip = QPushButton(t_col)
+                pin_icon = QgsApplication.getThemeIcon("mActionHighlightFeature.svg")
+                if not pin_icon.isNull():
+                    btn_chip.setIcon(pin_icon)
+                    btn_chip.setIconSize(QSize(12, 12))
+                btn_chip.setCursor(Qt.PointingHandCursor)
+                btn_chip.setToolTip(f"Click to scroll directly to '{t_col}' column")
+                btn_chip.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {colors['target_badge_bg']};
+                        color: {colors['target_badge_text']};
+                        border: 1px solid {colors['target_badge_border']};
+                        border-radius: 10px;
+                        padding: 2px 8px;
+                        font-size: 10.5px;
+                        font-weight: 600;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {colors['accent_hover']};
+                        color: #FFFFFF;
+                        border-color: {colors['accent_hover']};
+                    }}
+                """)
+                btn_chip.clicked.connect(lambda checked=False, c=t_col: self._scroll_to_column(table, c, field_names))
+                hint_bar.addWidget(btn_chip)
+
+            hint_bar.addStretch()
+            layout.addLayout(hint_bar)
+
         # Ensure sf_status exists on layer if building point geojson status is present
         if layer and layer.isValid():
             has_status_field = any(f.name().lower() in ("status", "sf_status") for f in layer.fields())
@@ -1320,11 +1741,28 @@ class CbmsmvDialog(QDialog):
                 except Exception:
                     pass
 
-        field_names = [f.name() for f in layer.fields()] if layer and layer.isValid() else []
-        headers = ["☑"] + field_names + ["Action"]
+        headers = [""] + [fn for fn in field_names] + ["Action"]
         action_col = len(headers) - 1
         table.setColumnCount(len(headers))
         table.setHorizontalHeaderLabels(headers)
+
+        h_item0 = table.horizontalHeaderItem(0)
+        if h_item0:
+            sel_icon = QgsApplication.getThemeIcon("mActionSelectAll.svg")
+            if not sel_icon.isNull():
+                h_item0.setIcon(sel_icon)
+            h_item0.setToolTip("Select / Deselect All")
+
+        for c_idx, fn in enumerate(field_names):
+            if fn in target_cols:
+                h_item = table.horizontalHeaderItem(c_idx + 1)
+                if h_item:
+                    pin_icon = QgsApplication.getThemeIcon("mActionHighlightFeature.svg")
+                    if not pin_icon.isNull():
+                        h_item.setIcon(pin_icon)
+                    h_item.setToolTip(f"Target column for validation check '{val_id}' (review/edit this field)")
+                    h_item.setForeground(QColor(colors["target_badge_text"]))
+
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setAlternatingRowColors(True)
         table.verticalHeader().setVisible(True)
@@ -1397,11 +1835,18 @@ class CbmsmvDialog(QDialog):
                     elif fn_lower in ("fid", "sf_fid", "df_fid", "ref_fid"):
                         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                         item.setToolTip("Record FID (read-only primary key anchor)")
+                        if fname in target_cols:
+                            self._style_table_cell(item, "target")
                     elif fn_lower.startswith("ref_"):
                         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                         item.setToolTip("Reference dataset attribute (read-only)")
+                        if fname in target_cols:
+                            self._style_table_cell(item, "target")
                     else:
                         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
+                        if fname in target_cols:
+                            self._style_table_cell(item, "target")
+                            item.setToolTip(f"Target field for '{val_id}' — review or edit this value")
                     item.setData(Qt.UserRole, source_fid)
                     item.setData(Qt.UserRole + 1, uuid_str)
                     item.setData(Qt.UserRole + 2, fname)
@@ -1486,6 +1931,12 @@ class CbmsmvDialog(QDialog):
         )
 
         layout.addWidget(table, stretch=1)
+
+        # Auto-scroll to first target column
+        if target_cols:
+            first_target = target_cols[0]
+            QTimer.singleShot(150, lambda: self._scroll_to_column(table, first_target, field_names))
+
         return tab
 
     def _on_table_item_changed(
@@ -1511,10 +1962,10 @@ class CbmsmvDialog(QDialog):
                 if table.item(r, 0) and table.item(r, 0).checkState() == Qt.Checked
             )
             if btn_fix_selected:
-                btn_fix_selected.setText(f"⚡  Fix Selected ({checked_count})")
+                btn_fix_selected.setText(f"Fix Selected ({checked_count})")
                 btn_fix_selected.setEnabled(has_fix(val_id) and checked_count > 0)
             if btn_delete_selected:
-                btn_delete_selected.setText(f"🗑️  Delete Selected ({checked_count})")
+                btn_delete_selected.setText(f"Delete Selected ({checked_count})")
                 btn_delete_selected.setEnabled(checked_count > 0)
             return
 
@@ -1752,12 +2203,17 @@ class CbmsmvDialog(QDialog):
         table.setProperty("is_populating", False)
 
         checked_count = len(visible_rows) if target_state == Qt.Checked else 0
-        btn_fix_selected.setText(f"⚡  Fix Selected ({checked_count})")
+        btn_fix_selected.setText(f"Fix Selected ({checked_count})")
         btn_fix_selected.setEnabled(has_fix(val_id) and checked_count > 0)
         if btn_delete_selected:
-            btn_delete_selected.setText(f"🗑️  Delete Selected ({checked_count})")
+            btn_delete_selected.setText(f"Delete Selected ({checked_count})")
             btn_delete_selected.setEnabled(checked_count > 0)
-        btn_select_all.setText("☐  Select None" if target_state == Qt.Checked else "☑  Select All")
+        btn_select_all.setText("Select None" if target_state == Qt.Checked else "Select All")
+        toggle_ic = QgsApplication.getThemeIcon(
+            "mActionDeselectAll.svg" if target_state == Qt.Checked else "mActionSelectAll.svg"
+        )
+        if not toggle_ic.isNull():
+            btn_select_all.setIcon(toggle_ic)
 
     def _delete_selected_features(
         self,
@@ -1828,11 +2284,11 @@ class CbmsmvDialog(QDialog):
             deleted_count += 1
 
         if btn_delete_selected:
-            btn_delete_selected.setText("🗑️  Delete Selected (0)")
+            btn_delete_selected.setText("Delete Selected (0)")
             btn_delete_selected.setEnabled(False)
 
         self.lbl_footer_status.setText(
-            f"🗑️ Marked {deleted_count} feature(s) as 'deleted' in status column (Press Ctrl+S to save)"
+            f"Marked {deleted_count} feature(s) as 'deleted' in status column (Press Ctrl+S to save)"
         )
         if self.iface and self.iface.mapCanvas():
             self.iface.mapCanvas().refresh()
@@ -1998,7 +2454,7 @@ class CbmsmvDialog(QDialog):
                     if action_cell:
                         for btn in action_cell.findChildren(QPushButton):
                             if btn.text() == "Fix":
-                                btn.setText("✓ Fixed")
+                                btn.setText("Fixed")
                                 btn.setEnabled(False)
                                 self._style_row_fix_button(btn, enabled=False, fixed=True)
         finally:
@@ -2008,7 +2464,7 @@ class CbmsmvDialog(QDialog):
         if self.iface:
             self.iface.mapCanvas().refresh()
 
-        self.lbl_footer_status.setText(f"⚡ Successfully fixed {fixed_count} feature(s) for '{val_id}'.")
+        self.lbl_footer_status.setText(f"Successfully fixed {fixed_count} feature(s) for '{val_id}'.")
         QMessageBox.information(
             self,
             "Fix Complete",
@@ -2057,7 +2513,8 @@ class CbmsmvDialog(QDialog):
         # 2. Locate status column in table
         status_col_idx = None
         for c in range(1, table.columnCount() - 1):
-            h_text = table.horizontalHeaderItem(c).text().strip().lower()
+            h_it = table.horizontalHeaderItem(c)
+            h_text = h_it.text().strip().lower() if h_it else ""
             if h_text in ("status", "sf_status"):
                 status_col_idx = c
                 break
@@ -2203,50 +2660,58 @@ class CbmsmvDialog(QDialog):
         Synchronize a status update initiated from outside the table (e.g. Review Dock)
         into the corresponding result layer tab's QTableWidget.
         """
-        if not hasattr(self, "tab_results"):
+        tabs = getattr(self, "results_tab_widget", None) or getattr(self, "tab_results", None)
+        if not tabs:
             return
 
-        for i in range(self.tab_results.count()):
-            tab_text = self.tab_results.tabText(i)
-            if val_id in tab_text:
-                tab_widget = self.tab_results.widget(i)
-                if tab_widget:
-                    table = tab_widget.findChild(QTableWidget)
-                    if table:
-                        for r in range(table.rowCount()):
-                            item0 = table.item(r, 0)
-                            if not item0:
-                                continue
-                            r_fid = item0.data(Qt.UserRole)
-                            r_uuid = str(item0.data(Qt.UserRole + 1) or "").strip()
-                            if (source_fid is not None and str(r_fid) == str(source_fid)) or (map_uuid and r_uuid == str(map_uuid).strip()):
-                                status_col_idx = None
-                                for c in range(1, table.columnCount() - 1):
-                                    h_text = table.horizontalHeaderItem(c).text().strip().lower()
-                                    if h_text in ("status", "sf_status"):
-                                        status_col_idx = c
-                                        break
-                                if status_col_idx is not None:
-                                    table.setProperty("is_populating", True)
-                                    try:
-                                        cell_item = table.item(r, status_col_idx)
-                                        if cell_item:
-                                            cell_item.setText(new_status)
-                                            if new_status.lower() == "deleted":
-                                                self._style_table_cell(cell_item, "deleted")
-                                            else:
-                                                self._style_table_cell(cell_item, "normal")
-                                    finally:
-                                        table.setProperty("is_populating", False)
+        target_table = None
+        for table in tabs.findChildren(QTableWidget):
+            p = table.parent()
+            while p and p != tabs:
+                if p.property("val_id") == val_id:
+                    target_table = table
+                    break
+                p = p.parent()
+            if target_table:
+                break
 
-                                act_w = table.cellWidget(r, table.columnCount() - 1)
-                                if act_w:
-                                    for child in act_w.findChildren(QPushButton):
-                                        if child.text() in ("Delete", "Deleted"):
-                                            is_del = (new_status.lower() == "deleted")
-                                            child.setText("Deleted" if is_del else "Delete")
-                                            self._style_row_delete_button(child, is_deleted=is_del)
-                                break
+        if target_table:
+            table = target_table
+            for r in range(table.rowCount()):
+                item0 = table.item(r, 0)
+                if not item0:
+                    continue
+                r_fid = item0.data(Qt.UserRole)
+                r_uuid = str(item0.data(Qt.UserRole + 1) or "").strip()
+                if (source_fid is not None and str(r_fid) == str(source_fid)) or (map_uuid and r_uuid == str(map_uuid).strip()):
+                    status_col_idx = None
+                    for c in range(1, table.columnCount() - 1):
+                        h_it = table.horizontalHeaderItem(c)
+                        h_text = h_it.text().strip().lower() if h_it else ""
+                        if h_text in ("status", "sf_status"):
+                            status_col_idx = c
+                            break
+                    if status_col_idx is not None:
+                        table.setProperty("is_populating", True)
+                        try:
+                            cell_item = table.item(r, status_col_idx)
+                            if cell_item:
+                                cell_item.setText(new_status)
+                                if new_status.lower() == "deleted":
+                                    self._style_table_cell(cell_item, "deleted")
+                                else:
+                                    self._style_table_cell(cell_item, "normal")
+                        finally:
+                            table.setProperty("is_populating", False)
+
+                    act_w = table.cellWidget(r, table.columnCount() - 1)
+                    if act_w:
+                        for child in act_w.findChildren(QPushButton):
+                            if child.text() in ("Delete", "Deleted"):
+                                is_del = (new_status.lower() == "deleted")
+                                child.setText("Deleted" if is_del else "Delete")
+                                self._style_row_delete_button(child, is_deleted=is_del)
+                    break
 
     def _on_shortcut_save(self):
         """Handle Ctrl+S shortcut, strictly scoped to this dialog window and its child controls."""
@@ -2655,6 +3120,14 @@ class CbmsmvDialog(QDialog):
             cur_widget = self.results_tab_widget.currentWidget()
             if cur_widget:
                 val_id = cur_widget.property("val_id")
+                if not val_id:
+                    stacked = cur_widget.findChild(QStackedWidget, "stackedCategoryTables")
+                    if stacked and stacked.currentWidget():
+                        val_id = stacked.currentWidget().property("val_id")
+                if not val_id:
+                    combo = cur_widget.findChild(QComboBox, "comboCategoryChecks")
+                    if combo and combo.currentData():
+                        val_id = combo.currentData()
             if not val_id and self.results_tab_widget.currentIndex() > 0:
                 cur_text = self.results_tab_widget.tabText(self.results_tab_widget.currentIndex())
                 for r in self._rules:
@@ -2666,7 +3139,7 @@ class CbmsmvDialog(QDialog):
         if val_id:
             self._rerun_validation_check(val_id, saved_msg=saved_msg)
         else:
-            self.lbl_footer_status.setText(f"💾 {saved_msg}")
+            self.lbl_footer_status.setText(saved_msg)
             QMessageBox.information(
                 self,
                 "Changes Saved",
@@ -2689,10 +3162,10 @@ class CbmsmvDialog(QDialog):
         base_path = self.file_base.filePath().strip()
 
         if not form2_path or not os.path.exists(form2_path):
-            self.lbl_footer_status.setText(f"💾 {saved_msg} (Cannot re-run: Form 2 JSON missing)")
+            self.lbl_footer_status.setText(f"{saved_msg} (Cannot re-run: Form 2 JSON missing)")
             return
         if not points_path or not os.path.exists(points_path):
-            self.lbl_footer_status.setText(f"💾 {saved_msg} (Cannot re-run: Building Points file missing)")
+            self.lbl_footer_status.setText(f"{saved_msg} (Cannot re-run: Building Points file missing)")
             return
 
         rule = next((r for r in self._rules if r["id"] == val_id), None)
@@ -2700,19 +3173,19 @@ class CbmsmvDialog(QDialog):
             rule = {"id": val_id, "name": val_id.replace("_", " ").title(), "has_base": False}
 
         if rule.get("has_base") and (not base_path or not os.path.exists(base_path)):
-            self.lbl_footer_status.setText(f"💾 {saved_msg} (Cannot re-run: Base Layers GPKG required)")
+            self.lbl_footer_status.setText(f"{saved_msg} (Cannot re-run: Base Layers GPKG required)")
             return
 
         reg_id = f"gmd_pipeline:{val_id}"
         is_registered = QgsApplication.processingRegistry().algorithmById(reg_id) is not None
         alg = self._get_algorithm_instance(val_id)
         if not is_registered and not alg:
-            self.lbl_footer_status.setText(f"💾 {saved_msg} (Could not instantiate algorithm '{val_id}')")
+            self.lbl_footer_status.setText(f"{saved_msg} (Could not instantiate algorithm '{val_id}')")
             return
 
         alg_target = reg_id if is_registered else alg
 
-        self.lbl_footer_status.setText(f"⚡ Re-running check '{val_id}' with fresh data...")
+        self.lbl_footer_status.setText(f"Re-running check '{val_id}' with fresh data...")
         QApplication.processEvents()
 
         params = {
@@ -2816,53 +3289,25 @@ class CbmsmvDialog(QDialog):
             if self.iface:
                 self.iface.mapCanvas().refresh()
 
-        # Update Results Tab
-        target_tab_idx = None
-        for ti in range(1, self.results_tab_widget.count()):
-            w = self.results_tab_widget.widget(ti)
-            if w and w.property("val_id") == val_id:
-                target_tab_idx = ti
-                break
-            if val_id in self.results_tab_widget.tabText(ti):
-                target_tab_idx = ti
-                break
-
-        new_tab = self._create_result_layer_tab(val_id, rule["name"], out_layer, new_count)
-        tab_title = f"🔴  {val_id} ({new_count})" if new_count > 0 else f"🟢  {val_id} (0)"
-
-        if target_tab_idx is not None:
-            self.results_tab_widget.removeTab(target_tab_idx)
-            self.results_tab_widget.insertTab(target_tab_idx, new_tab, tab_title)
-            self.results_tab_widget.setTabToolTip(target_tab_idx, f"{rule['name']} — {new_count} flagged feature(s)")
-            self.results_tab_widget.setCurrentIndex(target_tab_idx)
-        else:
-            tab_idx = self.results_tab_widget.addTab(new_tab, tab_title)
-            self.results_tab_widget.setTabToolTip(tab_idx, f"{rule['name']} — {new_count} flagged feature(s)")
-            self.results_tab_widget.setCurrentIndex(tab_idx)
-
-        # Update Summary Overview (Tab 0)
-        if self.results_tab_widget.count() > 0:
-            active_idx = self.results_tab_widget.currentIndex()
-            new_summary = self._create_summary_tab(self._execution_summary, self._result_layers)
-            self.results_tab_widget.removeTab(0)
-            self.results_tab_widget.insertTab(0, new_summary, "📊  Summary Overview")
-            self.results_tab_widget.setCurrentIndex(active_idx)
+        # Update Results Workspace (rebuilds Two-tier Category Tabs & Summary Scorecard, then jumps to check)
+        self._populate_results_workspace(self._execution_summary, self._result_layers)
+        self._jump_to_result_tab(val_id)
 
         # User feedback
         if new_count == 0:
             self._log_success(f"'{val_id}' re-run complete: 0 flagged issues! All issues resolved.")
-            self.lbl_footer_status.setText(f"🎉 '{val_id}' resolved! 0 flagged features remaining.")
+            self.lbl_footer_status.setText(f"Check '{val_id}' resolved: 0 flagged features remaining.")
             QMessageBox.information(
                 self,
                 "Check Re-run: Clean!",
                 f"{saved_msg}\n\n"
-                f"🎉 Re-run of validation check '{val_id}' completed:\n"
+                f"Re-run of validation check '{val_id}' completed:\n"
                 f"0 flagged issues detected!\n\n"
                 f"All features for this validation check are now consistent and valid.",
             )
         else:
             self._log_warning(f"'{val_id}' re-run complete: {new_count:,} flagged feature(s) remaining.")
-            self.lbl_footer_status.setText(f"💾 Changes saved • '{val_id}' re-run: {new_count:,} issue(s) remaining.")
+            self.lbl_footer_status.setText(f"Changes saved • '{val_id}' re-run: {new_count:,} issue(s) remaining.")
             QMessageBox.information(
                 self,
                 "Check Re-run Complete",
@@ -3108,6 +3553,12 @@ class CbmsmvDialog(QDialog):
             except Exception:
                 pass
 
+        rule_target_fields = None
+        for r in getattr(self, "rules", []):
+            if r.get("id") == val_id:
+                rule_target_fields = r.get("target_fields")
+                break
+
         try:
             dock = CbmsMvReviewDock(
                 parent_dialog=self,
@@ -3116,6 +3567,7 @@ class CbmsmvDialog(QDialog):
                 error_layer=error_layer,
                 main_layer=main_layer,
                 start_index=start_index,
+                target_fields=rule_target_fields,
             )
             dock.dock_closed.connect(self._on_review_dock_closed)
 
@@ -3494,7 +3946,7 @@ class CbmsmvDialog(QDialog):
         self.gpkg_widget.setVisible(checked)
 
     def _on_inputs_changed(self):
-        """Update file existence indicators (✓ / ❌) beside input boxes and persist settings."""
+        """Update file existence indicators beside input boxes and persist settings."""
         form2 = self.file_form2.filePath().strip()
         points = self.file_points.filePath().strip()
         base = self.file_base.filePath().strip()
@@ -3513,41 +3965,61 @@ class CbmsmvDialog(QDialog):
             self.settings.setValue(SETTINGS_KEY_LOAD_INPUTS, self.chk_load_inputs_canvas.isChecked())
 
         # Update indicator status icons beside input boxes
-        if hasattr(self, "lbl_status_form2"):
-            if form2:
-                if os.path.exists(form2):
-                    self.lbl_status_form2.setText("<span style='color: #27AE60; font-weight: bold; font-size: 14px;'>✓</span>")
-                    self.lbl_status_form2.setToolTip("Form 2 Data file exists")
+        succ_icon = QgsApplication.getThemeIcon("mIconSuccess.svg")
+        crit_icon = QgsApplication.getThemeIcon("mIconCritical.svg")
+
+        def _update_file_status(lbl: QLabel, path_val: str, ok_tip: str, missing_tip: str, is_optional: bool = False):
+            if not path_val:
+                if is_optional:
+                    lbl.clear()
+                    lbl.setToolTip("Optional input")
                 else:
-                    self.lbl_status_form2.setText("<span style='color: #E74C3C; font-weight: bold; font-size: 14px;'>❌</span>")
-                    self.lbl_status_form2.setToolTip("Form 2 Data file not found")
+                    if not crit_icon.isNull():
+                        lbl.setPixmap(crit_icon.pixmap(14, 14))
+                    else:
+                        lbl.setText("•")
+                    lbl.setToolTip(missing_tip)
+                return
+
+            if os.path.exists(path_val):
+                if not succ_icon.isNull():
+                    lbl.setPixmap(succ_icon.pixmap(14, 14))
+                else:
+                    lbl.setText("•")
+                lbl.setToolTip(ok_tip)
             else:
-                self.lbl_status_form2.setText("<span style='color: #E74C3C; font-weight: bold; font-size: 14px;'>❌</span>")
-                self.lbl_status_form2.setToolTip("Form 2 Data file required")
+                if not crit_icon.isNull():
+                    lbl.setPixmap(crit_icon.pixmap(14, 14))
+                else:
+                    lbl.setText("•")
+                lbl.setToolTip(missing_tip)
+
+        if hasattr(self, "lbl_status_form2"):
+            _update_file_status(
+                self.lbl_status_form2,
+                form2,
+                "Form 2 Data file exists",
+                "Form 2 Data file required",
+                is_optional=False,
+            )
 
         if hasattr(self, "lbl_status_points"):
-            if points:
-                if os.path.exists(points):
-                    self.lbl_status_points.setText("<span style='color: #27AE60; font-weight: bold; font-size: 14px;'>✓</span>")
-                    self.lbl_status_points.setToolTip("Geotagged Building Points file exists")
-                else:
-                    self.lbl_status_points.setText("<span style='color: #E74C3C; font-weight: bold; font-size: 14px;'>❌</span>")
-                    self.lbl_status_points.setToolTip("Geotagged Building Points file not found")
-            else:
-                self.lbl_status_points.setText("<span style='color: #E74C3C; font-weight: bold; font-size: 14px;'>❌</span>")
-                self.lbl_status_points.setToolTip("Geotagged Building Points file required")
+            _update_file_status(
+                self.lbl_status_points,
+                points,
+                "Geotagged Building Points file exists",
+                "Geotagged Building Points file required",
+                is_optional=False,
+            )
 
         if hasattr(self, "lbl_status_base"):
-            if base:
-                if os.path.exists(base):
-                    self.lbl_status_base.setText("<span style='color: #27AE60; font-weight: bold; font-size: 14px;'>✓</span>")
-                    self.lbl_status_base.setToolTip("Base Layers GeoPackage exists")
-                else:
-                    self.lbl_status_base.setText("<span style='color: #E74C3C; font-weight: bold; font-size: 14px;'>❌</span>")
-                    self.lbl_status_base.setToolTip("Base Layers GeoPackage not found")
-            else:
-                self.lbl_status_base.setText("")
-                self.lbl_status_base.setToolTip("Base Layers GeoPackage is optional")
+            _update_file_status(
+                self.lbl_status_base,
+                base,
+                "Base Layers GeoPackage exists",
+                "Base Layers GeoPackage not found",
+                is_optional=True,
+            )
 
     def _load_saved_settings(self):
         """Load previously saved filepaths and load options from QSettings if available."""
@@ -3576,32 +4048,70 @@ class CbmsmvDialog(QDialog):
         Create the Validation Rules tab displaying dynamically discovered algorithms.
         Columns:
           - Enable (Checkbox)
+          - Category (Label + Icon)
           - Validation ID (Algorithm filename without .py)
           - Validation Check Name (First line of shortHelpString)
-          - Base Layer (Required / —)
         """
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(10)
 
+        colors = self._get_theme_colors()
+
         # Filter & Quick Action Toolbar
         toolbar = QHBoxLayout()
         toolbar.setSpacing(8)
 
         self.edit_filter = QLineEdit()
-        self.edit_filter.setPlaceholderText("🔍  Search rules by Validation ID, check name, or keyword...")
+        self.edit_filter.setPlaceholderText("Search rules by Validation ID, check name, or keyword...")
+        filter_icon = QgsApplication.getThemeIcon("mActionFilter.svg")
+        if not filter_icon.isNull():
+            self.edit_filter.addAction(filter_icon, QLineEdit.LeadingPosition)
         self.edit_filter.setClearButtonEnabled(True)
         self.edit_filter.textChanged.connect(self._filter_rules_table)
         toolbar.addWidget(self.edit_filter, stretch=1)
 
+        self.combo_rule_category = QComboBox()
+        self.combo_rule_category.addItem("Category: All", "all")
+        self.combo_rule_category.setStyleSheet(f"""
+            QComboBox {{
+                border: 1px solid {colors['border']};
+                border-radius: 4px;
+                padding: 4px 10px;
+                background-color: {colors['surface_bg']};
+                color: {colors['text_primary']};
+                font-size: 11px;
+                min-width: 145px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {colors['surface_bg']};
+                color: {colors['text_primary']};
+                selection-background-color: {colors['selected_item_bg']};
+                selection-color: {colors['selected_item_text']};
+            }}
+        """)
+        self.combo_rule_category.currentIndexChanged.connect(self._filter_rules_table)
+        toolbar.addWidget(self.combo_rule_category)
+
         btn_select_all = QPushButton("Select All")
+        sel_ic = QgsApplication.getThemeIcon("mActionSelectAll.svg")
+        if not sel_ic.isNull():
+            btn_select_all.setIcon(sel_ic)
         btn_select_all.clicked.connect(lambda: self._set_all_rules_checked(True))
+
         btn_deselect_all = QPushButton("Deselect All")
+        desel_ic = QgsApplication.getThemeIcon("mActionDeselectAll.svg")
+        if not desel_ic.isNull():
+            btn_deselect_all.setIcon(desel_ic)
         btn_deselect_all.clicked.connect(lambda: self._set_all_rules_checked(False))
 
         btn_refresh = QToolButton()
-        btn_refresh.setText("🔄")
+        ref_ic = QgsApplication.getThemeIcon("mActionRefresh.svg")
+        if not ref_ic.isNull():
+            btn_refresh.setIcon(ref_ic)
+        else:
+            btn_refresh.setText("Refresh")
         btn_refresh.setToolTip("Refresh and re-scan algorithms in gmd_scripts/cbms_mv")
         btn_refresh.clicked.connect(self.refresh_rules)
 
@@ -3613,22 +4123,23 @@ class CbmsmvDialog(QDialog):
         # Rules Table
         self.rules_table = QTableWidget()
         enable_shift_scroll(self.rules_table)
-        self.rules_table.setColumnCount(3)
+        self.rules_table.setColumnCount(4)
         self.rules_table.setHorizontalHeaderLabels([
             "Enable",
+            "Category",
             "Validation ID",
             "Validation Check Name",
         ])
         self.rules_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.rules_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.rules_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.rules_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.rules_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self.rules_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.rules_table.setAlternatingRowColors(True)
         self.rules_table.verticalHeader().setVisible(False)
 
         layout.addWidget(self.rules_table, stretch=1)
 
-        colors = self._get_theme_colors()
         # Rule counts label
         self.lbl_rules_count = QLabel("")
         self.lbl_rules_count.setStyleSheet(f"font-size: 11px; color: {colors['text_secondary']};")
@@ -3678,6 +4189,28 @@ class CbmsmvDialog(QDialog):
         prev_states = prev_states or {}
         saved_enabled = self._get_saved_enabled_rule_ids()
 
+        # Update category filter dropdown
+        if hasattr(self, "combo_rule_category"):
+            self.combo_rule_category.blockSignals(True)
+            prev_cat = self.combo_rule_category.currentData() or "all"
+            self.combo_rule_category.clear()
+            self.combo_rule_category.addItem("Category: All", "all")
+            used_cats = []
+            for r in self._rules:
+                ck = r.get("category") or get_rule_category(r.get("id", ""))
+                if ck not in used_cats:
+                    used_cats.append(ck)
+            ordered_cats = [k for k in CBMS_MV_CATEGORIES.keys() if k in used_cats] + [k for k in used_cats if k not in CBMS_MV_CATEGORIES]
+            for ck in ordered_cats:
+                c_info = get_category_info(ck)
+                c_count = sum(1 for r in self._rules if (r.get("category") or get_rule_category(r.get("id", ""))) == ck)
+                c_icon = QgsApplication.getThemeIcon(c_info["icon"])
+                self.combo_rule_category.addItem(c_icon if not c_icon.isNull() else QIcon(), f"{c_info['label']} ({c_count})", ck)
+            idx = self.combo_rule_category.findData(prev_cat)
+            if idx >= 0:
+                self.combo_rule_category.setCurrentIndex(idx)
+            self.combo_rule_category.blockSignals(False)
+
         self.rules_table.blockSignals(True)
         self.rules_table.setRowCount(len(self._rules))
         self._rule_checkboxes.clear()
@@ -3700,18 +4233,30 @@ class CbmsmvDialog(QDialog):
             self._rule_checkboxes[val_id] = item_check
             self.rules_table.setItem(row, 0, item_check)
 
-            # 1. Validation ID
+            # 1. Category
+            cat_key = rule.get("category") or get_rule_category(val_id)
+            cat_info = get_category_info(cat_key)
+            item_cat = QTableWidgetItem(cat_info["label"])
+            c_ic = QgsApplication.getThemeIcon(cat_info["icon"])
+            if not c_ic.isNull():
+                item_cat.setIcon(c_ic)
+            item_cat.setData(Qt.UserRole, cat_key)
+            item_cat.setFont(QFont("Segoe UI", 9))
+            item_cat.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            self.rules_table.setItem(row, 1, item_cat)
+
+            # 2. Validation ID
             item_id = QTableWidgetItem(val_id)
             item_id.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             item_id.setFont(QFont("Consolas", 9))
-            self.rules_table.setItem(row, 1, item_id)
+            self.rules_table.setItem(row, 2, item_id)
 
-            # 2. Validation Check Name
+            # 3. Validation Check Name
             item_name = QTableWidgetItem(rule["name"])
-            tooltip_text = f"{rule['name']}\n\n{rule['desc']}\n\nValidation ID: {val_id}\nFile: {rule.get('file_path', '')}"
+            tooltip_text = f"{rule['name']}\n\n{rule['desc']}\n\nValidation ID: {val_id}\nCategory: {cat_info['label']}\nFile: {rule.get('file_path', '')}"
             item_name.setToolTip(tooltip_text)
             item_name.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            self.rules_table.setItem(row, 2, item_name)
+            self.rules_table.setItem(row, 3, item_name)
 
         self.rules_table.blockSignals(False)
         self.rules_table.itemChanged.connect(self._on_rule_item_changed)
@@ -3722,25 +4267,44 @@ class CbmsmvDialog(QDialog):
             self._update_rule_counts()
             self._save_rule_settings()
 
-    def _filter_rules_table(self, text: str):
-        """Filter rows based on search input matching Validation ID or Validation Check Name."""
-        search = text.strip().lower()
+    def _filter_rules_table(self, *args):
+        """Filter rows based on category selection and keyword search matching ID, Name, or Category."""
+        search = self.edit_filter.text().strip().lower() if hasattr(self, "edit_filter") else ""
+        sel_cat = self.combo_rule_category.currentData() if hasattr(self, "combo_rule_category") else "all"
+
         for row in range(self.rules_table.rowCount()):
-            if not search:
-                self.rules_table.setRowHidden(row, False)
+            item_cat = self.rules_table.item(row, 1)
+            item_id = self.rules_table.item(row, 2)
+            item_name = self.rules_table.item(row, 3)
+            if not (item_cat and item_id and item_name):
                 continue
-            val_id = self.rules_table.item(row, 1).text().lower()
-            val_name = self.rules_table.item(row, 2).text().lower()
-            match = (search in val_id) or (search in val_name)
-            self.rules_table.setRowHidden(row, not match)
+
+            cat_key = item_cat.data(Qt.UserRole) or ""
+            match_cat = True
+            if sel_cat and sel_cat != "all":
+                match_cat = (cat_key == sel_cat)
+
+            match_search = True
+            if search:
+                match_search = (
+                    search in item_id.text().lower()
+                    or search in item_name.text().lower()
+                    or search in item_cat.text().lower()
+                )
+
+            show = match_cat and match_search
+            self.rules_table.setRowHidden(row, not show)
         self._update_rule_counts()
 
     def _set_all_rules_checked(self, checked: bool):
-        """Batch set all rules checked or unchecked."""
+        """Batch set all visible rules checked or unchecked."""
         state = Qt.Checked if checked else Qt.Unchecked
         self.rules_table.blockSignals(True)
-        for item in self._rule_checkboxes.values():
-            item.setCheckState(state)
+        for row in range(self.rules_table.rowCount()):
+            if not self.rules_table.isRowHidden(row):
+                item = self.rules_table.item(row, 0)
+                if item:
+                    item.setCheckState(state)
         self.rules_table.blockSignals(False)
         self._update_rule_counts()
         self._save_rule_settings()
@@ -3752,8 +4316,15 @@ class CbmsmvDialog(QDialog):
             1 for item in self._rule_checkboxes.values()
             if item.checkState() == Qt.Checked
         )
+        visible = sum(
+            1 for row in range(self.rules_table.rowCount())
+            if not self.rules_table.isRowHidden(row)
+        ) if hasattr(self, "rules_table") else total
 
-        self.lbl_rules_count.setText(f"{enabled} of {total} validation rules enabled")
+        if visible < total:
+            self.lbl_rules_count.setText(f"{enabled} of {total} validation rules enabled ({visible} matching filter)")
+        else:
+            self.lbl_rules_count.setText(f"{enabled} of {total} validation rules enabled")
         self.lbl_footer_status.setText(f"Ready • {enabled} validation rule(s) selected")
         if hasattr(self, "lbl_kpi_rules"):
             self.lbl_kpi_rules.setText(str(enabled))
@@ -3888,15 +4459,24 @@ class CbmsmvDialog(QDialog):
         layout.addWidget(self.lbl_footer_status, stretch=1)
 
         self.btn_reset = QPushButton("Reset Form")
+        ic_reset = QgsApplication.getThemeIcon("mActionUndo.svg")
+        if not ic_reset.isNull():
+            self.btn_reset.setIcon(ic_reset)
         self.btn_reset.clicked.connect(self._reset_form)
         layout.addWidget(self.btn_reset)
 
         self.btn_close = QPushButton("Close")
+        ic_close = QgsApplication.getThemeIcon("mActionCancel.svg")
+        if not ic_close.isNull():
+            self.btn_close.setIcon(ic_close)
         self.btn_close.clicked.connect(self.close)
         layout.addWidget(self.btn_close)
 
-        self.btn_run = QPushButton("  ▶  Run Validation  ")
+        self.btn_run = QPushButton("  Run Validation  ")
         self.btn_run.setObjectName("btnRun")
+        ic_run = QgsApplication.getThemeIcon("mActionStart.svg")
+        if not ic_run.isNull():
+            self.btn_run.setIcon(ic_run)
         self.btn_run.setShortcut("Ctrl+Return")
         self.btn_run.setToolTip("Run Map Validation (Ctrl+Enter)")
         self.btn_run.clicked.connect(self.run_validation)

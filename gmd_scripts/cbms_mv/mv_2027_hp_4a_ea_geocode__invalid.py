@@ -27,6 +27,8 @@ from PyQt5.QtGui import QIcon
 from .. import gmdhelpers
 
 
+TARGET_FIELDS = ["sf_ea_geocode", "ref_ea_geocode"]
+
 class mv_2027_hp_4a_ea_geocode__invalid(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"

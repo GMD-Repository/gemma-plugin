@@ -35,6 +35,8 @@ from PyQt5.QtGui import QIcon
 from .. import gmdhelpers
 
 
+TARGET_FIELDS = ["sf_bsn_geoid", "sf_bsn"]
+
 class mv_2027_hp_4b_bsn_geoid__invalid(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"

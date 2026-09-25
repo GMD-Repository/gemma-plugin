@@ -45,6 +45,14 @@ except ImportError:
     except ImportError:
         sip = None
 
+try:
+    from references.cbms_mv.cbms_mv_targets import resolve_target_columns
+except ImportError:
+    try:
+        from cbms_mv_targets import resolve_target_columns
+    except ImportError:
+        resolve_target_columns = lambda v, f, c=None: []
+
 
 def is_valid_qobject(obj) -> bool:
     """Safely check whether a Qt C++ wrapper object is still alive and not deleted."""
@@ -79,6 +87,7 @@ class CbmsMvReviewDock(QDockWidget):
         error_layer: QgsVectorLayer,
         main_layer: Optional[QgsVectorLayer] = None,
         start_index: int = 0,
+        target_fields: Optional[List[str]] = None,
     ):
         super().__init__(
             f"CBMS Review: {val_id}",
@@ -91,6 +100,7 @@ class CbmsMvReviewDock(QDockWidget):
         self.check_name = check_name
         self.error_layer = error_layer
         self.main_layer = main_layer
+        self.target_fields = target_fields
         self.current_index = 0
         self.error_features: List[Dict[str, Any]] = []
 
@@ -184,6 +194,9 @@ class CbmsMvReviewDock(QDockWidget):
                 "disabled_border": "#3C4043",
                 "btn_return_bg": "#4A5568",
                 "btn_return_hover": "#2D3748",
+                "target_badge_bg": "#1A365D",
+                "target_badge_text": "#90CDF4",
+                "target_badge_border": "#2B6CB0",
             }
         else:
             return {
@@ -215,6 +228,9 @@ class CbmsMvReviewDock(QDockWidget):
                 "disabled_border": "#E2E8F0",
                 "btn_return_bg": "#718096",
                 "btn_return_hover": "#4A5568",
+                "target_badge_bg": "#EBF8FF",
+                "target_badge_text": "#2B6CB0",
+                "target_badge_border": "#BEE3F8",
             }
 
     # -----------------------------------------------------------------------
@@ -236,19 +252,31 @@ class CbmsMvReviewDock(QDockWidget):
         header_layout.setContentsMargins(8, 6, 8, 6)
         header_layout.setSpacing(2)
 
-        lbl_rule_id = QLabel(f"🔴  {self.val_id}")
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(6)
+
+        crit_icon = QgsApplication.getThemeIcon("mIconCritical.svg")
+        if not crit_icon.isNull():
+            lbl_icon = QLabel()
+            lbl_icon.setPixmap(crit_icon.pixmap(14, 14))
+            title_row.addWidget(lbl_icon)
+
+        lbl_rule_id = QLabel(self.val_id)
         lbl_rule_id.setStyleSheet(f"font-size: 11.5px; font-weight: bold; color: {colors['danger_text']};")
         lbl_rule_id.setFont(QFont("Consolas", 9, QFont.Bold))
+        title_row.addWidget(lbl_rule_id)
+        title_row.addStretch(1)
+        header_layout.addLayout(title_row)
 
         lbl_check_name = QLabel(self.check_name)
         lbl_check_name.setWordWrap(True)
         lbl_check_name.setStyleSheet(f"font-size: 10.5px; color: {colors['text_secondary']};")
 
-        header_layout.addWidget(lbl_rule_id)
         header_layout.addWidget(lbl_check_name)
         layout.addWidget(header_frame)
 
-        # 2. Navigation Bar: [ ◀ Prev ]  ( 3 of 12 )  [ Next ▶ ]
+        # 2. Navigation Bar: [ Prev ]  ( 3 of 12 )  [ Next ]
         nav_frame = QFrame()
         nav_frame.setObjectName("dockNavFrame")
         nav_layout = QVBoxLayout(nav_frame)
@@ -258,7 +286,10 @@ class CbmsMvReviewDock(QDockWidget):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
 
-        self.btn_prev = QPushButton("◀  Previous")
+        self.btn_prev = QPushButton("Previous")
+        prev_ic = QgsApplication.getThemeIcon("mActionPrevious.svg")
+        if not prev_ic.isNull():
+            self.btn_prev.setIcon(prev_ic)
         self.btn_prev.setObjectName("btnNavPrev")
         self.btn_prev.setToolTip("Navigate to previous error feature")
         self.btn_prev.clicked.connect(self._on_prev)
@@ -267,7 +298,10 @@ class CbmsMvReviewDock(QDockWidget):
         self.lbl_counter.setAlignment(Qt.AlignCenter)
         self.lbl_counter.setStyleSheet(f"font-weight: bold; font-size: 11.5px; color: {colors['title']};")
 
-        self.btn_next = QPushButton("Next  ▶")
+        self.btn_next = QPushButton("Next")
+        next_ic = QgsApplication.getThemeIcon("mActionNext.svg")
+        if not next_ic.isNull():
+            self.btn_next.setIcon(next_ic)
         self.btn_next.setObjectName("btnNavNext")
         self.btn_next.setToolTip("Navigate to next error feature")
         self.btn_next.clicked.connect(self._on_next)
@@ -305,6 +339,18 @@ class CbmsMvReviewDock(QDockWidget):
         self.lbl_feat_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
         nav_layout.addWidget(self.lbl_feat_info)
 
+        # Target Columns Guidance Card
+        self.lbl_target_hints = QLabel("")
+        self.lbl_target_hints.setWordWrap(True)
+        self.lbl_target_hints.setStyleSheet(
+            f"font-size: 10px; color: {colors['target_badge_text']}; "
+            f"padding: 4px 6px; background-color: {colors['target_badge_bg']}; "
+            f"border: 1px solid {colors['target_badge_border']}; border-radius: 4px;"
+        )
+        self.lbl_target_hints.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.lbl_target_hints.setVisible(False)
+        nav_layout.addWidget(self.lbl_target_hints)
+
         layout.addWidget(nav_frame)
 
         # 3. Actions Frame: [ Edit ] [ Save ] [ Return ]
@@ -316,24 +362,36 @@ class CbmsMvReviewDock(QDockWidget):
 
         # Edit Feature Form Button
         self.btn_edit_form = QPushButton("Edit")
+        edit_ic = QgsApplication.getThemeIcon("mActionToggleEditing.svg")
+        if not edit_ic.isNull():
+            self.btn_edit_form.setIcon(edit_ic)
         self.btn_edit_form.setObjectName("btnEditForm")
         self.btn_edit_form.setToolTip("Open QGIS native Edit Feature Form for this building point")
         self.btn_edit_form.clicked.connect(self._on_open_feature_form)
 
         # Delete Feature Button (sets status to 'deleted')
         self.btn_delete_feat = QPushButton("Delete")
+        del_ic = QgsApplication.getThemeIcon("mActionDeleteSelected.svg")
+        if not del_ic.isNull():
+            self.btn_delete_feat.setIcon(del_ic)
         self.btn_delete_feat.setObjectName("btnDeleteFeat")
         self.btn_delete_feat.setToolTip("Mark this building point as 'deleted' in status column")
         self.btn_delete_feat.clicked.connect(self._on_delete_feature)
 
         # Save Layer Changes Button
         self.btn_save_layer = QPushButton("Save")
+        save_ic = QgsApplication.getThemeIcon("mActionSaveEdits.svg")
+        if not save_ic.isNull():
+            self.btn_save_layer.setIcon(save_ic)
         self.btn_save_layer.setObjectName("btnSaveLayer")
         self.btn_save_layer.setToolTip("Save layer edits permanently to disk")
         self.btn_save_layer.clicked.connect(self._on_save_layer_changes)
 
         # Return Button
         self.btn_return = QPushButton("Return")
+        ret_ic = QgsApplication.getThemeIcon("mActionCancel.svg")
+        if not ret_ic.isNull():
+            self.btn_return.setIcon(ret_ic)
         self.btn_return.setObjectName("btnReturn")
         self.btn_return.setToolTip("Close review dock and return to validation results")
         self.btn_return.clicked.connect(self.close)
@@ -394,9 +452,30 @@ class CbmsMvReviewDock(QDockWidget):
         if current_uuid:
             info_parts.append(f"UUID: {current_uuid}")
         if is_del:
-            info_parts.append("🔴 [DELETED]")
+            info_parts.append("[DELETED]")
         self._style_delete_button(is_deleted=is_del)
         self.lbl_feat_info.setText(" | ".join(info_parts))
+
+        # Target column inspection and hint display
+        f_fields = err_feat.fields() if (err_feat and hasattr(err_feat, "fields")) else (target_feat.fields() if (target_feat and hasattr(target_feat, "fields")) else None)
+        f_names = [f.name() for f in f_fields] if f_fields else []
+        target_cols = resolve_target_columns(self.val_id, f_names, custom_target_fields=self.target_fields)
+        if target_cols:
+            col_lines = []
+            for tc in target_cols:
+                val = None
+                if err_feat and tc in [f.name() for f in err_feat.fields()]:
+                    val = err_feat[tc]
+                elif target_feat and tc in [f.name() for f in target_feat.fields()]:
+                    val = target_feat[tc]
+                val_s = "<i>NULL</i>" if (val is None or val == NULL) else str(val).strip()
+                col_lines.append(f"• <b>{tc}:</b> {val_s}")
+            self.lbl_target_hints.setText(
+                f"<b>Target Column(s) to Check / Edit:</b><br/>" + "<br/>".join(col_lines)
+            )
+            self.lbl_target_hints.setVisible(True)
+        else:
+            self.lbl_target_hints.setVisible(False)
 
         # Synchronize QGIS map canvas
         self._sync_map_canvas(main_feat, err_feat)
@@ -721,6 +800,9 @@ class CbmsMvReviewDock(QDockWidget):
         colors = self._get_theme_colors()
         if is_deleted:
             self.btn_delete_feat.setText("Deleted")
+            del_ic = QgsApplication.getThemeIcon("mActionUndo.svg")
+            if not del_ic.isNull():
+                self.btn_delete_feat.setIcon(del_ic)
             self.btn_delete_feat.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {colors['danger_active_bg']};
@@ -734,6 +816,9 @@ class CbmsMvReviewDock(QDockWidget):
             """)
         else:
             self.btn_delete_feat.setText("Delete")
+            del_ic = QgsApplication.getThemeIcon("mActionDeleteSelected.svg")
+            if not del_ic.isNull():
+                self.btn_delete_feat.setIcon(del_ic)
             self.btn_delete_feat.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {colors['danger_bg']};

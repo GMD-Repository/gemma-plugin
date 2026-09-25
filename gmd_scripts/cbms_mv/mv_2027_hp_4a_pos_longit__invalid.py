@@ -29,6 +29,8 @@ from .. import gmdhelpers
 
 
 
+TARGET_FIELDS = ["sf_pos_longit", "sf_pos_latitu", "sf_longitude", "sf_latitude"]
+
 class mv_2027_hp_4a_pos_longit__invalid(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"

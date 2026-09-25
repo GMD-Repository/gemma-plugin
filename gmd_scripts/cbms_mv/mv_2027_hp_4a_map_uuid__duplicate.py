@@ -36,6 +36,8 @@ from .. import gmdhelpers
 
 
 
+TARGET_FIELDS = ["sf_map_uuid"]
+
 class mv_2027_hp_4a_map_uuid__duplicate(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"

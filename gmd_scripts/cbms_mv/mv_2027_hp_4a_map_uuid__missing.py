@@ -26,6 +26,8 @@ from PyQt5.QtGui import QIcon
 from .. import gmdhelpers
 
 
+TARGET_FIELDS = ["sf_map_uuid", "sf_remarks"]
+
 class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
 
     INPUT_DATA = "INPUT_DATA"
