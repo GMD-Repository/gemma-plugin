@@ -155,6 +155,7 @@ def main() -> None:
     parser.add_argument("--repo", default="GMD-Repository/gemma-plugin", help="GitHub repo full name")
     parser.add_argument("--worksheet-emails", default="email_gemma", help="Worksheet name for emails")
     parser.add_argument("--worksheet-log", default="Releases", help="Worksheet name for logs")
+    parser.add_argument("--output-file", default="", help="Optional file path to write recipient emails")
 
     args = parser.parse_args()
 
@@ -183,6 +184,11 @@ def main() -> None:
                 print(f"::add-mask::{recipients_str}")
 
         set_github_output("recipients", recipients_str)
+        if args.output_file:
+            out_path = Path(args.output_file)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text("\n".join(emails), encoding="utf-8")
+            logger.info("Saved %d recipients to %s", len(emails), out_path)
 
     if args.log_release:
         log_release(
