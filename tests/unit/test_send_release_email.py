@@ -227,6 +227,28 @@ class TestSendReleaseEmail(unittest.TestCase):
             resolved = resolve_recipients(args_mock)
             self.assertEqual(resolved, ["fallback@example.com"])
 
+    def test_main_uses_html_body_env(self):
+        """Test that main() uses HTML_BODY environment variable when provided."""
+        from scripts.release.send_release_email import main
+
+        custom_html = "<html><body><h1>Custom Release Notice</h1></body></html>"
+        with patch.dict(
+            "os.environ",
+            {
+                "HTML_BODY": custom_html,
+                "RECIPIENTS": "user@example.com",
+                "MAIL_USERNAME": "test_user",
+                "MAIL_PASSWORD": "test_password",
+            },
+        ):
+            with patch("scripts.release.send_release_email.send_batch_emails") as mock_send:
+                mock_send.return_value = True
+                with patch("sys.argv", ["send_release_email.py", "--dry-run"]):
+                    main()
+                    mock_send.assert_called_once()
+                    call_kwargs = mock_send.call_args[1]
+                    self.assertEqual(call_kwargs["html_content"], custom_html)
+
 
 if __name__ == "__main__":
     unittest.main()

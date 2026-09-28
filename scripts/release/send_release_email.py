@@ -147,10 +147,14 @@ def build_email_html(
       font-weight: bold;
       margin-bottom: 6px;
     }}
+    .list {{
+      font-size: 14px;
+      margin: 6px 0;
+    }}
     .button {{
       display: inline-block;
       background-color: #2563a8;
-      color: #ffffff !important;
+      color: #ffffff;
       padding: 10px 18px;
       text-decoration: none;
       border-radius: 4px;
@@ -504,6 +508,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--to-addr", default="", help="Visible 'To' email address")
     parser.add_argument("--reply-to", default="", help="Reply-To email address")
     parser.add_argument("--subject", default="", help="Custom email subject")
+    parser.add_argument("--html-body", default="", help="Full HTML body content")
+    parser.add_argument("--html-file", default="", help="Path to file containing HTML body")
+    parser.add_argument("--text-body", default="", help="Full plain text body content")
 
     # Batching controls
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help="Max recipients per message")
@@ -547,7 +554,7 @@ def main() -> None:
     from_addr = args.from_addr or os.environ.get("MAIL_FROM") or username
     reply_to = args.reply_to or os.environ.get("MAIL_REPLY_TO") or from_addr
     to_addr = args.to_addr or from_addr
-    subject = args.subject or os.environ.get("MAIL_SUBJECT") or f"[GEMMA Plugin] v{version} — Stable Release Ready"
+    subject = args.subject or os.environ.get("SUBJECT") or os.environ.get("MAIL_SUBJECT") or f"[GEMMA Plugin] v{version} — Stable Release Ready"
 
     recipients = resolve_recipients(args)
     if not recipients:
@@ -566,20 +573,27 @@ def main() -> None:
         logger.warning("SMTP credentials (MAIL_USERNAME/MAIL_PASSWORD) not configured. Skipping email delivery.")
         return
 
-    html_content = build_email_html(
-        version=version,
-        zip_name=zip_name,
-        release_body=release_body,
-        repo=repo,
-        doc_url=doc_url,
-    )
-    text_content = build_email_text(
-        version=version,
-        zip_name=zip_name,
-        release_body=release_body,
-        repo=repo,
-        doc_url=doc_url,
-    )
+    html_content = args.html_body or os.environ.get("HTML_BODY", "")
+    if not html_content and args.html_file and Path(args.html_file).exists():
+        html_content = Path(args.html_file).read_text(encoding="utf-8")
+    if not html_content:
+        html_content = build_email_html(
+            version=version,
+            zip_name=zip_name,
+            release_body=release_body,
+            repo=repo,
+            doc_url=doc_url,
+        )
+
+    text_content = args.text_body or os.environ.get("TEXT_BODY", "")
+    if not text_content:
+        text_content = build_email_text(
+            version=version,
+            zip_name=zip_name,
+            release_body=html_content or release_body,
+            repo=repo,
+            doc_url=doc_url,
+        )
 
     success = send_batch_emails(
         server_address=server_address,
