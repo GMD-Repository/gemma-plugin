@@ -247,7 +247,34 @@ class TestSendReleaseEmail(unittest.TestCase):
                     main()
                     mock_send.assert_called_once()
                     call_kwargs = mock_send.call_args[1]
-                    self.assertEqual(call_kwargs["html_content"], custom_html)
+                    self.assertIn("<h1>Custom Release Notice</h1>", call_kwargs["html_content"])
+                    self.assertIn("font-family", call_kwargs["html_content"])
+
+    def test_render_template_placeholders(self):
+        """Test that both GitHub Actions and Python style placeholders are resolved."""
+        from scripts.release.send_release_email import render_template
+
+        raw_template = "Version: ${{ steps.release.outputs.version }} | Body: {formatted_body} | Repo: {repo}"
+        rendered = render_template(
+            template=raw_template,
+            version="3.5.0",
+            zip_name="gemma-3.5.0.zip",
+            release_body="Resolved bug",
+            repo="GMD-Repository/gemma-plugin",
+        )
+        self.assertEqual(rendered, "Version: 3.5.0 | Body: Resolved bug | Repo: GMD-Repository/gemma-plugin")
+        self.assertNotIn("{formatted_body}", rendered)
+        self.assertNotIn("${{ steps.release.outputs.version }}", rendered)
+
+    def test_inline_email_styles(self):
+        """Test that CSS classes are converted to inline styles for email client compatibility."""
+        from scripts.release.send_release_email import inline_email_styles
+
+        raw = '<div class="box"><div class="box-title">Title</div></div><a href="https://gemma-plugin.vercel.app/getting-started.html" class="button">Docs</a>'
+        styled = inline_email_styles(raw)
+        self.assertIn('style="background-color: #f8fafc', styled)
+        self.assertIn('style="font-size: 15px', styled)
+        self.assertIn('background-color: #2563a8', styled)
 
 
 if __name__ == "__main__":

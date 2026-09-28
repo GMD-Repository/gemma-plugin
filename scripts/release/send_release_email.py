@@ -97,9 +97,8 @@ def build_email_html(
     repo: str = DEFAULT_REPO,
     doc_url: str = DEFAULT_DOC_URL,
 ) -> str:
-    """Build the HTML announcement email body using GEMMA template styling."""
+    """Build the HTML announcement email body using GEMMA template styling with robust inline styles."""
     formatted_body = release_body.strip()
-    # If the release body does not contain HTML tags, format newlines as <br>
     if "<" not in formatted_body and ">" not in formatted_body:
         formatted_body = formatted_body.replace("\n", "<br>")
 
@@ -109,119 +108,63 @@ def build_email_html(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GEMMA Plugin Notification</title>
-  <style>
-    body {{
-      font-family: Arial, sans-serif;
-      line-height: 1.5;
-      color: #333;
-      margin: 0;
-      padding: 0;
-      background-color: #f5f5f5;
-    }}
-    .email-container {{
-      max-width: 600px;
-      margin: 16px auto;
-      background-color: #ffffff;
-    }}
-    .content {{
-      padding: 24px;
-    }}
-    .title {{
-      font-size: 20px;
-      font-weight: bold;
-      margin-bottom: 8px;
-    }}
-    .text {{
-      font-size: 14px;
-      color: #555;
-      margin-bottom: 12px;
-    }}
-    .box {{
-      background-color: #f8fafc;
-      border: 1px solid #e2e8f0;
-      padding: 16px;
-      margin: 14px 0;
-    }}
-    .box-title {{
-      font-size: 15px;
-      font-weight: bold;
-      margin-bottom: 6px;
-    }}
-    .list {{
-      font-size: 14px;
-      margin: 6px 0;
-    }}
-    .button {{
-      display: inline-block;
-      background-color: #2563a8;
-      color: #ffffff;
-      padding: 10px 18px;
-      text-decoration: none;
-      border-radius: 4px;
-      font-size: 13px;
-      font-weight: bold;
-      margin: 6px 0;
-    }}
-  </style>
 </head>
-<body>
-  <div class="email-container">
-    <div class="content">
-      <div class="title">Release Announcement: GEMMA Plugin v{version}</div>
-      <div class="text">
+<body style="font-family: Arial, Helvetica, sans-serif; line-height: 1.5; color: #333333; margin: 0; padding: 0; background-color: #f5f5f5;">
+  <div class="email-container" style="max-width: 600px; margin: 16px auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; font-family: Arial, Helvetica, sans-serif;">
+    <div class="content" style="padding: 24px;">
+      <div class="title" style="font-size: 20px; font-weight: bold; color: #1e293b; margin-bottom: 8px;">Release Announcement: GEMMA Plugin v{version}</div>
+      <div class="text" style="font-size: 14px; color: #555555; line-height: 1.5; margin-bottom: 12px;">
         We are pleased to formally announce the production release of the <strong>GEMMA Plugin</strong> (Version
         <strong>{version}</strong>).
       </div>
 
       <!-- Release Summary -->
-      <div class="box">
-        <div class="box-title">Release Summary</div>
-        <div class="text"><strong>Product:</strong> GEMMA QGIS Plugin</div>
-        <div class="text"><strong>Version:</strong> {version}</div>
-        <div class="text"><strong>Platform:</strong> QGIS Plugin (.zip)</div>
-        <div class="text"><strong>Status:</strong> Official Production / General Availability</div>
+      <div class="box" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px; margin: 14px 0;">
+        <div class="box-title" style="font-size: 15px; font-weight: bold; color: #0f172a; margin-bottom: 6px;">Release Summary</div>
+        <div class="text" style="font-size: 14px; color: #555555; line-height: 1.5; margin: 4px 0;"><strong>Product:</strong> GEMMA QGIS Plugin</div>
+        <div class="text" style="font-size: 14px; color: #555555; line-height: 1.5; margin: 4px 0;"><strong>Version:</strong> {version}</div>
+        <div class="text" style="font-size: 14px; color: #555555; line-height: 1.5; margin: 4px 0;"><strong>Platform:</strong> QGIS Plugin (.zip)</div>
+        <div class="text" style="font-size: 14px; color: #555555; line-height: 1.5; margin: 4px 0;"><strong>Status:</strong> Official Production / General Availability</div>
       </div>
 
       <!-- Changelog & Highlights -->
-      <div class="box">
-        <div class="box-title">Changelog &amp; Highlights</div>
-        <div class="text">
+      <div class="box" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px; margin: 14px 0;">
+        <div class="box-title" style="font-size: 15px; font-weight: bold; color: #0f172a; margin-bottom: 6px;">Changelog &amp; Highlights</div>
+        <div class="text" style="font-size: 14px; color: #555555; line-height: 1.5; margin: 4px 0;">
           {formatted_body}
         </div>
       </div>
 
       <!-- Installation & Deployment -->
-      <div class="box">
-        <div class="box-title">Installation &amp; Deployment</div>
+      <div class="box" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px; margin: 14px 0;">
+        <div class="box-title" style="font-size: 15px; font-weight: bold; color: #0f172a; margin-bottom: 6px;">Installation &amp; Deployment</div>
 
-        <div class="text" style="margin-bottom: 10px;">
+        <div class="text" style="font-size: 14px; color: #555555; line-height: 1.5; margin-bottom: 10px;">
           <strong>QGIS Repository Installation:</strong> If your QGIS client is connected to the official GEMMA
           repository, QGIS will automatically prompt you for update. Open QGIS and navigate to <em>Plugins &rarr;
           Manage and Install Plugins &rarr; GEMMA &rarr; Upgrade / Install Plugin</em>.
         </div>
 
-        <div class="text" style="margin-bottom: 12px;">
+        <div class="text" style="font-size: 14px; color: #555555; line-height: 1.5; margin-bottom: 12px;">
           <strong>Manual Download &amp; Documentation:</strong> You may also download the official release package
           directly or review technical documentation:
         </div>
 
         <div style="margin-bottom: 10px;">
           <a href="{doc_url}"
-             class="button"
-             style="color: #ffffff !important; text-decoration: none; margin-right: 8px;"
+             style="display: inline-block; background-color: #2563a8; color: #ffffff !important; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: bold; margin-right: 8px; margin-top: 4px; margin-bottom: 4px;"
              target="_blank">
             View Documentation
           </a>
 
           <a href="https://github.com/{repo}/releases/download/v{version}/{zip_name}"
-             class="button"
-             style="background-color: #475569; color: #ffffff !important; text-decoration: none;"
+             style="display: inline-block; background-color: #475569; color: #ffffff !important; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: bold; margin-top: 4px; margin-bottom: 4px;"
              target="_blank">
             Download Release Package
           </a>
         </div>
 
-        <div style="margin-top: 8px; font-size: 12px; color: #777; line-height: 1.4;">
+        <div style="margin-top: 8px; font-size: 12px; color: #777777; line-height: 1.4;">
           If the direct package link is unavailable, assets may still be propagating.
           You can access the
           <a href="https://github.com/{repo}/releases"
@@ -236,6 +179,89 @@ def build_email_html(
 </body>
 </html>
 """
+
+
+def render_template(
+    template: str,
+    version: str,
+    zip_name: str,
+    release_body: str,
+    repo: str = DEFAULT_REPO,
+    doc_url: str = DEFAULT_DOC_URL,
+) -> str:
+    """Safely replace all variable placeholders in both GitHub Actions and Python formats."""
+    rendered = template
+    replacements = {
+        "${{ steps.release.outputs.version }}": version,
+        "${{ steps.release.outputs.zip_name }}": zip_name,
+        "${{ steps.release.outputs.release_body_html || steps.release.outputs.release_body }}": release_body,
+        "${{ steps.release.outputs.release_body }}": release_body,
+        "${{ steps.release.outputs.release_body_html }}": release_body,
+        "${{ github.repository }}": repo,
+        "{version}": version,
+        "{zip_name}": zip_name,
+        "{formatted_body}": release_body,
+        "{release_body}": release_body,
+        "{repo}": repo,
+        "{doc_url}": doc_url,
+    }
+    for placeholder, val in replacements.items():
+        rendered = rendered.replace(placeholder, val)
+    return rendered
+
+
+def inline_email_styles(html_str: str) -> str:
+    """Ensure email clients (like Gmail/Outlook) that strip <style> blocks render properly.
+
+    Inlines essential styles directly onto elements that only have CSS class attributes.
+    """
+    if not html_str:
+        return ""
+
+    result = html_str
+
+    # Ensure body has font-family
+    result = re.sub(
+        r"<body([^>]*)>",
+        lambda m: f'<body{m.group(1)} style="font-family: Arial, Helvetica, sans-serif; line-height: 1.5; color: #333333; margin: 0; padding: 0; background-color: #f5f5f5;">'
+        if "font-family" not in m.group(1)
+        else m.group(0),
+        result,
+    )
+
+    # Class mappings with corresponding inline style definitions
+    class_styles = [
+        ('class="email-container"', 'class="email-container" style="max-width: 600px; margin: 16px auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; font-family: Arial, Helvetica, sans-serif;"'),
+        ('class="content"', 'class="content" style="padding: 24px; font-family: Arial, Helvetica, sans-serif;"'),
+        ('class="title"', 'class="title" style="font-size: 20px; font-weight: bold; color: #1e293b; margin-bottom: 8px; font-family: Arial, Helvetica, sans-serif;"'),
+        ('class="box"', 'class="box" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px; margin: 14px 0; font-family: Arial, Helvetica, sans-serif;"'),
+        ('class="box-title"', 'class="box-title" style="font-size: 15px; font-weight: bold; color: #0f172a; margin-bottom: 6px; font-family: Arial, Helvetica, sans-serif;"'),
+        ('class="list"', 'class="list" style="font-size: 14px; margin: 6px 0; font-family: Arial, Helvetica, sans-serif;"'),
+    ]
+
+    for cls_attr, styled_attr in class_styles:
+        # Match class="..." only if not followed by style=
+        pattern = re.compile(re.escape(cls_attr) + r"(?![^>]*style=)")
+        result = pattern.sub(styled_attr, result)
+
+    # Ensure "View Documentation" button has inline background color (not transparent)
+    result = re.sub(
+        r'<a([^>]+)href="[^"]*getting-started[^"]*"([^>]*)>',
+        lambda m: m.group(0).replace(
+            m.group(0),
+            f'<a{m.group(1)}href="https://gemma-plugin.vercel.app/getting-started.html"{m.group(2)} style="display: inline-block; background-color: #2563a8; color: #ffffff !important; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: bold; margin-right: 8px; margin-top: 4px; margin-bottom: 4px;">'
+        ) if "background-color" not in m.group(0) else m.group(0),
+        result,
+    )
+
+    # Ensure "Download Release Package" button has complete button styles
+    result = re.sub(
+        r'<a([^>]+)href="[^"]*releases/download[^"]*"([^>]*)style="([^"]*)"([^>]*)>',
+        lambda m: f'<a{m.group(1)}href="{re.search(r"href=[\'\"]([^\'\"]+)[\'\"]", m.group(0)).group(1)}"{m.group(2)}style="display: inline-block; background-color: #475569; color: #ffffff !important; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: bold; margin-top: 4px; margin-bottom: 4px;"{m.group(4)}>',
+        result,
+    )
+
+    return result
 
 
 def build_email_text(
@@ -584,6 +610,19 @@ def main() -> None:
             repo=repo,
             doc_url=doc_url,
         )
+    else:
+        # Resolve placeholders (both GitHub Actions ${{ ... }} and Python {placeholder})
+        html_content = render_template(
+            template=html_content,
+            version=version,
+            zip_name=zip_name,
+            release_body=release_body,
+            repo=repo,
+            doc_url=doc_url,
+        )
+
+    # Automatically inline styles to prevent email clients from stripping <style> tags
+    html_content = inline_email_styles(html_content)
 
     text_content = args.text_body or os.environ.get("TEXT_BODY", "")
     if not text_content:
