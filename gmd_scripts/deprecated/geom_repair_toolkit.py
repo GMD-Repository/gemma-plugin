@@ -2492,8 +2492,14 @@ class GeometryFixerTab(QWidget):
 
 class HelpInfoTab(QWidget):
     """Embedded HTML documentation and reference guide tab for Geometry Repair Toolkit."""
-    def __init__(self):
+    def __init__(self, is_dark=None):
         super().__init__()
+        if is_dark is None:
+            palette = self.palette()
+            bg_color = palette.color(palette.Window)
+            self.is_dark = bg_color.lightness() < 128
+        else:
+            self.is_dark = is_dark
         self._build()
 
     def _build(self):
@@ -2504,144 +2510,238 @@ class HelpInfoTab(QWidget):
         self.text = QTextBrowser()
         self.text.setReadOnly(True)
         self.text.setOpenExternalLinks(True)
-        self.text.setStyleSheet(
-            "QTextBrowser { background-color: #ffffff; color: #1f2937; font-size: 12px; border: 1px solid #d1d5db; border-radius: 4px; padding: 8px; }"
-        )
-        self.text.setHtml("""
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1f2937; line-height: 1.5; font-size: 12px;">
+        self.apply_theme(self.is_dark)
+        root.addWidget(self.text, stretch=1)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        palette = self.palette()
+        bg_color = palette.color(palette.Window)
+        new_is_dark = bg_color.lightness() < 128
+        if new_is_dark != getattr(self, "is_dark", False):
+            self.apply_theme(new_is_dark)
+
+    def apply_theme(self, is_dark: bool = False):
+        """Apply adaptive styling and rendered HTML documentation for light or dark mode."""
+        self.is_dark = is_dark
+        if is_dark:
+            self.text.setStyleSheet("""
+                QTextBrowser {
+                    background-color: #263238;
+                    color: #ECEFF1;
+                    font-size: 12px;
+                    border: 1px solid #455A64;
+                    border-radius: 4px;
+                    padding: 8px;
+                }
+                QScrollBar:vertical {
+                    background: #1E2327;
+                    width: 10px;
+                    margin: 0px;
+                }
+                QScrollBar::handle:vertical {
+                    background: #455A64;
+                    min-height: 20px;
+                    border-radius: 4px;
+                }
+                QScrollBar::handle:vertical:hover {
+                    background: #546E7A;
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    height: 0px;
+                }
+            """)
+        else:
+            self.text.setStyleSheet(
+                "QTextBrowser { background-color: #ffffff; color: #1f2937; font-size: 12px; border: 1px solid #d1d5db; border-radius: 4px; padding: 8px; }"
+            )
+        self.text.setHtml(self._get_html(is_dark))
+
+    def _get_html(self, is_dark: bool = False) -> str:
+        if is_dark:
+            body_color = "#ECEFF1"
+            h2_color = "#FFFFFF"
+            sub_color = "#B0BEC5"
+            border_color = "#455A64"
+            header_border = "#455A64"
+            callout_bg = "#1E2327"
+            callout_border = "#455A64"
+            callout_accent = "#29B6F6"
+            callout_title = "#FFFFFF"
+            callout_text = "#ECEFF1"
+            h3_color = "#4FC3F7"
+            table_border = "#455A64"
+            row_even_bg = "#263238"
+            row_odd_bg = "#1E2327"
+            row_border = "#37474F"
+            step_title_color = "#FFFFFF"
+            table_ref_border = "#455A64"
+            th_bg = "#37474F"
+            th_color = "#FFFFFF"
+            td_border = "#37474F"
+            err_title_color = "#FFFFFF"
+            ring_err_color = "#FBBF24"
+            footer_color = "#90A4AE"
+        else:
+            body_color = "#1f2937"
+            h2_color = "#111827"
+            sub_color = "#4b5563"
+            border_color = "#e5e7eb"
+            header_border = "#374151"
+            callout_bg = "#f9fafb"
+            callout_border = "#e5e7eb"
+            callout_accent = "#4b5563"
+            callout_title = "#111827"
+            callout_text = "#374151"
+            h3_color = "#111827"
+            table_border = "#e5e7eb"
+            row_even_bg = "#ffffff"
+            row_odd_bg = "#f9fafb"
+            row_border = "#f3f4f6"
+            step_title_color = "#111827"
+            table_ref_border = "#d1d5db"
+            th_bg = "#f3f4f6"
+            th_color = "#111827"
+            td_border = "#e5e7eb"
+            err_title_color = "#111827"
+            ring_err_color = "#b45309"
+            footer_color = "#4b5563"
+
+        return f"""
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: {body_color}; line-height: 1.5; font-size: 12px;">
 
           <!-- Header Section -->
-          <div style="border-bottom: 2px solid #374151; padding-bottom: 8px; margin-bottom: 14px;">
-            <h2 style="margin: 0 0 4px 0; color: #111827; font-size: 17px; font-weight: bold;">
+          <div style="border-bottom: 2px solid {header_border}; padding-bottom: 8px; margin-bottom: 14px;">
+            <h2 style="margin: 0 0 4px 0; color: {h2_color}; font-size: 17px; font-weight: bold;">
               Geometry Repair Toolkit
             </h2>
-            <div style="color: #4b5563; font-size: 12px;">
+            <div style="color: {sub_color}; font-size: 12px;">
               Direct In-Place Topology Validation and Automated Polygon Geometry Reconstruction
             </div>
           </div>
 
           <!-- Overview & In-Place Editing -->
-          <div style="background-color: #f9fafb; border: 1px solid #e5e7eb; border-left: 4px solid #4b5563; padding: 10px 14px; margin-bottom: 16px;">
-            <b style="color: #111827;">In-Place Editing Mode:</b>
-            <span style="color: #374151;">
+          <div style="background-color: {callout_bg}; border: 1px solid {callout_border}; border-left: 4px solid {callout_accent}; padding: 10px 14px; margin-bottom: 16px;">
+            <b style="color: {callout_title};">In-Place Editing Mode:</b>
+            <span style="color: {callout_text};">
               This tool checks polygon layers for geometry errors and repairs them directly on the <b>original layer</b>. Features are edited in-place inside QGIS's active editing mode (unsaved buffer marked with a pencil icon). No duplicate output layers are created. You can inspect changes on the map canvas and choose <b>Save Edits</b> to write to disk or <b>Cancel Edits</b> to discard and revert to the original state.
             </span>
           </div>
 
           <!-- Section 1: How to Use -->
-          <h3 style="color: #111827; font-size: 14px; font-weight: bold; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
+          <h3 style="color: {h3_color}; font-size: 14px; font-weight: bold; border-bottom: 1px solid {border_color}; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
             How to Use
           </h3>
-          <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px; border: 1px solid #e5e7eb; font-size: 11px;">
-            <tr style="background-color: #ffffff;">
-              <td width="65" style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 1</td>
-              <td style="border-bottom: 1px solid #f3f4f6;"><b>Select Input Layers:</b> Select one or more polygon layers from the <i>Input Layers</i> list.</td>
+          <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px; border: 1px solid {table_border}; font-size: 11px;">
+            <tr style="background-color: {row_even_bg};">
+              <td width="65" style="font-weight: bold; vertical-align: top; border-bottom: 1px solid {row_border}; color: {step_title_color};">Step 1</td>
+              <td style="border-bottom: 1px solid {row_border}; color: {body_color};"><b>Select Input Layers:</b> Select one or more polygon layers from the <i>Input Layers</i> list.</td>
             </tr>
-            <tr style="background-color: #f9fafb;">
-              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 2</td>
-              <td style="border-bottom: 1px solid #f3f4f6;"><b>Scan Layers:</b> Click <i>Scan Layers</i> to execute multi-threaded geometry checks across selected layers.</td>
+            <tr style="background-color: {row_odd_bg};">
+              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid {row_border}; color: {step_title_color};">Step 2</td>
+              <td style="border-bottom: 1px solid {row_border}; color: {body_color};"><b>Scan Layers:</b> Click <i>Scan Layers</i> to execute multi-threaded geometry checks across selected layers.</td>
             </tr>
-            <tr style="background-color: #ffffff;">
-              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 3</td>
-              <td style="border-bottom: 1px solid #f3f4f6;"><b>Inspect Detected Errors:</b> Review issues in the results table. Double-click any row to zoom and highlight the defect on the map canvas with bounding outlines and vertex markers.</td>
+            <tr style="background-color: {row_even_bg};">
+              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid {row_border}; color: {step_title_color};">Step 3</td>
+              <td style="border-bottom: 1px solid {row_border}; color: {body_color};"><b>Inspect Detected Errors:</b> Review issues in the results table. Double-click any row to zoom and highlight the defect on the map canvas with bounding outlines and vertex markers.</td>
             </tr>
-            <tr style="background-color: #f9fafb;">
-              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 4</td>
-              <td style="border-bottom: 1px solid #f3f4f6;"><b>Select Errors to Repair:</b> Check individual rows or click the checkbox in the table header to select or clear all auto-fixable errors at once.</td>
+            <tr style="background-color: {row_odd_bg};">
+              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid {row_border}; color: {step_title_color};">Step 4</td>
+              <td style="border-bottom: 1px solid {row_border}; color: {body_color};"><b>Select Errors to Repair:</b> Check individual rows or click the checkbox in the table header to select or clear all auto-fixable errors at once.</td>
             </tr>
-            <tr style="background-color: #ffffff;">
-              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 5</td>
-              <td style="border-bottom: 1px solid #f3f4f6;"><b>Repair Selected Features:</b> Click <i>Repair Selected Features</i>. The toolkit automatically routes each checked row to its specific repair mechanism directly on the source layer.</td>
+            <tr style="background-color: {row_even_bg};">
+              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid {row_border}; color: {step_title_color};">Step 5</td>
+              <td style="border-bottom: 1px solid {row_border}; color: {body_color};"><b>Repair Selected Features:</b> Click <i>Repair Selected Features</i>. The toolkit automatically routes each checked row to its specific repair mechanism directly on the source layer.</td>
             </tr>
-            <tr style="background-color: #f9fafb;">
-              <td style="font-weight: bold; vertical-align: top; color: #111827;">Step 6</td>
-              <td><b>Verify & Commit:</b> Re-run <i>Scan Layers</i> to confirm all errors are resolved on the unsaved layer. Use QGIS's <b>Save Edits</b> to write changes to disk, or <b>Cancel Edits</b> to discard.</td>
+            <tr style="background-color: {row_odd_bg};">
+              <td style="font-weight: bold; vertical-align: top; color: {step_title_color};">Step 6</td>
+              <td style="color: {body_color};"><b>Verify & Commit:</b> Re-run <i>Scan Layers</i> to confirm all errors are resolved on the unsaved layer. Use QGIS's <b>Save Edits</b> to write changes to disk, or <b>Cancel Edits</b> to discard.</td>
             </tr>
           </table>
 
           <!-- Section 2: Error Types Reference Table -->
-          <h3 style="color: #111827; font-size: 14px; font-weight: bold; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
+          <h3 style="color: {h3_color}; font-size: 14px; font-weight: bold; border-bottom: 1px solid {border_color}; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
             Error Types Reference
           </h3>
-          <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px; border: 1px solid #d1d5db; font-size: 11px;">
+          <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px; border: 1px solid {table_ref_border}; font-size: 11px;">
             <thead>
-              <tr style="background-color: #f3f4f6; color: #111827; text-align: left;">
-                <th style="border: 1px solid #d1d5db; padding: 7px 10px; width: 170px;">Error Type</th>
-                <th style="border: 1px solid #d1d5db; padding: 7px 10px;">Description</th>
-                <th style="border: 1px solid #d1d5db; padding: 7px 10px; width: 220px;">Repair Mechanism</th>
+              <tr style="background-color: {th_bg}; color: {th_color}; text-align: left;">
+                <th style="border: 1px solid {table_ref_border}; padding: 7px 10px; width: 170px; color: {th_color};">Error Type</th>
+                <th style="border: 1px solid {table_ref_border}; padding: 7px 10px; color: {th_color};">Description</th>
+                <th style="border: 1px solid {table_ref_border}; padding: 7px 10px; width: 220px; color: {th_color};">Repair Mechanism</th>
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; font-weight: bold;">Null Geometry</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">The feature record exists, but there is no geometry object.</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Spatial gap recovery from surrounding polygons.</td>
+              <tr style="background-color: {row_even_bg};">
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; font-weight: bold; color: {err_title_color};">Null Geometry</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">The feature record exists, but there is no geometry object.</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">Spatial gap recovery from surrounding polygons.</td>
               </tr>
-              <tr style="background-color: #f9fafb;">
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; font-weight: bold;">Empty/Missing Geometry</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">The feature exists, but its geometry has no usable shape or coordinates.</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Spatial void recovery from surrounding polygons.</td>
+              <tr style="background-color: {row_odd_bg};">
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; font-weight: bold; color: {err_title_color};">Empty/Missing Geometry</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">The feature exists, but its geometry has no usable shape or coordinates.</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">Spatial void recovery from surrounding polygons.</td>
               </tr>
-              <tr>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; font-weight: bold;">Invalid Geometry</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">The polygon has geometry errors such as ring errors, spikes, or folded edges.</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Thorough polygon reconstruction.</td>
+              <tr style="background-color: {row_even_bg};">
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; font-weight: bold; color: {err_title_color};">Invalid Geometry</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">The polygon has geometry errors such as ring errors, spikes, or folded edges.</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">Thorough polygon reconstruction.</td>
               </tr>
-              <tr style="background-color: #f9fafb;">
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; font-weight: bold;">Self Intersection</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">The polygon boundary crosses itself (e.g. bowtie or figure-8 loop).</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Thorough polygon reconstruction.</td>
+              <tr style="background-color: {row_odd_bg};">
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; font-weight: bold; color: {err_title_color};">Self Intersection</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">The polygon boundary crosses itself (e.g. bowtie or figure-8 loop).</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">Thorough polygon reconstruction.</td>
               </tr>
-              <tr>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; font-weight: bold;">Wrong-type Geometry</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">The feature's geometry type does not match the layer's declared geometry type (e.g. a line or GeometryCollection stored in a polygon layer).</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Thorough polygon reconstruction.</td>
+              <tr style="background-color: {row_even_bg};">
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; font-weight: bold; color: {err_title_color};">Wrong-type Geometry</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">The feature's geometry type does not match the layer's declared geometry type (e.g. a line or GeometryCollection stored in a polygon layer).</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">Thorough polygon reconstruction.</td>
               </tr>
-              <tr style="background-color: #f9fafb;">
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; font-weight: bold;">Duplicate Vertex</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Commonly an accidental self-snap made while manually digitizing a polygon (a duplicate/near-duplicate vertex or zero-length segment). Reported only when QGIS's validator actually names a duplicate node.</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Direct duplicate vertex removal via progressive tolerance sweep.</td>
+              <tr style="background-color: {row_odd_bg};">
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; font-weight: bold; color: {err_title_color};">Duplicate Vertex</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">Commonly an accidental self-snap made while manually digitizing a polygon (a duplicate/near-duplicate vertex or zero-length segment). Reported only when QGIS's validator actually names a duplicate node.</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">Direct duplicate vertex removal via progressive tolerance sweep.</td>
               </tr>
-              <tr>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; font-weight: bold;">Ring/Structure Error</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">GEOS accepts the geometry, but QGIS's internal validator objects to how its rings or parts are arranged &mdash; e.g. a hole (interior ring) that is not fully inside its outer ring, or a part nested inside another part.</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; color: #b45309;"><b>No automatic repair.</b> There is no vertex to delete and makeValid() leaves it unchanged. Correct the ring manually with the Vertex Tool.</td>
+              <tr style="background-color: {row_even_bg};">
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; font-weight: bold; color: {err_title_color};">Ring/Structure Error</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">GEOS accepts the geometry, but QGIS's internal validator objects to how its rings or parts are arranged &mdash; e.g. a hole (interior ring) that is not fully inside its outer ring, or a part nested inside another part.</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {ring_err_color};"><b>No automatic repair.</b> There is no vertex to delete and makeValid() leaves it unchanged. Correct the ring manually with the Vertex Tool.</td>
               </tr>
             </tbody>
           </table>
 
           <!-- Section 3: Repair Mechanics & Original Layer Editing -->
-          <h3 style="color: #111827; font-size: 14px; font-weight: bold; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
+          <h3 style="color: {h3_color}; font-size: 14px; font-weight: bold; border-bottom: 1px solid {border_color}; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
             Repair Selected Features & In-Place Processing
           </h3>
-          <p style="margin: 0 0 10px 0;">
+          <p style="margin: 0 0 10px 0; color: {body_color};">
             Clicking <b>Repair Selected Features</b> inspects each checked error row and automatically routes it to the correct repair mechanism directly on the source layer:
           </p>
-          <ul style="margin: 0 0 12px 0; padding-left: 20px;">
+          <ul style="margin: 0 0 12px 0; padding-left: 20px; color: {body_color};">
             <li style="margin-bottom: 4px;"><b>Invalid Geometry / Wrong-type Geometry / Self Intersection:</b> Thorough polygon reconstruction (ring decomposition, unary union planarization, face matching, and hole restoration).</li>
-            <li style="margin-bottom: 4px;"><b>Duplicate Vertex:</b> Removes duplicate and near-duplicate vertices directly via progressive tolerance sweep ($10^{-12}$ to $10^{-6}$ bbox scale) and node-clustering deduplication.</li>
+            <li style="margin-bottom: 4px;"><b>Duplicate Vertex:</b> Removes duplicate and near-duplicate vertices directly via progressive tolerance sweep ($10^{{-12}}$ to $10^{{-6}}$ bbox scale) and node-clustering deduplication.</li>
             <li style="margin-bottom: 4px;"><b>Null / Empty / Missing Geometry:</b> Recovers missing geometry from surrounding polygon spatial boundary context.</li>
-            <li style="margin-bottom: 4px;"><b>Ring/Structure Error:</b> <span style="color: #b45309;">Not repaired automatically.</span> These rows stay greyed out with the checkbox disabled, because no automatic mechanism can fix them &mdash; they must be corrected by hand.</li>
+            <li style="margin-bottom: 4px;"><b>Ring/Structure Error:</b> <span style="color: {ring_err_color};">Not repaired automatically.</span> These rows stay greyed out with the checkbox disabled, because no automatic mechanism can fix them &mdash; they must be corrected by hand.</li>
           </ul>
-          <p style="margin: 0 0 12px 0;">
+          <p style="margin: 0 0 12px 0; color: {body_color};">
             <b>When a feature cannot be repaired:</b> the log names the feature and states the reason &mdash; for example
             <i>"FID 12 could NOT be repaired automatically. Reason: it encloses no area &mdash; the outline collapses to a line&hellip;"</i>
             &mdash; followed by a prompt to check it manually. The run summary reports these as
             <b>Needs manual repair</b>, separately from the features it fixed. A feature that reports
             <i>"encloses no area"</i> has to be re-digitised or deleted; nothing can rebuild a polygon that has none.
           </p>
-          <p style="margin: 0 0 10px 0;">
-            <b>Multipart Resolution & Sliver Cleanup:</b> Polygon reconstruction can occasionally produce multiple parts when resolving a self-intersecting bowtie shape. The toolkit automatically drops negligible artifact slivers (< 0.1% area ratio) and keeps the union of real parts. Pre-existing legitimate multipart features that were not repaired are left completely untouched.
+          <p style="margin: 0 0 10px 0; color: {body_color};">
+            <b>Multipart Resolution & Sliver Cleanup:</b> Polygon reconstruction can occasionally produce multiple parts when resolving a self-intersecting bowtie shape. The toolkit automatically drops negligible artifact slivers (&lt; 0.1% area ratio) and keeps the union of real parts. Pre-existing legitimate multipart features that were not repaired are left completely untouched.
           </p>
-          <p style="margin: 0 0 12px 0;">
+          <p style="margin: 0 0 12px 0; color: {body_color};">
             <b>Multiple Error Types on One Feature:</b> When a feature has multiple geometry defects (such as Invalid Geometry + Self Intersection), they are processed together or can be re-scanned and repaired in sequence.
           </p>
 
           <!-- Section 4: Review and Limitations -->
-          <h3 style="color: #111827; font-size: 14px; font-weight: bold; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
+          <h3 style="color: {h3_color}; font-size: 14px; font-weight: bold; border-bottom: 1px solid {border_color}; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
             Review and Limitations
           </h3>
-          <ul style="margin: 0 0 14px 0; padding-left: 20px;">
+          <ul style="margin: 0 0 14px 0; padding-left: 20px; color: {body_color};">
             <li style="margin-bottom: 4px;">Always visually inspect repaired features before saving edits to disk.</li>
             <li style="margin-bottom: 4px;">Re-run <b>Scan Layers</b> on the layer while still in edit mode to confirm all errors are resolved.</li>
             <li style="margin-bottom: 4px;">Completely deleted attribute records cannot be recovered by this tool.</li>
@@ -2650,37 +2750,37 @@ class HelpInfoTab(QWidget):
           </ul>
 
           <!-- Section 5: Map Canvas & Table Controls -->
-          <h3 style="color: #111827; font-size: 14px; font-weight: bold; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
+          <h3 style="color: {h3_color}; font-size: 14px; font-weight: bold; border-bottom: 1px solid {border_color}; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
             Map Canvas & Table Controls
           </h3>
-          <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px; border: 1px solid #e5e7eb; font-size: 11px;">
-            <tr style="background-color: #f9fafb;">
-              <td width="160" style="font-weight: bold; border-bottom: 1px solid #e5e7eb;">Double-Click Error Row</td>
-              <td style="border-bottom: 1px solid #e5e7eb;">Pans and zooms the map canvas to the feature and places a red outline and vertex marker at the error location.</td>
+          <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px; border: 1px solid {table_border}; font-size: 11px;">
+            <tr style="background-color: {row_odd_bg};">
+              <td width="160" style="font-weight: bold; border-bottom: 1px solid {table_border}; color: {step_title_color};">Double-Click Error Row</td>
+              <td style="border-bottom: 1px solid {table_border}; color: {body_color};">Pans and zooms the map canvas to the feature and places a red outline and vertex marker at the error location.</td>
             </tr>
-            <tr>
-              <td style="font-weight: bold; border-bottom: 1px solid #e5e7eb;">Header Checkbox</td>
-              <td style="border-bottom: 1px solid #e5e7eb;">One-click toggle in column 1 header to select all or clear all auto-fixable rows.</td>
+            <tr style="background-color: {row_even_bg};">
+              <td style="font-weight: bold; border-bottom: 1px solid {table_border}; color: {step_title_color};">Header Checkbox</td>
+              <td style="border-bottom: 1px solid {table_border}; color: {body_color};">One-click toggle in column 1 header to select all or clear all auto-fixable rows.</td>
             </tr>
-            <tr style="background-color: #f9fafb;">
-              <td style="font-weight: bold; border-bottom: 1px solid #e5e7eb;">Clear Button / Esc Key</td>
-              <td style="border-bottom: 1px solid #e5e7eb;">Clears the results table and removes canvas rubber-band outlines and markers.</td>
+            <tr style="background-color: {row_odd_bg};">
+              <td style="font-weight: bold; border-bottom: 1px solid {table_border}; color: {step_title_color};">Clear Button / Esc Key</td>
+              <td style="border-bottom: 1px solid {table_border}; color: {body_color};">Clears the results table and removes canvas rubber-band outlines and markers.</td>
             </tr>
-            <tr>
-              <td style="font-weight: bold;">Save / Cancel Edits</td>
-              <td>Use QGIS's native editing toolbar to save in-place repairs permanently to disk or cancel edits to revert back to original geometry.</td>
+            <tr style="background-color: {row_even_bg};">
+              <td style="font-weight: bold; color: {step_title_color};">Save / Cancel Edits</td>
+              <td style="color: {body_color};">Use QGIS's native editing toolbar to save in-place repairs permanently to disk or cancel edits to revert back to original geometry.</td>
             </tr>
           </table>
 
           <!-- Footer Section -->
-          <div style="text-align: center; color: #4b5563; font-size: 11px; padding: 14px 0 6px 0; border-top: 1px solid #e5e7eb; margin-top: 16px;">
+          <div style="text-align: center; color: {footer_color}; font-size: 11px; padding: 14px 0 6px 0; border-top: 1px solid {border_color}; margin-top: 16px;">
             <b>Geometry Repair Toolkit</b> &bull; Version 1.5.1<br>
             Philippine Statistics Authority &bull; Geospatial Management Division<br>
             Project 1MAP
           </div>
 
         </div>
-        """)
+        """
         root.addWidget(self.text, stretch=1)
 
 

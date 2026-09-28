@@ -1084,10 +1084,11 @@ class PackageDialog(QDialog, DialogUi):
 
         # Add Help and Properties buttons to upper right
         self.help_button = QPushButton(self.tr("Help"))
+        self.help_button.setIcon(QgsApplication.getThemeIcon("mActionHelpContents.svg"))
         self.help_button.clicked.connect(self.show_help)
         
-        self.config_button = QPushButton(self.tr("⚙ Configuration"))
-        self.config_button.setIcon(QIcon(QgsApplication.iconPath("mActionOptions.svg")))
+        self.config_button = QPushButton(self.tr("Configuration"))
+        self.config_button.setIcon(QgsApplication.getThemeIcon("mActionOptions.svg"))
         self.config_button.clicked.connect(self._show_configuration_dialog)
 
         _help_layout = QHBoxLayout()
@@ -1161,19 +1162,29 @@ class PackageDialog(QDialog, DialogUi):
         # ── Toolbar ──────────────────────────────────────────────────────────
         toolbar_layout = QHBoxLayout()
         
-        self.apply_groups_btn = QPushButton(self.tr("▶ Apply Groups && Styles"))
+        self.apply_groups_btn = QPushButton(self.tr("Apply Groups && Styles"))
+        self.apply_groups_btn.setIcon(QgsApplication.getThemeIcon("mActionPlay.svg"))
         self.apply_groups_btn.setStyleSheet(
             "QPushButton { font-weight: bold; font-size: 13px; padding: 4px 8px; }"
         )
         
-        self.add_group_btn = QPushButton(self.tr("➕ Add Group"))
-        self.delete_group_btn = QPushButton(self.tr("🗑 Delete Item"))
+        self.add_group_btn = QPushButton(self.tr("Add Group"))
+        self.add_group_btn.setIcon(QgsApplication.getThemeIcon("mActionAddGroup.svg"))
+
+        self.delete_group_btn = QPushButton(self.tr("Delete Item"))
+        self.delete_group_btn.setIcon(QgsApplication.getThemeIcon("mActionDeleteSelected.svg"))
         
-        self.load_preset_btn = QPushButton(self.tr("📂 Load"))
-        self.save_preset_btn = QPushButton(self.tr("💾 Save"))
-        self.delete_preset_btn = QPushButton(self.tr("🗑 Delete Preset"))
+        self.load_preset_btn = QPushButton(self.tr("Load"))
+        self.load_preset_btn.setIcon(QgsApplication.getThemeIcon("mActionFileOpen.svg"))
+
+        self.save_preset_btn = QPushButton(self.tr("Save"))
+        self.save_preset_btn.setIcon(QgsApplication.getThemeIcon("mActionFileSave.svg"))
+
+        self.delete_preset_btn = QPushButton(self.tr("Delete Preset"))
+        self.delete_preset_btn.setIcon(QgsApplication.getThemeIcon("mActionDeleteSelected.svg"))
         
-        self.import_qml_btn = QPushButton(self.tr("📥 Import QML..."))
+        self.import_qml_btn = QPushButton(self.tr("Import QML..."))
+        self.import_qml_btn.setIcon(QgsApplication.getThemeIcon("mActionSharingImport.svg"))
         self.import_qml_btn.setToolTip(self.tr(
             "Import additional QML style files if the built-in styles are not sufficient."
         ))
@@ -1320,7 +1331,9 @@ class PackageDialog(QDialog, DialogUi):
         self._filter_tree_widget.setSelectionMode(QTreeWidget.ExtendedSelection)
         self._last_clicked_tree_item = None
         self._filter_tree_select_all_btn = QPushButton(self.tr("Select All"))
+        self._filter_tree_select_all_btn.setIcon(QgsApplication.getThemeIcon("mActionSelectAllTree.svg"))
         self._filter_tree_deselect_all_btn = QPushButton(self.tr("Deselect All"))
+        self._filter_tree_deselect_all_btn.setIcon(QgsApplication.getThemeIcon("mActionDeselectAll.svg"))
         _filter_tree_btn_container = QWidget()
         _filter_tree_btn_layout = QHBoxLayout(_filter_tree_btn_container)
         _filter_tree_btn_layout.setContentsMargins(0, 0, 0, 0)
@@ -1501,7 +1514,7 @@ class PackageDialog(QDialog, DialogUi):
         _layer_title_label.setStyleSheet("font-weight: bold; font-size: 12px;")
         
         self._data_source_icon_btn = QToolButton()
-        self._data_source_icon_btn.setIcon(QIcon(QgsApplication.iconPath("mActionOpenTable.svg")))
+        self._data_source_icon_btn.setIcon(QgsApplication.getThemeIcon("mActionOpenTable.svg"))
         self._data_source_icon_btn.setToolTip(self.tr(
             "Configure per-layer data source properties for active layers.\n"
             "Opens a popup dialog showing active project layers (excluding standard system role layers)\n"
@@ -1545,9 +1558,11 @@ class PackageDialog(QDialog, DialogUi):
         # ── Buttons ──────────────────────────────────────────────────────────
         btn_layout = QHBoxLayout()
         self.restore_defaults_btn = QPushButton(self.tr("Restore Defaults"))
+        self.restore_defaults_btn.setIcon(QgsApplication.getThemeIcon("mActionUndo.svg"))
         self.restore_defaults_btn.clicked.connect(self._on_restore_defaults)
         
         close_btn = QPushButton(self.tr("Close"))
+        close_btn.setIcon(QgsApplication.getThemeIcon("mIconClose.svg"))
         close_btn.clicked.connect(self._save_role_policies_from_table)
         close_btn.clicked.connect(self._apply_role_policies_to_project_layers)
         close_btn.clicked.connect(self.config_dialog.accept)
