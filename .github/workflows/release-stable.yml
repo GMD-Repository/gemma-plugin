@@ -96,6 +96,7 @@ jobs:
           ZIP_NAME: ${{ steps.release.outputs.zip_name }}
           RELEASE_BODY: ${{ steps.release.outputs.release_body_html || steps.release.outputs.release_body }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          CHANGELOG_URL: "https://gemma-plugin.vercel.app/changelog.html"
         run: |
           python scripts/release/send_release_email.py \
             --batch-size 80 \

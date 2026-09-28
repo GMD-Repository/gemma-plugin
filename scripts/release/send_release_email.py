@@ -44,6 +44,7 @@ DEFAULT_DELAY_SECONDS = 2.0
 DEFAULT_SMTP_SERVER = "smtp.gmail.com"
 DEFAULT_SMTP_PORT = 465
 DEFAULT_DOC_URL = "https://gemma-plugin.vercel.app/getting-started.html"
+DEFAULT_CHANGELOG_URL = "https://gemma-plugin.vercel.app/changelog.html"
 DEFAULT_REPO = "GMD-Repository/gemma-plugin"
 
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
@@ -96,6 +97,7 @@ def build_email_html(
     release_body: str,
     repo: str = DEFAULT_REPO,
     doc_url: str = DEFAULT_DOC_URL,
+    changelog_url: str = DEFAULT_CHANGELOG_URL,
 ) -> str:
     """Build the HTML announcement email body using GEMMA template styling with robust inline styles."""
     formatted_body = release_body.strip()
@@ -152,12 +154,21 @@ def build_email_html(
 
         <div style="margin-bottom: 10px;">
           <a href="{doc_url}"
+             class="button"
              style="display: inline-block; background-color: #2563a8; color: #ffffff !important; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: bold; margin-right: 8px; margin-top: 4px; margin-bottom: 4px;"
              target="_blank">
             View Documentation
           </a>
 
+          <a href="{changelog_url}"
+             class="button"
+             style="display: inline-block; background-color: #0d9488; color: #ffffff !important; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: bold; margin-right: 8px; margin-top: 4px; margin-bottom: 4px;"
+             target="_blank">
+            View Changelog
+          </a>
+
           <a href="https://github.com/{repo}/releases/download/v{version}/{zip_name}"
+             class="button"
              style="display: inline-block; background-color: #475569; color: #ffffff !important; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: bold; margin-top: 4px; margin-bottom: 4px;"
              target="_blank">
             Download Release Package
@@ -188,6 +199,7 @@ def render_template(
     release_body: str,
     repo: str = DEFAULT_REPO,
     doc_url: str = DEFAULT_DOC_URL,
+    changelog_url: str = DEFAULT_CHANGELOG_URL,
 ) -> str:
     """Safely replace all variable placeholders in both GitHub Actions and Python formats."""
     rendered = template
@@ -197,6 +209,7 @@ def render_template(
         "${{ steps.release.outputs.release_body_html || steps.release.outputs.release_body }}": release_body,
         "${{ steps.release.outputs.release_body }}": release_body,
         "${{ steps.release.outputs.release_body_html }}": release_body,
+        "${{ steps.release.outputs.changelog_url }}": changelog_url,
         "${{ github.repository }}": repo,
         "{version}": version,
         "{zip_name}": zip_name,
@@ -204,13 +217,14 @@ def render_template(
         "{release_body}": release_body,
         "{repo}": repo,
         "{doc_url}": doc_url,
+        "{changelog_url}": changelog_url,
     }
     for placeholder, val in replacements.items():
         rendered = rendered.replace(placeholder, val)
     return rendered
 
 
-def inline_email_styles(html_str: str) -> str:
+def inline_email_styles(html_str: str, changelog_url: str = DEFAULT_CHANGELOG_URL) -> str:
     """Ensure email clients (like Gmail/Outlook) that strip <style> blocks render properly.
 
     Inlines essential styles directly onto elements that only have CSS class attributes.
@@ -254,6 +268,16 @@ def inline_email_styles(html_str: str) -> str:
         result,
     )
 
+    # Ensure "View Changelog" button has inline background color
+    result = re.sub(
+        r'<a([^>]+)href="[^"]*changelog[^"]*"([^>]*)>',
+        lambda m: m.group(0).replace(
+            m.group(0),
+            f'<a{m.group(1)}href="{changelog_url}"{m.group(2)} style="display: inline-block; background-color: #0d9488; color: #ffffff !important; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: bold; margin-right: 8px; margin-top: 4px; margin-bottom: 4px;">'
+        ) if "background-color" not in m.group(0) else m.group(0),
+        result,
+    )
+
     # Ensure "Download Release Package" button has complete button styles
     result = re.sub(
         r'<a([^>]+)href="[^"]*releases/download[^"]*"([^>]*)style="([^"]*)"([^>]*)>',
@@ -270,6 +294,7 @@ def build_email_text(
     release_body: str,
     repo: str = DEFAULT_REPO,
     doc_url: str = DEFAULT_DOC_URL,
+    changelog_url: str = DEFAULT_CHANGELOG_URL,
 ) -> str:
     """Build the plain text fallback announcement email body."""
     # Convert simple HTML highlights to plain text lines
@@ -296,6 +321,7 @@ Changelog & Highlights:
 Installation & Deployment:
 - QGIS Repository Installation: Open QGIS and navigate to Plugins -> Manage and Install Plugins -> GEMMA -> Upgrade / Install Plugin.
 - Documentation: {doc_url}
+- Changelog: {changelog_url}
 - Download Release Package: https://github.com/{repo}/releases/download/v{version}/{zip_name}
 - Official Releases: https://github.com/{repo}/releases
 """
@@ -519,6 +545,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--release-body", default="", help="Changelog or release summary (markdown or HTML)")
     parser.add_argument("--repo", default="", help="GitHub repository (e.g. GMD-Repository/gemma-plugin)")
     parser.add_argument("--doc-url", default=DEFAULT_DOC_URL, help="Documentation site URL")
+    parser.add_argument("--changelog-url", default=DEFAULT_CHANGELOG_URL, help="Changelog site URL")
 
     # Recipient options
     parser.add_argument("--recipients", default="", help="Comma-separated recipient emails")
@@ -571,6 +598,7 @@ def main() -> None:
 
     repo = args.repo or os.environ.get("GITHUB_REPOSITORY", DEFAULT_REPO)
     doc_url = args.doc_url or os.environ.get("DOC_URL", DEFAULT_DOC_URL)
+    changelog_url = args.changelog_url or os.environ.get("CHANGELOG_URL", DEFAULT_CHANGELOG_URL)
 
     # SMTP configuration
     server_address = args.server_address or os.environ.get("SMTP_SERVER") or os.environ.get("MAIL_SERVER") or DEFAULT_SMTP_SERVER
@@ -609,6 +637,7 @@ def main() -> None:
             release_body=release_body,
             repo=repo,
             doc_url=doc_url,
+            changelog_url=changelog_url,
         )
     else:
         # Resolve placeholders (both GitHub Actions ${{ ... }} and Python {placeholder})
@@ -619,10 +648,11 @@ def main() -> None:
             release_body=release_body,
             repo=repo,
             doc_url=doc_url,
+            changelog_url=changelog_url,
         )
 
     # Automatically inline styles to prevent email clients from stripping <style> tags
-    html_content = inline_email_styles(html_content)
+    html_content = inline_email_styles(html_content, changelog_url=changelog_url)
 
     text_content = args.text_body or os.environ.get("TEXT_BODY", "")
     if not text_content:
@@ -632,6 +662,7 @@ def main() -> None:
             release_body=html_content or release_body,
             repo=repo,
             doc_url=doc_url,
+            changelog_url=changelog_url,
         )
 
     success = send_batch_emails(

@@ -94,6 +94,8 @@ class TestSendReleaseEmail(unittest.TestCase):
         self.assertIn("gemma-plugin-v3.2.0.zip", html)
         self.assertIn("Fixed point snapping", html)
         self.assertIn("https://gemma-plugin.vercel.app/getting-started.html", html)
+        self.assertIn("https://gemma-plugin.vercel.app/changelog.html", html)
+        self.assertIn("View Changelog", html)
         self.assertIn("https://github.com/GMD-Repository/gemma-plugin/releases/download/v3.2.0/gemma-plugin-v3.2.0.zip", html)
 
     def test_build_email_text_content(self):
@@ -107,6 +109,7 @@ class TestSendReleaseEmail(unittest.TestCase):
         self.assertIn("v3.2.0", text)
         self.assertIn("gemma-plugin-v3.2.0.zip", text)
         self.assertIn("- Fixed point snapping", text)
+        self.assertIn("Changelog: https://gemma-plugin.vercel.app/changelog.html", text)
 
     def test_create_email_message_bcc_privacy(self):
         """Test that EmailMessage sets Subject, From, To, but does NOT leak BCC in headers."""
@@ -254,27 +257,30 @@ class TestSendReleaseEmail(unittest.TestCase):
         """Test that both GitHub Actions and Python style placeholders are resolved."""
         from scripts.release.send_release_email import render_template
 
-        raw_template = "Version: ${{ steps.release.outputs.version }} | Body: {formatted_body} | Repo: {repo}"
+        raw_template = "Version: ${{ steps.release.outputs.version }} | Body: {formatted_body} | Repo: {repo} | Changelog: {changelog_url}"
         rendered = render_template(
             template=raw_template,
             version="3.5.0",
             zip_name="gemma-3.5.0.zip",
             release_body="Resolved bug",
             repo="GMD-Repository/gemma-plugin",
+            changelog_url="https://gemma-plugin.vercel.app/changelog.html",
         )
-        self.assertEqual(rendered, "Version: 3.5.0 | Body: Resolved bug | Repo: GMD-Repository/gemma-plugin")
+        self.assertEqual(rendered, "Version: 3.5.0 | Body: Resolved bug | Repo: GMD-Repository/gemma-plugin | Changelog: https://gemma-plugin.vercel.app/changelog.html")
         self.assertNotIn("{formatted_body}", rendered)
         self.assertNotIn("${{ steps.release.outputs.version }}", rendered)
+        self.assertNotIn("{changelog_url}", rendered)
 
     def test_inline_email_styles(self):
         """Test that CSS classes are converted to inline styles for email client compatibility."""
         from scripts.release.send_release_email import inline_email_styles
 
-        raw = '<div class="box"><div class="box-title">Title</div></div><a href="https://gemma-plugin.vercel.app/getting-started.html" class="button">Docs</a>'
+        raw = '<div class="box"><div class="box-title">Title</div></div><a href="https://gemma-plugin.vercel.app/getting-started.html" class="button">Docs</a><a href="https://gemma-plugin.vercel.app/changelog.html" class="button">Changelog</a>'
         styled = inline_email_styles(raw)
         self.assertIn('style="background-color: #f8fafc', styled)
         self.assertIn('style="font-size: 15px', styled)
         self.assertIn('background-color: #2563a8', styled)
+        self.assertIn('background-color: #0d9488', styled)
 
 
 if __name__ == "__main__":
