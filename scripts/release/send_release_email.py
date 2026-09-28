@@ -110,6 +110,105 @@ def build_email_html(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GEMMA Plugin Notification</title>
+  <style>
+    body {{
+      font-family: Arial, Helvetica, sans-serif;
+      line-height: 1.5;
+      color: #333333;
+      margin: 0;
+      padding: 0;
+      background-color: #f5f5f5;
+    }}
+    .email-container {{
+      max-width: 600px;
+      margin: 16px auto;
+      background-color: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      overflow: hidden;
+      font-family: Arial, Helvetica, sans-serif;
+    }}
+    .content {{
+      padding: 24px;
+    }}
+    .title {{
+      font-size: 20px;
+      font-weight: bold;
+      color: #1e293b;
+      margin-bottom: 8px;
+    }}
+    .text {{
+      font-size: 14px;
+      color: #555555;
+      line-height: 1.5;
+      margin-bottom: 12px;
+    }}
+    .box {{
+      background-color: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 16px;
+      margin: 14px 0;
+    }}
+    .box-title {{
+      font-size: 15px;
+      font-weight: bold;
+      color: #0f172a;
+      margin-bottom: 6px;
+    }}
+    .button-group {{
+      margin-top: 12px;
+      margin-bottom: 12px;
+    }}
+    .button {{
+      display: inline-block;
+      padding: 8px 12px;
+      text-decoration: none;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: bold;
+      margin-right: 6px;
+      margin-top: 4px;
+      margin-bottom: 4px;
+      text-align: center;
+      white-space: nowrap;
+      box-sizing: border-box;
+    }}
+    @media only screen and (max-width: 600px) {{
+      .email-container {{
+        width: 100% !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+        border-left: none !important;
+        border-right: none !important;
+      }}
+      .content {{
+        padding: 16px !important;
+      }}
+      .box {{
+        padding: 14px !important;
+        margin: 12px 0 !important;
+      }}
+      .button-group {{
+        display: block !important;
+        width: 100% !important;
+        margin-top: 10px !important;
+        margin-bottom: 10px !important;
+      }}
+      .button {{
+        display: block !important;
+        width: 100% !important;
+        margin-right: 0 !important;
+        margin-left: 0 !important;
+        margin-top: 6px !important;
+        margin-bottom: 6px !important;
+        padding: 11px 16px !important;
+        font-size: 13px !important;
+        text-align: center !important;
+        box-sizing: border-box !important;
+      }}
+    }}
+  </style>
 </head>
 <body style="font-family: Arial, Helvetica, sans-serif; line-height: 1.5; color: #333333; margin: 0; padding: 0; background-color: #f5f5f5;">
   <div class="email-container" style="max-width: 600px; margin: 16px auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; font-family: Arial, Helvetica, sans-serif;">
@@ -152,24 +251,24 @@ def build_email_html(
           directly or review technical documentation:
         </div>
 
-        <div style="margin-bottom: 10px;">
+        <div class="button-group" style="margin-top: 12px; margin-bottom: 12px;">
           <a href="{doc_url}"
              class="button"
-             style="display: inline-block; background-color: #2563a8; color: #ffffff !important; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: bold; margin-right: 8px; margin-top: 4px; margin-bottom: 4px;"
+             style="display: inline-block; background-color: #2563a8; color: #ffffff !important; padding: 8px 12px; text-decoration: none; border-radius: 4px; font-size: 12px; font-weight: bold; margin-right: 6px; margin-top: 4px; margin-bottom: 4px; text-align: center; white-space: nowrap; box-sizing: border-box;"
              target="_blank">
             View Documentation
           </a>
 
           <a href="{changelog_url}"
              class="button"
-             style="display: inline-block; background-color: #0d9488; color: #ffffff !important; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: bold; margin-right: 8px; margin-top: 4px; margin-bottom: 4px;"
+             style="display: inline-block; background-color: #0d9488; color: #ffffff !important; padding: 8px 12px; text-decoration: none; border-radius: 4px; font-size: 12px; font-weight: bold; margin-right: 6px; margin-top: 4px; margin-bottom: 4px; text-align: center; white-space: nowrap; box-sizing: border-box;"
              target="_blank">
             View Changelog
           </a>
 
           <a href="https://github.com/{repo}/releases/download/v{version}/{zip_name}"
              class="button"
-             style="display: inline-block; background-color: #475569; color: #ffffff !important; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: bold; margin-top: 4px; margin-bottom: 4px;"
+             style="display: inline-block; background-color: #475569; color: #ffffff !important; padding: 8px 12px; text-decoration: none; border-radius: 4px; font-size: 12px; font-weight: bold; margin-top: 4px; margin-bottom: 4px; text-align: center; white-space: nowrap; box-sizing: border-box;"
              target="_blank">
             Download Release Package
           </a>
@@ -251,6 +350,7 @@ def inline_email_styles(html_str: str, changelog_url: str = DEFAULT_CHANGELOG_UR
         ('class="box"', 'class="box" style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px; margin: 14px 0; font-family: Arial, Helvetica, sans-serif;"'),
         ('class="box-title"', 'class="box-title" style="font-size: 15px; font-weight: bold; color: #0f172a; margin-bottom: 6px; font-family: Arial, Helvetica, sans-serif;"'),
         ('class="list"', 'class="list" style="font-size: 14px; margin: 6px 0; font-family: Arial, Helvetica, sans-serif;"'),
+        ('class="button-group"', 'class="button-group" style="margin-top: 12px; margin-bottom: 12px;"'),
     ]
 
     for cls_attr, styled_attr in class_styles:
@@ -263,7 +363,7 @@ def inline_email_styles(html_str: str, changelog_url: str = DEFAULT_CHANGELOG_UR
         r'<a([^>]+)href="[^"]*getting-started[^"]*"([^>]*)>',
         lambda m: m.group(0).replace(
             m.group(0),
-            f'<a{m.group(1)}href="https://gemma-plugin.vercel.app/getting-started.html"{m.group(2)} style="display: inline-block; background-color: #2563a8; color: #ffffff !important; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: bold; margin-right: 8px; margin-top: 4px; margin-bottom: 4px;">'
+            f'<a{m.group(1)}href="https://gemma-plugin.vercel.app/getting-started.html"{m.group(2)} style="display: inline-block; background-color: #2563a8; color: #ffffff !important; padding: 8px 12px; text-decoration: none; border-radius: 4px; font-size: 12px; font-weight: bold; margin-right: 6px; margin-top: 4px; margin-bottom: 4px; text-align: center; white-space: nowrap; box-sizing: border-box;">'
         ) if "background-color" not in m.group(0) else m.group(0),
         result,
     )
@@ -273,7 +373,7 @@ def inline_email_styles(html_str: str, changelog_url: str = DEFAULT_CHANGELOG_UR
         r'<a([^>]+)href="[^"]*changelog[^"]*"([^>]*)>',
         lambda m: m.group(0).replace(
             m.group(0),
-            f'<a{m.group(1)}href="{changelog_url}"{m.group(2)} style="display: inline-block; background-color: #0d9488; color: #ffffff !important; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: bold; margin-right: 8px; margin-top: 4px; margin-bottom: 4px;">'
+            f'<a{m.group(1)}href="{changelog_url}"{m.group(2)} style="display: inline-block; background-color: #0d9488; color: #ffffff !important; padding: 8px 12px; text-decoration: none; border-radius: 4px; font-size: 12px; font-weight: bold; margin-right: 6px; margin-top: 4px; margin-bottom: 4px; text-align: center; white-space: nowrap; box-sizing: border-box;">'
         ) if "background-color" not in m.group(0) else m.group(0),
         result,
     )
@@ -281,7 +381,7 @@ def inline_email_styles(html_str: str, changelog_url: str = DEFAULT_CHANGELOG_UR
     # Ensure "Download Release Package" button has complete button styles
     result = re.sub(
         r'<a([^>]+)href="[^"]*releases/download[^"]*"([^>]*)style="([^"]*)"([^>]*)>',
-        lambda m: f'<a{m.group(1)}href="{re.search(r"href=[\'\"]([^\'\"]+)[\'\"]", m.group(0)).group(1)}"{m.group(2)}style="display: inline-block; background-color: #475569; color: #ffffff !important; padding: 10px 18px; text-decoration: none; border-radius: 4px; font-size: 13px; font-weight: bold; margin-top: 4px; margin-bottom: 4px;"{m.group(4)}>',
+        lambda m: f'<a{m.group(1)}href="{re.search(r"href=[\'\"]([^\'\"]+)[\'\"]", m.group(0)).group(1)}"{m.group(2)}style="display: inline-block; background-color: #475569; color: #ffffff !important; padding: 8px 12px; text-decoration: none; border-radius: 4px; font-size: 12px; font-weight: bold; margin-top: 4px; margin-bottom: 4px; text-align: center; white-space: nowrap; box-sizing: border-box;"{m.group(4)}>',
         result,
     )
 

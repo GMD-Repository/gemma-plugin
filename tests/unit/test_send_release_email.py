@@ -282,6 +282,22 @@ class TestSendReleaseEmail(unittest.TestCase):
         self.assertIn('background-color: #2563a8', styled)
         self.assertIn('background-color: #0d9488', styled)
 
+    def test_mobile_responsive_button_group(self):
+        """Test that HTML includes responsive media queries and compact one-row button sizing."""
+        html = build_email_html(
+            version="3.3.0",
+            zip_name="gemma-3.3.0.zip",
+            release_body="Responsive updates",
+        )
+        # Verify responsive styles
+        self.assertIn("@media only screen and (max-width: 600px)", html)
+        self.assertIn(".button-group", html)
+        self.assertIn("display: block !important", html)
+        self.assertIn("width: 100% !important", html)
+        # Verify desktop 1-row compact padding and font sizing
+        self.assertIn("padding: 8px 12px", html)
+        self.assertIn("font-size: 12px", html)
+
 
 if __name__ == "__main__":
     unittest.main()
