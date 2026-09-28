@@ -765,22 +765,32 @@ def main() -> None:
             changelog_url=changelog_url,
         )
 
-    success = send_batch_emails(
-        server_address=server_address,
-        server_port=server_port,
-        username=username,
-        password=password,
-        from_addr=from_addr,
-        to_addr=to_addr,
-        reply_to=reply_to,
-        subject=subject,
-        html_content=html_content,
-        text_content=text_content,
-        recipients=recipients,
-        batch_size=args.batch_size,
-        delay_seconds=args.delay_seconds,
-        dry_run=args.dry_run,
-    )
+    try:
+        success = send_batch_emails(
+            server_address=server_address,
+            server_port=server_port,
+            username=username,
+            password=password,
+            from_addr=from_addr,
+            to_addr=to_addr,
+            reply_to=reply_to,
+            subject=subject,
+            html_content=html_content,
+            text_content=text_content,
+            recipients=recipients,
+            batch_size=args.batch_size,
+            delay_seconds=args.delay_seconds,
+            dry_run=args.dry_run,
+        )
+    finally:
+        # Ephemeral PII cleanup: delete recipients file immediately after sending
+        default_recipients_file = REPO_ROOT / "scripts" / "release" / ".recipients.txt"
+        if default_recipients_file.exists():
+            try:
+                default_recipients_file.unlink()
+                logger.debug("Cleaned up ephemeral recipients file: %s", default_recipients_file)
+            except Exception as e:
+                logger.debug("Could not remove ephemeral recipients file: %s", e)
 
     if not success and not args.dry_run:
         sys.exit(1)
