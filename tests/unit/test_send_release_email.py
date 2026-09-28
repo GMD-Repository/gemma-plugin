@@ -298,6 +298,21 @@ class TestSendReleaseEmail(unittest.TestCase):
         self.assertIn("padding: 8px 12px", html)
         self.assertIn("font-size: 12px", html)
 
+    def test_auto_delete_ephemeral_recipients_file(self):
+        """Test that main() automatically unlinks and deletes the ephemeral recipients file."""
+        from scripts.release.send_release_email import main, REPO_ROOT
+
+        test_recipients_file = REPO_ROOT / "scripts" / "release" / ".recipients.txt"
+        test_recipients_file.parent.mkdir(parents=True, exist_ok=True)
+        test_recipients_file.write_text("secure1@example.com\nsecure2@example.com", encoding="utf-8")
+        self.assertTrue(test_recipients_file.exists())
+
+        with patch("sys.argv", ["send_release_email.py", "--dry-run"]):
+            main()
+
+        # The file must be automatically deleted after execution
+        self.assertFalse(test_recipients_file.exists(), "Ephemeral recipients file should be auto-deleted.")
+
 
 if __name__ == "__main__":
     unittest.main()

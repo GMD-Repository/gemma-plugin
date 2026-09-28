@@ -783,14 +783,20 @@ def main() -> None:
             dry_run=args.dry_run,
         )
     finally:
-        # Ephemeral PII cleanup: delete recipients file immediately after sending
-        default_recipients_file = REPO_ROOT / "scripts" / "release" / ".recipients.txt"
-        if default_recipients_file.exists():
-            try:
-                default_recipients_file.unlink()
-                logger.debug("Cleaned up ephemeral recipients file: %s", default_recipients_file)
-            except Exception as e:
-                logger.debug("Could not remove ephemeral recipients file: %s", e)
+        # Ephemeral PII cleanup: auto-delete recipients file immediately after sending
+        candidates = [
+            REPO_ROOT / "scripts" / "release" / ".recipients.txt",
+        ]
+        if args.recipients_file:
+            candidates.append(Path(args.recipients_file))
+
+        for target in candidates:
+            if target.exists():
+                try:
+                    target.unlink()
+                    logger.info("🧹 Auto-deleted ephemeral recipients file: %s", target)
+                except Exception as e:
+                    logger.debug("Could not remove ephemeral recipients file: %s", e)
 
     if not success and not args.dry_run:
         sys.exit(1)
