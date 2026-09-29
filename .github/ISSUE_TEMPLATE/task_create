@@ -1,0 +1,20 @@
+name: Create Task
+description: Task creation
+title: "[TASK]: "
+labels: ["2027 CBMS"]
+assignees: []
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A short description of the task.
+      placeholder: E.g., Creation of User Guide for the 2027 CBMS Activity.
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        **Attachments:** Feel free to drag and drop mockups, wireframes, or reference images into any box above!
