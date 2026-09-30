@@ -24,8 +24,8 @@ Use this tool when you need to:
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | **Reference layer** | Feature Source (Polygon) | The combined Reference MBI polygon layer containing baseline cases, `mbi_status`, `pso_remarks`, `mbi_type`, and `num_bldg_pts`. Required. Automatically pre-selects matching `ref_mbi_cases` layer loaded in active QGIS project. |
-| **Checker GAP layer** | Feature Source (Polygon) | Topological checker output layer containing detected boundary gaps. Optional. Automatically pre-selects matching `Gaps` layer loaded in active QGIS project. |
-| **Checker OVERLAP layer** | Feature Source (Polygon) | Topological checker output layer containing detected boundary overlaps. Optional. Automatically pre-selects matching `Overlaps` layer loaded in active QGIS project. |
+| **Checker GAP layer** | Feature Source (Polygon) | Topological checker output layer containing detected boundary gaps. Optional. A clean MBI Checker run emits an empty `Gaps` layer, so supply it as normal — its zero features are what confirm the gap cases as resolved. Automatically pre-selects matching `Gaps` layer loaded in active QGIS project. |
+| **Checker OVERLAP layer** | Feature Source (Polygon) | Topological checker output layer containing detected boundary overlaps. Optional. A clean MBI Checker run emits an empty `Overlaps` layer, so supply it as normal. Automatically pre-selects matching `Overlaps` layer loaded in active QGIS project. |
 | **Save outputs as GeoPackage** | Boolean | Option to consolidate non-empty audit result categories into a single GeoPackage file. Default is `False`. |
 | **Save Path** | Folder Directory | Destination folder where the GeoPackage will be saved. Optional unless **Save outputs as GeoPackage** is checked. The filename is automatically generated as `ref_mbi_reviewed-YYYY-MM-DD_HH-MM-SS.gpkg`. |
 | **Layers to include in GeoPackage** | Enum (Multiple) | Multi-select choice of which audit result layers/categories to write into the GeoPackage. All categories are selected by default. |
@@ -89,6 +89,8 @@ Outputs are generated conditionally and will only create output layers when at l
 
 6. **Confirmed Resolved (`CONFIRMED_RESOLVED`)**:
    - Reference cases marked `1_Updated` with zero building points that no longer overlap any Checker polygons.
+   - An **empty** Checker layer satisfies this rule: the MBI Checker emits a zero-feature `Gaps`/`Overlaps` layer once that case type has been fixed, which is positive evidence the check ran and found nothing. This is the normal way a fixed layer reaches Confirmed Resolved.
+   - An **omitted** Checker input does not satisfy it. Nothing is compared for that case type, so its cases go to Remaining Cases marked as unverified — a missing layer can equally mean the Checker was run in a Run Mode that skipped the case type, or that the output was never loaded.
 
 7. **Manual Review (`MANUAL_REVIEW`)**:
    - Checker polygons that spatially overlap two or more distinct Reference cases.
