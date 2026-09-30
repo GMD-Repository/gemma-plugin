@@ -208,7 +208,7 @@ class GMDPipeline(object):
         self.updating_boundaries_menu.addAction(self.comparison_panel_action)
 
         self.projection_finder_action = QAction(
-            projection_finder_icon, "Know Your Projection!", self.iface.mainWindow()
+            projection_finder_icon, "Know Your Projection", self.iface.mainWindow()
         )
         self.projection_finder_action.triggered.connect(self.show_projection_finder)
         self.updating_boundaries_menu.addAction(self.projection_finder_action)
@@ -428,7 +428,7 @@ class GMDPipeline(object):
         self.ea_dlg.activateWindow()
 
     def show_projection_finder(self):
-        """Open the Know Your Projection! (Projection Finder) dialog."""
+        """Open the Know Your Projection (Projection Finder) dialog."""
         from .gmd_scripts.projection_finder import ProjectionToolkit
 
         try:
