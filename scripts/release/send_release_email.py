@@ -379,9 +379,24 @@ def inline_email_styles(html_str: str, changelog_url: str = DEFAULT_CHANGELOG_UR
     )
 
     # Ensure "Download Release Package" button has complete button styles
+    _href_re = re.compile(r"""href=['"](.*?)['"]""")
+
+    def _replace_download_button(m: re.Match) -> str:
+        href_match = _href_re.search(m.group(0))
+        href_val = href_match.group(1) if href_match else ""
+        return (
+            f'<a{m.group(1)}href="{href_val}"{m.group(2)}'
+            f'style="display: inline-block; background-color: #475569;'
+            f" color: #ffffff !important; padding: 8px 12px;"
+            f" text-decoration: none; border-radius: 4px; font-size: 12px;"
+            f" font-weight: bold; margin-top: 4px; margin-bottom: 4px;"
+            f" text-align: center; white-space: nowrap;"
+            f' box-sizing: border-box;"{m.group(4)}>'
+        )
+
     result = re.sub(
         r'<a([^>]+)href="[^"]*releases/download[^"]*"([^>]*)style="([^"]*)"([^>]*)>',
-        lambda m: f'<a{m.group(1)}href="{re.search(r"href=[\'\"]([^\'\"]+)[\'\"]", m.group(0)).group(1)}"{m.group(2)}style="display: inline-block; background-color: #475569; color: #ffffff !important; padding: 8px 12px; text-decoration: none; border-radius: 4px; font-size: 12px; font-weight: bold; margin-top: 4px; margin-bottom: 4px; text-align: center; white-space: nowrap; box-sizing: border-box;"{m.group(4)}>',
+        _replace_download_button,
         result,
     )
 
