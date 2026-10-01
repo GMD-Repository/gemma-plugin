@@ -36,6 +36,7 @@ from qgis.core import (
     QgsFeature,
     QgsFeatureRequest,
     QgsField,
+    QgsWkbTypes,
 )
 from qgis.gui import QgsFileWidget
 from qgis.PyQt.QtCore import Qt, QTimer, pyqtSignal, QSize, QEvent, QObject, QVariant
@@ -71,7 +72,15 @@ from qgis.PyQt.QtWidgets import (
     QShortcut,
     QDockWidget,
     QComboBox,
+    QMenu,
 )
+try:
+    from qgis.PyQt.QtWidgets import QAction, QActionGroup
+except ImportError:
+    try:
+        from qgis.PyQt.QtGui import QAction, QActionGroup
+    except ImportError:
+        from PyQt5.QtWidgets import QAction, QActionGroup
 
 try:
     import processing
@@ -97,15 +106,48 @@ except (ImportError, ValueError):
         from gmd_scripts.gmdhelpers import load_cbms_json_to_layer, load_cbms_csv_to_layer
 
 try:
-    from .cbmsmv_review_dock import CbmsMvReviewDock, is_valid_qobject
+    from qgis.PyQt import sip
+except ImportError:
+    try:
+        import sip
+    except ImportError:
+        sip = None
+
+
+def is_valid_qobject(obj) -> bool:
+    """Safely check whether a Qt C++ wrapper object is still alive and not deleted."""
+    if obj is None:
+        return False
+    if sip is not None:
+        try:
+            return not sip.isdeleted(obj)
+        except (RuntimeError, TypeError, AttributeError):
+            return False
+    try:
+        obj.objectName()
+        return True
+    except (RuntimeError, AttributeError):
+        return False
+
+
+def _is_empty_val(v) -> bool:
+    """Check if an attribute value is empty, None, or NULL."""
+    if v is None or v == NULL:
+        return True
+    s = str(v).strip()
+    return not s or s.lower() in ("null", "none")
+
+
+try:
+    from .cbmsmv_review_dock import CbmsMvReviewDock
 except (ImportError, ValueError):
     try:
-        from cbmsmv_review_dock import CbmsMvReviewDock, is_valid_qobject
+        from cbmsmv_review_dock import CbmsMvReviewDock
     except (ImportError, ValueError):
         _ref_dir = os.path.dirname(__file__)
         if _ref_dir not in sys.path:
             sys.path.insert(0, _ref_dir)
-        from cbmsmv_review_dock import CbmsMvReviewDock, is_valid_qobject
+        from cbmsmv_review_dock import CbmsMvReviewDock
 
 try:
     from .cbms_mv_fix import get_fix_handler, has_fix
@@ -392,7 +434,7 @@ class CbmsmvDialog(QDialog):
         # Restore docked mode if user previously had it docked
         was_docked = self.settings.value("cbms_mv/is_docked", False, type=bool)
         if was_docked and self.iface and hasattr(self.iface, "addDockWidget"):
-            QTimer.singleShot(50, self.dock_window)
+            QTimer.singleShot(50, lambda: self.dock_window() if is_valid_qobject(self) else None)
 
     @property
     def is_dark(self) -> bool:
@@ -622,17 +664,23 @@ class CbmsmvDialog(QDialog):
 
     def _scroll_to_column(self, table: QTableWidget, col_name: str, field_names: List[str]):
         """Scroll the table horizontally to bring the target column into center view."""
-        if not table or col_name not in field_names:
+        if not is_valid_qobject(self) or not is_valid_qobject(table):
             return
-        col_idx = field_names.index(col_name) + 1  # Account for column 0 (checkbox)
-        if table.rowCount() > 0:
-            item = table.item(0, col_idx)
-            if item:
-                table.scrollToItem(item, QAbstractItemView.PositionAtCenter)
-        elif hasattr(table, "horizontalScrollBar"):
-            h_bar = table.horizontalScrollBar()
-            col_x = table.columnViewportPosition(col_idx)
-            h_bar.setValue(max(0, col_x - 100))
+        if not table or not field_names or col_name not in field_names:
+            return
+        try:
+            col_idx = field_names.index(col_name) + 1  # Account for column 0 (checkbox)
+            if table.rowCount() > 0:
+                item = table.item(0, col_idx)
+                if item:
+                    table.scrollToItem(item, QAbstractItemView.PositionAtCenter)
+            elif hasattr(table, "horizontalScrollBar"):
+                h_bar = table.horizontalScrollBar()
+                if h_bar:
+                    col_x = table.columnViewportPosition(col_idx)
+                    h_bar.setValue(max(0, col_x - 100))
+        except (RuntimeError, Exception):
+            pass
 
     # -----------------------------------------------------------------------
     # Setup & Icons
@@ -851,7 +899,7 @@ class CbmsmvDialog(QDialog):
                 table = target_tab.findChild(QTableWidget)
                 if table:
                     first_target = target_cols[0]
-                    QTimer.singleShot(100, lambda: self._scroll_to_column(table, first_target, field_names))
+                    QTimer.singleShot(100, lambda: self._scroll_to_column(table, first_target, field_names) if is_valid_qobject(self) else None)
 
     def _create_empty_state_widget(self) -> QWidget:
         """Create a clean empty state card shown before any validation has been executed."""
@@ -1080,7 +1128,7 @@ class CbmsmvDialog(QDialog):
                 if target_cols and field_names:
                     tbl = active_tab.findChild(QTableWidget)
                     if tbl:
-                        QTimer.singleShot(100, lambda: self._scroll_to_column(tbl, target_cols[0], field_names))
+                        QTimer.singleShot(100, lambda: self._scroll_to_column(tbl, target_cols[0], field_names) if is_valid_qobject(self) else None)
 
         combo_checks.currentIndexChanged.connect(_on_check_changed)
         btn_prev_check.clicked.connect(lambda: combo_checks.setCurrentIndex(max(0, combo_checks.currentIndex() - 1)))
@@ -1175,8 +1223,18 @@ class CbmsmvDialog(QDialog):
 
         layout.addLayout(kpi_row)
 
-        # Filter & Search Toolbar
-        filter_bar = QHBoxLayout()
+        # Filter & Search Toolbar (styled same as category nav bar)
+        filter_frame = QFrame()
+        filter_frame.setObjectName("summaryFilterFrame")
+        filter_frame.setStyleSheet(f"""
+            #summaryFilterFrame {{
+                background-color: {colors['card_bg']};
+                border: 1px solid {colors['border']};
+                border-radius: 5px;
+            }}
+        """)
+        filter_bar = QHBoxLayout(filter_frame)
+        filter_bar.setContentsMargins(8, 6, 8, 6)
         filter_bar.setSpacing(8)
 
         # 1. Search Box
@@ -1221,6 +1279,9 @@ class CbmsmvDialog(QDialog):
                 font-size: 11px;
                 min-width: 140px;
             }}
+            QComboBox:focus {{
+                border-color: {colors['border_focus']};
+            }}
             QComboBox QAbstractItemView {{
                 background-color: {colors['surface_bg']};
                 color: {colors['text_primary']};
@@ -1254,6 +1315,9 @@ class CbmsmvDialog(QDialog):
                 font-size: 11px;
                 min-width: 145px;
             }}
+            QComboBox:focus {{
+                border-color: {colors['border_focus']};
+            }}
             QComboBox QAbstractItemView {{
                 background-color: {colors['surface_bg']};
                 color: {colors['text_primary']};
@@ -1282,6 +1346,9 @@ class CbmsmvDialog(QDialog):
                 font-size: 11px;
                 min-width: 165px;
             }}
+            QComboBox:focus {{
+                border-color: {colors['border_focus']};
+            }}
             QComboBox QAbstractItemView {{
                 background-color: {colors['surface_bg']};
                 color: {colors['text_primary']};
@@ -1296,7 +1363,7 @@ class CbmsmvDialog(QDialog):
         lbl_visible_count.setStyleSheet(f"color: {colors['text_secondary']}; font-size: 10.5px; font-weight: 500;")
         filter_bar.addWidget(lbl_visible_count)
 
-        layout.addLayout(filter_bar)
+        layout.addWidget(filter_frame)
 
         # Scorecard Table
         table = QTableWidget()
@@ -1533,20 +1600,18 @@ class CbmsmvDialog(QDialog):
         field_names = [f.name() for f in layer.fields()] if layer and layer.isValid() else []
         rule_target_fields = rule.get("target_fields") if rule else None
         target_cols = resolve_target_columns(val_id, field_names, rule_target_fields)
+        has_auto_fix = bool(has_fix(val_id))
 
         tab.setProperty("target_cols", target_cols)
         tab.setProperty("field_names", field_names)
 
-        # Mini Toolbar
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(8)
-
-        # Title & count
+        # Title & count (Header above toolbar)
         title_box = QVBoxLayout()
-        title_box.setSpacing(1)
+        title_box.setSpacing(2)
         colors = self._get_theme_colors()
         lbl_vname = QLabel(f"<b>{check_name}</b>")
-        lbl_vname.setToolTip(f"Validation ID: {val_id}")
+        lbl_vname.setWordWrap(False)
+        lbl_vname.setToolTip(f"{check_name}\n(Validation ID: {val_id})")
         lbl_vname.setStyleSheet(f"font-size: 11px; color: {colors['title']};")
         
         success_col = "#3FB950" if self.is_dark else "#2F855A"
@@ -1561,20 +1626,39 @@ class CbmsmvDialog(QDialog):
                 f"<span style='color: {danger_col}; font-weight: bold;'>{count:,}</span> flagged feature(s) detected. "
                 f"Click row to zoom; double-click cell to edit in-place."
             )
+        lbl_vcount.setWordWrap(False)
+        lbl_vcount.setToolTip("Click row to zoom; double-click cell to edit in-place.")
         lbl_vcount.setStyleSheet(f"font-size: 10px; color: {colors['text_secondary']};")
         title_box.addWidget(lbl_vname)
         title_box.addWidget(lbl_vcount)
-        toolbar.addLayout(title_box, stretch=1)
+        layout.addLayout(title_box)
+
+        # Mini Toolbar
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(8)
 
         # Search filter
         edit_filter = QLineEdit()
         filter_icon = QgsApplication.getThemeIcon("mActionFilter.svg")
         if not filter_icon.isNull():
             edit_filter.addAction(filter_icon, QLineEdit.LeadingPosition)
-        edit_filter.setPlaceholderText("Filter rows in this table...")
+        edit_filter.setPlaceholderText("Filter rows...")
         edit_filter.setClearButtonEnabled(True)
-        edit_filter.setFixedWidth(210)
-        toolbar.addWidget(edit_filter)
+        edit_filter.setMinimumWidth(160)
+        edit_filter.setStyleSheet(f"""
+            QLineEdit {{
+                border: 1px solid {colors['border']};
+                border-radius: 4px;
+                padding: 4px 8px;
+                background-color: {colors['surface_bg']};
+                color: {colors['text_primary']};
+                font-size: 11px;
+            }}
+            QLineEdit:focus {{
+                border-color: {colors['border_focus']};
+            }}
+        """)
+        toolbar.addWidget(edit_filter, stretch=1)
 
         # Select All / None toggle
         btn_select_all = QPushButton("Select All")
@@ -1599,67 +1683,164 @@ class CbmsmvDialog(QDialog):
         """)
         toolbar.addWidget(btn_select_all)
 
-        # Batch Fix Selected Button
-        has_auto_fix = has_fix(val_id)
-        btn_fix_selected = QPushButton("Fix Selected (0)")
-        fix_icon = QgsApplication.getThemeIcon("mActionCalculateField.svg")
-        if not fix_icon.isNull():
-            btn_fix_selected.setIcon(fix_icon)
-        btn_fix_selected.setEnabled(False)
-        btn_fix_selected.setToolTip(
-            f"Apply automated fix to checked rows ({val_id})" if has_auto_fix else f"No automated fix available for '{val_id}'"
-        )
-        btn_fix_selected.setStyleSheet(f"""
-            QPushButton:enabled {{
-                background-color: {colors['success_bg']};
-                color: {colors['success_text']};
-                font-weight: bold;
-                padding: 5px 12px;
-                border-radius: 4px;
-                border: 1px solid {colors['success_border']};
-                font-size: 11px;
-            }}
-            QPushButton:hover:enabled {{
-                background-color: {colors['success_hover']};
-                color: {colors['success_text']};
-            }}
-            QPushButton:disabled {{
-                background-color: {colors['disabled_bg']};
-                color: {colors['disabled_text']};
-                border: 1px solid {colors['disabled_border']};
-            }}
-        """)
-        toolbar.addWidget(btn_fix_selected)
+        # Actions Normal Dropdown (placed to the right of Select All)
+        combo_actions = QComboBox()
+        combo_actions.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        combo_actions.setMinimumContentsLength(16)
+        dropdown_icon = QgsApplication.getThemeIcon("mActionOptions.svg")
+        if not dropdown_icon.isNull():
+            combo_actions.addItem(dropdown_icon, "Actions")
+        else:
+            combo_actions.addItem("Actions")
 
-        # Batch Delete Selected Button
-        btn_delete_selected = QPushButton("Delete Selected (0)")
-        del_icon = QgsApplication.getThemeIcon("mActionDeleteSelected.svg")
-        if not del_icon.isNull():
-            btn_delete_selected.setIcon(del_icon)
-        btn_delete_selected.setEnabled(False)
-        btn_delete_selected.setToolTip("Mark all checked features as 'deleted' in status column")
-        btn_delete_selected.setStyleSheet(f"""
-            QPushButton:enabled {{
-                background-color: {colors['danger_bg']};
-                color: {colors['danger_text']};
-                font-weight: bold;
-                padding: 5px 12px;
+        concat_ic = QgsApplication.getThemeIcon("mActionCalculateField.svg")
+        if not concat_ic.isNull():
+            combo_actions.addItem(concat_ic, "Concatenate the ea_geocode")
+        else:
+            combo_actions.addItem("Concatenate the ea_geocode")
+
+        del_icon_menu = QgsApplication.getThemeIcon("mActionDeleteSelected.svg")
+        if not del_icon_menu.isNull():
+            combo_actions.addItem(del_icon_menu, "Delete selected features")
+        else:
+            combo_actions.addItem("Delete selected features")
+
+        combo_actions.setCursor(Qt.PointingHandCursor)
+        combo_actions.setToolTip("Select an action to execute for checked features")
+        combo_actions.currentIndexChanged.connect(lambda idx: combo_actions.setToolTip(combo_actions.itemText(idx)))
+
+        arrow_icon_name = "arrow_down_dark.svg" if self.is_dark else "arrow_down.svg"
+        arrow_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "icons", arrow_icon_name)
+        ).replace("\\", "/")
+
+        combo_actions.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {colors['surface_elevated']};
+                color: {colors['text_primary']};
+                font-weight: 600;
+                padding: 5px 26px 5px 10px;
                 border-radius: 4px;
-                border: 1px solid {colors['danger_border']};
+                border: 1px solid {colors['border']};
+                font-size: 11px;
+                min-height: 18px;
+                min-width: 155px;
+            }}
+            QComboBox:hover {{
+                background-color: {colors['surface_hover']};
+                border-color: {colors['border_focus']};
+                color: {colors['title']};
+            }}
+            QComboBox:focus {{
+                border-color: {colors['border_focus']};
+            }}
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 20px;
+                border-left: 1px solid {colors['border']};
+                border-top-right-radius: 4px;
+                border-bottom-right-radius: 4px;
+                background-color: {colors['surface_elevated']};
+            }}
+            QComboBox::drop-down:hover {{
+                background-color: {colors['surface_hover']};
+            }}
+            QComboBox::down-arrow {{
+                image: url('{arrow_path}');
+                width: 9px;
+                height: 9px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {colors['surface_bg']};
+                color: {colors['text_primary']};
+                border: 1px solid {colors['border']};
+                border-radius: 4px;
+                padding: 4px 0px;
+                font-size: 11px;
+                selection-background-color: {colors['selected_item_bg']};
+                selection-color: {colors['selected_item_text']};
+            }}
+            QComboBox QAbstractItemView::item {{
+                padding: 6px 12px;
+                min-height: 22px;
+            }}
+        """)
+
+        # Update Selected Button (placed to the right of the Action dropdown button)
+        btn_update_selected = QPushButton("Update Selected")
+        apply_icon = QgsApplication.getThemeIcon("mActionApply.svg")
+        if not apply_icon.isNull():
+            btn_update_selected.setIcon(apply_icon)
+        else:
+            calc_icon = QgsApplication.getThemeIcon("mActionCalculateField.svg")
+            if not calc_icon.isNull():
+                btn_update_selected.setIcon(calc_icon)
+        btn_update_selected.setCursor(Qt.PointingHandCursor)
+        btn_update_selected.setToolTip("Execute the selected action from the dropdown on all checked features")
+        btn_update_selected.setEnabled(False)
+        btn_update_selected.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {colors['accent_light']};
+                color: {colors['accent_light_text']};
+                font-weight: bold;
+                padding: 5px 10px;
+                border-radius: 4px;
+                border: 1px solid {colors['accent_light_border']};
                 font-size: 11px;
             }}
-            QPushButton:hover:enabled {{
-                background-color: {colors['danger_hover']};
-                color: {colors['danger_text']};
+            QPushButton:hover {{
+                background-color: {colors['surface_hover']};
+                color: {colors['title']};
             }}
             QPushButton:disabled {{
                 background-color: {colors['disabled_bg']};
                 color: {colors['disabled_text']};
-                border: 1px solid {colors['disabled_border']};
-                font-size: 11px;
+                border-color: {colors['disabled_border']};
             }}
         """)
-        toolbar.addWidget(btn_delete_selected)
+
+        def _on_trigger_update_selected():
+            if not is_valid_qobject(self):
+                return
+            checked_count = sum(
+                1 for r in range(table.rowCount())
+                if table.item(r, 0) and table.item(r, 0).checkState() == Qt.Checked
+            )
+            if checked_count == 0:
+                QMessageBox.information(
+                    self,
+                    "No Features Selected",
+                    "Please check at least one row in the table using the checkboxes before clicking Update Selected."
+                )
+                return
+
+            idx = combo_actions.currentIndex()
+            if idx == 1:
+                self._on_concatenate_ea_geocode(
+                    val_id, layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
+                )
+            elif idx == 2:
+                self._delete_selected_features(
+                    val_id, layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
+                )
+            else:
+                if has_auto_fix:
+                    self._fix_selected_features(val_id, layer, table)
+                    btn_update_selected.setText("Update Selected")
+                    btn_update_selected.setEnabled(False)
+                else:
+                    QMessageBox.information(
+                        self,
+                        "Select Action",
+                        "Please select an action from the dropdown first (e.g., 'Concatenate the ea_geocode' or 'Delete selected features')."
+                    )
+
+        btn_update_selected.clicked.connect(_on_trigger_update_selected)
+
+        toolbar.addWidget(combo_actions)
+        toolbar.addWidget(btn_update_selected)
+
 
         # Save Layer Changes
         btn_save_changes = QPushButton("Save Changes")
@@ -1682,7 +1863,7 @@ class CbmsmvDialog(QDialog):
                 color: {colors['title']};
             }}
         """)
-        btn_save_changes.clicked.connect(lambda checked=False, v=val_id: self._save_changes(v))
+        btn_save_changes.clicked.connect(lambda checked=False, v=val_id: self._prompt_save_confirmation(v))
         toolbar.addWidget(btn_save_changes)
 
         layout.addLayout(toolbar)
@@ -1768,7 +1949,7 @@ class CbmsmvDialog(QDialog):
         table.verticalHeader().setVisible(True)
 
         table.setColumnWidth(0, 38)
-        table.setColumnWidth(action_col, 205)
+        table.setColumnWidth(action_col, 80)
 
         table.setProperty("is_populating", True)
 
@@ -1798,16 +1979,18 @@ class CbmsmvDialog(QDialog):
                 raw_fid = feat[fid_col] if fid_col else None
                 source_fid = raw_fid if (fid_col and not _is_empty(raw_fid)) else feat.id()
                 raw_sf_fid = feat[sf_fid_col] if sf_fid_col else None
-                sf_fid_val = raw_sf_fid if (sf_fid_col and not _is_empty(raw_sf_fid)) else source_fid
+                sf_fid_val = raw_sf_fid if (sf_fid_col and not _is_empty(raw_sf_fid)) else None
                 raw_df_fid = feat[df_fid_col] if df_fid_col else None
                 df_fid_val = raw_df_fid if (df_fid_col and not _is_empty(raw_df_fid)) else None
 
+                sf_uuid_val = feat[sf_uuid_col] if sf_uuid_col else None
+                sf_uuid_str = str(sf_uuid_val).strip() if (sf_uuid_val is not None and not _is_empty(sf_uuid_val)) else ""
+                df_uuid_val = feat[df_uuid_col] if df_uuid_col else None
+                df_uuid_str = str(df_uuid_val).strip() if (df_uuid_val is not None and not _is_empty(df_uuid_val)) else ""
                 uuid_val = feat[uuid_col] if uuid_col else None
-                uuid_str = str(uuid_val).strip() if uuid_val is not None else ""
-                sf_uuid_val = feat[sf_uuid_col] if sf_uuid_col else uuid_val
-                sf_uuid_str = str(sf_uuid_val).strip() if sf_uuid_val is not None else ""
-                df_uuid_val = feat[df_uuid_col] if df_uuid_col else uuid_val
-                df_uuid_str = str(df_uuid_val).strip() if df_uuid_val is not None else ""
+                uuid_str = str(uuid_val).strip() if (uuid_val is not None and not _is_empty(uuid_val)) else ""
+                if not uuid_str:
+                    uuid_str = df_uuid_str or sf_uuid_str or ""
 
                 # Column 0: Checkbox
                 chk_item = QTableWidgetItem()
@@ -1857,7 +2040,7 @@ class CbmsmvDialog(QDialog):
                     item.setData(Qt.UserRole + 7, sf_uuid_str)
                     table.setItem(row_idx, col_idx + 1, item)
 
-                # Column Action: Edit, Fix & Delete buttons
+                # Column Action: Edit button only
                 action_widget = QWidget()
                 action_layout = QHBoxLayout(action_widget)
                 action_layout.setContentsMargins(4, 2, 4, 2)
@@ -1868,37 +2051,11 @@ class CbmsmvDialog(QDialog):
                 btn_row_edit.setToolTip(f"Open Navigation Review Dock / Feature Form for feature #{row_idx + 1}")
                 self._style_row_edit_button(btn_row_edit)
                 btn_row_edit.clicked.connect(
-                    lambda checked=False, s_id=source_fid, u=uuid_str: self._launch_review_dock(
-                        val_id, check_name, layer, target_fid=s_id, target_uuid=u
+                    lambda checked=False, s_id=source_fid, u=uuid_str, df_u=df_uuid_str, sf_u=sf_uuid_str: self._launch_review_dock(
+                        val_id, check_name, layer, target_fid=s_id, target_uuid=u or df_u or sf_u
                     )
                 )
                 action_layout.addWidget(btn_row_edit)
-
-                btn_row_fix = QPushButton("Fix")
-                if has_auto_fix:
-                    btn_row_fix.setToolTip(f"Run automated fix for feature #{row_idx + 1} ({val_id})")
-                    self._style_row_fix_button(btn_row_fix, enabled=True, fixed=False)
-                    btn_row_fix.clicked.connect(
-                        lambda checked=False, s_id=source_fid, u=uuid_str, r=row_idx: self._execute_fix(
-                            val_id, layer, table, target_fids=[s_id], target_uuids=[u], target_rows=[r]
-                        )
-                    )
-                else:
-                    btn_row_fix.setEnabled(False)
-                    btn_row_fix.setToolTip(f"No automated fix registered for '{val_id}'")
-                    self._style_row_fix_button(btn_row_fix, enabled=False, fixed=False)
-                action_layout.addWidget(btn_row_fix)
-
-                # Delete Button (sets 'deleted' in status column)
-                btn_row_delete = QPushButton("Deleted" if is_row_deleted else "Delete")
-                btn_row_delete.setToolTip(f"Mark feature #{row_idx + 1} as 'deleted' in status column")
-                self._style_row_delete_button(btn_row_delete, is_deleted=is_row_deleted)
-                btn_row_delete.clicked.connect(
-                    lambda checked=False, s_id=source_fid, u=uuid_str, e_id=err_fid, btn=btn_row_delete: self._mark_feature_deleted(
-                        val_id, layer, table, source_fid=s_id, map_uuid=u, err_fid=e_id, button=btn
-                    )
-                )
-                action_layout.addWidget(btn_row_delete)
 
                 table.setCellWidget(row_idx, action_col, action_widget)
 
@@ -1909,7 +2066,7 @@ class CbmsmvDialog(QDialog):
         # Wire Signals
         table.itemChanged.connect(
             lambda item: self._on_table_item_changed(
-                val_id, layer, table, item, btn_fix_selected, btn_delete_selected
+                val_id, layer, table, item, combo_actions=combo_actions, btn_update_selected=btn_update_selected
             )
         )
         table.itemClicked.connect(
@@ -1917,14 +2074,8 @@ class CbmsmvDialog(QDialog):
         )
         btn_select_all.clicked.connect(
             lambda: self._toggle_select_all(
-                table, btn_select_all, btn_fix_selected, val_id, btn_delete_selected
+                table, btn_select_all, val_id=val_id, combo_actions=combo_actions, btn_update_selected=btn_update_selected
             )
-        )
-        btn_fix_selected.clicked.connect(
-            lambda: self._fix_selected_features(val_id, layer, table)
-        )
-        btn_delete_selected.clicked.connect(
-            lambda: self._delete_selected_features(val_id, layer, table, btn_delete_selected)
         )
         edit_filter.textChanged.connect(
             lambda text: self._filter_feature_table(table, text)
@@ -1935,18 +2086,22 @@ class CbmsmvDialog(QDialog):
         # Auto-scroll to first target column
         if target_cols:
             first_target = target_cols[0]
-            QTimer.singleShot(150, lambda: self._scroll_to_column(table, first_target, field_names))
+            QTimer.singleShot(150, lambda: self._scroll_to_column(table, first_target, field_names) if is_valid_qobject(self) else None)
 
         return tab
 
+    # -----------------------------------------------------------------------
+    # Process: Table In-Place Cell Editing & Feature Lookup
+    # -----------------------------------------------------------------------
     def _on_table_item_changed(
         self,
         val_id: str,
         layer: QgsVectorLayer,
         table: QTableWidget,
         item: QTableWidgetItem,
-        btn_fix_selected: Optional[QPushButton] = None,
-        btn_delete_selected: Optional[QPushButton] = None,
+        combo_actions: Optional[QComboBox] = None,
+        btn_actions: Optional[Any] = None,
+        btn_update_selected: Optional[QPushButton] = None,
     ):
         """Handle checkbox toggles and direct cell value editing."""
         if table.property("is_populating"):
@@ -1961,12 +2116,13 @@ class CbmsmvDialog(QDialog):
                 1 for r in range(table.rowCount())
                 if table.item(r, 0) and table.item(r, 0).checkState() == Qt.Checked
             )
-            if btn_fix_selected:
-                btn_fix_selected.setText(f"Fix Selected ({checked_count})")
-                btn_fix_selected.setEnabled(has_fix(val_id) and checked_count > 0)
-            if btn_delete_selected:
-                btn_delete_selected.setText(f"Delete Selected ({checked_count})")
-                btn_delete_selected.setEnabled(checked_count > 0)
+            if combo_actions:
+                combo_actions.setItemText(0, f"Actions ({checked_count})" if checked_count > 0 else "Actions")
+            elif btn_actions:
+                btn_actions.setText(f"Actions ({checked_count}) ▾" if checked_count > 0 else "Actions ▾")
+            if btn_update_selected:
+                btn_update_selected.setText(f"Update Selected ({checked_count})" if checked_count > 0 else "Update Selected")
+                btn_update_selected.setEnabled(checked_count > 0)
             return
 
         # Case 2: Action column
@@ -2179,15 +2335,21 @@ class CbmsmvDialog(QDialog):
 
         return None
 
+    # -----------------------------------------------------------------------
+    # Process: Table Selection & Batch Toolbar Actions
+    # -----------------------------------------------------------------------
     def _toggle_select_all(
         self,
         table: QTableWidget,
         btn_select_all: QPushButton,
-        btn_fix_selected: QPushButton,
-        val_id: str,
-        btn_delete_selected: Optional[QPushButton] = None,
+        val_id: Optional[str] = None,
+        combo_actions: Optional[QComboBox] = None,
+        btn_actions: Optional[Any] = None,
+        btn_update_selected: Optional[QPushButton] = None,
     ):
         """Toggle checking/unchecking all visible rows in the table."""
+        if not is_valid_qobject(self) or not is_valid_qobject(table):
+            return
         visible_rows = [r for r in range(table.rowCount()) if not table.isRowHidden(r)]
         all_checked = all(
             table.item(r, 0) and table.item(r, 0).checkState() == Qt.Checked
@@ -2203,11 +2365,13 @@ class CbmsmvDialog(QDialog):
         table.setProperty("is_populating", False)
 
         checked_count = len(visible_rows) if target_state == Qt.Checked else 0
-        btn_fix_selected.setText(f"Fix Selected ({checked_count})")
-        btn_fix_selected.setEnabled(has_fix(val_id) and checked_count > 0)
-        if btn_delete_selected:
-            btn_delete_selected.setText(f"Delete Selected ({checked_count})")
-            btn_delete_selected.setEnabled(checked_count > 0)
+        if combo_actions:
+            combo_actions.setItemText(0, f"Actions ({checked_count})" if checked_count > 0 else "Actions")
+        elif btn_actions:
+            btn_actions.setText(f"Actions ({checked_count}) ▾" if checked_count > 0 else "Actions ▾")
+        if btn_update_selected:
+            btn_update_selected.setText(f"Update Selected ({checked_count})" if checked_count > 0 else "Update Selected")
+            btn_update_selected.setEnabled(checked_count > 0)
         btn_select_all.setText("Select None" if target_state == Qt.Checked else "Select All")
         toggle_ic = QgsApplication.getThemeIcon(
             "mActionDeselectAll.svg" if target_state == Qt.Checked else "mActionSelectAll.svg"
@@ -2220,94 +2384,85 @@ class CbmsmvDialog(QDialog):
         val_id: str,
         layer: QgsVectorLayer,
         table: QTableWidget,
-        btn_delete_selected: Optional[QPushButton] = None,
+        combo_actions: Optional[QComboBox] = None,
+        btn_actions: Optional[Any] = None,
+        btn_update_selected: Optional[QPushButton] = None,
     ):
-        """Batch mark all checked features as 'deleted' in the status column."""
-        checked_rows = []
-        for r in range(table.rowCount()):
-            item0 = table.item(r, 0)
-            if item0 and item0.checkState() == Qt.Checked:
-                checked_rows.append(r)
-
-        if not checked_rows:
-            QMessageBox.information(self, "No Selection", "Please check at least one row using the checkboxes.")
+        """Batch mark all checked features as 'deleted' in the status column via cbms_mv_fix."""
+        if not is_valid_qobject(self) or not is_valid_qobject(table):
             return
-
-        reply = QMessageBox.question(
+        from .cbms_mv_fix import cbms_mv_fix
+        cbms_mv_fix.delete_selected_features(
             self,
-            "Delete Selected Features",
-            f"Are you sure you want to mark {len(checked_rows)} selected feature(s) as 'deleted' in the status column?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
+            val_id,
+            layer,
+            table,
+            combo_actions=combo_actions,
+            btn_actions=btn_actions,
+            btn_update_selected=btn_update_selected,
         )
-        if reply != QMessageBox.Yes:
+
+    def _on_concatenate_ea_geocode(
+        self,
+        val_id: str,
+        layer: QgsVectorLayer,
+        table: QTableWidget,
+        combo_actions: Optional[QComboBox] = None,
+        btn_actions: Optional[Any] = None,
+        btn_update_selected: Optional[QPushButton] = None,
+    ):
+        """Trigger EA geocode concatenation process from cbms_mv_fix."""
+        if not is_valid_qobject(self):
             return
-
-        # Ensure main building points layer is loaded and editable
-        main_layer = self._get_or_load_main_building_layer()
-        if main_layer and main_layer.isValid() and not main_layer.isEditable():
-            main_layer.startEditing()
-
-        if layer and layer.isValid() and not layer.isEditable():
-            layer.startEditing()
-
-        deleted_count = 0
-        for r in checked_rows:
-            item0 = table.item(r, 0)
-            if not item0:
-                continue
-            s_fid = item0.data(Qt.UserRole)
-            u_str = item0.data(Qt.UserRole + 1)
-            e_fid = item0.data(Qt.UserRole + 3)
-
-            # Find action button if present in row
-            row_del_btn = None
-            act_w = table.cellWidget(r, table.columnCount() - 1)
-            if act_w:
-                for child in act_w.findChildren(QPushButton):
-                    if child.text() in ("Delete", "Deleted"):
-                        row_del_btn = child
-                        break
-
-            self._mark_feature_deleted(
-                val_id,
-                layer,
-                table,
-                source_fid=s_fid,
-                map_uuid=u_str,
-                err_fid=e_fid,
-                button=row_del_btn,
-                prompt_confirm=False,
-                target_status="deleted",
-            )
-            item0.setCheckState(Qt.Unchecked)
-            deleted_count += 1
-
-        if btn_delete_selected:
-            btn_delete_selected.setText("Delete Selected (0)")
-            btn_delete_selected.setEnabled(False)
-
-        self.lbl_footer_status.setText(
-            f"Marked {deleted_count} feature(s) as 'deleted' in status column (Press Ctrl+S to save)"
-        )
-        if self.iface and self.iface.mapCanvas():
-            self.iface.mapCanvas().refresh()
+        try:
+            from .cbms_mv_fix import cbms_mv_fix
+            if hasattr(cbms_mv_fix, "concatenate_ea_geocode"):
+                cbms_mv_fix.concatenate_ea_geocode(self, val_id, layer, table)
+                if combo_actions:
+                    combo_actions.setItemText(0, "Actions")
+                elif btn_actions:
+                    btn_actions.setText("Actions ▾")
+                if btn_update_selected:
+                    btn_update_selected.setText("Update Selected")
+                    btn_update_selected.setEnabled(False)
+                return
+        except Exception:
+            pass
+        self._fix_selected_features("mv_2027_hp_4b_ea_geocode__missing", layer, table)
+        if combo_actions:
+            combo_actions.setItemText(0, "Actions")
+        elif btn_actions:
+            btn_actions.setText("Actions ▾")
+        if btn_update_selected:
+            btn_update_selected.setText("Update Selected")
+            btn_update_selected.setEnabled(False)
 
     def _fix_selected_features(self, val_id: str, layer: QgsVectorLayer, table: QTableWidget):
         """Batch execute fix for all checked rows in the table."""
+        if not is_valid_qobject(self):
+            return
         target_fids = []
         target_uuids = []
         target_rows = []
         for r in range(table.rowCount()):
             item0 = table.item(r, 0)
             if item0 and item0.checkState() == Qt.Checked:
-                fid_val = item0.data(Qt.UserRole)
-                uuid_val = item0.data(Qt.UserRole + 1)
-                target_fids.append(fid_val)
-                target_uuids.append(str(uuid_val).strip() if uuid_val else "")
+                s_id = item0.data(Qt.UserRole)
+                u = item0.data(Qt.UserRole + 1)
+                e_id = item0.data(Qt.UserRole + 3)
+                df_f = item0.data(Qt.UserRole + 4)
+                df_u = item0.data(Qt.UserRole + 5)
+                sf_f = item0.data(Qt.UserRole + 6)
+                sf_u = item0.data(Qt.UserRole + 7)
+                for f in (s_id, df_f, sf_f, e_id):
+                    if f is not None and str(f).strip() not in ("", "NULL", "None"):
+                        target_fids.append(f)
+                for u_val in (u, df_u, sf_u):
+                    if u_val and str(u_val).strip() not in ("", "NULL", "None"):
+                        target_uuids.append(str(u_val).strip())
                 target_rows.append(r)
 
-        if not target_fids and not target_uuids:
+        if not target_fids and not target_uuids and not target_rows:
             QMessageBox.information(self, "No Selection", "Please select at least one row using the checkboxes.")
             return
 
@@ -2323,6 +2478,8 @@ class CbmsmvDialog(QDialog):
         target_rows: Optional[List[int]] = None,
     ):
         """Execute automated fix for one or more features using registered fix handler."""
+        if not is_valid_qobject(self):
+            return
         handler = get_fix_handler(val_id)
         if not handler:
             QMessageBox.warning(
@@ -2345,13 +2502,23 @@ class CbmsmvDialog(QDialog):
         try:
             feedback = QgsProcessingFeedback()
             try:
-                res = handler(main_layer, target_fids=target_fids, target_uuids=target_uuids, feedback=feedback)
+                res = handler(
+                    main_layer,
+                    target_fids=target_fids,
+                    target_uuids=target_uuids,
+                    feedback=feedback,
+                    error_layer=layer,
+                    table=table,
+                    dialog=self,
+                    target_rows=target_rows,
+                )
             except TypeError as te:
                 te_msg = str(te).lower()
                 if "keyword argument" in te_msg or "positional argument" in te_msg or "takes" in te_msg:
                     res = handler(main_layer, target_uuids or target_fids, feedback=feedback)
                 else:
                     raise te
+
         except Exception as exc:
             import traceback
             err_details = traceback.format_exc()
@@ -2393,23 +2560,16 @@ class CbmsmvDialog(QDialog):
                 r_uuid = str(item0.data(Qt.UserRole + 1)).strip() if item0.data(Qt.UserRole + 1) else ""
                 r_err_fid = item0.data(Qt.UserRole + 3)
 
-                # Prioritize fid lookup, fallback to uuid
+                # Collect all candidate keys for matching updated_values
                 col_updates = None
                 fid_candidates = []
-                if r_fid is not None:
-                    if isinstance(r_fid, dict):
-                        for k in ("fid", "sf_fid", "df_fid", "id", "map_uuid", "uuid"):
-                            v = r_fid.get(k)
-                            if v is not None and not isinstance(v, (dict, list, set, tuple)):
-                                fid_candidates.extend([v, str(v), str(v).lower()])
-                    elif not isinstance(r_fid, (list, set, tuple)):
-                        fid_candidates.extend([r_fid, str(r_fid), str(r_fid).lower()])
-
-                if r_uuid:
-                    fid_candidates.extend([r_uuid, r_uuid.lower()])
-
-                if r_err_fid is not None and not isinstance(r_err_fid, (dict, list, set, tuple)):
-                    fid_candidates.extend([r_err_fid, str(r_err_fid)])
+                for role_off in (0, 1, 3, 4, 5, 6, 7):
+                    v = item0.data(Qt.UserRole + role_off)
+                    if v is not None:
+                        s_v = str(v).strip()
+                        if s_v and s_v.lower() not in ("", "null", "none"):
+                            fid_candidates.extend([v, s_v, s_v.lower()])
+                fid_candidates.extend([r, str(r)])
 
                 for cand in fid_candidates:
                     try:
@@ -2464,15 +2624,31 @@ class CbmsmvDialog(QDialog):
         if self.iface:
             self.iface.mapCanvas().refresh()
 
-        self.lbl_footer_status.setText(f"Successfully fixed {fixed_count} feature(s) for '{val_id}'.")
+        if fixed_count == 0:
+            self.lbl_footer_status.setText(f"No features fixed for '{val_id}'.")
+            QMessageBox.warning(
+                self,
+                "Fix Incomplete",
+                res.get(
+                    "message",
+                    f"No features were fixed for '{val_id}'.\n\n"
+                    "Please verify that the selected row contains valid non-zero coordinates ('df_x_current' / 'df_y_current') and is not already present in the layer.",
+                ),
+            )
+            return
+
+        self.lbl_footer_status.setText(f"Successfully fixed {fixed_count} feature(s) for '{val_id}'. (Press Ctrl+S to save)")
         QMessageBox.information(
             self,
             "Fix Complete",
             f"Successfully applied fix to {fixed_count} feature(s) for rule:\n{val_id}\n\n"
-            f"Changes are buffered.\n"
+            f"Changes are buffered in the Geotagged Building Points layer.\n"
             f"Click 'Save Changes' in the toolbar (or press Ctrl+S) to commit to disk and re-run check.",
         )
 
+    # -----------------------------------------------------------------------
+    # Process: Soft Delete & Status Synchronization (Delegated to cbms_mv_fix)
+    # -----------------------------------------------------------------------
     def _mark_feature_deleted(
         self,
         val_id: str,
@@ -2485,169 +2661,22 @@ class CbmsmvDialog(QDialog):
         prompt_confirm: bool = True,
         target_status: Optional[str] = None,
     ):
-        """
-        Mark a single feature as 'deleted' in its status column.
-        Updates the QTableWidget cell, the memory result layer, and the primary
-        Geotagged Building Points layer (ready for Ctrl+S persistence).
-        """
-        # 1. Locate target row in table dynamically to be immune against sorting/filtering
-        target_row = None
-        for r in range(table.rowCount()):
-            item0 = table.item(r, 0)
-            if not item0:
-                continue
-            r_err_fid = item0.data(Qt.UserRole + 3)
-            r_source_fid = item0.data(Qt.UserRole)
-            r_uuid = str(item0.data(Qt.UserRole + 1) or "").strip()
-
-            if err_fid is not None and r_err_fid == err_fid:
-                target_row = r
-                break
-            if source_fid is not None and r_source_fid == source_fid:
-                target_row = r
-                break
-            if map_uuid and r_uuid == str(map_uuid).strip():
-                target_row = r
-                break
-
-        # 2. Locate status column in table
-        status_col_idx = None
-        for c in range(1, table.columnCount() - 1):
-            h_it = table.horizontalHeaderItem(c)
-            h_text = h_it.text().strip().lower() if h_it else ""
-            if h_text in ("status", "sf_status"):
-                status_col_idx = c
-                break
-
-        # If table doesn't have status or sf_status column, insert it before Action
-        if status_col_idx is None:
-            act_col = table.columnCount() - 1
-            table.insertColumn(act_col)
-            table.setHorizontalHeaderItem(act_col, QTableWidgetItem("sf_status"))
-            status_col_idx = act_col
-            table.setProperty("is_populating", True)
-            try:
-                for r in range(table.rowCount()):
-                    b_item = QTableWidgetItem("")
-                    b_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
-                    table.setItem(r, status_col_idx, b_item)
-            finally:
-                table.setProperty("is_populating", False)
-
-        # 3. Determine current status and new status
-        current_status = ""
-        if target_row is not None and status_col_idx is not None:
-            c_item = table.item(target_row, status_col_idx)
-            if c_item:
-                current_status = c_item.text().strip().lower()
-
-        is_currently_deleted = (current_status == "deleted")
-        if target_status is not None:
-            new_status = target_status
-        elif is_currently_deleted:
-            if prompt_confirm:
-                reply = QMessageBox.question(
-                    self,
-                    "Restore Feature?",
-                    f"Feature FID #{source_fid or err_fid} is currently marked as 'deleted'.\n\n"
-                    f"Do you want to restore this feature and clear its status?",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No,
-                )
-                if reply != QMessageBox.Yes:
-                    return
-            new_status = ""
-        else:
-            new_status = "deleted"
-
-        # 4. Update QTableWidget cell
-        if target_row is not None and status_col_idx is not None:
-            cell_item = table.item(target_row, status_col_idx)
-            if not cell_item:
-                cell_item = QTableWidgetItem()
-                cell_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
-                table.setItem(target_row, status_col_idx, cell_item)
-
-            table.setProperty("is_populating", True)
-            try:
-                cell_item.setText(new_status)
-                if new_status.lower() == "deleted":
-                    self._style_table_cell(cell_item, "deleted")
-                else:
-                    self._style_table_cell(cell_item, "normal")
-            finally:
-                table.setProperty("is_populating", False)
-
-        # 5. Update Result Memory Layer
-        if layer and layer.isValid():
-            f_idx = -1
-            for fld in layer.fields():
-                if fld.name().lower() in ("status", "sf_status"):
-                    f_idx = layer.fields().indexOf(fld.name())
-                    break
-            if f_idx == -1:
-                try:
-                    layer.dataProvider().addAttributes([QgsField("sf_status", QVariant.String)])
-                    layer.updateFields()
-                    f_idx = layer.fields().indexOf("sf_status")
-                except Exception:
-                    pass
-
-            if f_idx != -1:
-                if not layer.isEditable():
-                    layer.startEditing()
-                target_f_id = err_fid if err_fid is not None else source_fid
-                layer.changeAttributeValue(target_f_id, f_idx, new_status)
-
-        # 6. Update Primary Geotagged Building Points Layer
-        main_layer = self._get_or_load_main_building_layer()
-        if main_layer and main_layer.isValid():
-            main_feat = self._find_main_feature(main_layer, fid=source_fid, map_uuid=map_uuid)
-            if main_feat:
-                m_idx = -1
-                for fld in main_layer.fields():
-                    if fld.name().lower() in ("status", "sf_status"):
-                        m_idx = main_layer.fields().indexOf(fld.name())
-                        break
-                if m_idx == -1:
-                    try:
-                        main_layer.dataProvider().addAttributes([QgsField("status", QVariant.String)])
-                        main_layer.updateFields()
-                        m_idx = main_layer.fields().indexOf("status")
-                    except Exception:
-                        pass
-
-                if m_idx != -1:
-                    if not main_layer.isEditable():
-                        main_layer.startEditing()
-                    main_layer.changeAttributeValue(main_feat.id(), m_idx, new_status)
-
-        # 7. Update Button Text & Style
-        if not button and target_row is not None:
-            act_w = table.cellWidget(target_row, table.columnCount() - 1)
-            if act_w:
-                for child in act_w.findChildren(QPushButton):
-                    if child.text() in ("Delete", "Deleted"):
-                        button = child
-                        break
-
-        if button:
-            is_del = (new_status.lower() == "deleted")
-            button.setText("Deleted" if is_del else "Delete")
-            self._style_row_delete_button(button, is_deleted=is_del)
-
-        # 8. Update Footer Status
-        if new_status.lower() == "deleted":
-            self.lbl_footer_status.setText(
-                f"Marked feature FID #{source_fid or err_fid} as 'deleted' in status column (Press Ctrl+S to save)"
-            )
-        else:
-            self.lbl_footer_status.setText(
-                f"Restored status for feature FID #{source_fid or err_fid} (Press Ctrl+S to save)"
-            )
-
-        if self.iface and self.iface.mapCanvas():
-            self.iface.mapCanvas().refresh()
+        """Mark a single feature as 'deleted' via cbms_mv_fix."""
+        if not is_valid_qobject(self) or not is_valid_qobject(table):
+            return
+        from .cbms_mv_fix import cbms_mv_fix
+        cbms_mv_fix.mark_feature_deleted(
+            self,
+            val_id,
+            layer,
+            table,
+            source_fid=source_fid,
+            map_uuid=map_uuid,
+            err_fid=err_fid,
+            button=button,
+            prompt_confirm=prompt_confirm,
+            target_status=target_status,
+        )
 
     def _sync_feature_status(
         self,
@@ -2656,68 +2685,24 @@ class CbmsmvDialog(QDialog):
         map_uuid: Optional[str] = None,
         new_status: str = "deleted",
     ):
-        """
-        Synchronize a status update initiated from outside the table (e.g. Review Dock)
-        into the corresponding result layer tab's QTableWidget.
-        """
-        tabs = getattr(self, "results_tab_widget", None) or getattr(self, "tab_results", None)
-        if not tabs:
-            return
+        """Synchronize a status update into table via cbms_mv_fix."""
+        from .cbms_mv_fix import cbms_mv_fix
+        cbms_mv_fix.sync_feature_status(
+            self,
+            val_id,
+            source_fid=source_fid,
+            map_uuid=map_uuid,
+            new_status=new_status,
+        )
 
-        target_table = None
-        for table in tabs.findChildren(QTableWidget):
-            p = table.parent()
-            while p and p != tabs:
-                if p.property("val_id") == val_id:
-                    target_table = table
-                    break
-                p = p.parent()
-            if target_table:
-                break
-
-        if target_table:
-            table = target_table
-            for r in range(table.rowCount()):
-                item0 = table.item(r, 0)
-                if not item0:
-                    continue
-                r_fid = item0.data(Qt.UserRole)
-                r_uuid = str(item0.data(Qt.UserRole + 1) or "").strip()
-                if (source_fid is not None and str(r_fid) == str(source_fid)) or (map_uuid and r_uuid == str(map_uuid).strip()):
-                    status_col_idx = None
-                    for c in range(1, table.columnCount() - 1):
-                        h_it = table.horizontalHeaderItem(c)
-                        h_text = h_it.text().strip().lower() if h_it else ""
-                        if h_text in ("status", "sf_status"):
-                            status_col_idx = c
-                            break
-                    if status_col_idx is not None:
-                        table.setProperty("is_populating", True)
-                        try:
-                            cell_item = table.item(r, status_col_idx)
-                            if cell_item:
-                                cell_item.setText(new_status)
-                                if new_status.lower() == "deleted":
-                                    self._style_table_cell(cell_item, "deleted")
-                                else:
-                                    self._style_table_cell(cell_item, "normal")
-                        finally:
-                            table.setProperty("is_populating", False)
-
-                    act_w = table.cellWidget(r, table.columnCount() - 1)
-                    if act_w:
-                        for child in act_w.findChildren(QPushButton):
-                            if child.text() in ("Delete", "Deleted"):
-                                is_del = (new_status.lower() == "deleted")
-                                child.setText("Deleted" if is_del else "Delete")
-                                self._style_row_delete_button(child, is_deleted=is_del)
-                    break
-
+    # -----------------------------------------------------------------------
+    # Process: Data Persistence, Save & Discard Confirmation
+    # -----------------------------------------------------------------------
     def _on_shortcut_save(self):
         """Handle Ctrl+S shortcut, strictly scoped to this dialog window and its child controls."""
         if not self.isActiveWindow():
             return
-        self._save_changes()
+        self._prompt_save_confirmation()
 
     def _save_csv_changes(self) -> Tuple[bool, int, str]:
         """
@@ -3152,6 +3137,96 @@ class CbmsmvDialog(QDialog):
         """Backwards compatible alias for _save_changes."""
         return self._save_changes()
 
+    def _prompt_save_confirmation(self, target_val_id: Optional[str] = None) -> bool:
+        """
+        Prompt user with Save / Discard / Cancel confirmation when Save Changes is clicked.
+        """
+        if not is_valid_qobject(self):
+            return False
+
+        reply = QMessageBox.question(
+            self,
+            "Save Changes",
+            "Do you want to save your changes to disk, discard them, or cancel?",
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Save,
+        )
+
+        if reply == QMessageBox.Save:
+            return self._save_changes(target_val_id)
+        elif reply == QMessageBox.Discard:
+            return self._discard_changes(target_val_id)
+        return False
+
+    def _discard_changes(self, target_val_id: Optional[str] = None) -> bool:
+        """
+        Discard pending in-memory and buffer edits, restoring layers and table to disk state.
+        """
+        if not is_valid_qobject(self):
+            return False
+
+        # 1. Roll back GeoJSON main building layer edits
+        main_layer = self._find_existing_main_building_layer()
+        if main_layer and main_layer.isValid() and main_layer.isEditable():
+            try:
+                main_layer.rollBack()
+                main_layer.startEditing()
+            except Exception:
+                pass
+
+        # 2. Roll back Form 2 layer edits if active
+        form2_layer = self._get_or_load_form2_layer()
+        if form2_layer and form2_layer.isValid() and form2_layer.isEditable():
+            try:
+                form2_layer.rollBack()
+                form2_layer.startEditing()
+            except Exception:
+                pass
+
+        # 3. Clear pending in-memory Form 2 edits
+        self._pending_json_edits.clear()
+
+        # 4. Refresh map canvas
+        if self.iface and self.iface.mapCanvas():
+            self.iface.mapCanvas().refresh()
+
+        # 5. Resolve validation ID to re-run and refresh table to disk state
+        val_id = target_val_id
+        if not val_id and hasattr(self, "results_tab_widget"):
+            cur_widget = self.results_tab_widget.currentWidget()
+            if cur_widget:
+                val_id = cur_widget.property("val_id")
+                if not val_id:
+                    stacked = cur_widget.findChild(QStackedWidget, "stackedCategoryTables")
+                    if stacked and stacked.currentWidget():
+                        val_id = stacked.currentWidget().property("val_id")
+                if not val_id:
+                    combo = cur_widget.findChild(QComboBox, "comboCategoryChecks")
+                    if combo and combo.currentData():
+                        val_id = combo.currentData()
+            if not val_id and self.results_tab_widget.currentIndex() > 0:
+                cur_text = self.results_tab_widget.tabText(self.results_tab_widget.currentIndex())
+                for r in self._rules:
+                    if r["id"] in cur_text:
+                        val_id = r["id"]
+                        break
+
+        discard_msg = "Unsaved changes discarded. Reverted to disk state."
+        if val_id:
+            self._rerun_validation_check(val_id, saved_msg=discard_msg)
+        else:
+            self.lbl_footer_status.setText(discard_msg)
+            QMessageBox.information(
+                self,
+                "Changes Discarded",
+                "All unsaved edits have been discarded and reverted to the on-disk state.",
+            )
+
+        return True
+
+    # -----------------------------------------------------------------------
+    # Process: Single-Check Validation Re-run & Live Refresh
+    # -----------------------------------------------------------------------
     def _rerun_validation_check(self, val_id: str, saved_msg: str = ""):
         """
         Execute a single validation rule using fresh disk data and update its
@@ -3316,6 +3391,9 @@ class CbmsmvDialog(QDialog):
                 f"{new_count:,} flagged feature(s) remaining in this check.",
             )
 
+    # -----------------------------------------------------------------------
+    # Process: Table Navigation, Row Zoom & CSV Export
+    # -----------------------------------------------------------------------
     def _on_table_row_clicked(self, layer: QgsVectorLayer, table: QTableWidget, row: int):
         """Zoom and flash canvas feature when clicking any table row."""
         item0 = table.item(row, 0)
@@ -3429,50 +3507,56 @@ class CbmsmvDialog(QDialog):
         the input file path. If not currently loaded, loads it into the project.
         """
         points_path = self.file_points.filePath().strip() if hasattr(self, "file_points") else ""
-        if not points_path or not os.path.exists(points_path):
+        proj = self.project if self.project else QgsProject.instance()
+
+        # 1. Search existing project layers by path
+        if points_path:
+            norm_path = os.path.normpath(points_path).lower()
+            for layer in proj.mapLayers().values():
+                if isinstance(layer, QgsVectorLayer) and layer.isValid():
+                    src = os.path.normpath(layer.source().split("|")[0]).lower()
+                    if src == norm_path:
+                        return layer
+
+        # 2. Search existing project layers by geometry and key fields
+        for layer in proj.mapLayers().values():
+            if isinstance(layer, QgsVectorLayer) and layer.isValid():
+                is_point = False
+                try:
+                    is_point = (layer.geometryType() == QgsWkbTypes.PointGeometry)
+                except Exception:
+                    try:
+                        is_point = (layer.geometryType() == Qgis.GeometryType.Point)
+                    except Exception:
+                        pass
+                if is_point:
+                    fnames = [f.name().lower() for f in layer.fields()]
+                    if "sf_map_uuid" in fnames or "map_uuid" in fnames:
+                        return layer
+
+        # 3. Load from points_path if file exists
+        if points_path and os.path.exists(points_path):
+            try:
+                layer_name = f"Building Points ({os.path.basename(points_path)})"
+                pt_layer = QgsVectorLayer(points_path, layer_name, "ogr")
+                if pt_layer.isValid():
+                    group_name = "2027 CBMS Primary Inputs"
+                    grp = self._get_or_create_layer_group(group_name)
+                    proj.addMapLayer(pt_layer, False)
+                    grp.addLayer(pt_layer)
+                    self._log_info(f"Loaded main building points layer into '{group_name}': {layer_name}")
+                    return pt_layer
+            except Exception as exc:
+                self._log_error(f"Error loading building points layer: {exc}")
+
+        if is_valid_qobject(self):
             QMessageBox.warning(
                 self,
                 "Missing Building Points Layer",
                 "Geotagged Building Points (.geojson) file path is not configured or does not exist.\n\n"
                 "Please configure a valid points file in the 'Data Config' tab first.",
             )
-            return None
-
-        proj = self.project if self.project else QgsProject.instance()
-        norm_path = os.path.normpath(points_path).lower()
-
-        # 1. Search existing project layers
-        for layer in proj.mapLayers().values():
-            if isinstance(layer, QgsVectorLayer) and layer.isValid():
-                src = os.path.normpath(layer.source().split("|")[0]).lower()
-                if src == norm_path:
-                    return layer
-
-        # 2. Not loaded in project yet, load it
-        try:
-            layer_name = f"Building Points ({os.path.basename(points_path)})"
-            pt_layer = QgsVectorLayer(points_path, layer_name, "ogr")
-            if pt_layer.isValid():
-                group_name = "2027 CBMS Primary Inputs"
-                grp = self._get_or_create_layer_group(group_name)
-                proj.addMapLayer(pt_layer, False)
-                grp.addLayer(pt_layer)
-                self._log_info(f"Loaded main building points layer into '{group_name}': {layer_name}")
-                return pt_layer
-            else:
-                QMessageBox.critical(
-                    self,
-                    "Layer Load Error",
-                    f"Failed to load building points file:\n{points_path}",
-                )
-                return None
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                "Layer Load Exception",
-                f"Error loading building points layer:\n{exc}",
-            )
-            return None
+        return None
 
     def _get_or_load_form2_layer(self) -> Optional[QgsVectorLayer]:
         """
@@ -3615,6 +3699,8 @@ class CbmsmvDialog(QDialog):
     # -----------------------------------------------------------------------
     def toggle_dock(self):
         """Toggle between docked mode (bottom center of QGIS) and floating dialog."""
+        if not is_valid_qobject(self):
+            return
         if self._is_docked:
             self.undock_window()
         else:
@@ -3622,6 +3708,8 @@ class CbmsmvDialog(QDialog):
 
     def dock_window(self):
         """Dock the CBMS MV tool at the bottom center of QGIS mainWindow."""
+        if not is_valid_qobject(self):
+            return
         if not self.iface or not hasattr(self.iface, "addDockWidget"):
             return
 
@@ -3667,6 +3755,8 @@ class CbmsmvDialog(QDialog):
 
     def undock_window(self):
         """Undock the CBMS MV tool from QGIS mainWindow back into a floating dialog."""
+        if not is_valid_qobject(self):
+            return
         self._is_switching_dock = True
         try:
             if self._dock_widget:
@@ -3708,14 +3798,22 @@ class CbmsmvDialog(QDialog):
 
     def _on_dock_visibility_changed(self, visible: bool):
         """Handle dock widget close or visibility toggle."""
-        if getattr(self, "_is_switching_dock", False):
+        if not is_valid_qobject(self):
+            return
+        if getattr(self, "_is_switching_dock", False) or getattr(self, "_is_closing", False):
             return
         if not visible and getattr(self, "_is_docked", False):
-            # User closed the dock widget via 'X' button
-            self.close()
+            if is_valid_qobject(self):
+                self._is_docked = False
+                try:
+                    self.close()
+                except Exception:
+                    pass
 
     def showEvent(self, event):
         """Re-check theme when dialog is shown and update styling if changed."""
+        if not is_valid_qobject(self):
+            return
         super().showEvent(event)
         try:
             palette = self.palette()
@@ -3729,55 +3827,68 @@ class CbmsmvDialog(QDialog):
 
     def closeEvent(self, event):
         """Prompt to save unsaved edits and clean up active review dock and main dock widget."""
-        main_layer = self._find_existing_main_building_layer()
-        has_unsaved = (
-            (main_layer and main_layer.isValid() and main_layer.isEditable() and main_layer.isModified())
-            or bool(self._pending_json_edits)
-        )
-        if has_unsaved:
-            reply = QMessageBox.question(
-                self,
-                "Unsaved Changes",
-                "You have unsaved changes in your GeoJSON / Form 2 JSON data.\n\nDo you want to save them before closing?",
-                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
-                QMessageBox.Save,
+        if not is_valid_qobject(self):
+            event.accept()
+            return
+        self._is_closing = True
+        try:
+            main_layer = self._find_existing_main_building_layer()
+            has_unsaved = (
+                (main_layer and main_layer.isValid() and main_layer.isEditable() and main_layer.isModified())
+                or bool(self._pending_json_edits)
             )
-            if reply == QMessageBox.Save:
-                if not self._save_changes():
+            if has_unsaved:
+                reply = QMessageBox.question(
+                    self,
+                    "Unsaved Changes",
+                    "You have unsaved changes in your GeoJSON / Form 2 JSON data.\n\nDo you want to save them before closing?",
+                    QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                    QMessageBox.Save,
+                )
+                if reply == QMessageBox.Save:
+                    if not self._save_changes():
+                        event.ignore()
+                        self._is_closing = False
+                        if getattr(self, "_is_docked", False) and self._dock_widget:
+                            self._dock_widget.show()
+                        return
+                elif reply == QMessageBox.Cancel:
                     event.ignore()
+                    self._is_closing = False
                     if getattr(self, "_is_docked", False) and self._dock_widget:
                         self._dock_widget.show()
                     return
-            elif reply == QMessageBox.Cancel:
-                event.ignore()
-                if getattr(self, "_is_docked", False) and self._dock_widget:
-                    self._dock_widget.show()
-                return
 
-        # Clean up main dock widget if docked
-        if hasattr(self, "_dock_widget") and self._dock_widget:
-            dock = self._dock_widget
-            self._dock_widget = None
-            try:
-                if self.iface and hasattr(self.iface, "removeDockWidget"):
-                    self.iface.removeDockWidget(dock)
-                dock.deleteLater()
-            except Exception:
-                pass
-
-        if hasattr(self, "_active_review_dock") and self._active_review_dock:
-            dock = self._active_review_dock
-            self._active_review_dock = None
-            try:
+            # Clean up main dock widget if docked
+            if hasattr(self, "_dock_widget") and self._dock_widget:
+                dock = self._dock_widget
+                self._dock_widget = None
                 try:
-                    dock.dock_closed.disconnect(self._on_review_dock_closed)
+                    try:
+                        dock.visibilityChanged.disconnect(self._on_dock_visibility_changed)
+                    except Exception:
+                        pass
+                    if self.iface and hasattr(self.iface, "removeDockWidget"):
+                        self.iface.removeDockWidget(dock)
+                    dock.deleteLater()
                 except Exception:
                     pass
-                dock.parent_dialog = None
-                dock.close()
-            except Exception:
-                pass
-        super().closeEvent(event)
+
+            if hasattr(self, "_active_review_dock") and self._active_review_dock:
+                dock = self._active_review_dock
+                self._active_review_dock = None
+                try:
+                    try:
+                        dock.dock_closed.disconnect(self._on_review_dock_closed)
+                    except Exception:
+                        pass
+                    dock.parent_dialog = None
+                    dock.close()
+                except Exception:
+                    pass
+            super().closeEvent(event)
+        finally:
+            self._is_closing = False
 
 
     # -----------------------------------------------------------------------
@@ -4059,8 +4170,18 @@ class CbmsmvDialog(QDialog):
 
         colors = self._get_theme_colors()
 
-        # Filter & Quick Action Toolbar
-        toolbar = QHBoxLayout()
+        # Filter & Quick Action Toolbar (styled same as category and summary nav bar)
+        toolbar_frame = QFrame()
+        toolbar_frame.setObjectName("rulesToolbarFrame")
+        toolbar_frame.setStyleSheet(f"""
+            #rulesToolbarFrame {{
+                background-color: {colors['card_bg']};
+                border: 1px solid {colors['border']};
+                border-radius: 5px;
+            }}
+        """)
+        toolbar = QHBoxLayout(toolbar_frame)
+        toolbar.setContentsMargins(8, 6, 8, 6)
         toolbar.setSpacing(8)
 
         self.edit_filter = QLineEdit()
@@ -4069,6 +4190,19 @@ class CbmsmvDialog(QDialog):
         if not filter_icon.isNull():
             self.edit_filter.addAction(filter_icon, QLineEdit.LeadingPosition)
         self.edit_filter.setClearButtonEnabled(True)
+        self.edit_filter.setStyleSheet(f"""
+            QLineEdit {{
+                border: 1px solid {colors['border']};
+                border-radius: 4px;
+                padding: 4px 8px;
+                background-color: {colors['surface_bg']};
+                color: {colors['text_primary']};
+                font-size: 11px;
+            }}
+            QLineEdit:focus {{
+                border-color: {colors['border_focus']};
+            }}
+        """)
         self.edit_filter.textChanged.connect(self._filter_rules_table)
         toolbar.addWidget(self.edit_filter, stretch=1)
 
@@ -4084,6 +4218,9 @@ class CbmsmvDialog(QDialog):
                 font-size: 11px;
                 min-width: 145px;
             }}
+            QComboBox:focus {{
+                border-color: {colors['border_focus']};
+            }}
             QComboBox QAbstractItemView {{
                 background-color: {colors['surface_bg']};
                 color: {colors['text_primary']};
@@ -4094,16 +4231,34 @@ class CbmsmvDialog(QDialog):
         self.combo_rule_category.currentIndexChanged.connect(self._filter_rules_table)
         toolbar.addWidget(self.combo_rule_category)
 
+        btn_rule_style = f"""
+            QPushButton {{
+                background-color: {colors['surface_elevated']};
+                color: {colors['text_primary']};
+                font-weight: 600;
+                padding: 5px 10px;
+                border-radius: 4px;
+                border: 1px solid {colors['border']};
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                background-color: {colors['surface_hover']};
+                color: {colors['title']};
+            }}
+        """
+
         btn_select_all = QPushButton("Select All")
         sel_ic = QgsApplication.getThemeIcon("mActionSelectAll.svg")
         if not sel_ic.isNull():
             btn_select_all.setIcon(sel_ic)
+        btn_select_all.setStyleSheet(btn_rule_style)
         btn_select_all.clicked.connect(lambda: self._set_all_rules_checked(True))
 
         btn_deselect_all = QPushButton("Deselect All")
         desel_ic = QgsApplication.getThemeIcon("mActionDeselectAll.svg")
         if not desel_ic.isNull():
             btn_deselect_all.setIcon(desel_ic)
+        btn_deselect_all.setStyleSheet(btn_rule_style)
         btn_deselect_all.clicked.connect(lambda: self._set_all_rules_checked(False))
 
         btn_refresh = QToolButton()
@@ -4113,12 +4268,26 @@ class CbmsmvDialog(QDialog):
         else:
             btn_refresh.setText("Refresh")
         btn_refresh.setToolTip("Refresh and re-scan algorithms in gmd_scripts/cbms_mv")
+        btn_refresh.setStyleSheet(f"""
+            QToolButton {{
+                background-color: {colors['surface_elevated']};
+                color: {colors['text_primary']};
+                border-radius: 4px;
+                border: 1px solid {colors['border']};
+                padding: 4px 8px;
+                font-size: 11px;
+            }}
+            QToolButton:hover {{
+                background-color: {colors['surface_hover']};
+                color: {colors['title']};
+            }}
+        """)
         btn_refresh.clicked.connect(self.refresh_rules)
 
         toolbar.addWidget(btn_select_all)
         toolbar.addWidget(btn_deselect_all)
         toolbar.addWidget(btn_refresh)
-        layout.addLayout(toolbar)
+        layout.addWidget(toolbar_frame)
 
         # Rules Table
         self.rules_table = QTableWidget()
