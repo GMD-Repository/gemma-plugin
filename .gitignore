@@ -17,3 +17,8 @@ scripts/__pycache__/
 
 # context-mem
 .context-mem/
+
+# Ephemeral release recipient lists (Security / PII protection)
+*.recipients.txt
+.recipients.txt
+scripts/release/.recipients.txt

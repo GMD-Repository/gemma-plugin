@@ -7,7 +7,7 @@ from qgis.PyQt.QtGui import QTransform, QIcon
 from qgis.PyQt.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton,
     QListWidget, QMessageBox, QGroupBox, QCheckBox, QScrollArea,
-    QPlainTextEdit, QTextBrowser, QTabWidget, QFrame
+    QPlainTextEdit, QTextBrowser, QTabWidget, QFrame, QStyle
 )
 from qgis.core import (
     QgsProject, QgsVectorLayer, QgsRasterLayer, QgsCoordinateReferenceSystem,
@@ -319,18 +319,25 @@ class ProjectionFinderTab(QWidget):
     def _build(self):
         root = QHBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
-        root.setSpacing(8)
+        root.setSpacing(14)
 
         # -- LEFT: CONTROLS ------------------------------------------------
         left = QWidget()
         ll = QVBoxLayout(left)
-        ll.setContentsMargins(0, 0, 0, 0)
+        # Right margin keeps the group boxes (and the buttons inside them) off
+        # the scroll area's scrollbar, matching the inset on the left.
+        ll.setContentsMargins(0, 0, 8, 0)
         ll.setSpacing(6)
 
         grp_layer = QGroupBox("Step 1 - Input Layer")
         grp_layer.setStyleSheet(GRP_STYLE)
         gl = QVBoxLayout(grp_layer)
         self.layer_combo = QComboBox()
+        # Without this a long layer name / CRS label makes the combo demand its
+        # full text width, pushing the whole column wider than the scroll
+        # viewport - which clips the right edge of everything in it.
+        self.layer_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.layer_combo.setMinimumContentsLength(12)
         self.layer_combo.setToolTip("Vector layer with an unknown or missing CRS.")
         self._populate_layers()
         gl.addWidget(self.layer_combo)
@@ -351,6 +358,8 @@ class ProjectionFinderTab(QWidget):
         self.basemap_check.setChecked(True)
         bl.addWidget(self.basemap_check)
         self.basemap_combo = QComboBox()
+        self.basemap_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.basemap_combo.setMinimumContentsLength(12)
         for name, uri in BASEMAPS:
             self.basemap_combo.addItem(name, uri)
         bl.addWidget(self.basemap_combo)
@@ -368,7 +377,6 @@ class ProjectionFinderTab(QWidget):
         hint_a.setWordWrap(True)
         cl.addWidget(hint_a)
         self.crs_list = QListWidget()
-        self.crs_list.setMinimumHeight(110)
         self.crs_list.setAlternatingRowColors(True)
         self.crs_list.setStyleSheet(
             "QListWidget { border: 1px solid #b0bec5; outline: 0; }"
@@ -376,7 +384,11 @@ class ProjectionFinderTab(QWidget):
         for label, code in CRS_CANDIDATES:
             self.crs_list.addItem(label)
         self.crs_list.setCurrentRow(0)
-        cl.addWidget(self.crs_list, stretch=1)
+        # Show ~10 of the candidates and scroll the rest, so the two option
+        # groups both fit without pushing Option B off the bottom.
+        row_h = self.crs_list.sizeHintForRow(0) if self.crs_list.count() else 20
+        self.crs_list.setFixedHeight(row_h * 10 + 2 * self.crs_list.frameWidth() + 4)
+        cl.addWidget(self.crs_list)
         self.auto_btn = QPushButton("Detect Known CRS")
         self.auto_btn.setFixedHeight(32)
         self.auto_btn.setStyleSheet(BTN_RUN)
@@ -389,11 +401,19 @@ class ProjectionFinderTab(QWidget):
         self.preview_btn = QPushButton("Preview This CRS")
         self.preview_btn.setFixedHeight(28)
         self.preview_btn.clicked.connect(self.preview_crs)
-        crow.addWidget(self.preview_btn)
         self.custom_btn = QPushButton("Custom EPSG...")
         self.custom_btn.setFixedHeight(28)
         self.custom_btn.clicked.connect(self.enter_custom_crs)
-        crow.addWidget(self.custom_btn)
+        # Equal stretch alone doesn't produce an equal split: Qt grows each
+        # button outward from its own size hint, so a gap between the two
+        # labels' natural widths still shows up as a lopsided row. Force both
+        # to the same minimum width first so the 1:1 stretch actually lands
+        # on a 50/50 split.
+        pair_w = max(self.preview_btn.sizeHint().width(), self.custom_btn.sizeHint().width())
+        self.preview_btn.setMinimumWidth(pair_w)
+        self.custom_btn.setMinimumWidth(pair_w)
+        crow.addWidget(self.preview_btn, stretch=1)
+        crow.addWidget(self.custom_btn, stretch=1)
         cl.addLayout(crow)
 
         aline = QFrame()
@@ -409,14 +429,17 @@ class ProjectionFinderTab(QWidget):
         self.assign_btn.setToolTip(
             "Commit the previewed CRS and optionally write the .prj sidecar.")
         self.assign_btn.clicked.connect(self.assign_crs)
-        arow.addWidget(self.assign_btn)
         self.revert_btn = QPushButton("Revert CRS")
         self.revert_btn.setFixedHeight(32)
         self.revert_btn.setStyleSheet(BTN_CANCEL)
         self.revert_btn.setToolTip(
             "Restore the CRS this layer had when the dialog opened.")
         self.revert_btn.clicked.connect(self.revert_crs)
-        arow.addWidget(self.revert_btn)
+        pair_w = max(self.assign_btn.sizeHint().width(), self.revert_btn.sizeHint().width())
+        self.assign_btn.setMinimumWidth(pair_w)
+        self.revert_btn.setMinimumWidth(pair_w)
+        arow.addWidget(self.assign_btn, stretch=1)
+        arow.addWidget(self.revert_btn, stretch=1)
         cl.addLayout(arow)
         ll.addWidget(grp_crs, stretch=1)
 
@@ -433,6 +456,8 @@ class ProjectionFinderTab(QWidget):
         frow = QHBoxLayout()
         frow.addWidget(QLabel("Output CRS:"))
         self.fit_combo = QComboBox()
+        self.fit_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.fit_combo.setMinimumContentsLength(12)
         for label, code in FIT_TARGETS:
             self.fit_combo.addItem(label, code)
         frow.addWidget(self.fit_combo, 1)
@@ -464,11 +489,32 @@ class ProjectionFinderTab(QWidget):
         left_scroll.setWidgetResizable(True)
         left_scroll.setFrameShape(QFrame.NoFrame)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        left_scroll.setFixedWidth(376)
+        # Keep the vertical scrollbar track always reserved (rather than
+        # AsNeeded) so the viewport width - and therefore the content width -
+        # stays constant whether or not Option A + Option B are tall enough
+        # to need scrolling. Without this, the content is 376px wide with the
+        # scrollbar showing (short window) but 376+scrollbar_w wide once it
+        # hides (tall window), and the button rows visibly shift/overflow
+        # between the two.
+        left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        scrollbar_w = self.style().pixelMetric(QStyle.PM_ScrollBarExtent)
+        left_scroll.setFixedWidth(376 + scrollbar_w)
         root.addWidget(left_scroll)
+
+        # A visible divider makes the two columns read as separate groups,
+        # so the options panel never looks like it bleeds into the log panel.
+        vline = QFrame()
+        vline.setFrameShape(QFrame.VLine)
+        vline.setStyleSheet("color:#cfd8dc;")
+        root.addWidget(vline)
 
         # -- RIGHT: REPORT -------------------------------------------------
         right = QWidget()
+        # The left column has a fixed width; without a floor here, any
+        # container that squeezes this dialog below its intended size takes
+        # the whole deficit out of this stretchy column instead of sharing
+        # it, crushing the log panel down to an unreadable sliver.
+        right.setMinimumWidth(280)
         rl = QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(6)
@@ -1041,7 +1087,7 @@ class ProjectionFinderTab(QWidget):
 # HELP AND INFORMATION TAB
 # =============================================================================
 class HelpInfoTab(QWidget):
-    """Embedded HTML documentation and reference guide for Know Your Projection!."""
+    """Embedded HTML documentation and reference guide for Know Your Projection."""
 
     def __init__(self):
         super().__init__()
@@ -1064,7 +1110,7 @@ class HelpInfoTab(QWidget):
           <!-- Header Section -->
           <div style="border-bottom: 2px solid #374151; padding-bottom: 8px; margin-bottom: 14px;">
             <h2 style="margin: 0 0 4px 0; color: #111827; font-size: 17px; font-weight: bold;">
-              Know Your Projection!
+              Know Your Projection
             </h2>
             <div style="color: #4b5563; font-size: 12px;">
               Coordinate System Diagnosis, Identification and Affine Georeferencing for Philippine Boundary Layers
@@ -1315,7 +1361,7 @@ class HelpInfoTab(QWidget):
           </table>
 
           <div style="color: #6b7280; font-size: 10px; border-top: 1px solid #e5e7eb; padding-top: 8px; margin-top: 6px;">
-            Know Your Projection! v4.0.0 &nbsp;&middot;&nbsp; 2026-09-08
+            Know Your Projection v4.0.0 &nbsp;&middot;&nbsp; 2026-09-08
           </div>
 
         </div>
@@ -1335,7 +1381,7 @@ class ProjectionToolkit(QDialog):
             elif isinstance(parent_or_iface, QWidget):
                 parent = parent_or_iface
         super().__init__(parent)
-        self.setWindowTitle("Know Your Projection!")
+        self.setWindowTitle("Know Your Projection")
         icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', 'projection_finder.svg')
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
@@ -1354,7 +1400,7 @@ class ProjectionToolkit(QDialog):
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(6)
 
-        title = QLabel("Know Your Projection!")
+        title = QLabel("Know Your Projection")
         title.setStyleSheet("font-size:16px; font-weight:700; padding:2px 0;")
         root.addWidget(title)
 
@@ -1394,7 +1440,7 @@ class ProjectionFinderAlgorithm(QgsProcessingAlgorithm):
         return 'projection_finder'
 
     def displayName(self):
-        return self.tr('Know Your Projection!')
+        return self.tr('Know Your Projection')
 
     def group(self):
         return self.tr('1Map')
@@ -1417,7 +1463,7 @@ class ProjectionFinderAlgorithm(QgsProcessingAlgorithm):
             "projection candidates (PTM zones 1-5, UTM zones 50N-52N, WGS84, PRS92, Luzon 1911), "
             "and georeferences local CAD tabular grids using 2D 6-parameter affine transformations.\n\n"
             "When run from the Processing Toolbox inside QGIS Desktop, launches the interactive "
-            "Know Your Projection! dialog. When run headlessly, audits and diagnoses coordinates of the input layer."
+            "Know Your Projection dialog. When run headlessly, audits and diagnoses coordinates of the input layer."
         )
 
     def initAlgorithm(self, config=None):

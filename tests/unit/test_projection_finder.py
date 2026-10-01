@@ -18,7 +18,7 @@ from tests.mocks.sample_data import create_sample_polygon_layer
 
 
 class TestProjectionFinder(unittest.TestCase):
-    """Test suite for Know Your Projection! (projection_finder) tool and algorithm."""
+    """Test suite for Know Your Projection (projection_finder) tool and algorithm."""
 
     def setUp(self):
         self.mod = importlib.import_module("gmd_scripts.projection_finder")
@@ -37,7 +37,7 @@ class TestProjectionFinder(unittest.TestCase):
     def test_algorithm_metadata(self):
         """Verify algorithm metadata conforms to GMD standards."""
         self.assertEqual(self.alg.name(), "projection_finder")
-        self.assertEqual(self.alg.displayName(), "Know Your Projection!")
+        self.assertEqual(self.alg.displayName(), "Know Your Projection")
         self.assertEqual(self.alg.group(), "1Map")
         self.assertEqual(self.alg.groupId(), "1map")
         self.assertIsNotNone(self.alg.icon())
@@ -125,7 +125,7 @@ class TestProjectionFinder(unittest.TestCase):
                 self.skipTest("No QApplication available in test environment.")
             dlg = self.mod.ProjectionToolkit()
             self.assertIsNotNone(dlg)
-            self.assertEqual(dlg.windowTitle(), "Know Your Projection!")
+            self.assertEqual(dlg.windowTitle(), "Know Your Projection")
         except Exception as e:
             self.skipTest(f"Skipping dialog UI test in headless environment: {e}")
 

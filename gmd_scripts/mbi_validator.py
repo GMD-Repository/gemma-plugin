@@ -679,11 +679,15 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
             "new case sitting next to an old one is correctly classified as "
             "a New Case.\n\n"
             "Inputs:\n"
-            "Reference layer is required. Leave a Checker input empty if "
-            "that case type doesn't apply. Both Checker inputs may be left "
-            "empty — the algorithm then runs an attribute-only review of the "
-            "Reference layer, which still produces Pending Cases, No Status "
-            "and Disputed Areas for export.\n\n"
+            "Reference layer is required. A clean MBI Checker run still emits "
+            "an empty Gaps/Overlaps layer, so supply it as usual — its zero "
+            "features are what confirm those cases as resolved.\n\n"
+            "Leave a Checker input empty only if that case type doesn't apply. "
+            "Nothing is then compared for it, so its cases are reported as "
+            "unverified Remaining Cases rather than being called resolved. "
+            "Both Checker inputs may be left empty — the algorithm then runs an "
+            "attribute-only review of the Reference layer, which still produces "
+            "Pending Cases, No Status and Disputed Areas for export.\n\n"
             "GeoPackage Output:\n"
             "Optionally tick 'Save outputs as GeoPackage' and pick a destination "
             "folder (required only if checkbox is checked) — selected non-empty "
@@ -745,7 +749,7 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterFeatureSource(
             self.CHK_GAP, self.tr("Checker GAP layer"),
             [QgsProcessing.TypeVectorPolygon],
-            optional=True,
+            optional=False,
             defaultValue=default_gap))
 
         default_overlap = find_matching_layer_id(
@@ -755,7 +759,7 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterFeatureSource(
             self.CHK_OVERLAP, self.tr("Checker OVERLAP layer"),
             [QgsProcessing.TypeVectorPolygon],
-            optional=True,
+            optional=False,
             defaultValue=default_overlap))
 
         self.addParameter(QgsProcessingParameterBoolean(
