@@ -5,6 +5,25 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.10] - 2026-10-01
+
+### Added
+- Added an interactive Geometry Repair Toolkit for QGIS polygon layers ([@psacjperez](https://github.com/psacjperez))
+
+### Changed
+- Stabilized batch packaging, layer filter isolation, and safe project state restoration ([@nbacquiano-ui](https://github.com/nbacquiano-ui)) ([#303](https://github.com/GMD-Repository/gemma-plugin/pull/303))
+- Modified MBI Checker output, standardized naming, and polished the UI layout of Know Your Projection ([@psacjperez](https://github.com/psacjperez)) ([#331](https://github.com/GMD-Repository/gemma-plugin/pull/331))
+- Rendered action buttons on one row with mobile-responsive stacking ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### Fixed
+- Batch release email blast to circumvent Gmail 100-recipient limit ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### Removed
+- Added QField packaging dialog, check and update dialog, tests, and documentation, and deprecated the Geometry Repair Toolkit ([@velascojasper0](https://github.com/velascojasper0))
+
+### Documentation
+- Modification of MBI validator and gaps/overlaps checker scripts with user guide documentation ([@psacjperez](https://github.com/psacjperez))
+
 ## [1.0.9] - 2026-09-24
 
 ### Added

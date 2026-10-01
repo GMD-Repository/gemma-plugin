@@ -2,6 +2,28 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.10
+<time>Oct 01, 2026</time>
+
+### ✨ New Features
+- Added an interactive Geometry Repair Toolkit for QGIS polygon layers ([@psacjperez](https://github.com/psacjperez))
+
+### ⚡ Improvements & Fixes
+- Stabilized batch packaging, layer filter isolation, and safe project state restoration ([@nbacquiano-ui](https://github.com/nbacquiano-ui)) ([#303](https://github.com/GMD-Repository/gemma-plugin/pull/303))
+- Modified MBI Checker output, standardized naming, and polished the UI layout of Know Your Projection ([@psacjperez](https://github.com/psacjperez)) ([#331](https://github.com/GMD-Repository/gemma-plugin/pull/331))
+- Rendered action buttons on one row with mobile-responsive stacking ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### 🐛 Bug Fixes
+- Batch release email blast to circumvent Gmail 100-recipient limit ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### 💥 Breaking Changes
+- Added QField packaging dialog, check and update dialog, tests, and documentation, and deprecated the Geometry Repair Toolkit ([@velascojasper0](https://github.com/velascojasper0))
+
+### 📚 Documentation
+- Modification of MBI validator and gaps/overlaps checker scripts with user guide documentation ([@psacjperez](https://github.com/psacjperez))
+
+<Contributors :contributors="['psacjperez', 'nbacquiano-ui', 'kentemman-gmd', 'velascojasper0']" />
+
 ## 1.0.9
 <time>Sep 24, 2026</time>
 
