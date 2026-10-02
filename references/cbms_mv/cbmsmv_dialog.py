@@ -1825,16 +1825,11 @@ class CbmsmvDialog(QDialog):
                     val_id, layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
             else:
-                if has_auto_fix:
-                    self._fix_selected_features(val_id, layer, table)
-                    btn_update_selected.setText("Update Selected")
-                    btn_update_selected.setEnabled(False)
-                else:
-                    QMessageBox.information(
-                        self,
-                        "Select Action",
-                        "Please select an action from the dropdown first (e.g., 'Concatenate the ea_geocode' or 'Delete selected features')."
-                    )
+                QMessageBox.information(
+                    self,
+                    "Select Action",
+                    "Please select an action from the dropdown first (e.g., 'Concatenate the ea_geocode' or 'Delete selected features')."
+                )
 
         btn_update_selected.clicked.connect(_on_trigger_update_selected)
 
@@ -1947,6 +1942,8 @@ class CbmsmvDialog(QDialog):
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setAlternatingRowColors(True)
         table.verticalHeader().setVisible(True)
+        table.verticalHeader().setCursor(Qt.PointingHandCursor)
+        table.verticalHeader().setToolTip("Click row number to select row, toggle checkbox, and zoom to feature")
 
         table.setColumnWidth(0, 38)
         table.setColumnWidth(action_col, 80)
@@ -2070,7 +2067,19 @@ class CbmsmvDialog(QDialog):
             )
         )
         table.itemClicked.connect(
-            lambda item: self._on_table_row_clicked(layer, table, item.row())
+            lambda item: self._on_table_row_clicked(
+                layer, table, item.row(), col=item.column(), combo_actions=combo_actions, btn_update_selected=btn_update_selected
+            )
+        )
+        table.verticalHeader().sectionClicked.connect(
+            lambda row: self._on_vertical_header_section_clicked(
+                layer, table, row, combo_actions=combo_actions, btn_update_selected=btn_update_selected
+            )
+        )
+        table.horizontalHeader().sectionClicked.connect(
+            lambda col: self._toggle_select_all(
+                table, btn_select_all, val_id=val_id, combo_actions=combo_actions, btn_update_selected=btn_update_selected
+            ) if col == 0 else None
         )
         btn_select_all.clicked.connect(
             lambda: self._toggle_select_all(
@@ -2117,9 +2126,9 @@ class CbmsmvDialog(QDialog):
                 if table.item(r, 0) and table.item(r, 0).checkState() == Qt.Checked
             )
             if combo_actions:
-                combo_actions.setItemText(0, f"Actions ({checked_count})" if checked_count > 0 else "Actions")
+                combo_actions.setItemText(0, "Actions")
             elif btn_actions:
-                btn_actions.setText(f"Actions ({checked_count}) ▾" if checked_count > 0 else "Actions ▾")
+                btn_actions.setText("Actions ▾")
             if btn_update_selected:
                 btn_update_selected.setText(f"Update Selected ({checked_count})" if checked_count > 0 else "Update Selected")
                 btn_update_selected.setEnabled(checked_count > 0)
@@ -2366,9 +2375,9 @@ class CbmsmvDialog(QDialog):
 
         checked_count = len(visible_rows) if target_state == Qt.Checked else 0
         if combo_actions:
-            combo_actions.setItemText(0, f"Actions ({checked_count})" if checked_count > 0 else "Actions")
+            combo_actions.setItemText(0, "Actions")
         elif btn_actions:
-            btn_actions.setText(f"Actions ({checked_count}) ▾" if checked_count > 0 else "Actions ▾")
+            btn_actions.setText("Actions ▾")
         if btn_update_selected:
             btn_update_selected.setText(f"Update Selected ({checked_count})" if checked_count > 0 else "Update Selected")
             btn_update_selected.setEnabled(checked_count > 0)
@@ -2454,12 +2463,18 @@ class CbmsmvDialog(QDialog):
                 df_u = item0.data(Qt.UserRole + 5)
                 sf_f = item0.data(Qt.UserRole + 6)
                 sf_u = item0.data(Qt.UserRole + 7)
-                for f in (s_id, df_f, sf_f, e_id):
-                    if f is not None and str(f).strip() not in ("", "NULL", "None"):
-                        target_fids.append(f)
-                for u_val in (u, df_u, sf_u):
-                    if u_val and str(u_val).strip() not in ("", "NULL", "None"):
-                        target_uuids.append(str(u_val).strip())
+                # Prioritize primary layer FID (sf_f or s_id) over memory layer err_fid
+                best_fid = sf_f if (sf_f is not None and str(sf_f).strip() not in ("", "NULL", "None")) else s_id
+                if best_fid is not None and str(best_fid).strip() not in ("", "NULL", "None"):
+                    target_fids.append(best_fid)
+                elif df_f is not None and str(df_f).strip() not in ("", "NULL", "None"):
+                    target_fids.append(df_f)
+                elif e_id is not None and str(e_id).strip() not in ("", "NULL", "None"):
+                    target_fids.append(e_id)
+
+                best_uuid = sf_u or u or df_u
+                if best_uuid and str(best_uuid).strip() not in ("", "NULL", "None"):
+                    target_uuids.append(str(best_uuid).strip())
                 target_rows.append(r)
 
         if not target_fids and not target_uuids and not target_rows:
@@ -3394,8 +3409,22 @@ class CbmsmvDialog(QDialog):
     # -----------------------------------------------------------------------
     # Process: Table Navigation, Row Zoom & CSV Export
     # -----------------------------------------------------------------------
-    def _on_table_row_clicked(self, layer: QgsVectorLayer, table: QTableWidget, row: int):
-        """Zoom and flash canvas feature when clicking any table row."""
+    def _on_table_row_clicked(
+        self,
+        layer: QgsVectorLayer,
+        table: QTableWidget,
+        row: int,
+        col: Optional[int] = None,
+        combo_actions: Optional[QComboBox] = None,
+        btn_update_selected: Optional[QPushButton] = None,
+    ):
+        """Zoom and flash canvas feature when clicking any table row, and sync checkbox if data cell clicked."""
+        if col is not None and col > 0:
+            self._sync_row_checkbox_with_selection(
+                layer, table, row, combo_actions=combo_actions, btn_update_selected=btn_update_selected, from_header=False
+            )
+            return
+
         item0 = table.item(row, 0)
         if not item0:
             return
@@ -3430,6 +3459,82 @@ class CbmsmvDialog(QDialog):
                 self.lbl_footer_status.setText(f"Zoomed to feature FID #{target_fid} in '{target_layer.name()}'")
             except Exception as exc:
                 self.lbl_footer_status.setText(f"Could not zoom to feature: {exc}")
+
+    def _on_vertical_header_section_clicked(
+        self,
+        layer: QgsVectorLayer,
+        table: QTableWidget,
+        row_idx: int,
+        combo_actions: Optional[QComboBox] = None,
+        btn_update_selected: Optional[QPushButton] = None,
+    ):
+        """When user clicks a row number in the vertical header, sync checkbox with selection and zoom."""
+        self._sync_row_checkbox_with_selection(
+            layer, table, row_idx, combo_actions=combo_actions, btn_update_selected=btn_update_selected, from_header=True
+        )
+
+    def _sync_row_checkbox_with_selection(
+        self,
+        layer: QgsVectorLayer,
+        table: QTableWidget,
+        row_idx: int,
+        combo_actions: Optional[QComboBox] = None,
+        btn_update_selected: Optional[QPushButton] = None,
+        from_header: bool = False,
+    ):
+        """
+        Synchronize row checkbox with selection.
+        If Shift or Ctrl is NOT held for multi-selection, unchecks all other rows and checks the selected row.
+        If Shift or Ctrl IS held (or multiple rows are selected), checks all selected rows together.
+        """
+        if not is_valid_qobject(self) or not is_valid_qobject(table) or table.property("is_populating"):
+            return
+
+        item0 = table.item(row_idx, 0)
+        if not item0:
+            return
+
+        modifiers = QApplication.keyboardModifiers() if QApplication else Qt.NoModifier
+        is_multi_modifier = bool(modifiers & (Qt.ShiftModifier | Qt.ControlModifier))
+        sel_rows = sorted(set(idx.row() for idx in table.selectionModel().selectedRows()))
+        is_multi_selection = is_multi_modifier or (len(sel_rows) > 1 and row_idx in sel_rows)
+
+        table.setProperty("is_populating", True)
+        try:
+            if is_multi_selection:
+                rows_to_check = sel_rows if (row_idx in sel_rows and len(sel_rows) > 1) else [row_idx]
+                for r in rows_to_check:
+                    it = table.item(r, 0)
+                    if it:
+                        it.setCheckState(Qt.Checked)
+            else:
+                is_already_only_checked = (
+                    item0.checkState() == Qt.Checked and
+                    sum(1 for r in range(table.rowCount()) if table.item(r, 0) and table.item(r, 0).checkState() == Qt.Checked) == 1
+                )
+                if from_header and is_already_only_checked:
+                    item0.setCheckState(Qt.Unchecked)
+                else:
+                    for r in range(table.rowCount()):
+                        it = table.item(r, 0)
+                        if it:
+                            it.setCheckState(Qt.Checked if r == row_idx else Qt.Unchecked)
+        finally:
+            table.setProperty("is_populating", False)
+
+        # Update action buttons and count
+        checked_count = sum(
+            1 for r in range(table.rowCount())
+            if table.item(r, 0) and table.item(r, 0).checkState() == Qt.Checked
+        )
+        if combo_actions:
+            combo_actions.setItemText(0, "Actions")
+        if btn_update_selected:
+            btn_update_selected.setText(f"Update Selected ({checked_count})" if checked_count > 0 else "Update Selected")
+            btn_update_selected.setEnabled(checked_count > 0)
+
+        # Trigger canvas zoom and feature flash
+        self._on_table_row_clicked(layer, table, row_idx)
 
     def _filter_feature_table(self, table: QTableWidget, text: str):
         """Filter table rows matching search string across data columns."""
@@ -4838,10 +4943,76 @@ class CbmsmvDialog(QDialog):
                 border-color: {colors['border_focus']};
             }}
             QPushButton {{
+                background-color: {colors['surface_elevated']};
+                color: {colors['text_primary']};
+                border: 1px solid {colors['border']};
                 font-size: 11px;
                 font-weight: 600;
                 border-radius: 4px;
-                padding: 5px 12px;
+                padding: 5px 14px;
+                min-width: 60px;
+                min-height: 20px;
+                outline: none;
+            }}
+            QPushButton:hover {{
+                background-color: {colors['surface_hover']};
+                border-color: {colors['border_focus']};
+                color: {colors['title']};
+            }}
+            QPushButton:pressed {{
+                background-color: {colors['border']};
+            }}
+            QPushButton:focus {{
+                border-color: {colors['border_focus']};
+            }}
+            QPushButton:disabled {{
+                background-color: {colors['disabled_bg']};
+                color: {colors['disabled_text']};
+                border-color: {colors['disabled_border']};
+            }}
+            QMessageBox {{
+                background-color: {colors['surface_bg']};
+            }}
+            QMessageBox QLabel {{
+                color: {colors['text_primary']};
+                font-size: 11.5px;
+            }}
+            QMessageBox QPushButton, QDialogButtonBox QPushButton {{
+                background-color: {colors['surface_elevated']};
+                color: {colors['text_primary']};
+                border: 1px solid {colors['border']};
+                border-radius: 4px;
+                padding: 5px 18px;
+                min-width: 70px;
+                min-height: 22px;
+                font-size: 11px;
+                font-weight: 600;
+                outline: none;
+            }}
+            QMessageBox QPushButton:hover, QDialogButtonBox QPushButton:hover {{
+                background-color: {colors['surface_hover']};
+                border-color: {colors['border_focus']};
+                color: {colors['title']};
+            }}
+            QMessageBox QPushButton:pressed, QDialogButtonBox QPushButton:pressed {{
+                background-color: {colors['border']};
+            }}
+            QMessageBox QPushButton:focus, QDialogButtonBox QPushButton:focus {{
+                border-color: {colors['border_focus']};
+            }}
+            QMessageBox QPushButton:default, QDialogButtonBox QPushButton:default {{
+                background-color: {colors['accent']};
+                color: #FFFFFF;
+                border: 1px solid {colors['accent_hover']};
+                font-weight: bold;
+            }}
+            QMessageBox QPushButton:default:hover, QDialogButtonBox QPushButton:default:hover {{
+                background-color: {colors['accent_hover']};
+                color: #FFFFFF;
+            }}
+            QMessageBox QPushButton:default:pressed, QDialogButtonBox QPushButton:default:pressed {{
+                background-color: {colors['accent_pressed']};
+                color: #FFFFFF;
             }}
             QGroupBox {{
                 font-weight: 600;

@@ -120,8 +120,36 @@ class TestCbmsMvDropdownActions(unittest.TestCase):
         self.assertIn("cbms_mv_fix.mark_feature_deleted(", content)
         self.assertIn("cbms_mv_fix.sync_feature_status(", content)
 
+    def test_delete_selected_features_wiring(self):
+        """Verify that selecting index 2 in combo_actions invokes _delete_selected_features with target_status='deleted'."""
+        with open("references/cbms_mv/cbmsmv_dialog.py", "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("idx = combo_actions.currentIndex()", content)
+        self.assertIn("elif idx == 2:", content)
+        self.assertIn("self._delete_selected_features(", content)
+
+        with open("references/cbms_mv/cbms_mv_fix/cbms_mv_fix.py", "r", encoding="utf-8") as f:
+            fix_content = f.read()
+
+        self.assertIn('target_status="deleted"', fix_content)
+        self.assertIn('new_status = "deleted"', fix_content)
+        self.assertIn('layer.changeAttributeValue(target_f_id, f_idx, new_status)', fix_content)
+        self.assertIn('main_layer.changeAttributeValue(main_feat.id(), m_idx, new_status)', fix_content)
+
+    def test_vertical_header_row_click_toggles_checkbox(self):
+        """Verify that clicking the row number in the vertical header checks/toggles the row checkbox and unchecks others if not multi-selection."""
+        with open("references/cbms_mv/cbmsmv_dialog.py", "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("table.verticalHeader().sectionClicked.connect(", content)
+        self.assertIn("def _on_vertical_header_section_clicked(", content)
+        self.assertIn("def _sync_row_checkbox_with_selection(", content)
+        self.assertIn("it.setCheckState(Qt.Checked if r == row_idx else Qt.Unchecked)", content)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

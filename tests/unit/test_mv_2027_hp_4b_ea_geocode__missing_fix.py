@@ -98,6 +98,51 @@ class TestMv2027Hp4bEaGeocodeMissingFix(unittest.TestCase):
         calc = fix_module.compute_ea_geocode_field_calculator(feat, layer)
         self.assertEqual(calc, "04210800200088")
 
+    def test_null_string_not_concatenated(self):
+        """Literal string 'NULL', 'None', 'nan' must not be concatenated as 'NULLNULLNULLNULL'."""
+        layer = QgsVectorLayer("Point?crs=EPSG:4326", "test_pts", "memory")
+        fields = QgsFields()
+        fields.append(QgsField("sf_province_code", QVariant.String))
+        fields.append(QgsField("sf_city_mun_code", QVariant.String))
+        fields.append(QgsField("sf_barangay_code", QVariant.String))
+        fields.append(QgsField("sf_ean", QVariant.String))
+        layer.dataProvider().addAttributes(fields)
+        layer.updateFields()
+
+        feat = QgsFeature(layer.fields())
+        feat.setAttribute("sf_province_code", "NULL")
+        feat.setAttribute("sf_city_mun_code", "NULL")
+        feat.setAttribute("sf_barangay_code", "NULL")
+        feat.setAttribute("sf_ean", "NULL")
+        layer.dataProvider().addFeatures([feat])
+
+        calc = fix_module.compute_ea_geocode_field_calculator(feat, layer)
+        self.assertEqual(calc, "")
+
+    def test_null_string_with_fallback_bsn_geoid(self):
+        """When boundary columns contain literal 'NULL', fallback to sf_bsn_geoid/bsn_geoid."""
+        layer = QgsVectorLayer("Point?crs=EPSG:4326", "test_pts", "memory")
+        fields = QgsFields()
+        fields.append(QgsField("sf_province_code", QVariant.String))
+        fields.append(QgsField("sf_city_mun_code", QVariant.String))
+        fields.append(QgsField("sf_barangay_code", QVariant.String))
+        fields.append(QgsField("sf_ean", QVariant.String))
+        fields.append(QgsField("sf_bsn_geoid", QVariant.String))
+        layer.dataProvider().addAttributes(fields)
+        layer.updateFields()
+
+        feat = QgsFeature(layer.fields())
+        feat.setAttribute("sf_province_code", "NULL")
+        feat.setAttribute("sf_city_mun_code", "NULL")
+        feat.setAttribute("sf_barangay_code", "NULL")
+        feat.setAttribute("sf_ean", "NULL")
+        feat.setAttribute("sf_bsn_geoid", "042108002000999999")
+        layer.dataProvider().addFeatures([feat])
+
+        calc = fix_module.compute_ea_geocode_field_calculator(feat, layer)
+        self.assertEqual(calc, "04210800200099")
+
 
 if __name__ == "__main__":
     unittest.main()
+

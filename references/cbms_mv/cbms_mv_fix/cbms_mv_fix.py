@@ -159,7 +159,7 @@ def _get_val(feat: QgsFeature, col_name: str) -> Optional[str]:
         v = feat[col_name] if hasattr(feat, "__getitem__") else feat.attribute(col_name)
         if v is not None and v != NULL:
             s = str(v).strip()
-            if s and s not in ("", "NULL", "None") and not s.startswith(("<", "Mock")):
+            if s and s.upper() not in ("", "NULL", "NONE", "NAN") and not s.startswith(("<", "Mock")):
                 return s
     except Exception:
         pass
@@ -180,25 +180,25 @@ def compute_ea_geocode_field_calculator(
     # 1. Try QGIS Expression Engine
     exp_str = (
         'coalesce('
-        # 1st Priority: sf_* columns (all must be non-null & non-empty, direct concat)
-        'if("sf_province_code" IS NOT NULL AND to_string("sf_province_code")!=\'\' AND '
-        '"sf_city_mun_code" IS NOT NULL AND to_string("sf_city_mun_code")!=\'\' AND '
-        '"sf_barangay_code" IS NOT NULL AND to_string("sf_barangay_code")!=\'\' AND '
-        '"sf_ean" IS NOT NULL AND to_string("sf_ean")!=\'\', '
+        # 1st Priority: sf_* columns (all must be non-null & non-empty & not NULL/NONE, direct concat)
+        'if("sf_province_code" IS NOT NULL AND upper(trim(to_string("sf_province_code"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\') AND '
+        '"sf_city_mun_code" IS NOT NULL AND upper(trim(to_string("sf_city_mun_code"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\') AND '
+        '"sf_barangay_code" IS NOT NULL AND upper(trim(to_string("sf_barangay_code"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\') AND '
+        '"sf_ean" IS NOT NULL AND upper(trim(to_string("sf_ean"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\'), '
         'concat(to_string("sf_province_code"), to_string("sf_city_mun_code"), '
         'to_string("sf_barangay_code"), to_string("sf_ean")), NULL), '
-        # 2nd Priority: standard boundary columns (all must be non-null & non-empty, direct concat)
-        'if("province_code" IS NOT NULL AND to_string("province_code")!=\'\' AND '
-        '"city_mun_code" IS NOT NULL AND to_string("city_mun_code")!=\'\' AND '
-        '"barangay_code" IS NOT NULL AND to_string("barangay_code")!=\'\' AND '
-        '"ean" IS NOT NULL AND to_string("ean")!=\'\', '
+        # 2nd Priority: standard boundary columns (all must be non-null & non-empty & not NULL/NONE, direct concat)
+        'if("province_code" IS NOT NULL AND upper(trim(to_string("province_code"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\') AND '
+        '"city_mun_code" IS NOT NULL AND upper(trim(to_string("city_mun_code"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\') AND '
+        '"barangay_code" IS NOT NULL AND upper(trim(to_string("barangay_code"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\') AND '
+        '"ean" IS NOT NULL AND upper(trim(to_string("ean"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\'), '
         'concat(to_string("province_code"), to_string("city_mun_code"), '
         'to_string("barangay_code"), to_string("ean")), NULL), '
         # 3rd Priority: left(sf_bsn_geoid, 14)
-        'if("sf_bsn_geoid" IS NOT NULL AND to_string("sf_bsn_geoid")!=\'\', '
+        'if("sf_bsn_geoid" IS NOT NULL AND upper(trim(to_string("sf_bsn_geoid"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\'), '
         'substr(to_string("sf_bsn_geoid"), 1, 14), NULL), '
         # 4th Priority: left(bsn_geoid, 14)
-        'if("bsn_geoid" IS NOT NULL AND to_string("bsn_geoid")!=\'\', '
+        'if("bsn_geoid" IS NOT NULL AND upper(trim(to_string("bsn_geoid"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\'), '
         'substr(to_string("bsn_geoid"), 1, 14), NULL), '
         '\'\')'
     )
@@ -823,7 +823,7 @@ def run_fix(
 
 
 # ===========================================================================
-# Soft Delete Process: delete_selected_features, mark_feature_deleted, sync_feature_status
+# Fix 3: Soft Delete Process: delete_selected_features, mark_feature_deleted, sync_feature_status
 # ===========================================================================
 def delete_selected_features(
     dialog: Any,
@@ -904,6 +904,7 @@ def delete_selected_features(
             button=row_del_btn,
             prompt_confirm=False,
             target_status="deleted",
+            target_row=r,
         )
         item0.setCheckState(Qt.Unchecked)
         deleted_count += 1
@@ -935,6 +936,7 @@ def mark_feature_deleted(
     button: Optional[Any] = None,
     prompt_confirm: bool = True,
     target_status: Optional[str] = None,
+    target_row: Optional[int] = None,
 ) -> None:
     """
     Mark a single feature as 'deleted' in its status column.
@@ -945,24 +947,24 @@ def mark_feature_deleted(
         return
 
     # 1. Locate target row in table dynamically to be immune against sorting/filtering
-    target_row = None
-    for r in range(table.rowCount()):
-        item0 = table.item(r, 0)
-        if not item0:
-            continue
-        r_err_fid = item0.data(Qt.UserRole + 3)
-        r_source_fid = item0.data(Qt.UserRole)
-        r_uuid = str(item0.data(Qt.UserRole + 1) or "").strip()
+    if target_row is None:
+        for r in range(table.rowCount()):
+            item0 = table.item(r, 0)
+            if not item0:
+                continue
+            r_err_fid = item0.data(Qt.UserRole + 3)
+            r_source_fid = item0.data(Qt.UserRole)
+            r_uuid = str(item0.data(Qt.UserRole + 1) or "").strip()
 
-        if err_fid is not None and r_err_fid == err_fid:
-            target_row = r
-            break
-        if source_fid is not None and r_source_fid == source_fid:
-            target_row = r
-            break
-        if map_uuid and r_uuid == str(map_uuid).strip():
-            target_row = r
-            break
+            if err_fid is not None and r_err_fid == err_fid:
+                target_row = r
+                break
+            if source_fid is not None and r_source_fid == source_fid:
+                target_row = r
+                break
+            if map_uuid and r_uuid == str(map_uuid).strip():
+                target_row = r
+                break
 
     # 2. Locate status column in table
     status_col_idx = None
