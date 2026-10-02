@@ -352,17 +352,24 @@ class GMDPipeline(object):
 
         if hasattr(self, 'cbmsmv_dlg') and self.cbmsmv_dlg:
             try:
-                if getattr(self.cbmsmv_dlg, "_is_docked", False) and getattr(self.cbmsmv_dlg, "_dock_widget", None):
-                    self.cbmsmv_dlg._dock_widget.show()
-                    self.cbmsmv_dlg._dock_widget.raise_()
-                    return
-                else:
-                    self.cbmsmv_dlg.showNormal()
-                    self.cbmsmv_dlg.raise_()
-                    self.cbmsmv_dlg.activateWindow()
-                    return
+                import sip
+                is_deleted = sip.isdeleted(self.cbmsmv_dlg)
             except Exception:
-                pass
+                is_deleted = False
+            if not is_deleted:
+                try:
+                    if getattr(self.cbmsmv_dlg, "_is_docked", False) and getattr(self.cbmsmv_dlg, "_dock_widget", None):
+                        self.cbmsmv_dlg._dock_widget.show()
+                        self.cbmsmv_dlg._dock_widget.raise_()
+                        return
+                    else:
+                        self.cbmsmv_dlg.showNormal()
+                        self.cbmsmv_dlg.raise_()
+                        self.cbmsmv_dlg.activateWindow()
+                        return
+                except Exception:
+                    pass
+            self.cbmsmv_dlg = None
 
         self.cbmsmv_dlg = show_cbmsmv_dialog(
                     self.iface,
@@ -373,11 +380,6 @@ class GMDPipeline(object):
 
     def cbmsmv_dialog_finished(self):
         """Cleanup when the CBMS MV dialog is closed."""
-        try:
-            if hasattr(self, 'cbmsmv_dlg') and self.cbmsmv_dlg:
-                self.cbmsmv_dlg.setEnabled(False)
-        except Exception:
-            pass
         self.cbmsmv_dlg = None
 
     def show_check_and_update_dialog(self):

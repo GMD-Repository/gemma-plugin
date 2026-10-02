@@ -23,7 +23,6 @@ def show_cbmsmv_dialog(iface, offline_editing=None, on_finished_callback=None):
         offline_editing,
         iface.mainWindow() if iface else None,
     )
-    push_dlg.setAttribute(Qt.WA_DeleteOnClose)
     push_dlg.setWindowFlags(
         Qt.Window
         | Qt.WindowMinimizeButtonHint
