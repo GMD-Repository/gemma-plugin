@@ -27,6 +27,9 @@ def _get_candidate_file_stems(val_id: str) -> List[str]:
             if f"_{suffix}" in clean_id and f"__{suffix}" not in clean_id:
                 candidates.append(f"{clean_id.replace(f'_{suffix}', f'__{suffix}')}_fix")
 
+    # All known fixes are consolidated into the unified cbms_mv_fix module
+    candidates.append("cbms_mv_fix")
+
     # Preserve order while removing duplicates
     seen = set()
     result = []
@@ -62,6 +65,9 @@ def get_fix_handler(val_id: str) -> Optional[Callable]:
     """
     Dynamically locate and return the run_fix callable for a validation ID.
     Looks for references/cbms_mv/cbms_mv_fix/{val_id}_fix.py
+
+    If the resolved module is the unified cbms_mv_fix module, the returned
+    callable automatically injects val_id so the dispatcher routes correctly.
     """
     if not val_id:
         return None
@@ -72,14 +78,14 @@ def get_fix_handler(val_id: str) -> Optional[Callable]:
 
     stem = os.path.splitext(os.path.basename(file_path))[0]
 
+    mod = None
+
     # Try relative package import first if within cbms_mv_fix directory
     current_dir = os.path.dirname(__file__)
     if os.path.dirname(file_path) == current_dir:
         try:
             mod = importlib.import_module(f".{stem}", package=__name__)
             mod = importlib.reload(mod)
-            if hasattr(mod, "run_fix"):
-                return getattr(mod, "run_fix")
         except Exception as exc:
             try:
                 from qgis.core import Qgis, QgsMessageLog
@@ -92,24 +98,39 @@ def get_fix_handler(val_id: str) -> Optional[Callable]:
                 pass
 
     # Load directly from spec / file path
-    try:
-        spec = importlib.util.spec_from_file_location(stem, file_path)
-        if spec and spec.loader:
-            mod = importlib.util.module_from_spec(spec)
-            import sys
-            sys.modules[stem] = mod
-            spec.loader.exec_module(mod)
-            if hasattr(mod, "run_fix"):
-                return getattr(mod, "run_fix")
-    except Exception as exc:
+    if mod is None or not hasattr(mod, "run_fix"):
         try:
-            from qgis.core import Qgis, QgsMessageLog
-            QgsMessageLog.logMessage(
-                f"Failed spec loader execution of fix module {stem} ({file_path}): {exc}",
-                "CBMS MV",
-                Qgis.Critical,
-            )
-        except Exception:
-            pass
+            spec = importlib.util.spec_from_file_location(stem, file_path)
+            if spec and spec.loader:
+                mod = importlib.util.module_from_spec(spec)
+                import sys
+                sys.modules[stem] = mod
+                spec.loader.exec_module(mod)
+        except Exception as exc:
+            try:
+                from qgis.core import Qgis, QgsMessageLog
+                QgsMessageLog.logMessage(
+                    f"Failed spec loader execution of fix module {stem} ({file_path}): {exc}",
+                    "CBMS MV",
+                    Qgis.Critical,
+                )
+            except Exception:
+                pass
 
-    return None
+    if mod is None or not hasattr(mod, "run_fix"):
+        return None
+
+    run_fix_fn = getattr(mod, "run_fix")
+
+    # If the module is the unified cbms_mv_fix (has _FIX_DISPATCH), wrap the
+    # callable to inject val_id automatically so the dispatcher routes correctly.
+    if hasattr(mod, "_FIX_DISPATCH"):
+        _captured_val_id = val_id
+
+        def _dispatched_run_fix(main_layer, **kwargs):
+            kwargs["val_id"] = _captured_val_id
+            return run_fix_fn(main_layer, **kwargs)
+
+        return _dispatched_run_fix
+
+    return run_fix_fn

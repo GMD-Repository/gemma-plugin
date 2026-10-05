@@ -944,5 +944,49 @@ class CbmsMvReviewDock(QDockWidget):
                 selection-background-color: {colors['accent_light']};
                 selection-color: {colors['accent_light_text']};
             }}
+            QMessageBox {{
+                background-color: {colors['card_bg']};
+            }}
+            QMessageBox QLabel {{
+                color: {colors['text_primary']};
+                font-size: 11.5px;
+            }}
+            QMessageBox QPushButton, QDialogButtonBox QPushButton {{
+                background-color: {colors['surface_elevated']};
+                color: {colors['text_primary']};
+                border: 1px solid {colors['border']};
+                border-radius: 4px;
+                padding: 5px 18px;
+                min-width: 70px;
+                min-height: 22px;
+                font-size: 11px;
+                font-weight: 600;
+                outline: none;
+            }}
+            QMessageBox QPushButton:hover, QDialogButtonBox QPushButton:hover {{
+                background-color: {colors['surface_hover']};
+                border-color: {colors['border_focus']};
+                color: {colors['title']};
+            }}
+            QMessageBox QPushButton:pressed, QDialogButtonBox QPushButton:pressed {{
+                background-color: {colors['border']};
+            }}
+            QMessageBox QPushButton:focus, QDialogButtonBox QPushButton:focus {{
+                border-color: {colors['border_focus']};
+            }}
+            QMessageBox QPushButton:default, QDialogButtonBox QPushButton:default {{
+                background-color: {colors['accent']};
+                color: #FFFFFF;
+                border: 1px solid {colors['accent_hover']};
+                font-weight: bold;
+            }}
+            QMessageBox QPushButton:default:hover, QDialogButtonBox QPushButton:default:hover {{
+                background-color: {colors['accent_hover']};
+                color: #FFFFFF;
+            }}
+            QMessageBox QPushButton:default:pressed, QDialogButtonBox QPushButton:default:pressed {{
+                background-color: {colors['accent_pressed']};
+                color: #FFFFFF;
+            }}
         """)
         self._style_delete_button(is_deleted=False)
