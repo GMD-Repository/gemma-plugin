@@ -18,7 +18,7 @@ Key behaviors:
 5. Packages into gemma-cbmsbeta-{revision}.zip.
 6. Publishes release on GMD-Repository/gemma-plugin-closed-preview with tag cbms-{revision}.
 7. Prunes old CBMS releases (matching tag prefix "cbms-", retaining latest N).
-8. Generates docs/user-guide/public/gemma-cbms.xml and docs/user-guide/public/latest-cbms.json.
+8. Pushes gemma-cbms.xml and latest-cbms.json directly to the root of the preview repository.
 """
 
 from __future__ import annotations
@@ -46,8 +46,6 @@ from scripts.utils.files import (
     read_metadata,
     read_metadata_raw,
     write_metadata_raw,
-    write_text,
-    ensure_dir,
 )
 from scripts.release.build_plugin import EXCLUDE_PATTERNS, _copy_plugin_files
 from scripts.release.create_release import create_github_release, prune_old_releases
@@ -56,9 +54,6 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger("release_cbms")
 
 METADATA_PATH = "metadata.txt"
-PUBLIC_DIR = "docs/user-guide/public"
-CBMS_XML_PATH = f"{PUBLIC_DIR}/gemma-cbms.xml"
-CBMS_JSON_PATH = f"{PUBLIC_DIR}/latest-cbms.json"
 ROOT_FOLDER_NAME = "gemma-cbmsbeta"
 
 
@@ -273,6 +268,66 @@ def build_cbms_xml(
     )
 
 
+def push_cbms_channel_files_to_preview_repo(
+    owner: str,
+    repo: str,
+    token: str,
+    xml_content: str,
+    json_content: str,
+    revision: str,
+    branch: str = "main",
+    dry_run: bool = False,
+) -> None:
+    """Push gemma-cbms.xml and latest-cbms.json to the root of the preview repository."""
+    if dry_run:
+        logger.info("[DRY RUN] Skipping push of CBMS channel files to %s/%s (%s)", owner, repo, branch)
+        return
+
+    if not token:
+        logger.warning("No GITHUB_TOKEN available — skipping push of CBMS channel files to %s/%s", owner, repo)
+        return
+
+    logger.info("═══ Step 5: Push CBMS channel files to %s/%s (branch: %s) ═══", owner, repo, branch)
+    with tempfile.TemporaryDirectory(prefix="gemma_preview_repo_") as tmp_dir:
+        repo_dir = Path(tmp_dir) / "repo"
+        remote_url = f"https://x-access-token:{token}@github.com/{owner}/{repo}.git"
+        logger.info("Cloning %s/%s (%s)...", owner, repo, branch)
+        try:
+            subprocess.run(
+                ["git", "clone", "--depth", "1", "--branch", branch, remote_url, str(repo_dir)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as err:
+            safe_err = err.stderr.replace(token, "***") if err.stderr else str(err)
+            logger.error("Failed to clone %s/%s: %s", owner, repo, safe_err)
+            raise RuntimeError(f"Failed to clone {owner}/{repo}: {safe_err}") from None
+
+        # Write files at preview repo root
+        (repo_dir / "gemma-cbms.xml").write_text(xml_content, encoding="utf-8")
+        (repo_dir / "latest-cbms.json").write_text(json_content, encoding="utf-8")
+
+        # Configure git identity for preview repo
+        subprocess.run(["git", "config", "user.name", "Gemma Release[bot]"], cwd=repo_dir, check=True)
+        subprocess.run(["git", "config", "user.email", "gemma-release[bot]@users.noreply.github.com"], cwd=repo_dir, check=True)
+
+        subprocess.run(["git", "add", "gemma-cbms.xml", "latest-cbms.json"], cwd=repo_dir, check=True)
+        diff_res = subprocess.run(["git", "diff", "--staged", "--quiet"], cwd=repo_dir)
+        if diff_res.returncode != 0:
+            commit_msg = f"chore: update CBMS beta channel files for preview {revision} [skip ci]"
+            subprocess.run(["git", "commit", "-m", commit_msg], cwd=repo_dir, check=True)
+            try:
+                subprocess.run(["git", "push", "origin", branch], cwd=repo_dir, check=True, capture_output=True, text=True)
+                logger.info("✅ Pushed gemma-cbms.xml and latest-cbms.json to %s/%s (%s)", owner, repo, branch)
+            except subprocess.CalledProcessError as err:
+                safe_err = err.stderr.replace(token, "***") if err.stderr else str(err)
+                logger.error("Failed to push to %s/%s: %s", owner, repo, safe_err)
+                raise RuntimeError(f"Failed to push to {owner}/{repo}: {safe_err}") from None
+        else:
+            logger.info("No changes to CBMS channel files in %s/%s.", owner, repo)
+
+
 def run_cbms_pipeline(args: argparse.Namespace) -> None:
     """Execute the CBMS preview release pipeline."""
     github_token = os.environ.get("GITHUB_TOKEN", "")
@@ -280,6 +335,7 @@ def run_cbms_pipeline(args: argparse.Namespace) -> None:
     source_owner, source_repo = repo_full.split("/")
     preview_owner = args.preview_owner
     preview_repo = args.preview_repo
+    preview_branch = args.preview_branch
     branch = args.branch
     today = date.today().isoformat()
 
@@ -353,8 +409,8 @@ def run_cbms_pipeline(args: argparse.Namespace) -> None:
 
     set_github_output("release_url", release_url)
 
-    # ── Step 4: Update gemma-cbms.xml ─────────────────────────────────────
-    logger.info("═══ Step 4: Update %s ═══", CBMS_XML_PATH)
+    # ── Step 4: Generate CBMS channel files ───────────────────────────────
+    logger.info("═══ Step 4: Generate CBMS channel files (gemma-cbms.xml, latest-cbms.json) ═══")
     xml_content = build_cbms_xml(
         metadata=metadata,
         preview_version=preview_version,
@@ -364,13 +420,8 @@ def run_cbms_pipeline(args: argparse.Namespace) -> None:
         source_repo=source_repo,
         branch=branch,
     )
-    ensure_dir(PUBLIC_DIR)
-    write_text(CBMS_XML_PATH, xml_content)
-    logger.info("✅ %s generated", CBMS_XML_PATH)
 
-    # ── Step 5: Update latest-cbms.json ───────────────────────────────────
-    logger.info("═══ Step 5: Update %s ═══", CBMS_JSON_PATH)
-    raw_repo_url = f"https://raw.githubusercontent.com/{source_owner}/{source_repo}/{branch}/{CBMS_XML_PATH}"
+    raw_repo_url = f"https://raw.githubusercontent.com/{preview_owner}/{preview_repo}/{preview_branch}/gemma-cbms.xml"
     latest_data = {
         "version": preview_version,
         "revision": revision,
@@ -381,8 +432,19 @@ def run_cbms_pipeline(args: argparse.Namespace) -> None:
         "releaseUrl": release_url,
         "branch": branch,
     }
-    write_text(CBMS_JSON_PATH, json.dumps(latest_data, indent=2) + "\n")
-    logger.info("✅ %s generated", CBMS_JSON_PATH)
+    json_content = json.dumps(latest_data, indent=2) + "\n"
+
+    # ── Step 5: Push channel files to preview repository root ─────────────
+    push_cbms_channel_files_to_preview_repo(
+        owner=preview_owner,
+        repo=preview_repo,
+        token=github_token,
+        xml_content=xml_content,
+        json_content=json_content,
+        revision=revision,
+        branch=preview_branch,
+        dry_run=args.dry_run,
+    )
     set_github_output("repository_url", raw_repo_url)
 
     # ── Step 6: Step summary ──────────────────────────────────────────────
@@ -437,6 +499,11 @@ def parse_args() -> argparse.Namespace:
         "--preview-repo",
         default=os.environ.get("CBMS_PREVIEW_REPO", "gemma-plugin-closed-preview"),
         help="GitHub repository for preview release assets (default: gemma-plugin-closed-preview).",
+    )
+    parser.add_argument(
+        "--preview-branch",
+        default="main",
+        help="Default branch for preview release repo where XML/JSON will be pushed (default: main).",
     )
     parser.add_argument(
         "--max-previews",
