@@ -2,6 +2,14 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.11
+<time>Oct 05, 2026</time>
+
+### 🐛 Bug Fixes
+- Fixed f-string backslash SyntaxError in download button style inliner ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#333](https://github.com/GMD-Repository/gemma-plugin/pull/333))
+
+<Contributors :contributors="['kentemman-gmd']" />
+
 ## 1.0.10
 <time>Oct 01, 2026</time>
 
