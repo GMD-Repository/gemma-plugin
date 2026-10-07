@@ -2757,6 +2757,15 @@ class CbmsmvDialog(QDialog):
                 uuid_idx = header_lower.index(target)
                 break
 
+        # Locate or append updated_variables column
+        updated_var_idx = header_lower.index("updated_variables") if "updated_variables" in header_lower else None
+        if updated_var_idx is None:
+            header.append("updated_variables")
+            header_lower.append("updated_variables")
+            updated_var_idx = len(header) - 1
+            for r in rows:
+                r.append("")
+
         updated_count = 0
         for rec_k, record_info in self._pending_json_edits.items():
             t_fid = record_info.get("df_fid")
@@ -2793,6 +2802,8 @@ class CbmsmvDialog(QDialog):
                 row = rows[target_row_idx]
                 while len(row) < len(header):
                     row.append("")
+
+                changed_cols_for_row = []
                 for prop_name, new_val in props.items():
                     clean_p = prop_name.lower()
                     clean_df_p = f"df_{clean_p}"
@@ -2802,24 +2813,45 @@ class CbmsmvDialog(QDialog):
                             col_idx = idx
                             break
                     if col_idx is not None:
+                        actual_col_name = header[col_idx]
                         row[col_idx] = str(new_val) if new_val is not None else ""
+                        if actual_col_name.lower() != "updated_variables":
+                            var_name = actual_col_name[3:] if actual_col_name.lower().startswith("df_") else actual_col_name
+                            changed_cols_for_row.append(var_name)
+
+                if changed_cols_for_row and updated_var_idx is not None:
+                    existing_val = str(row[updated_var_idx]).strip() if updated_var_idx < len(row) else ""
+                    existing_tokens = [t.strip() for t in existing_val.split("|") if t.strip()]
+                    combined = list(dict.fromkeys(existing_tokens + changed_cols_for_row))
+                    row[updated_var_idx] = "|".join(combined)
+
                 updated_count += 1
 
-        # Atomic write back to Form 2 CSV file
+        # Write back to Form 2 CSV file (atomic attempt with fallback for Windows file locks)
         tmp_file = form2_path + ".tmp"
         try:
             with open(tmp_file, "w", encoding="utf-8", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow(header)
                 writer.writerows(rows)
-            os.replace(tmp_file, form2_path)
+            try:
+                os.replace(tmp_file, form2_path)
+            except PermissionError:
+                # On Windows, when QGIS holds an open OGR handle on the CSV layer,
+                # os.replace fails with [WinError 5] Access is denied.
+                # Direct overwrite succeeds because GDAL/OS permits shared write access.
+                with open(form2_path, "w", encoding="utf-8", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(header)
+                    writer.writerows(rows)
         except Exception as e:
+            return False, 0, f"Error saving Form 2 CSV to disk:\n{e}"
+        finally:
             if os.path.exists(tmp_file):
                 try:
                     os.remove(tmp_file)
                 except Exception:
                     pass
-            return False, 0, f"Error saving Form 2 CSV to disk:\n{e}"
 
         self._pending_json_edits.clear()
 
@@ -2829,6 +2861,7 @@ class CbmsmvDialog(QDialog):
                 if lyr.name().startswith("Form 2 (") or (hasattr(lyr, "source") and lyr.source() == form2_path):
                     try:
                         lyr.dataProvider().forceReload()
+                        lyr.updateFields()
                         lyr.triggerRepaint()
                     except Exception:
                         pass
@@ -2962,26 +2995,41 @@ class CbmsmvDialog(QDialog):
                                 typed_val = float(new_val)
                             except (ValueError, TypeError):
                                 typed_val = new_val
-                    elif new_val == "":
-                        typed_val = None
-
                     target_dict[final_key] = typed_val
+
+                # Track updated_variables in JSON record
+                updated_key = "updated_variables"
+                existing_uv = str(target_dict.get(updated_key) or "").strip()
+                existing_tokens = [t.strip() for t in existing_uv.split("|") if t.strip()]
+                new_tokens = [
+                    (p[3:] if p.lower().startswith("df_") else p)
+                    for p in props_to_update.keys()
+                    if p.lower() != "updated_variables"
+                ]
+                if new_tokens:
+                    combined = list(dict.fromkeys(existing_tokens + new_tokens))
+                    target_dict[updated_key] = "|".join(combined)
 
                 updated_count += 1
 
-        # Atomic write back to Form 2 JSON file
+        # Write back to Form 2 JSON file (atomic attempt with fallback for Windows file locks)
         tmp_file = form2_path + ".tmp"
         try:
             with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
-            os.replace(tmp_file, form2_path)
+            try:
+                os.replace(tmp_file, form2_path)
+            except PermissionError:
+                with open(form2_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception as e:
+            return False, 0, f"Error saving Form 2 JSON to disk:\n{e}"
+        finally:
             if os.path.exists(tmp_file):
                 try:
                     os.remove(tmp_file)
                 except Exception:
                     pass
-            return False, 0, f"Error saving Form 2 JSON to disk:\n{e}"
 
         self._pending_json_edits.clear()
 
@@ -3046,7 +3094,24 @@ class CbmsmvDialog(QDialog):
         form2_layer = self._get_or_load_form2_layer()
 
         if form2_path.lower().endswith(".csv"):
-            if form2_layer and form2_layer.isValid() and form2_layer.isEditable() and form2_layer.isModified():
+            if self._pending_json_edits:
+                ok, form2_updated_count, form2_msg = self._save_csv_changes()
+                if not ok:
+                    QMessageBox.critical(
+                        self,
+                        "Save Failed",
+                        f"Failed to commit changes to Form 2 CSV file:\n{form2_msg}",
+                    )
+                    return False
+                form2_saved = True
+                if form2_layer and form2_layer.isValid() and form2_layer.isModified():
+                    try:
+                        form2_layer.rollBack()
+                        form2_layer.dataProvider().forceReload()
+                        form2_layer.triggerRepaint()
+                    except Exception:
+                        pass
+            elif form2_layer and form2_layer.isValid() and form2_layer.isEditable() and form2_layer.isModified():
                 try:
                     success = form2_layer.commitChanges()
                     if success:
@@ -3070,16 +3135,6 @@ class CbmsmvDialog(QDialog):
                         f"Error committing Form 2 CSV layer:\n{exc}",
                     )
                     return False
-            elif self._pending_json_edits:
-                ok, form2_updated_count, form2_msg = self._save_csv_changes()
-                if not ok:
-                    QMessageBox.critical(
-                        self,
-                        "Save Failed",
-                        f"Failed to commit changes to Form 2 CSV file:\n{form2_msg}",
-                    )
-                    return False
-                form2_saved = True
         elif form2_path.lower().endswith(".json") and self._pending_json_edits:
             ok, form2_updated_count, form2_msg = self._save_json_changes()
             if not ok:
