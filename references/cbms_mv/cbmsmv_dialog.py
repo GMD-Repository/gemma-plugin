@@ -1705,9 +1705,20 @@ class CbmsmvDialog(QDialog):
         else:
             combo_actions.addItem("Delete selected features")
 
+        geom_ic = QgsApplication.getThemeIcon("mActionCapturePoint.svg")
+        if not geom_ic.isNull():
+            combo_actions.addItem(geom_ic, "Generate point geometry")
+        else:
+            combo_actions.addItem("Generate point geometry")
+
+        dup_ic = QgsApplication.getThemeIcon("mActionDeleteSelected.svg")
+        if not dup_ic.isNull():
+            combo_actions.addItem(dup_ic, "Delete duplicate features (retain one)")
+        else:
+            combo_actions.addItem("Delete duplicate features (retain one)")
+
         combo_actions.setCursor(Qt.PointingHandCursor)
         combo_actions.setToolTip("Select an action to execute for checked features")
-        combo_actions.currentIndexChanged.connect(lambda idx: combo_actions.setToolTip(combo_actions.itemText(idx)))
 
         arrow_icon_name = "arrow_down_dark.svg" if self.is_dark else "arrow_down.svg"
         arrow_path = os.path.abspath(
@@ -1807,7 +1818,24 @@ class CbmsmvDialog(QDialog):
                 1 for r in range(table.rowCount())
                 if table.item(r, 0) and table.item(r, 0).checkState() == Qt.Checked
             )
+            idx = combo_actions.currentIndex()
             if checked_count == 0:
+                if idx == 4:
+                    reply = QMessageBox.question(
+                        self,
+                        "Deduplicate All Features",
+                        "No specific rows are checked.\n\n"
+                        "Do you want to check and deduplicate all features in this tab?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.Yes,
+                    )
+                    if reply != QMessageBox.Yes:
+                        return
+                    self._on_deduplicate_features(
+                        val_id, layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected, process_all=True
+                    )
+                    return
+
                 QMessageBox.information(
                     self,
                     "No Features Selected",
@@ -1815,7 +1843,6 @@ class CbmsmvDialog(QDialog):
                 )
                 return
 
-            idx = combo_actions.currentIndex()
             if idx == 1:
                 self._on_concatenate_ea_geocode(
                     val_id, layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
@@ -1824,14 +1851,57 @@ class CbmsmvDialog(QDialog):
                 self._delete_selected_features(
                     val_id, layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
+            elif idx == 3:
+                self._on_generate_point_geometry(
+                    val_id, layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
+                )
+            elif idx == 4:
+                self._on_deduplicate_features(
+                    val_id, layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
+                )
             else:
                 QMessageBox.information(
                     self,
                     "Select Action",
-                    "Please select an action from the dropdown first (e.g., 'Concatenate the ea_geocode' or 'Delete selected features')."
+                    "Please select an action from the dropdown first (e.g., 'Concatenate the ea_geocode', 'Delete selected features', 'Generate point geometry', or 'Delete duplicate features (retain one)')."
                 )
 
         btn_update_selected.clicked.connect(_on_trigger_update_selected)
+
+        def _on_combo_actions_changed(idx: int):
+            if not is_valid_qobject(self) or not is_valid_qobject(table):
+                return
+            combo_actions.setToolTip(combo_actions.itemText(idx))
+            action_text = combo_actions.itemText(idx).lower()
+            if "duplicate" in action_text or idx == 4:
+                # Automatically select/check all features in the tab
+                table.setProperty("is_populating", True)
+                visible_count = 0
+                for r in range(table.rowCount()):
+                    if not table.isRowHidden(r):
+                        it = table.item(r, 0)
+                        if it:
+                            it.setCheckState(Qt.Checked)
+                            visible_count += 1
+                table.setProperty("is_populating", False)
+                table.selectAll()
+                btn_update_selected.setText(f"Update Selected ({visible_count})" if visible_count > 0 else "Update Selected")
+                btn_update_selected.setEnabled(visible_count > 0)
+                if btn_select_all:
+                    btn_select_all.setText("Select None")
+                    toggle_ic = QgsApplication.getThemeIcon("mActionDeselectAll.svg")
+                    if not toggle_ic.isNull():
+                        btn_select_all.setIcon(toggle_ic)
+            else:
+                checked_count = sum(
+                    1 for r in range(table.rowCount())
+                    if not table.isRowHidden(r) and table.item(r, 0) and table.item(r, 0).checkState() == Qt.Checked
+                )
+                btn_update_selected.setText(f"Update Selected ({checked_count})" if checked_count > 0 else "Update Selected")
+                btn_update_selected.setEnabled(checked_count > 0)
+
+        combo_actions.currentIndexChanged.connect(_on_combo_actions_changed)
+        combo_actions.activated.connect(_on_combo_actions_changed)
 
         toolbar.addWidget(combo_actions)
         toolbar.addWidget(btn_update_selected)
@@ -2131,7 +2201,7 @@ class CbmsmvDialog(QDialog):
                 btn_actions.setText("Actions ▾")
             if btn_update_selected:
                 btn_update_selected.setText(f"Update Selected ({checked_count})" if checked_count > 0 else "Update Selected")
-                btn_update_selected.setEnabled(checked_count > 0)
+                btn_update_selected.setEnabled(checked_count > 0 or bool(combo_actions and combo_actions.currentIndex() == 4))
             return
 
         # Case 2: Action column
@@ -2438,6 +2508,87 @@ class CbmsmvDialog(QDialog):
         except Exception:
             pass
         self._fix_selected_features("mv_2027_hp_4b_ea_geocode__missing", layer, table)
+        if combo_actions:
+            combo_actions.setItemText(0, "Actions")
+        elif btn_actions:
+            btn_actions.setText("Actions ▾")
+        if btn_update_selected:
+            btn_update_selected.setText("Update Selected")
+            btn_update_selected.setEnabled(False)
+
+    def _on_generate_point_geometry(
+        self,
+        val_id: str,
+        layer: QgsVectorLayer,
+        table: QTableWidget,
+        combo_actions: Optional[QComboBox] = None,
+        btn_actions: Optional[Any] = None,
+        btn_update_selected: Optional[QPushButton] = None,
+    ):
+        """Trigger point geometry generation process from cbms_mv_fix."""
+        if not is_valid_qobject(self):
+            return
+        try:
+            from .cbms_mv_fix import cbms_mv_fix
+            if hasattr(cbms_mv_fix, "generate_point_geometry"):
+                cbms_mv_fix.generate_point_geometry(self, val_id, layer, table)
+                if combo_actions:
+                    combo_actions.setItemText(0, "Actions")
+                elif btn_actions:
+                    btn_actions.setText("Actions ▾")
+                if btn_update_selected:
+                    btn_update_selected.setText("Update Selected")
+                    btn_update_selected.setEnabled(False)
+                return
+        except Exception:
+            pass
+        self._fix_selected_features("mv_2027_hp_1a_map_uuid__missing", layer, table)
+        if combo_actions:
+            combo_actions.setItemText(0, "Actions")
+        elif btn_actions:
+            btn_actions.setText("Actions ▾")
+        if btn_update_selected:
+            btn_update_selected.setText("Update Selected")
+            btn_update_selected.setEnabled(False)
+
+    def _on_deduplicate_features(
+        self,
+        val_id: str,
+        layer: QgsVectorLayer,
+        table: QTableWidget,
+        combo_actions: Optional[QComboBox] = None,
+        btn_actions: Optional[Any] = None,
+        btn_update_selected: Optional[QPushButton] = None,
+        process_all: bool = False,
+    ):
+        """Trigger duplicate feature deletion (retain one) via cbms_mv_fix."""
+        if not is_valid_qobject(self) or not is_valid_qobject(table):
+            return
+        try:
+            from .cbms_mv_fix import cbms_mv_fix
+            if hasattr(cbms_mv_fix, "deduplicate_features"):
+                cbms_mv_fix.deduplicate_features(
+                    self,
+                    val_id,
+                    layer,
+                    table,
+                    combo_actions=combo_actions,
+                    btn_actions=btn_actions,
+                    btn_update_selected=btn_update_selected,
+                    process_all=process_all,
+                )
+                if combo_actions:
+                    combo_actions.setItemText(0, "Actions")
+                elif btn_actions:
+                    btn_actions.setText("Actions ▾")
+                if btn_update_selected:
+                    btn_update_selected.setText("Update Selected")
+                    btn_update_selected.setEnabled(False)
+                return
+        except Exception as exc:
+            if hasattr(self, "_log_error"):
+                self._log_error(f"Error in _on_deduplicate_features: {exc}")
+        self._fix_selected_features("mv_2027_hp_4a_longitude__duplicate", layer, table)
         if combo_actions:
             combo_actions.setItemText(0, "Actions")
         elif btn_actions:

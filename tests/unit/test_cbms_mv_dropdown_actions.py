@@ -58,6 +58,7 @@ class TestCbmsMvDropdownActions(unittest.TestCase):
         self.assertIn('combo_actions.addItem(dropdown_icon, "Actions")', content)
         self.assertIn('combo_actions.addItem(concat_ic, "Concatenate the ea_geocode")', content)
         self.assertIn('combo_actions.addItem(del_icon_menu, "Delete selected features")', content)
+        self.assertIn('combo_actions.addItem(geom_ic, "Generate point geometry")', content)
 
         # Verify redundant delete button was removed from toolbar
         self.assertNotIn('toolbar.addWidget(btn_delete_selected)', content)
@@ -66,6 +67,7 @@ class TestCbmsMvDropdownActions(unittest.TestCase):
         self.assertIn('btn_update_selected.clicked.connect(_on_trigger_update_selected)', content)
         self.assertIn('def _on_concatenate_ea_geocode(', content)
         self.assertIn('def _delete_selected_features(', content)
+        self.assertIn('def _on_generate_point_geometry(', content)
 
     def test_save_button_confirmation_dialog(self):
         """Verify Save Changes button triggers Save / Discard / Cancel confirmation."""
@@ -137,6 +139,17 @@ class TestCbmsMvDropdownActions(unittest.TestCase):
         self.assertIn('layer.changeAttributeValue(target_f_id, f_idx, new_status)', fix_content)
         self.assertIn('main_layer.changeAttributeValue(main_feat.id(), m_idx, new_status)', fix_content)
 
+    def test_generate_point_geometry_wiring(self):
+        """Verify that selecting index 3 in combo_actions invokes _on_generate_point_geometry and calls fix."""
+        with open("references/cbms_mv/cbmsmv_dialog.py", "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("idx = combo_actions.currentIndex()", content)
+        self.assertIn("elif idx == 3:", content)
+        self.assertIn("self._on_generate_point_geometry(", content)
+
+        self.assertTrue(hasattr(self.fix_mod, "generate_point_geometry"))
+
     def test_vertical_header_row_click_toggles_checkbox(self):
         """Verify that clicking the row number in the vertical header checks/toggles the row checkbox and unchecks others if not multi-selection."""
         with open("references/cbms_mv/cbmsmv_dialog.py", "r", encoding="utf-8") as f:
@@ -146,6 +159,30 @@ class TestCbmsMvDropdownActions(unittest.TestCase):
         self.assertIn("def _on_vertical_header_section_clicked(", content)
         self.assertIn("def _sync_row_checkbox_with_selection(", content)
         self.assertIn("it.setCheckState(Qt.Checked if r == row_idx else Qt.Unchecked)", content)
+
+    def test_deduplicate_features_action_wiring(self):
+        """Verify that selecting index 4 in combo_actions invokes _on_deduplicate_features and calls fix."""
+        with open("references/cbms_mv/cbmsmv_dialog.py", "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn('combo_actions.addItem(dup_ic, "Delete duplicate features (retain one)")', content)
+        self.assertIn("elif idx == 4:", content)
+        self.assertIn("self._on_deduplicate_features(", content)
+        self.assertIn("def _on_deduplicate_features(", content)
+
+        self.assertTrue(hasattr(self.fix_mod, "deduplicate_features"))
+
+    def test_deduplicate_features_action_auto_selects_all_features(self):
+        """Verify that selecting deduplicate features in combo_actions automatically selects all features in the tab."""
+        with open("references/cbms_mv/cbmsmv_dialog.py", "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("def _on_combo_actions_changed(idx: int):", content)
+        self.assertIn('if "duplicate" in action_text or idx == 4:', content)
+        self.assertIn("it.setCheckState(Qt.Checked)", content)
+        self.assertIn("table.selectAll()", content)
+        self.assertIn('btn_select_all.setText("Select None")', content)
+        self.assertIn("combo_actions.currentIndexChanged.connect(_on_combo_actions_changed)", content)
 
 
 if __name__ == "__main__":
