@@ -1717,6 +1717,12 @@ class CbmsmvDialog(QDialog):
         else:
             combo_actions.addItem("Delete duplicate features (retain one)")
 
+        concat_bsn_ic = QgsApplication.getThemeIcon("mActionCalculateField.svg")
+        if not concat_bsn_ic.isNull():
+            combo_actions.addItem(concat_bsn_ic, "Concatenate the bsn_geoid")
+        else:
+            combo_actions.addItem("Concatenate the bsn_geoid")
+
         combo_actions.setCursor(Qt.PointingHandCursor)
         combo_actions.setToolTip("Select an action to execute for checked features")
 
@@ -1859,11 +1865,15 @@ class CbmsmvDialog(QDialog):
                 self._on_deduplicate_features(
                     val_id, layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
+            elif idx == 5 or "bsn_geoid" in combo_actions.itemText(idx).lower() or "bsn" in combo_actions.itemText(idx).lower():
+                self._on_concatenate_bsn_geoid(
+                    val_id, layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
+                )
             else:
                 QMessageBox.information(
                     self,
                     "Select Action",
-                    "Please select an action from the dropdown first (e.g., 'Concatenate the ea_geocode', 'Delete selected features', 'Generate point geometry', or 'Delete duplicate features (retain one)')."
+                    "Please select an action from the dropdown first (e.g., 'Concatenate the ea_geocode', 'Delete selected features', 'Generate point geometry', 'Delete duplicate features (retain one)', or 'Concatenate the bsn_geoid')."
                 )
 
         btn_update_selected.clicked.connect(_on_trigger_update_selected)
@@ -2508,6 +2518,43 @@ class CbmsmvDialog(QDialog):
         except Exception:
             pass
         self._fix_selected_features("mv_2027_hp_4b_ea_geocode__missing", layer, table)
+        if combo_actions:
+            combo_actions.setItemText(0, "Actions")
+        elif btn_actions:
+            btn_actions.setText("Actions ▾")
+        if btn_update_selected:
+            btn_update_selected.setText("Update Selected")
+            btn_update_selected.setEnabled(False)
+
+    def _on_concatenate_bsn_geoid(
+        self,
+        val_id: str,
+        layer: QgsVectorLayer,
+        table: QTableWidget,
+        combo_actions: Optional[QComboBox] = None,
+        btn_actions: Optional[Any] = None,
+        btn_update_selected: Optional[QPushButton] = None,
+    ):
+        """Trigger BSN GEOID concatenation process from cbms_mv_fix."""
+        if not is_valid_qobject(self):
+            return
+        target_rule = "mv_2027_hp_4b_bsn_geoid__invalid"
+        effective_val_id = val_id if (val_id and "bsn_geoid" in str(val_id).lower()) else target_rule
+        try:
+            from .cbms_mv_fix import cbms_mv_fix
+            if hasattr(cbms_mv_fix, "concatenate_bsn_geoid"):
+                cbms_mv_fix.concatenate_bsn_geoid(self, effective_val_id, layer, table)
+                if combo_actions:
+                    combo_actions.setItemText(0, "Actions")
+                elif btn_actions:
+                    btn_actions.setText("Actions ▾")
+                if btn_update_selected:
+                    btn_update_selected.setText("Update Selected")
+                    btn_update_selected.setEnabled(False)
+                return
+        except Exception:
+            pass
+        self._fix_selected_features(effective_val_id, layer, table)
         if combo_actions:
             combo_actions.setItemText(0, "Actions")
         elif btn_actions:

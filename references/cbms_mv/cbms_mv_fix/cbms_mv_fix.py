@@ -10,21 +10,28 @@ Processes and Fixes registered in this module:
      1) Direct sf_* columns, 2) Standard boundary columns, 3) sf_bsn_geoid, 4) bsn_geoid.
      Entry points: concatenate_ea_geocode(), compute_ea_geocode_field_calculator(), _run_fix_ea_geocode().
 
-  2. Process: Generate Point Geometry (mv_2027_hp_1a_map_uuid__missing)
+  2. Process: Concatenate BSN GEOID (mv_2027_hp_4b_bsn_geoid__invalid, mv_2027_hp_4b_bsn_geoid__missing)
+     Computes missing or invalid BSN GEOID following a 2-scenario fallback cascade:
+     1st Scenario: ea_geocode + bsn (sf_ea_geocode, sf_bsn or ea_geocode, bsn)
+     2nd Scenario: province_code, city_mun_code, barangay_code, ean, bsn
+     (sf_province_code, sf_city_mun_code, sf_barangay_code, sf_ean, sf_bsn or standard boundary columns).
+     Entry points: concatenate_bsn_geoid(), compute_bsn_geoid_field_calculator(), _run_fix_bsn_geoid().
+
+  3. Process: Generate Point Geometry (mv_2027_hp_1a_map_uuid__missing)
      Generates point geometries in the Form 2 Geotagged Building Points layer (.geojson)
      from coordinates in df_x_current / df_y_current.
      Entry points: generate_point_geometry(), _run_fix_map_uuid_missing().
 
-  3. Process: Unified Fix Dispatcher
+  4. Process: Unified Fix Dispatcher
      Single entry point routing any validation check ID to its fix algorithm.
      Entry point: run_fix(main_layer, val_id=..., target_fids=..., target_uuids=...).
 
-  4. Process: Soft Delete
+  5. Process: Soft Delete
      Batch marks checked features as 'deleted' in the status column and synchronizes
      across table rows, in-memory layers, and the primary building points layer.
      Entry points: delete_selected_features(), mark_feature_deleted(), sync_feature_status().
 
-  5. Process: Deduplicate Features (mv_2027_hp_4a_longitude__duplicate)
+  6. Process: Deduplicate Features (mv_2027_hp_4a_longitude__duplicate)
      Checks all columns to see if features with duplicate coordinates are identical.
      Retains only one active feature and marks duplicate features as 'deleted' in sf_status / status.
      Entry points: deduplicate_features(), _run_fix_longitude_duplicate().
@@ -485,6 +492,318 @@ def concatenate_ea_geocode(
     """
     if hasattr(dialog, "_fix_selected_features"):
         dialog._fix_selected_features("mv_2027_hp_4b_ea_geocode__missing", layer, table)
+
+
+# ===========================================================================
+# Fix 1b: mv_2027_hp_4b_bsn_geoid__invalid / missing — BSN GEOID Concatenation
+# ===========================================================================
+def _format_bsn_code(bsn_val: Any) -> Optional[str]:
+    """Safely formats and zero-pads BSN code to standard 5 digits if needed."""
+    if bsn_val is None or bsn_val == NULL:
+        return None
+    s = str(bsn_val).strip()
+    if not s or s.upper() in ("", "NULL", "NONE", "NAN") or s.startswith(("<", "Mock")):
+        return None
+    if s.isdigit() and len(s) < 5:
+        return s.zfill(5)
+    return s
+
+
+def compute_bsn_geoid_field_calculator(
+    feature: QgsFeature,
+    layer: Optional[QgsVectorLayer] = None,
+) -> str:
+    """
+    Computes BSN geoid following a 2-scenario fallback cascade:
+      1st Scenario:
+        - Priority 1: sf_ea_geocode + sf_bsn
+        - Priority 2: ea_geocode + bsn
+      2nd Scenario:
+        - Priority 3: sf_province_code + sf_city_mun_code + sf_barangay_code + sf_ean + sf_bsn
+        - Priority 4: province_code + city_mun_code + barangay_code + ean + bsn
+      Resilient Fallback:
+        - Synthesized EA geocode + available BSN.
+    """
+    # 1. Try QGIS Expression Engine
+    exp_str = (
+        'coalesce('
+        # 1st Scenario (Priority 1): sf_ea_geocode + sf_bsn
+        'if("sf_ea_geocode" IS NOT NULL AND upper(trim(to_string("sf_ea_geocode"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\') AND '
+        '"sf_bsn" IS NOT NULL AND upper(trim(to_string("sf_bsn"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\'), '
+        'concat(to_string("sf_ea_geocode"), '
+        'if(length(to_string("sf_bsn")) < 5, lpad(to_string("sf_bsn"), 5, \'0\'), to_string("sf_bsn"))), NULL), '
+        # 1st Scenario (Priority 2): ea_geocode + bsn
+        'if("ea_geocode" IS NOT NULL AND upper(trim(to_string("ea_geocode"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\') AND '
+        '"bsn" IS NOT NULL AND upper(trim(to_string("bsn"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\'), '
+        'concat(to_string("ea_geocode"), '
+        'if(length(to_string("bsn")) < 5, lpad(to_string("bsn"), 5, \'0\'), to_string("bsn"))), NULL), '
+        # 2nd Scenario (Priority 3): sf_province_code + sf_city_mun_code + sf_barangay_code + sf_ean + sf_bsn
+        'if("sf_province_code" IS NOT NULL AND upper(trim(to_string("sf_province_code"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\') AND '
+        '"sf_city_mun_code" IS NOT NULL AND upper(trim(to_string("sf_city_mun_code"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\') AND '
+        '"sf_barangay_code" IS NOT NULL AND upper(trim(to_string("sf_barangay_code"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\') AND '
+        '"sf_ean" IS NOT NULL AND upper(trim(to_string("sf_ean"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\') AND '
+        '"sf_bsn" IS NOT NULL AND upper(trim(to_string("sf_bsn"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\'), '
+        'concat(to_string("sf_province_code"), to_string("sf_city_mun_code"), '
+        'to_string("sf_barangay_code"), to_string("sf_ean"), '
+        'if(length(to_string("sf_bsn")) < 5, lpad(to_string("sf_bsn"), 5, \'0\'), to_string("sf_bsn"))), NULL), '
+        # 2nd Scenario (Priority 4): province_code + city_mun_code + barangay_code + ean + bsn
+        'if("province_code" IS NOT NULL AND upper(trim(to_string("province_code"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\') AND '
+        '"city_mun_code" IS NOT NULL AND upper(trim(to_string("city_mun_code"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\') AND '
+        '"barangay_code" IS NOT NULL AND upper(trim(to_string("barangay_code"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\') AND '
+        '"ean" IS NOT NULL AND upper(trim(to_string("ean"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\') AND '
+        '"bsn" IS NOT NULL AND upper(trim(to_string("bsn"))) NOT IN (\'\', \'NULL\', \'NONE\', \'NAN\'), '
+        'concat(to_string("province_code"), to_string("city_mun_code"), '
+        'to_string("barangay_code"), to_string("ean"), '
+        'if(length(to_string("bsn")) < 5, lpad(to_string("bsn"), 5, \'0\'), to_string("bsn"))), NULL), '
+        '\'\')'
+    )
+
+    try:
+        exp = QgsExpression(exp_str)
+        ctx = QgsExpressionContext()
+        if layer and hasattr(QgsExpressionContextUtils, "globalProjectLayerScopes"):
+            ctx.appendScopes(QgsExpressionContextUtils.globalProjectLayerScopes(layer))
+        ctx.setFeature(feature)
+        res = exp.evaluate(ctx)
+        if res and res != NULL and not str(res).startswith(("<", "Mock")) and str(res).strip():
+            return str(res).strip()
+    except Exception:
+        pass
+
+    # 2. Resilient Python Fallback Engine
+    # 1st Scenario - Priority 1: sf_ea_geocode + sf_bsn
+    sf_ea = _get_val(feature, "sf_ea_geocode")
+    sf_bsn = _format_bsn_code(_get_val(feature, "sf_bsn"))
+    if sf_ea is not None and sf_bsn is not None:
+        return f"{sf_ea}{sf_bsn}"
+
+    # 1st Scenario - Priority 2: ea_geocode + bsn
+    ea = _get_val(feature, "ea_geocode")
+    bsn = _format_bsn_code(_get_val(feature, "bsn"))
+    if ea is not None and bsn is not None:
+        return f"{ea}{bsn}"
+
+    # 2nd Scenario - Priority 3: sf_province_code, sf_city_mun_code, sf_barangay_code, sf_ean, sf_bsn
+    p1, m1, b1, e1 = (
+        _get_val(feature, "sf_province_code"),
+        _get_val(feature, "sf_city_mun_code"),
+        _get_val(feature, "sf_barangay_code"),
+        _get_val(feature, "sf_ean"),
+    )
+    if p1 is not None and m1 is not None and b1 is not None and e1 is not None and sf_bsn is not None:
+        return f"{p1}{m1}{b1}{e1}{sf_bsn}"
+
+    # 2nd Scenario - Priority 4: province_code, city_mun_code, barangay_code, ean, bsn
+    p2, m2, b2, e2 = (
+        _get_val(feature, "province_code"),
+        _get_val(feature, "city_mun_code"),
+        _get_val(feature, "barangay_code"),
+        _get_val(feature, "ean"),
+    )
+    if p2 is not None and m2 is not None and b2 is not None and e2 is not None and bsn is not None:
+        return f"{p2}{m2}{b2}{e2}{bsn}"
+
+    # Resilient fallback across mixed/joined columns
+    best_ea = sf_ea or ea
+    if not best_ea:
+        for fn in ("df_ea_geocode", "geocode"):
+            v = _get_val(feature, fn)
+            if v:
+                best_ea = v
+                break
+    if not best_ea:
+        best_ea = compute_ea_geocode_field_calculator(feature, layer)
+
+    best_bsn = sf_bsn or bsn
+    if not best_bsn:
+        for fn in ("df_bsn", "bsn_num", "bldg_sn"):
+            v = _format_bsn_code(_get_val(feature, fn))
+            if v:
+                best_bsn = v
+                break
+
+    if best_ea and best_bsn:
+        return f"{best_ea}{best_bsn}"
+
+    return ""
+
+
+def _run_fix_bsn_geoid(
+    main_layer: QgsVectorLayer,
+    target_fids: Optional[List[Any]] = None,
+    target_uuids: Optional[List[str]] = None,
+    feedback: Optional[QgsProcessingFeedback] = None,
+    error_layer: Optional[QgsVectorLayer] = None,
+    table: Optional[Any] = None,
+    dialog: Optional[Any] = None,
+    target_rows: Optional[List[int]] = None,
+    **kwargs,
+) -> Dict[str, Any]:
+    """
+    Execute automated fix: computes BSN geoid using the 2-scenario logic
+    and assigns it to the building points layer.
+    """
+    active_layer = main_layer if (main_layer and main_layer.isValid()) else error_layer
+    if not active_layer or not active_layer.isValid():
+        return {
+            "success": False,
+            "message": "Invalid or missing Building Points layer.",
+            "fixed_count": 0,
+            "updated_values": {},
+        }
+
+    is_targeted = (target_fids is not None) or (target_uuids is not None) or (target_rows is not None)
+    target_set = _flatten_ids(target_fids) | _flatten_ids(target_uuids)
+
+    if is_targeted and not target_set and target_rows:
+        # Extract target IDs from table if provided
+        if table is not None and is_valid_qobject(table):
+            for r in target_rows:
+                it0 = table.item(r, 0)
+                if it0:
+                    for off in (0, 1, 3, 4, 5, 6, 7):
+                        v = it0.data(Qt.UserRole + off)
+                        if v is not None:
+                            target_set.update(_flatten_ids(v))
+
+    if is_targeted and not target_set and (target_fids is not None or target_uuids is not None):
+        return {
+            "success": True,
+            "fixed_count": 0,
+            "updated_values": {},
+            "message": "No valid target ID or UUID provided.",
+        }
+
+    field_names = active_layer.fields().names() if hasattr(active_layer.fields(), "names") else []
+    target_fields = [f for f in ("sf_bsn_geoid", "bsn_geoid") if f in field_names]
+
+    if not target_fields:
+        if not active_layer.isEditable():
+            active_layer.startEditing()
+        active_layer.dataProvider().addAttributes([QgsField("sf_bsn_geoid", QVariant.String, len=30)])
+        active_layer.updateFields()
+        target_fields.append("sf_bsn_geoid")
+
+    if not active_layer.isEditable() and not active_layer.startEditing():
+        return {
+            "success": False,
+            "fixed_count": 0,
+            "updated_values": {},
+            "message": "Failed to start edit session on building points layer.",
+        }
+
+    # Also start editing on error_layer if different and valid
+    if error_layer and error_layer.isValid() and error_layer != active_layer:
+        if not error_layer.isEditable():
+            error_layer.startEditing()
+
+    # Build lookup of error_layer features for joined survey attributes
+    err_feats_lookup = {}
+    if error_layer and error_layer.isValid() and error_layer != active_layer:
+        for ef in error_layer.getFeatures():
+            ef_ids = _flatten_ids(ef.id())
+            for col in ("sf_fid", "fid", "df_fid", "sf_map_uuid", "map_uuid", "uuid"):
+                try:
+                    val = ef.attribute(col)
+                    if val is not None and val != NULL:
+                        ef_ids.update(_flatten_ids(val))
+                except Exception:
+                    pass
+            for eid in ef_ids:
+                err_feats_lookup[eid] = ef
+
+    updated_values: Dict[Any, Dict[str, str]] = {}
+    fixed_count = 0
+
+    for feat in active_layer.getFeatures():
+        if feedback and feedback.isCanceled():
+            break
+
+        f_id = feat.id()
+        feat_ids = _flatten_ids(f_id)
+        for col in ("sf_fid", "fid", "df_fid", "sf_map_uuid", "map_uuid", "uuid"):
+            if col in field_names:
+                try:
+                    val = feat.attribute(col)
+                    if val is not None and val != NULL:
+                        feat_ids.update(_flatten_ids(val))
+                except Exception:
+                    pass
+
+        if is_targeted and target_set and not (feat_ids & target_set):
+            continue
+
+        concat_bsn_geoid = compute_bsn_geoid_field_calculator(feat, active_layer)
+        if not concat_bsn_geoid:
+            # Try to find corresponding feature in error_layer
+            for kid in feat_ids:
+                if kid in err_feats_lookup:
+                    concat_bsn_geoid = compute_bsn_geoid_field_calculator(err_feats_lookup[kid], error_layer)
+                    if concat_bsn_geoid:
+                        break
+
+        if not concat_bsn_geoid:
+            continue
+
+        for tf_name in target_fields:
+            idx = active_layer.fields().indexOf(tf_name)
+            if idx != -1:
+                active_layer.changeAttributeValue(f_id, idx, concat_bsn_geoid)
+
+        payload = {"sf_bsn_geoid": concat_bsn_geoid, "bsn_geoid": concat_bsn_geoid}
+        for k in feat_ids:
+            updated_values[k] = payload
+
+        fixed_count += 1
+
+    # If active_layer was main_layer, also update error_layer if applicable
+    if error_layer and error_layer.isValid() and error_layer != active_layer:
+        err_field_names = error_layer.fields().names() if hasattr(error_layer.fields(), "names") else []
+        err_target_fields = [f for f in ("sf_bsn_geoid", "bsn_geoid") if f in err_field_names]
+        if err_target_fields:
+            for ef in error_layer.getFeatures():
+                ef_ids = _flatten_ids(ef.id())
+                for col in ("sf_fid", "fid", "df_fid", "sf_map_uuid", "map_uuid", "uuid"):
+                    if col in err_field_names:
+                        try:
+                            val = ef.attribute(col)
+                            if val is not None and val != NULL:
+                                ef_ids.update(_flatten_ids(val))
+                        except Exception:
+                            pass
+                for k in ef_ids:
+                    if k in updated_values:
+                        new_val = updated_values[k]["sf_bsn_geoid"]
+                        for tf_name in err_target_fields:
+                            idx = error_layer.fields().indexOf(tf_name)
+                            if idx != -1:
+                                error_layer.changeAttributeValue(ef.id(), idx, new_val)
+                        break
+
+    if feedback:
+        feedback.pushInfo(f"Calculated and assigned BSN GEOID for {fixed_count} feature(s).")
+
+    return {
+        "success": True,
+        "fixed_count": fixed_count,
+        "updated_values": updated_values,
+        "message": f"Successfully calculated and updated BSN GEOID for {fixed_count} feature(s).",
+    }
+
+
+def concatenate_bsn_geoid(
+    dialog: Any,
+    val_id: str,
+    layer: Any,
+    table: Any,
+) -> None:
+    """
+    Process handler for concatenating BSN GEOID on checked table rows.
+    Keeps all algorithmic processing inside cbms_mv_fix.py.
+    """
+    target_rule = val_id if val_id and "bsn_geoid" in str(val_id) else "mv_2027_hp_4b_bsn_geoid__invalid"
+    if hasattr(dialog, "_fix_selected_features"):
+        dialog._fix_selected_features(target_rule, layer, table)
 
 
 # ===========================================================================
@@ -1165,6 +1484,10 @@ def generate_point_geometry(
 _FIX_DISPATCH = {
     "mv_2027_hp_4b_ea_geocode__missing": _run_fix_ea_geocode,
     "mv_2027_hp_1a_map_uuid__missing": _run_fix_map_uuid_missing,
+    "mv_2027_hp_4b_bsn_geoid__invalid": _run_fix_bsn_geoid,
+    "mv_2027_hp_4b_bsn_geoid_invalid": _run_fix_bsn_geoid,
+    "mv_2027_hp_4b_bsn_geoid__missing": _run_fix_bsn_geoid,
+    "mv_2027_hp_4b_bsn_geoid_missing": _run_fix_bsn_geoid,
 }
 
 
@@ -1182,7 +1505,11 @@ def run_fix(
     """
     val_id = kwargs.pop("val_id", None)
 
-    handler = _FIX_DISPATCH.get(val_id, _run_fix_ea_geocode)
+    if val_id and "bsn_geoid" in str(val_id).lower():
+        handler = _run_fix_bsn_geoid
+    else:
+        handler = _FIX_DISPATCH.get(val_id, _run_fix_ea_geocode)
+
     return handler(
         main_layer,
         target_fids=target_fids,
@@ -2251,4 +2578,6 @@ def _run_fix_longitude_duplicate(
 
 # Register in dispatch table
 _FIX_DISPATCH["mv_2027_hp_4a_longitude__duplicate"] = _run_fix_longitude_duplicate
+_FIX_DISPATCH["mv_2027_hp_4b_bsn_geoid__invalid"] = _run_fix_bsn_geoid
+_FIX_DISPATCH["mv_2027_hp_4b_bsn_geoid__missing"] = _run_fix_bsn_geoid
 
