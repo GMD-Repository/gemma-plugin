@@ -242,6 +242,7 @@ def load_cbms_geojson(alg, parameters, param_name, context, feedback=None, prefi
 def load_cbms_csv(alg, parameters, param_name, context, feedback=None, prefix="df_"):
     """Loads and validates a CBMS CSV table from algorithm parameters.
     Automatically prefixes all attribute fields with prefix (default: 'df_') and ensures 'df_fid' is present.
+    Renames 'mapid' to 'map_uuid' if present.
     Filters out rows marked with status == 'deleted'.
     """
     csv_path = alg.parameterAsFile(parameters, param_name, context)
@@ -262,6 +263,22 @@ def load_cbms_csv(alg, parameters, param_name, context, feedback=None, prefix="d
 
     if source is None:
         raise QgsProcessingException(alg.invalidSourceError(parameters, param_name))
+
+    # Rename 'mapid' to 'map_uuid' (case-insensitive) if present and map_uuid doesn't exist
+    target_field = "mapid"
+    target_new_name = "map_uuid"
+
+    source = processing.run(
+        "native:renametablefield",
+        {
+            "INPUT": source,
+            "FIELD": target_field,
+            "NEW_NAME": target_new_name,
+            "OUTPUT": "memory:",
+        },
+        context=context,
+        feedback=feedback,
+    )["OUTPUT"]
 
     if prefix:
         source = add_prefix_to_layer_fields(source, prefix=prefix, context=context, feedback=feedback)
