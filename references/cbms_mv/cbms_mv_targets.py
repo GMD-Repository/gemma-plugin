@@ -16,7 +16,7 @@ CBMS_MV_CATEGORIES: Dict[str, Dict[str, str]] = {
     "missing": {
         "label": "Missing / Blank",
         "desc": "NA or blank values that require field or questionnaire verification",
-        "icon": "mActionSelectUnset.svg",
+        "icon": "mIconWarning.svg",
     },
     "invalid": {
         "label": "Invalid Values",
@@ -41,7 +41,7 @@ CBMS_MV_CATEGORIES: Dict[str, Dict[str, str]] = {
     "unexpected": {
         "label": "Unexpected / Skipping",
         "desc": "Routing logic skips and Priority D inconsistencies",
-        "icon": "mIconQuestion.svg",
+        "icon": "mActionHelpContents.svg",
     },
     "outlier": {
         "label": "Outliers",
