@@ -112,7 +112,7 @@ class mv_2027_hp_4b_longitude__invalid(QgsProcessingAlgorithm):
                 "FIELD_TYPE": 0,  # Float / Double
                 "FIELD_LENGTH": 0,
                 "FIELD_PRECISION": 0,
-                "FORMULA":  'CASE \r\n WHEN "sf_longitude" IS NOT NULL AND "sf_latitude" IS NOT NULL \r\n AND is_empty_or_null($geometry) = False\r\n THEN distance(\r\n transform(make_point("sf_longitude", "sf_latitude"), \'EPSG:4326\', \'EPSG:3857\'),\r\n transform($geometry, \'EPSG:4326\', \'EPSG:3857\')\r\n )\r\n ELSE NULL\r\nEND',
+                "FORMULA":  'CASE \r\n WHEN "sf_longitude" IS NOT NULL AND "sf_longitude" != \'\' \r\n AND "sf_latitude" IS NOT NULL AND "sf_latitude" != \'\' \r\n AND is_empty_or_null($geometry) = False\r\n THEN distance(\r\n transform(make_point(to_real("sf_longitude"), to_real("sf_latitude")), \'EPSG:4326\', \'EPSG:3857\'),\r\n transform($geometry, \'EPSG:4326\', \'EPSG:3857\')\r\n )\r\n ELSE NULL\r\nEND',
                 "OUTPUT": "memory:",
             },
             context=context,
