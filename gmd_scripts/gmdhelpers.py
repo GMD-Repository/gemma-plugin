@@ -28,6 +28,18 @@ from qgis.core import (
 )
 
 
+def ensure_processing_initialized():
+    """Ensure QGIS core Processing providers (including 'native') are registered and available."""
+    try:
+        from qgis.core import QgsApplication
+        reg = QgsApplication.processingRegistry()
+        if reg and (not reg.providerById("native") or not reg.algorithmById("native:refactorfields")):
+            from processing.core.Processing import Processing
+            Processing.initialize()
+    except Exception:
+        pass
+
+
 def check_geometry_validity(geom: QgsGeometry) -> bool:
     """Recreates check_geometry_validity from R: checks if geometry is non-empty and valid."""
     if geom is None or geom.isEmpty():
@@ -175,22 +187,63 @@ def add_prefix_to_layer_fields(layer, prefix="", context=None, feedback=None):
             "type": f.type(),
         })
 
-    return processing.run(
-        "native:refactorfields",
-        {
-            "INPUT": layer,
-            "FIELDS_MAPPING": field_mapping,
-            "OUTPUT": "memory:",
-        },
-        context=context,
-        feedback=feedback,
-    )["OUTPUT"]
+    ensure_processing_initialized()
+    try:
+        return processing.run(
+            "native:refactorfields",
+            {
+                "INPUT": layer,
+                "FIELDS_MAPPING": field_mapping,
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+    except Exception as exc:
+        if "not found" in str(exc).lower() or "native:refactorfields" in str(exc).lower() or "refactorfields" in str(exc).lower():
+            is_spatial = hasattr(layer, "isSpatial") and layer.isSpatial()
+            geom_str = QgsWkbTypes.displayString(layer.wkbType()) if is_spatial else "None"
+            crs_str = f"?crs={layer.crs().authid()}" if (is_spatial and hasattr(layer, "crs") and layer.crs().isValid()) else ""
+            mem_layer = QgsVectorLayer(f"{geom_str}{crs_str}", f"{layer.name()}_prefixed", "memory")
+            dp = mem_layer.dataProvider()
+            new_fields = []
+            for m in field_mapping:
+                new_fields.append(QgsField(m["name"], m["type"], len=m.get("length", 0), prec=m.get("precision", 0)))
+            dp.addAttributes(new_fields)
+            mem_layer.updateFields()
+
+            new_features = []
+            for feat in layer.getFeatures():
+                nf = QgsFeature(mem_layer.fields())
+                if is_spatial:
+                    nf.setGeometry(feat.geometry())
+                attrs = []
+                for m in field_mapping:
+                    name = m["name"]
+                    expr = m["expression"]
+                    if expr == "$id":
+                        attrs.append(feat.id())
+                    else:
+                        old_f_name = expr.strip('"')
+                        val = feat[old_f_name] if old_f_name in feat.fields().names() else None
+                        if name.lower().endswith(("_x_current", "_y_current")):
+                            try:
+                                val = float(val) if val not in (None, "", NULL) else 0.0
+                            except (ValueError, TypeError):
+                                val = 0.0
+                        attrs.append(val)
+                nf.setAttributes(attrs)
+                new_features.append(nf)
+            dp.addFeatures(new_features)
+            mem_layer.updateExtents()
+            return mem_layer
+        raise
 
 
 def load_cbms_geojson(alg, parameters, param_name, context, feedback=None, prefix="sf_"):
     """Loads and validates a CBMS GeoJSON vector layer or source from algorithm parameters.
     Automatically prefixes all attribute fields with prefix (default: 'sf_') and ensures 'sf_fid' is present.
-    Filters out features marked with status == 'deleted'.
+    Filters out features marked with is_deleted == True.
     """
     if isinstance(feedback, str):
         prefix = feedback
@@ -216,20 +269,20 @@ def load_cbms_geojson(alg, parameters, param_name, context, feedback=None, prefi
     if prefix:
         source = add_prefix_to_layer_fields(source, prefix=prefix, context=context, feedback=feedback)
 
-    # Filter out features marked with status == 'deleted' if status column exists
-    status_field = None
+    # Filter out features marked with is_deleted == True if is_deleted column exists
+    is_deleted_field = None
     for fld in source.fields():
         name_lower = fld.name().lower()
-        if name_lower in ("status", f"{prefix}status".lower()):
-            status_field = fld.name()
+        if name_lower in ("is_deleted", f"{prefix}is_deleted".lower()):
+            is_deleted_field = fld.name()
             break
 
-    if status_field:
+    if is_deleted_field:
         source = processing.run(
             "native:extractbyexpression",
             {
                 "INPUT": source,
-                "EXPRESSION": f'coalesce(lower("{status_field}"), \'\') != \'deleted\'',
+                "EXPRESSION": f'"{is_deleted_field}" IS NOT TRUE',
                 "OUTPUT": "memory:",
             },
             context=context,
@@ -493,11 +546,27 @@ def remove_layer_lengths(layer, context=None, feedback=None):
             'name': f.name(),
             'type': f.type()
         })
-    return processing.run("native:refactorfields", {
-        'INPUT': layer,
-        'FIELDS_MAPPING': field_mapping,
-        'OUTPUT': 'memory:'
-    }, context=context, feedback=feedback)['OUTPUT']
+    ensure_processing_initialized()
+    try:
+        return processing.run("native:refactorfields", {
+            'INPUT': layer,
+            'FIELDS_MAPPING': field_mapping,
+            'OUTPUT': 'memory:'
+        }, context=context, feedback=feedback)['OUTPUT']
+    except Exception as exc:
+        if "not found" in str(exc).lower() or "native:refactorfields" in str(exc).lower() or "refactorfields" in str(exc).lower():
+            is_spatial = hasattr(layer, "isSpatial") and layer.isSpatial()
+            geom_str = QgsWkbTypes.displayString(layer.wkbType()) if is_spatial else "None"
+            crs_str = f"?crs={layer.crs().authid()}" if (is_spatial and hasattr(layer, "crs") and layer.crs().isValid()) else ""
+            mem_layer = QgsVectorLayer(f"{geom_str}{crs_str}", f"{layer.name()}_nolength", "memory")
+            dp = mem_layer.dataProvider()
+            new_fields = [QgsField(f.name(), f.type(), len=0, prec=f.precision()) for f in layer.fields()]
+            dp.addAttributes(new_fields)
+            mem_layer.updateFields()
+            dp.addFeatures(list(layer.getFeatures()))
+            mem_layer.updateExtents()
+            return mem_layer
+        raise
 
 
 def set_status_bar(self, status_bar):
@@ -660,16 +729,40 @@ def select_mv(layer, *extra_fields, context=None, feedback=None, base_fields=Non
     if not fields_to_retain:
         return layer
 
-    return processing.run(
-        "native:retainfields",
-        {
-            "INPUT": layer,
-            "FIELDS": fields_to_retain,
-            "OUTPUT": "memory:",
-        },
-        context=context,
-        feedback=feedback,
-    )["OUTPUT"]
+    ensure_processing_initialized()
+    try:
+        return processing.run(
+            "native:retainfields",
+            {
+                "INPUT": layer,
+                "FIELDS": fields_to_retain,
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+    except Exception as exc:
+        if "not found" in str(exc).lower() or "native:retainfields" in str(exc).lower() or "retainfields" in str(exc).lower():
+            is_spatial = hasattr(layer, "isSpatial") and layer.isSpatial()
+            geom_str = QgsWkbTypes.displayString(layer.wkbType()) if is_spatial else "None"
+            crs_str = f"?crs={layer.crs().authid()}" if (is_spatial and hasattr(layer, "crs") and layer.crs().isValid()) else ""
+            mem_layer = QgsVectorLayer(f"{geom_str}{crs_str}", f"{layer.name()}_retained", "memory")
+            dp = mem_layer.dataProvider()
+            retained_fields = [f for f in layer.fields() if f.name() in fields_to_retain]
+            dp.addAttributes(retained_fields)
+            mem_layer.updateFields()
+
+            new_features = []
+            for feat in layer.getFeatures():
+                nf = QgsFeature(mem_layer.fields())
+                if is_spatial:
+                    nf.setGeometry(feat.geometry())
+                nf.setAttributes([feat[f.name()] for f in retained_fields])
+                new_features.append(nf)
+            dp.addFeatures(new_features)
+            mem_layer.updateExtents()
+            return mem_layer
+        raise
 
 
 def load_cbms_json_to_layer(json_input: Any, layer_name: str = "cbms_json_table", add_to_project: bool = True) -> QgsVectorLayer:

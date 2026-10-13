@@ -130,6 +130,18 @@ def is_valid_qobject(obj) -> bool:
         return False
 
 
+def ensure_processing_initialized():
+    """Ensure QGIS core Processing providers (including 'native') are registered and available."""
+    try:
+        from qgis.core import QgsApplication
+        reg = QgsApplication.processingRegistry()
+        if reg and (not reg.providerById("native") or not reg.algorithmById("native:refactorfields")):
+            from processing.core.Processing import Processing
+            Processing.initialize()
+    except Exception:
+        pass
+
+
 def _is_empty_val(v) -> bool:
     """Check if an attribute value is empty, None, or NULL."""
     if v is None or v == NULL:
@@ -360,6 +372,27 @@ class SortableTableWidgetItem(QTableWidgetItem):
                     pass
         return super().__lt__(other)
 
+class CbmsmvDockWidget(QDockWidget):
+    """
+    Dedicated QDockWidget wrapper for docking the CBMS MV tool into QGIS.
+    Tracks user closure explicitly via closeEvent to prevent spurious closes
+    during drag-and-drop undocking or floating.
+    """
+    closed = pyqtSignal()
+
+    def __init__(self, title: str, parent: Optional[QWidget] = None):
+        if parent is not None and not isinstance(parent, QWidget):
+            parent = None
+        super().__init__(title, parent)
+
+    def closeEvent(self, event):
+        """Emit closed signal when user clicks the [X] button on the dock widget."""
+        try:
+            self.closed.emit()
+        except Exception:
+            pass
+        super().closeEvent(event)
+
 
 class CbmsmvDialog(QDialog):
     """
@@ -415,8 +448,9 @@ class CbmsmvDialog(QDialog):
         self._pending_json_edits: Dict[str, Dict[str, Any]] = {}
         self._is_docked = False
         self._is_switching_dock = False
+        self._user_toggled_load_inputs = False
         self._dock_widget: Optional[QDockWidget] = None
-
+        ensure_processing_initialized()
         self.context = QgsProcessingContext()
         self.context.setProject(self.project)
 
@@ -430,6 +464,14 @@ class CbmsmvDialog(QDialog):
         self._apply_styling()
         self._load_saved_settings()
         self.refresh_rules()
+
+        # Connect to project signals to keep load inputs default synchronized with layers panel
+        if self.project:
+            try:
+                self.project.projectRead.connect(self._on_project_changed)
+                self.project.cleared.connect(self._on_project_changed)
+            except Exception:
+                pass
 
         # Restore docked mode if user previously had it docked
         was_docked = self.settings.value("cbms_mv/is_docked", False, type=bool)
@@ -841,6 +883,12 @@ class CbmsmvDialog(QDialog):
 
         self.config_tab_widget = QTabWidget()
         self.config_tab_widget.setObjectName("configTabWidget")
+        self.config_tab_widget.setUsesScrollButtons(True)
+        tb_config = self.config_tab_widget.tabBar()
+        if tb_config is not None:
+            tb_config.setElideMode(Qt.ElideNone)
+            tb_config.setExpanding(False)
+            tb_config.setUsesScrollButtons(True)
 
         self.tab_data_config = self._create_tab_data_config()
         self.tab_validation_rules = self._create_tab_validation_rules()
@@ -877,6 +925,12 @@ class CbmsmvDialog(QDialog):
         # Subpage 1: Results tabs
         self.results_tab_widget = QTabWidget()
         self.results_tab_widget.setObjectName("resultsTabWidget")
+        self.results_tab_widget.setUsesScrollButtons(True)
+        tb_results = self.results_tab_widget.tabBar()
+        if tb_results is not None:
+            tb_results.setElideMode(Qt.ElideNone)
+            tb_results.setExpanding(False)
+            tb_results.setUsesScrollButtons(True)
         self.results_tab_widget.currentChanged.connect(self._on_results_tab_changed)
         self.results_stack.addWidget(self.results_tab_widget)
 
@@ -1181,6 +1235,13 @@ class CbmsmvDialog(QDialog):
                 tab_index,
                 f"{cat_info['label']} — {cat_flag_count:,} flagged feature(s) across {len(cat_items)} check(s)",
             )
+
+        # Ensure tabs do not elide, do not compress, and show scroll buttons when needed
+        tb = self.results_tab_widget.tabBar()
+        if tb is not None:
+            tb.setElideMode(Qt.ElideNone)
+            tb.setExpanding(False)
+            tb.setUsesScrollButtons(True)
 
         # Switch subpage of results_stack to show the tab widget
         self.results_stack.setCurrentIndex(1)
@@ -4064,6 +4125,31 @@ class CbmsmvDialog(QDialog):
         else:
             self.dock_window()
 
+    def _restore_central_container_to_dialog(self):
+        """Safely reparent central container back into dialog layout, ensuring it is never deleted."""
+        if not hasattr(self, "_central_container") or not self._central_container:
+            return
+        if not is_valid_qobject(self._central_container):
+            return
+
+        try:
+            if hasattr(self, "_dock_widget") and self._dock_widget:
+                if self._dock_widget.widget() == self._central_container:
+                    self._dock_widget.setWidget(None)
+
+            self._central_container.setParent(self)
+            if hasattr(self, "_dialog_layout") and self._dialog_layout:
+                if self._dialog_layout.indexOf(self._central_container) == -1:
+                    self._dialog_layout.addWidget(self._central_container)
+            self._central_container.setVisible(True)
+            self._central_container.show()
+            if self._central_container.layout():
+                self._central_container.layout().activate()
+            if hasattr(self, "_dialog_layout") and self._dialog_layout:
+                self._dialog_layout.activate()
+        except Exception:
+            pass
+
     def dock_window(self):
         """Dock the CBMS MV tool at the bottom center of QGIS mainWindow."""
         if not is_valid_qobject(self):
@@ -4074,7 +4160,7 @@ class CbmsmvDialog(QDialog):
         self._is_switching_dock = True
         try:
             if not self._dock_widget:
-                self._dock_widget = QDockWidget("2027 CBMS Form 2 Map Validation", self.iface.mainWindow())
+                self._dock_widget = CbmsmvDockWidget("2027 CBMS Form 2 Map Validation", self.iface.mainWindow())
                 self._dock_widget.setObjectName("CbmsmvMainDock")
                 self._dock_widget.setAllowedAreas(
                     Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea | Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea
@@ -4082,7 +4168,8 @@ class CbmsmvDialog(QDialog):
                 self._dock_widget.setFeatures(
                     QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable
                 )
-                self._dock_widget.visibilityChanged.connect(self._on_dock_visibility_changed)
+                self._dock_widget.closed.connect(self._on_dock_closed)
+                self._dock_widget.topLevelChanged.connect(self._on_dock_top_level_changed)
                 self._dock_widget.setStyleSheet(self.styleSheet())
 
             # Reparent central container to dock widget
@@ -4123,22 +4210,12 @@ class CbmsmvDialog(QDialog):
                 self._dock_widget.hide()
 
             # Reparent central container back to dialog
-            self._central_container.setParent(self)
-            self._dialog_layout.addWidget(self._central_container)
-            self._central_container.setVisible(True)
-            self._central_container.show()
-            self._central_container.update()
-            if self._central_container.layout():
-                self._central_container.layout().activate()
-            self._dialog_layout.activate()
+            self._restore_central_container_to_dialog()
 
             if hasattr(self, "main_stack") and self.main_stack.currentWidget():
                 self.main_stack.currentWidget().show()
                 self.main_stack.currentWidget().setVisible(True)
                 self.main_stack.show()
-
-            if self._dock_widget and self._dock_widget.widget() == self._central_container:
-                self._dock_widget.setWidget(None)
 
             self._is_docked = False
             if hasattr(self, "btn_dock"):
@@ -4154,25 +4231,35 @@ class CbmsmvDialog(QDialog):
         finally:
             self._is_switching_dock = False
 
-    def _on_dock_visibility_changed(self, visible: bool):
-        """Handle dock widget close or visibility toggle."""
+    def _on_dock_closed(self):
+        """Handle dock widget close button [X] clicked by user."""
         if not is_valid_qobject(self):
             return
         if getattr(self, "_is_switching_dock", False) or getattr(self, "_is_closing", False):
             return
-        if not visible and getattr(self, "_is_docked", False):
-            if is_valid_qobject(self):
-                self._is_docked = False
-                try:
-                    self.close()
-                except Exception:
-                    pass
+        self.close()
+
+    def _on_dock_top_level_changed(self, floating: bool):
+        """Handle dock widget becoming floating or re-docking via dragging."""
+        if not is_valid_qobject(self):
+            return
+        if getattr(self, "_is_switching_dock", False) or getattr(self, "_is_closing", False):
+            return
+        if floating:
+            self.lbl_footer_status.setText("Floating dock window.")
+        else:
+            self.lbl_footer_status.setText("Docked in QGIS workspace.")
 
     def showEvent(self, event):
-        """Re-check theme when dialog is shown and update styling if changed."""
+        """Re-check theme when dialog is shown, update styling if changed, and sync load inputs checkbox default."""
         if not is_valid_qobject(self):
             return
         super().showEvent(event)
+        try:
+            if not getattr(self, "_user_toggled_load_inputs", False) and not getattr(self, "_is_switching_dock", False):
+                self._update_load_inputs_default()
+        except Exception:
+            pass
         try:
             palette = self.palette()
             bg_color = palette.color(palette.Window)
@@ -4189,6 +4276,7 @@ class CbmsmvDialog(QDialog):
             event.accept()
             return
         self._is_closing = True
+        self._user_toggled_load_inputs = False
         try:
             main_layer = self._find_existing_main_building_layer()
             has_unsaved = (
@@ -4217,20 +4305,32 @@ class CbmsmvDialog(QDialog):
                         self._dock_widget.show()
                     return
 
+            # ALWAYS ensure central container is safely reparented back to self BEFORE destroying dock
+            self._restore_central_container_to_dialog()
+
             # Clean up main dock widget if docked
             if hasattr(self, "_dock_widget") and self._dock_widget:
                 dock = self._dock_widget
                 self._dock_widget = None
                 try:
-                    try:
-                        dock.visibilityChanged.disconnect(self._on_dock_visibility_changed)
-                    except Exception:
-                        pass
+                    if hasattr(dock, "closed"):
+                        try:
+                            dock.closed.disconnect()
+                        except Exception:
+                            pass
+                    if hasattr(dock, "topLevelChanged"):
+                        try:
+                            dock.topLevelChanged.disconnect()
+                        except Exception:
+                            pass
                     if self.iface and hasattr(self.iface, "removeDockWidget"):
                         self.iface.removeDockWidget(dock)
                     dock.deleteLater()
                 except Exception:
                     pass
+
+            self._is_docked = False
+            self.settings.setValue("cbms_mv/is_docked", False)
 
             if hasattr(self, "_active_review_dock") and self._active_review_dock:
                 dock = self._active_review_dock
@@ -4244,7 +4344,22 @@ class CbmsmvDialog(QDialog):
                     dock.close()
                 except Exception:
                     pass
+
+            if self.project:
+                try:
+                    self.project.projectRead.disconnect(self._on_project_changed)
+                except Exception:
+                    pass
+                try:
+                    self.project.cleared.disconnect(self._on_project_changed)
+                except Exception:
+                    pass
+
             super().closeEvent(event)
+            try:
+                self.finished.emit(0)
+            except Exception:
+                pass
         finally:
             self._is_closing = False
 
@@ -4341,7 +4456,9 @@ class CbmsmvDialog(QDialog):
             "If checked, automatically loads Form 2 CSV/table, Geotagged Building Points, "
             "and all sublayers in Base Layers GPKG into QGIS Layers Panel during validation."
         )
+        self.chk_load_inputs_canvas.clicked.connect(self._on_user_toggled_load_inputs)
         self.chk_load_inputs_canvas.stateChanged.connect(self._on_inputs_changed)
+        self._update_load_inputs_default()
         grid_sources.addWidget(self.chk_load_inputs_canvas, 3, 0, 1, 3)
 
         container_layout.addWidget(grp_sources)
@@ -4420,12 +4537,6 @@ class CbmsmvDialog(QDialog):
         points = self.file_points.filePath().strip()
         base = self.file_base.filePath().strip()
 
-        # Check if '2027 CBMS Primary Inputs' group already exists in QGIS layer tree
-        proj = self.project if hasattr(self, "project") and self.project else QgsProject.instance()
-        if proj and proj.layerTreeRoot() and proj.layerTreeRoot().findGroup("2027 CBMS Primary Inputs"):
-            if hasattr(self, "chk_load_inputs_canvas"):
-                self.chk_load_inputs_canvas.setChecked(False)
-
         # Persist paths and load options
         self.settings.setValue(SETTINGS_KEY_FORM2, form2)
         self.settings.setValue(SETTINGS_KEY_POINTS, points)
@@ -4490,12 +4601,69 @@ class CbmsmvDialog(QDialog):
                 is_optional=True,
             )
 
+    def _has_primary_inputs_group(self) -> bool:
+        """
+        Check if the '2027 CBMS Primary Inputs' group exists and contains layers in the QGIS Layers Panel.
+        Returns:
+            bool: True if group exists and contains one or more layers; False otherwise.
+        """
+        proj = self.project if hasattr(self, "project") and self.project else QgsProject.instance()
+        if not proj or not hasattr(proj, "layerTreeRoot"):
+            return False
+        root = proj.layerTreeRoot()
+        if not root:
+            return False
+        grp = root.findGroup("2027 CBMS Primary Inputs")
+        if grp is None:
+            return False
+        if hasattr(grp, "findLayers"):
+            tree_layers = grp.findLayers()
+            if not tree_layers:
+                return False
+            valid_layers = [
+                tl for tl in tree_layers
+                if tl and getattr(tl, "layer", None) and tl.layer() is not None and tl.layer().isValid()
+            ]
+            if any(getattr(tl, "layer", None) for tl in tree_layers):
+                return len(valid_layers) > 0
+            return len(tree_layers) > 0
+        if hasattr(grp, "children"):
+            return len(grp.children()) > 0
+        return True
+
+    def _update_load_inputs_default(self):
+        """
+        Dynamically update the checked state of chk_load_inputs_canvas based on whether
+        the '2027 CBMS Primary Inputs' group is already present in the layers panel.
+        Checked by default if group is absent or empty, unchecked if already loaded.
+        """
+        if not hasattr(self, "chk_load_inputs_canvas"):
+            return
+        has_group = self._has_primary_inputs_group()
+        should_check = not has_group
+        self.chk_load_inputs_canvas.blockSignals(True)
+        try:
+            self.chk_load_inputs_canvas.setChecked(should_check)
+        finally:
+            self.chk_load_inputs_canvas.blockSignals(False)
+        self.settings.setValue(SETTINGS_KEY_LOAD_INPUTS, should_check)
+
+    def _on_user_toggled_load_inputs(self):
+        """Track explicit user click on the load primary inputs checkbox."""
+        self._user_toggled_load_inputs = True
+
+    def _on_project_changed(self):
+        """Handle QGIS project read or cleared event to re-evaluate input layer presence."""
+        if not is_valid_qobject(self):
+            return
+        self._user_toggled_load_inputs = False
+        self._update_load_inputs_default()
+
     def _load_saved_settings(self):
         """Load previously saved filepaths and load options from QSettings if available."""
         saved_form2 = self.settings.value(SETTINGS_KEY_FORM2, "", type=str) or self.settings.value(SETTINGS_KEY_FORM2_LEGACY, "", type=str)
         saved_points = self.settings.value(SETTINGS_KEY_POINTS, "", type=str)
         saved_base = self.settings.value(SETTINGS_KEY_BASE, "", type=str)
-        saved_load_inputs = self.settings.value(SETTINGS_KEY_LOAD_INPUTS, False, type=bool)
 
         if saved_form2:
             self.file_form2.setFilePath(saved_form2)
@@ -4505,7 +4673,7 @@ class CbmsmvDialog(QDialog):
             self.file_base.setFilePath(saved_base)
 
         if hasattr(self, "chk_load_inputs_canvas"):
-            self.chk_load_inputs_canvas.setChecked(bool(saved_load_inputs))
+            self._update_load_inputs_default()
 
         self._on_inputs_changed()
 
@@ -5173,7 +5341,8 @@ class CbmsmvDialog(QDialog):
                 color: {colors['text_secondary']};
                 font-size: 11px;
                 font-weight: 600;
-                padding: 6px 14px;
+                padding: 6px 16px;
+                min-width: 90px;
                 border-top-left-radius: 4px;
                 border-top-right-radius: 4px;
                 margin-right: 2px;
@@ -5183,6 +5352,21 @@ class CbmsmvDialog(QDialog):
                 color: {colors['title']};
                 border: 1px solid {colors['border']};
                 border-bottom-color: {colors['surface_bg']};
+            }}
+            #resultsTabWidget QTabBar::tab {{
+                min-width: 100px;
+                padding: 6px 16px;
+            }}
+            QTabBar QToolButton {{
+                background-color: {colors['surface_elevated']};
+                border: 1px solid {colors['border']};
+                border-radius: 3px;
+                margin: 2px;
+                padding: 1px;
+            }}
+            QTabBar QToolButton:hover {{
+                background-color: {colors['surface_hover']};
+                border-color: {colors['border_focus']};
             }}
             QLineEdit {{
                 font-size: 11px;
@@ -5573,6 +5757,7 @@ class CbmsmvDialog(QDialog):
 
         # Uncheck canvas loading checkbox after loading inputs to prevent duplicate loading
         self.chk_load_inputs_canvas.setChecked(False)
+        self._user_toggled_load_inputs = False
 
     # -----------------------------------------------------------------------
     # Execution Logic: Iterating Selected Algorithms
@@ -5692,6 +5877,7 @@ class CbmsmvDialog(QDialog):
         self._execution_summary.clear()
 
         # 5. Execution context and feedback
+        ensure_processing_initialized()
         self.context = QgsProcessingContext()
         self.context.setProject(self.project or QgsProject.instance())
         feedback = ProcessingFeedbackBridge(self._log_info, self._log_warning, self._log_error)

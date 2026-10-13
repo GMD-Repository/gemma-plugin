@@ -63,6 +63,11 @@ class GMDPipeline(object):
 
 
     def initProcessing(self):
+        try:
+            from processing.core.Processing import Processing
+            Processing.initialize()
+        except Exception:
+            pass
         self.provider = GmdPipelineProvider()
         QgsApplication.processingRegistry().addProvider(self.provider)
 
@@ -359,10 +364,17 @@ class GMDPipeline(object):
             if not is_deleted:
                 try:
                     if getattr(self.cbmsmv_dlg, "_is_docked", False) and getattr(self.cbmsmv_dlg, "_dock_widget", None):
-                        self.cbmsmv_dlg._dock_widget.show()
-                        self.cbmsmv_dlg._dock_widget.raise_()
-                        return
-                    else:
+                        dock = self.cbmsmv_dlg._dock_widget
+                        try:
+                            import sip
+                            dock_deleted = sip.isdeleted(dock)
+                        except Exception:
+                            dock_deleted = False
+                        if not dock_deleted:
+                            dock.show()
+                            dock.raise_()
+                            return
+                    elif getattr(self.cbmsmv_dlg, "isVisible", lambda: False)():
                         self.cbmsmv_dlg.showNormal()
                         self.cbmsmv_dlg.raise_()
                         self.cbmsmv_dlg.activateWindow()
