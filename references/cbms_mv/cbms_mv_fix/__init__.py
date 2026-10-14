@@ -19,6 +19,29 @@ def _get_candidate_file_stems(val_id: str) -> List[str]:
     clean_id = str(val_id).strip()
     candidates = [f"{clean_id}_fix"]
 
+    # Map validation IDs / action names to their dedicated process module file stems
+    _ACTION_STEM_MAP = {
+        "mv_2027_hp_4b_ea_geocode__missing": "concatenate_ea_geocode_fix",
+        "mv_2027_hp_4b_ea_geocode_missing": "concatenate_ea_geocode_fix",
+        "mv_2027_hp_1a_map_uuid__missing": "generate_point_geometry_fix",
+        "mv_2027_hp_1a_map_uuid_missing": "generate_point_geometry_fix",
+        "mv_2027_hp_4a_longitude__duplicate": "deduplicate_features_fix",
+        "mv_2027_hp_4a_longitude_duplicate": "deduplicate_features_fix",
+        "mv_2027_hp_4b_bsn_geoid__invalid": "concatenate_bsn_geoid_fix",
+        "mv_2027_hp_4b_bsn_geoid_invalid": "concatenate_bsn_geoid_fix",
+        "mv_2027_hp_4b_bsn_geoid__missing": "concatenate_bsn_geoid_fix",
+        "mv_2027_hp_4b_bsn_geoid_missing": "concatenate_bsn_geoid_fix",
+        "copy_geometry_to_coordinates": "copy_geometry_to_coordinates_fix",
+        "copy_geometry": "copy_geometry_to_coordinates_fix",
+        "delete_selected_features": "delete_selected_features_fix",
+    }
+    if clean_id in _ACTION_STEM_MAP:
+        candidates.append(_ACTION_STEM_MAP[clean_id])
+    if "bsn_geoid" in clean_id.lower():
+        candidates.append("concatenate_bsn_geoid_fix")
+    if any(k in clean_id.lower() for k in ("copy_geometry", "geometry_to_coord")):
+        candidates.append("copy_geometry_to_coordinates_fix")
+
     # Handle underscore variations: single _ vs double __
     if "__" in clean_id:
         candidates.append(f"{clean_id.replace('__', '_')}_fix")
@@ -27,7 +50,7 @@ def _get_candidate_file_stems(val_id: str) -> List[str]:
             if f"_{suffix}" in clean_id and f"__{suffix}" not in clean_id:
                 candidates.append(f"{clean_id.replace(f'_{suffix}', f'__{suffix}')}_fix")
 
-    # All known fixes are consolidated into the unified cbms_mv_fix module
+    # Fallback to unified cbms_mv_fix facade
     candidates.append("cbms_mv_fix")
 
     # Preserve order while removing duplicates
@@ -134,3 +157,18 @@ def get_fix_handler(val_id: str) -> Optional[Callable]:
         return _dispatched_run_fix
 
     return run_fix_fn
+
+
+try:
+    from .cbms_mv_fix import (
+        copy_geometry_to_coordinates,
+        concatenate_ea_geocode,
+        concatenate_bsn_geoid,
+        generate_point_geometry,
+        delete_selected_features,
+        deduplicate_features,
+        run_fix,
+    )
+except ImportError:
+    pass
+

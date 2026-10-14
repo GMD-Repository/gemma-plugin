@@ -31,7 +31,7 @@ class TestCbmsMvDropdownActions(unittest.TestCase):
             self.fix_mod = importlib.import_module("references.cbms_mv.cbms_mv_fix.cbms_mv_fix")
         except ModuleNotFoundError:
             self.fix_mod = importlib.import_module(
-                "references.cbms_mv.cbms_mv_fix.mv_2027_hp_4b_ea_geocode__missing_fix"
+                "references.cbms_mv.cbms_mv_fix.concatenate_ea_geocode_fix"
             )
 
     def test_dropdown_and_update_selected_toolbar_structure(self):
@@ -59,6 +59,7 @@ class TestCbmsMvDropdownActions(unittest.TestCase):
         self.assertIn('combo_actions.addItem(concat_ic, "Concatenate the ea_geocode")', content)
         self.assertIn('combo_actions.addItem(del_icon_menu, "Delete selected features")', content)
         self.assertIn('combo_actions.addItem(geom_ic, "Generate point geometry")', content)
+        self.assertIn('combo_actions.addItem(copy_geom_ic, "Copy the geometry and paste it into the longitude and latitude columns")', content)
 
         # Verify redundant delete button was removed from toolbar
         self.assertNotIn('toolbar.addWidget(btn_delete_selected)', content)
@@ -68,6 +69,7 @@ class TestCbmsMvDropdownActions(unittest.TestCase):
         self.assertIn('def _on_concatenate_ea_geocode(', content)
         self.assertIn('def _delete_selected_features(', content)
         self.assertIn('def _on_generate_point_geometry(', content)
+        self.assertIn('def _on_copy_geometry_to_coordinates(', content)
 
     def test_save_button_confirmation_dialog(self):
         """Verify Save Changes button triggers Save / Discard / Cancel confirmation."""
