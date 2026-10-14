@@ -57,14 +57,22 @@ FIX_DESCRIPTION = (
 
 def delete_selected_features(
     dialog: Any,
-    val_id: str,
-    layer: Any,
-    table: Any,
+    *args,
     combo_actions: Optional[Any] = None,
     btn_actions: Optional[Any] = None,
     btn_update_selected: Optional[Any] = None,
+    **kwargs,
 ) -> None:
     """Batch mark all checked features as 'deleted' in the status column, deduplicated by unique (fid + map_uuid)."""
+    if len(args) >= 2 and hasattr(args[1], "rowCount"):
+        layer, table = args[0], args[1]
+    elif len(args) >= 3 and hasattr(args[2], "rowCount"):
+        layer, table = args[1], args[2]
+    else:
+        layer = kwargs.get("layer")
+        table = kwargs.get("table")
+
+    val_id = args[0] if (len(args) >= 3 and isinstance(args[0], str)) else "delete_selected_features"
     if not is_valid_qobject(dialog) or not is_valid_qobject(table):
         return
     checked_rows = []

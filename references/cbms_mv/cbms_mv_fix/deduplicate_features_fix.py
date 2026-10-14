@@ -97,14 +97,13 @@ def _is_deduplication_check_col(col_name: str) -> bool:
 
 def deduplicate_features(
     dialog: Any,
-    val_id: str,
-    layer: Any,
-    table: Any,
+    *args,
     combo_actions: Optional[Any] = None,
     btn_actions: Optional[Any] = None,
     btn_update_selected: Optional[Any] = None,
     process_all: bool = False,
     prompt_confirm: bool = True,
+    **kwargs,
 ) -> Dict[str, Any]:
     """
     Interactive process handler for deduplicating features in the table:
@@ -114,6 +113,16 @@ def deduplicate_features(
     4. Marks all other duplicate features as 'deleted' in sf_status / status.
     5. Styles the table cells with 'deleted'.
     """
+    if len(args) >= 2 and hasattr(args[1], "rowCount"):
+        layer, table = args[0], args[1]
+    elif len(args) >= 3 and hasattr(args[2], "rowCount"):
+        layer, table = args[1], args[2]
+    else:
+        layer = kwargs.get("layer")
+        table = kwargs.get("table")
+
+    val_id = args[0] if (len(args) >= 3 and isinstance(args[0], str)) else "deduplicate_features"
+
     if not is_valid_qobject(dialog) or not is_valid_qobject(table):
         return {"success": False, "fixed_count": 0, "message": "Dialog or table is not valid."}
 

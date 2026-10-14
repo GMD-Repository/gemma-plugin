@@ -184,5 +184,108 @@ class TestCbmsMvModularActions(unittest.TestCase):
         self.assertIn("latitude", mod.DEDUPLICATION_CHECK_COLS)
 
 
+    def test_action_registry_deleted_and_streamlined(self):
+        """Verify the complex dynamic action registry was deleted from cbms_mv_fix.__init__."""
+        pkg = importlib.import_module("references.cbms_mv.cbms_mv_fix")
+        # Dynamic discovery registries removed
+        self.assertFalse(hasattr(pkg, "AVAILABLE_ACTIONS"))
+        self.assertFalse(hasattr(pkg, "ACTION_MODULE_MAP"))
+        self.assertFalse(hasattr(pkg, "resolve_action_stem"))
+        # Direct action functions exported
+        self.assertTrue(callable(getattr(pkg, "concatenate_ea_geocode", None)))
+        self.assertTrue(callable(getattr(pkg, "delete_selected_features", None)))
+        self.assertTrue(callable(getattr(pkg, "generate_point_geometry", None)))
+        self.assertTrue(callable(getattr(pkg, "deduplicate_features", None)))
+        self.assertTrue(callable(getattr(pkg, "concatenate_bsn_geoid", None)))
+        self.assertTrue(callable(getattr(pkg, "copy_geometry_to_coordinates", None)))
+
+    def test_action_processed_regardless_of_validation_rule_or_file(self):
+        """Verify action is processed directly regardless of what validation check or tab is active."""
+        pkg = importlib.import_module("references.cbms_mv.cbms_mv_fix")
+        from qgis.core import QgsVectorLayer, QgsField, QgsFeature
+        from PyQt5.QtCore import QVariant
+
+        # Create a layer with a totally mismatched validation ID
+        arbitrary_val_id = "custom_validation_rule_xyz_999"
+        layer = QgsVectorLayer("Point?crs=epsg:4326", "arbitrary_layer", "memory")
+        pr = layer.dataProvider()
+        pr.addAttributes([
+            QgsField("fid", QVariant.Int),
+            QgsField("map_uuid", QVariant.String),
+            QgsField("province_code", QVariant.String),
+            QgsField("city_mun_code", QVariant.String),
+            QgsField("barangay_code", QVariant.String),
+            QgsField("ean", QVariant.String),
+            QgsField("bsn", QVariant.String),
+        ])
+        layer.updateFields()
+
+        f = QgsFeature(layer.fields())
+        f.setAttribute("fid", 10)
+        f.setAttribute("map_uuid", "uuid-any-10")
+        f.setAttribute("province_code", "09")
+        f.setAttribute("city_mun_code", "12")
+        f.setAttribute("barangay_code", "01")
+        f.setAttribute("ean", "001")
+        f.setAttribute("bsn", "00002")
+        pr.addFeatures([f])
+
+        # Regardless of arbitrary_val_id, the chosen action handler runs directly
+        ea_handler = pkg.get_fix_handler("concatenate_ea_geocode")
+        res_ea = ea_handler(layer, target_keys=["10_uuid-any-10"])
+        self.assertTrue(res_ea.get("success"))
+        self.assertEqual(res_ea.get("fixed_count"), 1)
+        self.assertIn("10_uuid-any-10", res_ea.get("updated_values", {}))
+        self.assertEqual(res_ea["updated_values"]["10_uuid-any-10"]["sf_ea_geocode"], "091201001")
+
+        bsn_handler = pkg.get_fix_handler("concatenate_bsn_geoid")
+        res_bsn = bsn_handler(layer, target_keys=["10_uuid-any-10"])
+        self.assertTrue(res_bsn.get("success"))
+        self.assertEqual(res_bsn.get("fixed_count"), 1)
+        self.assertEqual(res_bsn["updated_values"]["10_uuid-any-10"]["sf_bsn_geoid"], "09120100100002")
+
+    def test_actions_work_without_main_building_layer(self):
+        """Verify actions process cleanly on error_layer alone when main_layer is None."""
+        pkg = importlib.import_module("references.cbms_mv.cbms_mv_fix")
+        from qgis.core import QgsVectorLayer, QgsField, QgsFeature, QgsGeometry, QgsPointXY
+        from PyQt5.QtCore import QVariant
+
+        layer = QgsVectorLayer("Point?crs=epsg:4326", "error_layer_only", "memory")
+        pr = layer.dataProvider()
+        pr.addAttributes([
+            QgsField("fid", QVariant.Int),
+            QgsField("map_uuid", QVariant.String),
+            QgsField("sf_province_code", QVariant.String),
+            QgsField("sf_city_mun_code", QVariant.String),
+            QgsField("sf_barangay_code", QVariant.String),
+            QgsField("sf_ean", QVariant.String),
+            QgsField("sf_bsn", QVariant.String),
+        ])
+        layer.updateFields()
+
+        f = QgsFeature(layer.fields())
+        f.setAttribute("fid", 1)
+        f.setAttribute("map_uuid", "m-1")
+        f.setAttribute("sf_province_code", "01")
+        f.setAttribute("sf_city_mun_code", "02")
+        f.setAttribute("sf_barangay_code", "03")
+        f.setAttribute("sf_ean", "004")
+        f.setAttribute("sf_bsn", "00005")
+        f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(121.0, 14.0)))
+        pr.addFeatures([f])
+
+        # Test with main_layer=None
+        ea_handler = pkg.get_fix_handler("concatenate_ea_geocode")
+        res = ea_handler(None, target_keys=["1_m-1"], error_layer=layer)
+        self.assertTrue(res.get("success"))
+        self.assertEqual(res.get("fixed_count"), 1)
+
+        copy_handler = pkg.get_fix_handler("copy_geometry_to_coordinates")
+        res_copy = copy_handler(None, target_keys=["1_m-1"], error_layer=layer)
+        self.assertTrue(res_copy.get("success"))
+        self.assertEqual(res_copy.get("fixed_count"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
+

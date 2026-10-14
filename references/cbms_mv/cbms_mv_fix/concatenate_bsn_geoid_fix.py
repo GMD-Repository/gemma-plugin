@@ -374,14 +374,22 @@ def _run_fix_bsn_geoid(
 
 def concatenate_bsn_geoid(
     dialog: Any,
-    val_id: str,
-    layer: Any,
-    table: Any,
+    *args,
+    **kwargs,
 ) -> None:
     """
     Process handler for concatenating BSN GEOID on checked table rows.
+    Processes the action directly regardless of validation check or file.
     """
-    target_rule = val_id if val_id and "bsn_geoid" in str(val_id) else "mv_2027_hp_4b_bsn_geoid__invalid"
+    if len(args) >= 2 and hasattr(args[1], "rowCount"):
+        layer, table = args[0], args[1]
+    elif len(args) >= 3 and hasattr(args[2], "rowCount"):
+        layer, table = args[1], args[2]
+    else:
+        layer = kwargs.get("layer")
+        table = kwargs.get("table")
+
+    target_rule = "concatenate_bsn_geoid"
     if hasattr(dialog, "_fix_selected_features"):
         dialog._fix_selected_features(target_rule, layer, table)
 
