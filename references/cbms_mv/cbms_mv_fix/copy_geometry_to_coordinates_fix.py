@@ -65,7 +65,7 @@ def _run_fix_copy_geometry_to_coordinates(
     if not active_layer or not active_layer.isValid():
         return {
             "success": False,
-            "message": "Invalid or missing active vector layer.",
+            "message": "The map layer is missing or could not be opened.",
             "fixed_count": 0,
             "updated_values": {},
         }
@@ -73,7 +73,7 @@ def _run_fix_copy_geometry_to_coordinates(
     if not active_layer.isEditable() and not active_layer.startEditing():
         return {
             "success": False,
-            "message": "Failed to start edit session on layer.",
+            "message": "The map layer could not be opened for editing.",
             "fixed_count": 0,
             "updated_values": {},
         }
@@ -313,9 +313,9 @@ def _run_fix_copy_geometry_to_coordinates(
         "fixed_count": fixed_count,
         "updated_values": updated_values,
         "message": (
-            f"Successfully copied geometry coordinates to longitude and latitude for {fixed_count} feature(s)."
+            f"Copied map coordinates to longitude and latitude for {fixed_count} record(s)."
             if fixed_count > 0 else
-            "No features updated (ensure selected feature(s) have point geometries)."
+            "No records updated (please make sure the selected records have points on the map)."
         ),
     }
 

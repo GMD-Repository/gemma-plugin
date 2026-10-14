@@ -142,7 +142,7 @@ def _run_fix_ea_geocode(
     error_layer = kwargs.get("error_layer")
     active_layer = main_layer if (main_layer and main_layer.isValid()) else error_layer
     if not active_layer or not active_layer.isValid():
-        return {"success": False, "message": "Invalid or missing Building Points layer.", "fixed_count": 0, "updated_values": {}}
+        return {"success": False, "message": "The Building Points file is missing or could not be opened.", "fixed_count": 0, "updated_values": {}}
 
     target_keys_set = set(target_keys) if target_keys else set()
     target_keys_lower = {str(k).strip().lower() for k in target_keys_set if k}
@@ -163,7 +163,7 @@ def _run_fix_ea_geocode(
         target_fields.append("ea_geocode")
 
     if not active_layer.isEditable() and not active_layer.startEditing():
-        return {"success": False, "fixed_count": 0, "updated_values": {}, "message": "Failed to start edit session on building points layer."}
+        return {"success": False, "fixed_count": 0, "updated_values": {}, "message": "The Building Points file could not be opened for editing."}
 
     if error_layer and error_layer.isValid() and error_layer != active_layer:
         if not error_layer.isEditable():
@@ -261,7 +261,7 @@ def _run_fix_ea_geocode(
         "success": True,
         "fixed_count": fixed_count,
         "updated_values": updated_values,
-        "message": f"Successfully calculated and updated EA geocode for {fixed_count} feature(s).",
+        "message": f"Updated EA geocode for {fixed_count} record(s).",
     }
 
 

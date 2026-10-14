@@ -142,8 +142,8 @@ def deduplicate_features(
         if QMessageBox:
             QMessageBox.information(
                 dialog,
-                "Cannot Deduplicate",
-                "At least 2 features are required to check for duplicate coordinates and identical columns.",
+                "Not Enough Records",
+                "Please select at least 2 records to check for duplicates.",
             )
         return {"success": False, "fixed_count": 0, "message": "Fewer than 2 rows to process."}
 
@@ -327,11 +327,11 @@ def deduplicate_features(
             grouped_rows.update(new_g)
 
     if coord_dup_groups and (len(dup_groups) == len(coord_dup_groups)):
-        dup_type_desc = "duplicate coordinates (matching map_uuid, bsn_geoid, longitude, and latitude up to 7 decimal places)"
+        dup_type_desc = "duplicate features with same location and same IDs"
     elif attr_dup_groups and not coord_dup_groups:
-        dup_type_desc = "identical survey attributes across all columns"
+        dup_type_desc = "same values in all checked columns"
     else:
-        dup_type_desc = "duplicate coordinates (7 decimals) and identical survey attributes"
+        dup_type_desc = "same location and same values"
 
     if not dup_groups:
         diff_cols = []
@@ -365,18 +365,26 @@ def deduplicate_features(
         if len(diff_cols) > 6:
             diff_details += f"\n... and {len(diff_cols) - 6} more column(s)"
 
+        cols_checked_str = (
+            '"map_uuid",\n    "bsn_geoid",\n    "geocode",\n    "ea_geocode",\n    '
+            '"region_code",\n    "province_code",\n    "city_mun_code",\n    "barangay_code",\n    '
+            '"ean",\n    "bsn",\n    "status",\n    "longitude",\n    "longitud",\n    '
+            '"latitude",\n    "latitud",\n    "pos_longit",\n    "pos_longitude",\n    '
+            '"pos_latitu",\n    "pos_latitude"'
+        )
+
         msg = (
-            "The features in this tab do not match duplicate criteria (checked duplicate coordinates on map_uuid, bsn_geoid, longitude, and latitude to 7 decimals, as well as identical survey columns).\n\n"
-            f"Differences were detected in:\n{diff_details}\n\n"
-            "Features with differing survey data will not be marked as deleted automatically."
+            f"No duplicate records found (these columns will be checked to consider them duplicates:\n    {cols_checked_str})\n\n"
+            f"The selected records have different values in:\n{diff_details}\n\n"
+            "Records with different values will not be deleted."
         ) if diff_cols else (
-            "No duplicate features matching coordinate check (7 decimals) or identical survey columns were found."
+            f"No duplicate features (these columns will be checked to consider them duplicates:\n    {cols_checked_str})"
         )
 
         if QMessageBox:
-            QMessageBox.warning(dialog, "Features Not Identical", msg)
+            QMessageBox.warning(dialog, "No Duplicates Found", msg)
         if hasattr(dialog, "lbl_footer_status") and dialog.lbl_footer_status:
-            dialog.lbl_footer_status.setText("Deduplication skipped: Features differ across columns or coordinates.")
+            dialog.lbl_footer_status.setText("No duplicates found. Nothing was deleted.")
         return {"success": False, "fixed_count": 0, "message": msg}
 
     total_to_delete = sum(len(r_list) - 1 for r_list in dup_groups)
@@ -385,16 +393,16 @@ def deduplicate_features(
     if prompt_confirm and QMessageBox:
         reply = QMessageBox.question(
             dialog,
-            "Deduplicate Features",
-            f"Found {len(dup_groups)} group(s) of duplicate features ({dup_type_desc}).\n\n"
-            f"• Retain active: {retained_count} feature(s) (without 'deleted' status)\n"
-            f"• Mark as 'deleted': {total_to_delete} duplicate feature(s)\n\n"
-            f"Do you want to proceed and mark the duplicates as 'deleted' in sf_status?",
+            "Remove Duplicates",
+            f"Found {len(dup_groups)} set(s) of duplicate records ({dup_type_desc}).\n\n"
+            f"• Keep: {retained_count} record(s)\n"
+            f"• Mark as deleted: {total_to_delete} duplicate record(s)\n\n"
+            f"Do you want to continue?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes,
         )
         if reply != QMessageBox.Yes:
-            return {"success": False, "fixed_count": 0, "message": "Operation cancelled by user."}
+            return {"success": False, "fixed_count": 0, "message": "Cancelled."}
 
     try:
         main_layer = dialog._get_or_load_main_building_layer() if hasattr(dialog, "_get_or_load_main_building_layer") else None
@@ -489,8 +497,8 @@ def deduplicate_features(
 
     if hasattr(dialog, "lbl_footer_status") and dialog.lbl_footer_status:
         dialog.lbl_footer_status.setText(
-            f"Deduplicated features: Retained {retained_count} active feature(s), "
-            f"marked {deleted_count} duplicate(s) as 'deleted' in sf_status (Press Ctrl+S to save)"
+            f"Removed duplicates: kept {retained_count} record(s), "
+            f"marked {deleted_count} as deleted. Click 'Save Changes' (Ctrl+S) to keep them."
         )
     if hasattr(dialog, "iface") and dialog.iface and dialog.iface.mapCanvas():
         dialog.iface.mapCanvas().refresh()
@@ -500,8 +508,8 @@ def deduplicate_features(
         "fixed_count": deleted_count,
         "updated_values": updated_values,
         "message": (
-            f"Successfully deduplicated features: Retained {retained_count} active feature(s) "
-            f"and marked {deleted_count} duplicate feature(s) as 'deleted'."
+            f"Removed duplicates: kept {retained_count} record(s) "
+            f"and marked {deleted_count} duplicate(s) as deleted."
         ),
     }
 

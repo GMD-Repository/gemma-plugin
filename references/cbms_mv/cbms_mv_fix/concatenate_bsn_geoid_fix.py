@@ -201,7 +201,7 @@ def _run_fix_bsn_geoid(
     if not active_layer or not active_layer.isValid():
         return {
             "success": False,
-            "message": "Invalid or missing Building Points layer.",
+            "message": "The Building Points file is missing or could not be opened.",
             "fixed_count": 0,
             "updated_values": {},
         }
@@ -244,7 +244,7 @@ def _run_fix_bsn_geoid(
             "success": False,
             "fixed_count": 0,
             "updated_values": {},
-            "message": "Failed to start edit session on building points layer.",
+            "message": "The Building Points file could not be opened for editing.",
         }
 
     if error_layer and error_layer.isValid() and error_layer != active_layer:
@@ -368,7 +368,7 @@ def _run_fix_bsn_geoid(
         "success": True,
         "fixed_count": fixed_count,
         "updated_values": updated_values,
-        "message": f"Successfully calculated and updated BSN GEOID for {fixed_count} feature(s).",
+        "message": f"Updated BSN GEOID for {fixed_count} record(s).",
     }
 
 

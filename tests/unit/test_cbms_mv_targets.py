@@ -4,6 +4,7 @@ from references.cbms_mv.cbms_mv_targets import (
     resolve_target_columns,
     get_rule_category,
     get_category_info,
+    get_rule_workflow_info,
     CBMS_MV_CATEGORIES,
 )
 
@@ -148,6 +149,57 @@ class TestCbmsMvTargets(unittest.TestCase):
                     [],
                     f"Unexpected float pointSize in QFont {matches} found in {path} at line {line_no}: {line.strip()}"
                 )
+
+
+    def test_get_rule_workflow_info_phases(self):
+        """Verify rules are categorized into Phase 1 -> 4 with correct relative rank."""
+        # Phase 1: Duplicates
+        rank1, label1 = get_rule_workflow_info("mv_2027_hp_4a_longitude__duplicate", flags=2)
+        self.assertIn("Phase 1", label1)
+
+        # Phase 2: Missing Points / Geometries
+        rank2, label2 = get_rule_workflow_info("mv_2027_hp_1a_map_uuid__missing", flags=5)
+        self.assertIn("Phase 2", label2)
+
+        # Phase 3: Spatial Consistency
+        rank3, label3 = get_rule_workflow_info("mv_2027_hp_1a_longitude__invalid", flags=2)
+        self.assertIn("Phase 3", label3)
+
+        # Phase 4: Geocoding & BSN
+        rank4, label4 = get_rule_workflow_info("mv_2027_hp_4b_ea_geocode__missing", flags=2)
+        self.assertIn("Phase 4", label4)
+
+        # Order must strictly follow Phase 1 < Phase 2 < Phase 3 < Phase 4
+        self.assertLess(rank1, rank2)
+        self.assertLess(rank2, rank3)
+        self.assertLess(rank3, rank4)
+
+        # Flagged rules must rank before clean rules (flags == 0)
+        rank4_clean, _ = get_rule_workflow_info("mv_2027_hp_4b_ea_geocode__missing", flags=0)
+        self.assertLess(rank4, rank4_clean)
+
+        # Strict Flagged-First: lowest-priority flagged rule (Phase 4) must rank before highest-priority clean rule (Phase 1 Clean)
+        rank1_clean, _ = get_rule_workflow_info("mv_2027_hp_4a_longitude__duplicate", flags=0)
+        self.assertLess(rank4, rank1_clean)
+
+    def test_summary_scorecard_recommended_workflow_sort_wiring(self):
+        """Verify cbmsmv_dialog.py wires Recommended Workflow sort at index 0 and as default."""
+        with open("references/cbms_mv/cbmsmv_dialog.py", "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn('combo_sort.addItem("Sort: Default", (6, Qt.AscendingOrder))', content)
+        self.assertIn("table.setColumnCount(7)", content)
+        self.assertIn("table.setColumnHidden(6, True)", content)
+        self.assertIn("table.sortItems(6, Qt.AscendingOrder)", content)
+        self.assertIn("combo_sort.setCurrentIndex(0)", content)
+
+    def test_summary_scorecard_read_only(self):
+        """Verify cbmsmv_dialog.py configures Summary Overview table as strictly read-only."""
+        with open("references/cbms_mv/cbmsmv_dialog.py", "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("table.setEditTriggers(QAbstractItemView.NoEditTriggers)", content)
+        self.assertIn("it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)", content)
 
 
 if __name__ == "__main__":

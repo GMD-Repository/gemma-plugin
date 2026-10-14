@@ -11,6 +11,7 @@ import os
 import csv
 import tempfile
 import unittest
+from unittest.mock import patch
 import importlib
 from tests.mocks.qgis_mock import setup_qgis_mock_if_needed
 
@@ -193,6 +194,89 @@ class TestCbmsMvSaveChanges(unittest.TestCase):
         finally:
             if os.path.exists(temp_csv_path):
                 os.remove(temp_csv_path)
+
+    def test_discard_changes_clears_pending_edits_and_leaves_disk_untouched(self):
+        """Verify _discard_changes clears in-memory edits without modifying disk files."""
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="", delete=False, suffix=".csv") as f:
+            writer = csv.writer(f)
+            writer.writerow(["fid", "map_uuid", "barangay_code", "updated_variables"])
+            writer.writerow(["1", "uuid-301", "original_bg", ""])
+            temp_csv_path = f.name
+
+        try:
+            class MockFileWidget:
+                def __init__(self, path): self._path = path
+                def filePath(self): return self._path
+
+            dialog = self.dialog_mod.CbmsmvDialog.__new__(self.dialog_mod.CbmsmvDialog)
+            dialog.file_form2 = MockFileWidget(temp_csv_path)
+            dialog.project = None
+            dialog._pending_json_edits = {
+                "fid_1": {
+                    "df_fid": "1",
+                    "uuid": "uuid-301",
+                    "props": {"barangay_code": "modified_uncommitted_bg"},
+                }
+            }
+            dialog._find_existing_main_building_layer = lambda: None
+            dialog._get_or_load_form2_layer = lambda: None
+            dialog.iface = None
+            dialog._rules = []
+            dialog._result_layers = {}
+            dialog.lbl_footer_status = type("MockLabel", (), {"setText": lambda s, t: None})()
+
+            # Execute discard
+            with patch("references.cbms_mv.cbmsmv_dialog.is_valid_qobject", return_value=True), \
+                 patch("qgis.PyQt.QtWidgets.QMessageBox.information"):
+                res = dialog._discard_changes()
+
+            self.assertTrue(res)
+            # Pending edits in memory must be cleared
+            self.assertEqual(dialog._pending_json_edits, {})
+
+            # Disk file must still have original_bg
+            with open(temp_csv_path, "r", encoding="utf-8") as f:
+                rows = list(csv.reader(f))
+            self.assertEqual(rows[1][2], "original_bg")
+        finally:
+            if os.path.exists(temp_csv_path):
+                os.remove(temp_csv_path)
+
+    def test_discard_changes_rolls_back_editable_layers(self):
+        """Verify _discard_changes rolls back all active layer edit buffers."""
+        dialog = self.dialog_mod.CbmsmvDialog.__new__(self.dialog_mod.CbmsmvDialog)
+        dialog._pending_json_edits = {"k": {"props": {"a": "1"}}}
+        dialog.iface = None
+        dialog._rules = []
+        dialog.lbl_footer_status = type("MockLabel", (), {"setText": lambda s, t: None})()
+
+        rolled_back = []
+
+        class MockVectorLayer:
+            def __init__(self, name):
+                self._name = name
+            def isValid(self): return True
+            def isEditable(self): return True
+            def isModified(self): return True
+            def rollBack(self): rolled_back.append(self._name)
+            def startEditing(self): pass
+
+        main_l = MockVectorLayer("main_building")
+        form2_l = MockVectorLayer("form2_layer")
+        res_l = MockVectorLayer("result_layer")
+
+        dialog._find_existing_main_building_layer = lambda: main_l
+        dialog._get_or_load_form2_layer = lambda: form2_l
+        dialog._result_layers = {"test_val": {"layer": res_l}}
+
+        with patch("references.cbms_mv.cbmsmv_dialog.is_valid_qobject", return_value=True), \
+             patch("qgis.PyQt.QtWidgets.QMessageBox.information"):
+            dialog._discard_changes()
+
+        self.assertIn("main_building", rolled_back)
+        self.assertIn("form2_layer", rolled_back)
+        self.assertIn("result_layer", rolled_back)
+        self.assertEqual(dialog._pending_json_edits, {})
 
 
 if __name__ == "__main__":
