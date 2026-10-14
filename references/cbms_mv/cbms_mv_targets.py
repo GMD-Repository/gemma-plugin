@@ -5,7 +5,7 @@ Resolves target fields defined directly in algorithm scripts (via TARGET_FIELDS)
 against actual layer attribute columns for UI highlighting, focus chips,
 auto-scrolling, and Review Dock guidance.
 """
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import re
 
 # Optional dictionary for legacy / external overrides if needed
@@ -127,3 +127,80 @@ def resolve_target_columns(
                 break
 
     return matched
+
+
+def get_rule_workflow_info(val_id: str, flags: int = 0, status: str = "") -> Tuple[int, str]:
+    """
+    Return (sort_rank, phase_label) for a map validation rule.
+    Follows the 4-phase dependency resolution pipeline:
+      Phase 1: Duplicates & Retain (Priority 100)
+      Phase 2: Missing Points & Geometries (Priority 200)
+      Phase 3: Spatial Consistency & Coordinates (Priority 300)
+      Phase 4: Identifiers & Geocoding Concatenation (Priority 400)
+      Phase 5: Other Integrity Checks (Priority 500)
+
+    Strict Flagged-First sorting:
+      1. All flagged rules across Phase 1 -> 5 appear at the top (ranks 1,000,000 - 5,999,999).
+      2. Execution errors (if any) follow flagged rules (ranks 6,000,000 - 9,999,999).
+      3. Clean checks (flags == 0) are placed at the bottom (ranks 10,000,000+),
+         still organized by Phase 1 -> Phase 5.
+    """
+    clean_id = str(val_id).strip().lower()
+
+    if "duplicate" in clean_id or "deduplicate" in clean_id:
+        phase_label = "Phase 1: Duplicates & Retain"
+        base_priority = 100
+        if "longitude" in clean_id:
+            sub = 10
+        elif "map_uuid" in clean_id:
+            sub = 20
+        else:
+            sub = 30
+    elif any(k in clean_id for k in ("hp_1a_map_uuid__missing", "hp_4a_map_uuid__missing", "missing_point", "geom__missing")) or ("missing" in clean_id and "map_uuid" in clean_id):
+        phase_label = "Phase 2: Missing Points & Links"
+        base_priority = 200
+        if "hp_1a" in clean_id:
+            sub = 10
+        elif "hp_4a" in clean_id:
+            sub = 20
+        else:
+            sub = 30
+    elif any(k in clean_id for k in ("longitude", "latitude", "coord", "geom", "bounds", "outside")) or ("invalid" in clean_id and ("map_uuid" in clean_id or "geom" in clean_id or "longitude" in clean_id)):
+        phase_label = "Phase 3: Spatial Consistency"
+        base_priority = 300
+        if "map_uuid__invalid" in clean_id:
+            sub = 10
+        elif "longitude__invalid" in clean_id or "latitude__invalid" in clean_id:
+            sub = 20
+        elif "geom__invalid" in clean_id:
+            sub = 30
+        elif "ea_geocode__invalid" in clean_id:
+            sub = 40
+        else:
+            sub = 50
+    elif any(k in clean_id for k in ("ea_geocode", "bsn_geoid", "geocode", "bsn")):
+        phase_label = "Phase 4: Geocoding & BSN"
+        base_priority = 400
+        if "ea_geocode" in clean_id:
+            sub = 10
+        elif "bsn_geoid" in clean_id:
+            sub = 20
+        else:
+            sub = 30
+    else:
+        phase_label = "Phase 5: Other Checks"
+        base_priority = 500
+        sub = 50
+
+    is_error = str(status).strip().lower().startswith(("error", "failed"))
+    if flags > 0:
+        clean_offset = 0
+    elif is_error:
+        clean_offset = 5_000_000
+    else:
+        clean_offset = 10_000_000
+
+    flag_penalty = max(0, 9999 - min(int(flags), 9999))
+    sort_rank = clean_offset + (base_priority * 10_000) + (sub * 10_000) + flag_penalty
+
+    return sort_rank, phase_label

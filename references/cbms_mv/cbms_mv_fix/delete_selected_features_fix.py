@@ -83,14 +83,14 @@ def delete_selected_features(
 
     if not checked_rows:
         if QMessageBox:
-            QMessageBox.information(dialog, "No Selection", "Please check at least one row using the checkboxes.")
+            QMessageBox.information(dialog, "Nothing Selected", "Please tick the box of at least one row first.")
         return
 
     if QMessageBox:
         reply = QMessageBox.question(
             dialog,
-            "Delete Selected Features",
-            f"Are you sure you want to mark {len(checked_rows)} selected feature(s) as 'deleted' in the status column?",
+            "Delete Selected Records",
+            f"Mark {len(checked_rows)} selected record(s) as deleted?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes,
         )
@@ -203,7 +203,7 @@ def delete_selected_features(
 
     if hasattr(dialog, "lbl_footer_status") and dialog.lbl_footer_status:
         dialog.lbl_footer_status.setText(
-            f"Marked {deleted_count} feature(s) as 'deleted' in status column (Press Ctrl+S to save)"
+            f"Marked {deleted_count} record(s) as deleted. Click 'Save Changes' (Ctrl+S) to keep them."
         )
     if hasattr(dialog, "iface") and dialog.iface and dialog.iface.mapCanvas():
         dialog.iface.mapCanvas().refresh()
@@ -290,9 +290,9 @@ def mark_feature_deleted(
         if prompt_confirm and QMessageBox:
             reply = QMessageBox.question(
                 dialog,
-                "Restore Feature?",
-                f"Feature FID #{source_fid or err_fid} is currently marked as 'deleted'.\n\n"
-                f"Do you want to restore this feature and clear its status?",
+                "Restore Record?",
+                f"Record #{source_fid or err_fid} is currently marked as deleted.\n\n"
+                f"Do you want to restore it?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
@@ -386,11 +386,11 @@ def mark_feature_deleted(
     if hasattr(dialog, "lbl_footer_status") and dialog.lbl_footer_status:
         if new_status.lower() == "deleted":
             dialog.lbl_footer_status.setText(
-                f"Marked feature FID #{source_fid or err_fid} as 'deleted' in status column (Press Ctrl+S to save)"
+                f"Marked record #{source_fid or err_fid} as deleted. Click 'Save Changes' (Ctrl+S) to keep it."
             )
         else:
             dialog.lbl_footer_status.setText(
-                f"Restored status for feature FID #{source_fid or err_fid} (Press Ctrl+S to save)"
+                f"Restored record #{source_fid or err_fid}. Click 'Save Changes' (Ctrl+S) to keep it."
             )
 
     if hasattr(dialog, "iface") and dialog.iface and dialog.iface.mapCanvas():
@@ -469,7 +469,7 @@ def run_fix(
 ) -> Dict[str, Any]:
     """Execute automated fix for soft delete."""
     if not main_layer or not main_layer.isValid():
-        return {"success": False, "message": "Invalid layer.", "fixed_count": 0, "updated_values": {}}
+        return {"success": False, "message": "The map layer is missing or could not be opened.", "fixed_count": 0, "updated_values": {}}
 
     target_keys_set = set(target_keys) if target_keys else set()
     target_keys_lower = {str(k).strip().lower() for k in target_keys_set if k}
@@ -477,7 +477,7 @@ def run_fix(
     target_set = _flatten_ids(target_fids) | _flatten_ids(target_uuids)
 
     if not main_layer.isEditable() and not main_layer.startEditing():
-        return {"success": False, "message": "Cannot edit layer.", "fixed_count": 0, "updated_values": {}}
+        return {"success": False, "message": "The map layer could not be opened for editing.", "fixed_count": 0, "updated_values": {}}
 
     m_idx = -1
     for fld in main_layer.fields():
@@ -530,5 +530,5 @@ def run_fix(
         "success": True,
         "fixed_count": fixed_count,
         "updated_values": updated_values,
-        "message": f"Marked {fixed_count} feature(s) as deleted.",
+        "message": f"Marked {fixed_count} record(s) as deleted.",
     }

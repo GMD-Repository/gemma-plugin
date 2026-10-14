@@ -237,7 +237,7 @@ def _run_fix_map_uuid_missing(
     if not active_layer or not active_layer.isValid():
         return {
             "success": False,
-            "message": "Invalid or missing Building Points layer.",
+            "message": "The Building Points file is missing or could not be opened.",
             "fixed_count": 0,
             "updated_values": {},
         }
@@ -282,7 +282,7 @@ def _run_fix_map_uuid_missing(
     if not active_layer.isEditable() and not active_layer.startEditing():
         return {
             "success": False,
-            "message": "Failed to start edit session on Building Points layer.",
+            "message": "The Building Points file could not be opened for editing.",
             "fixed_count": 0,
             "updated_values": {},
         }
@@ -577,14 +577,6 @@ def _run_fix_map_uuid_missing(
         fixed_count += 1
 
     if fixed_count > 0:
-        if not active_layer.commitChanges():
-            return {
-                "success": False,
-                "fixed_count": 0,
-                "updated_values": {},
-                "message": "Failed to commit changes to Building Points layer.",
-            }
-        active_layer.startEditing()
         active_layer.triggerRepaint()
 
         dlg = kwargs.get("dialog") or dialog
@@ -603,9 +595,9 @@ def _run_fix_map_uuid_missing(
             "fixed_count": 0,
             "updated_values": {},
             "message": (
-                f"Row #{bad_r + 1} has coordinates ({bad_x}, {bad_y}) in df_x_current / df_y_current.\n\n"
-                "A point cannot be generated with (0, 0) or missing coordinates. "
-                "Please ensure valid GPS coordinates exist in this row."
+                f"Row #{bad_r + 1} has invalid coordinates ({bad_x}, {bad_y}).\n\n"
+                "A point cannot be created when the coordinates are 0 or empty. "
+                "Please make sure this row has valid GPS coordinates."
             ),
         }
 
@@ -620,7 +612,7 @@ def _run_fix_map_uuid_missing(
         "success": True,
         "fixed_count": fixed_count,
         "updated_values": updated_values,
-        "message": f"Successfully processed {fixed_count} feature(s){summary_str} in Form 2 Building Points (.geojson).",
+        "message": f"Added {fixed_count} point(s){summary_str} to the Building Points file.",
     }
 
 

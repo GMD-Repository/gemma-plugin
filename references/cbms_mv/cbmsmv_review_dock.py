@@ -624,7 +624,7 @@ class CbmsMvReviewDock(QDockWidget):
         # Target layer
         target_layer = self.main_layer if (self.main_layer and self.main_layer.isValid()) else self.error_layer
         if not target_layer or not target_layer.isValid():
-            QMessageBox.warning(self, "No Layer", "Target layer is not available for editing.")
+            QMessageBox.warning(self, "Cannot Edit", "The map layer could not be opened for editing.")
             return
 
         # Target feature: locate on main layer first, fallback to error layer
@@ -635,8 +635,8 @@ class CbmsMvReviewDock(QDockWidget):
         if not target_feat or not target_feat.isValid():
             QMessageBox.warning(
                 self,
-                "Feature Not Found",
-                f"Could not locate feature (FID: {current_fid}, UUID: {current_uuid}) in '{target_layer.name()}'.",
+                "Record Not Found",
+                f"Could not find record #{current_fid} in '{target_layer.name()}'.",
             )
             return
 
@@ -664,13 +664,13 @@ class CbmsMvReviewDock(QDockWidget):
             return
 
         if not self.main_layer.isEditable():
-            QMessageBox.information(self, "No Edits", "The layer has no pending edits to save.")
+            QMessageBox.information(self, "Nothing to Save", "There are no changes to save.")
             return
 
         reply = QMessageBox.question(
             self,
-            "Save Changes to Layer",
-            f"Save all pending revisions permanently to '{self.main_layer.name()}' on disk?",
+            "Save Changes",
+            f"Save all changes to '{self.main_layer.name()}'?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes,
         )
@@ -679,13 +679,13 @@ class CbmsMvReviewDock(QDockWidget):
             if success:
                 # Re-open editing buffer for seamless continued editing
                 self.main_layer.startEditing()
-                QMessageBox.information(self, "Saved", "Layer edits successfully saved to disk.")
+                QMessageBox.information(self, "Saved", "Your changes have been saved.")
             else:
                 commit_errors = self.main_layer.commitErrors()
                 QMessageBox.critical(
                     self,
                     "Save Failed",
-                    f"Failed to commit edits to layer:\n{commit_errors}",
+                    f"Your changes could not be saved:\n{commit_errors}",
                 )
 
     def _on_delete_feature(self):
@@ -712,8 +712,8 @@ class CbmsMvReviewDock(QDockWidget):
         if is_already_deleted:
             reply = QMessageBox.question(
                 self,
-                "Restore Feature?",
-                f"Feature FID #{current_fid} is currently marked as 'deleted'.\n\nDo you want to restore it?",
+                "Restore Record?",
+                f"Record #{current_fid} is currently marked as deleted.\n\nDo you want to restore it?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )

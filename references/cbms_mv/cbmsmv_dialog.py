@@ -184,6 +184,7 @@ try:
         CBMS_MV_CATEGORIES,
         get_rule_category,
         get_category_info,
+        get_rule_workflow_info,
     )
 except (ImportError, ValueError):
     try:
@@ -193,6 +194,7 @@ except (ImportError, ValueError):
             CBMS_MV_CATEGORIES,
             get_rule_category,
             get_category_info,
+            get_rule_workflow_info,
         )
     except Exception:
         resolve_target_columns = lambda v, f, c=None: []
@@ -200,6 +202,7 @@ except (ImportError, ValueError):
         CBMS_MV_CATEGORIES = {}
         get_rule_category = lambda v: "other"
         get_category_info = lambda k: {"label": k.title(), "desc": "", "icon": "mActionOptions.svg"}
+        get_rule_workflow_info = lambda v, f=0: (5000000, "Phase 5: Other Checks")
 
 
 # ---------------------------------------------------------------------------
@@ -716,7 +719,7 @@ class CbmsmvDialog(QDialog):
             if table.rowCount() > 0:
                 item = table.item(0, col_idx)
                 if item:
-                    table.scrollToItem(item, QAbstractItemView.PositionAtCenter)
+                    table.scrollToItem(item, QAbstractItemView.EnsureVisible)
             elif hasattr(table, "horizontalScrollBar"):
                 h_bar = table.horizontalScrollBar()
                 if h_bar:
@@ -948,13 +951,9 @@ class CbmsmvDialog(QDialog):
         stacked = cat_widget.findChild(QStackedWidget, "stackedCategoryTables")
         target_tab = stacked.currentWidget() if stacked else cat_widget
         if target_tab:
-            target_cols = target_tab.property("target_cols")
-            field_names = target_tab.property("field_names")
-            if target_cols and field_names:
-                table = target_tab.findChild(QTableWidget)
-                if table:
-                    first_target = target_cols[0]
-                    QTimer.singleShot(100, lambda: self._scroll_to_column(table, first_target, field_names) if is_valid_qobject(self) else None)
+            table = target_tab.findChild(QTableWidget)
+            if table and hasattr(table, "horizontalScrollBar") and table.horizontalScrollBar():
+                QTimer.singleShot(50, lambda: table.horizontalScrollBar().setValue(0) if is_valid_qobject(self) and is_valid_qobject(table) else None)
 
     def _create_empty_state_widget(self) -> QWidget:
         """Create a clean empty state card shown before any validation has been executed."""
@@ -1178,12 +1177,9 @@ class CbmsmvDialog(QDialog):
             btn_next_check.setEnabled(idx < stacked_tables.count() - 1)
             active_tab = stacked_tables.currentWidget()
             if active_tab:
-                target_cols = active_tab.property("target_cols")
-                field_names = active_tab.property("field_names")
-                if target_cols and field_names:
-                    tbl = active_tab.findChild(QTableWidget)
-                    if tbl:
-                        QTimer.singleShot(100, lambda: self._scroll_to_column(tbl, target_cols[0], field_names) if is_valid_qobject(self) else None)
+                tbl = active_tab.findChild(QTableWidget)
+                if tbl and hasattr(tbl, "horizontalScrollBar") and tbl.horizontalScrollBar():
+                    QTimer.singleShot(50, lambda: tbl.horizontalScrollBar().setValue(0) if is_valid_qobject(self) and is_valid_qobject(tbl) else None)
 
         combo_checks.currentIndexChanged.connect(_on_check_changed)
         btn_prev_check.clicked.connect(lambda: combo_checks.setCurrentIndex(max(0, combo_checks.currentIndex() - 1)))
@@ -1391,7 +1387,7 @@ class CbmsmvDialog(QDialog):
 
         # 4. Quick Sort Helper Combo
         combo_sort = QComboBox()
-        combo_sort.addItem("Sort: Default", (-1, Qt.AscendingOrder))
+        combo_sort.addItem("Sort: Default", (6, Qt.AscendingOrder))
         combo_sort.addItem("Sort: Remaining Flags (High → Low)", (4, Qt.DescendingOrder))
         combo_sort.addItem("Sort: Remaining Flags (Low → High)", (4, Qt.AscendingOrder))
         combo_sort.addItem("Sort: Status (Flagged First)", (0, Qt.AscendingOrder))
@@ -1429,7 +1425,7 @@ class CbmsmvDialog(QDialog):
 
         # Scorecard Table
         table = QTableWidget()
-        table.setColumnCount(6)
+        table.setColumnCount(7)
         table.setHorizontalHeaderLabels([
             "Status",
             "Category",
@@ -1437,6 +1433,7 @@ class CbmsmvDialog(QDialog):
             "Validation Check Name",
             "Issues Flagged",
             "Action",
+            "Workflow Rank",
         ])
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
@@ -1444,17 +1441,31 @@ class CbmsmvDialog(QDialog):
         table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        table.setColumnHidden(6, True)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setAlternatingRowColors(True)
         table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         table.setRowCount(len(execution_summary))
 
-        for row, s in enumerate(execution_summary):
+        ordered_summary = sorted(
+            execution_summary,
+            key=lambda item: get_rule_workflow_info(
+                item.get("id", ""),
+                flags=item.get("features_flagged", 0),
+                status=item.get("status", ""),
+            )[0]
+        )
+
+        for row, s in enumerate(ordered_summary):
             val_id = s.get("id", "")
             name = s.get("name", "")
             status = s.get("status", "")
             flags = s.get("features_flagged", 0)
             has_layer = val_id in result_layers
+
+            # Workflow rank & phase label for dependency-based sorting
+            wf_rank, wf_phase = get_rule_workflow_info(val_id, flags=flags, status=status)
 
             # 0. Status Badge
             if flags > 0:
@@ -1480,6 +1491,7 @@ class CbmsmvDialog(QDialog):
                 status_item.setData(Qt.UserRole, 2)
             status_item.setFont(QFont("Segoe UI", 9, QFont.Bold))
             status_item.setTextAlignment(Qt.AlignCenter)
+            status_item.setToolTip(f"Status: {status_item.text()}\nWorkflow Priority: {wf_phase}")
             table.setItem(row, 0, status_item)
 
             # 1. Category
@@ -1491,17 +1503,20 @@ class CbmsmvDialog(QDialog):
                 cat_item.setIcon(c_ic)
             cat_item.setData(Qt.UserRole, cat_key)
             cat_item.setFont(QFont("Segoe UI", 9))
+            cat_item.setToolTip(f"Category: {cat_info['label']} — {cat_info['desc']}\nWorkflow Priority: {wf_phase}")
             table.setItem(row, 1, cat_item)
 
             # 2. Validation ID
             id_item = SortableTableWidgetItem(val_id)
             id_item.setFont(QFont("Consolas", 9))
             id_item.setData(Qt.UserRole, val_id)
+            id_item.setToolTip(f"Validation ID: {val_id}\nWorkflow Priority: {wf_phase}")
             table.setItem(row, 2, id_item)
 
             # 3. Check Name
             name_item = SortableTableWidgetItem(name)
             name_item.setData(Qt.UserRole, name.lower())
+            name_item.setToolTip(f"{name}\n\nRecommended Order: {wf_phase}")
             table.setItem(row, 3, name_item)
 
             # 4. Issues Flagged (numeric comparison)
@@ -1534,6 +1549,17 @@ class CbmsmvDialog(QDialog):
                 empty_act.setForeground(QColor(colors["text_muted"]))
                 empty_act.setData(Qt.UserRole, 1)
                 table.setItem(row, 5, empty_act)
+
+            # 6. Workflow Rank (Hidden column for native Qt item sorting)
+            rank_item = SortableTableWidgetItem(str(wf_rank))
+            rank_item.setData(Qt.UserRole, int(wf_rank))
+            table.setItem(row, 6, rank_item)
+
+            # Ensure all summary scorecard items are strictly read-only
+            for col_i in range(7):
+                it = table.item(row, col_i)
+                if it:
+                    it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
 
         # Filter logic
         def _apply_filter():
@@ -1613,10 +1639,9 @@ class CbmsmvDialog(QDialog):
         table.setSortingEnabled(True)
         enable_shift_scroll(table)
 
-        # Default sort: if rules are flagged, sort by Issues Flagged descending so remaining flags appear at the top
-        if flagged_rules > 0:
-            table.sortItems(4, Qt.DescendingOrder)
-            combo_sort.setCurrentIndex(1)
+        # Default sort: Recommended Workflow (Phase 1 → 4) so operators follow the logical fix pipeline
+        table.sortItems(6, Qt.AscendingOrder)
+        combo_sort.setCurrentIndex(0)
 
         layout.addWidget(table, stretch=1)
         return tab
@@ -1697,7 +1722,7 @@ class CbmsmvDialog(QDialog):
 
         # Mini Toolbar
         toolbar = QHBoxLayout()
-        toolbar.setSpacing(8)
+        toolbar.setSpacing(6)
 
         # Search filter
         edit_filter = QLineEdit()
@@ -1706,7 +1731,8 @@ class CbmsmvDialog(QDialog):
             edit_filter.addAction(filter_icon, QLineEdit.LeadingPosition)
         edit_filter.setPlaceholderText("Filter rows...")
         edit_filter.setClearButtonEnabled(True)
-        edit_filter.setMinimumWidth(160)
+        edit_filter.setMinimumWidth(110)
+        edit_filter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         edit_filter.setStyleSheet(f"""
             QLineEdit {{
                 border: 1px solid {colors['border']};
@@ -1728,6 +1754,8 @@ class CbmsmvDialog(QDialog):
         if not sel_icon.isNull():
             btn_select_all.setIcon(sel_icon)
         btn_select_all.setToolTip("Toggle select all or none of visible rows")
+        btn_select_all.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        btn_select_all.setMinimumWidth(98)
         btn_select_all.setStyleSheet(f"""
             QPushButton {{
                 background-color: {colors['surface_elevated']};
@@ -1747,8 +1775,12 @@ class CbmsmvDialog(QDialog):
 
         # Actions Normal Dropdown (placed to the right of Select All)
         combo_actions = QComboBox()
-        combo_actions.setSizeAdjustPolicy(QComboBox.AdjustToContents)
-        combo_actions.setMinimumContentsLength(16)
+        combo_actions.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        combo_actions.setMinimumContentsLength(8)
+        combo_actions.setMaximumWidth(210)
+        combo_actions.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        if combo_actions.view():
+            combo_actions.view().setMinimumWidth(380)
         dropdown_icon = QgsApplication.getThemeIcon("mActionOptions.svg")
         if not dropdown_icon.isNull():
             combo_actions.addItem(dropdown_icon, "Actions")
@@ -1804,12 +1836,13 @@ class CbmsmvDialog(QDialog):
                 background-color: {colors['surface_elevated']};
                 color: {colors['text_primary']};
                 font-weight: 600;
-                padding: 5px 26px 5px 10px;
+                padding: 5px 24px 5px 8px;
                 border-radius: 4px;
                 border: 1px solid {colors['border']};
                 font-size: 11px;
                 min-height: 18px;
-                min-width: 155px;
+                min-width: 200px;
+                max-width: 250px;
             }}
             QComboBox:hover {{
                 background-color: {colors['surface_hover']};
@@ -1864,6 +1897,8 @@ class CbmsmvDialog(QDialog):
         btn_update_selected.setCursor(Qt.PointingHandCursor)
         btn_update_selected.setToolTip("Execute the selected action from the dropdown on all checked features")
         btn_update_selected.setEnabled(False)
+        btn_update_selected.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        btn_update_selected.setMinimumWidth(138)
         btn_update_selected.setStyleSheet(f"""
             QPushButton {{
                 background-color: {colors['accent_light']};
@@ -1897,9 +1932,9 @@ class CbmsmvDialog(QDialog):
                 if idx == 4:
                     reply = QMessageBox.question(
                         self,
-                        "Deduplicate All Features",
-                        "No specific rows are checked.\n\n"
-                        "Do you want to check and deduplicate all features in this tab?",
+                        "Check All Records for Duplicates?",
+                        "No rows are ticked.\n\n"
+                        "Do you want to check all records in this tab for duplicates?",
                         QMessageBox.Yes | QMessageBox.No,
                         QMessageBox.Yes,
                     )
@@ -1912,8 +1947,8 @@ class CbmsmvDialog(QDialog):
 
                 QMessageBox.information(
                     self,
-                    "No Features Selected",
-                    "Please check at least one row in the table using the checkboxes before clicking Update Selected."
+                    "Nothing Selected",
+                    "Please tick the box of at least one row before clicking Update Selected."
                 )
                 return
 
@@ -1944,8 +1979,8 @@ class CbmsmvDialog(QDialog):
             else:
                 QMessageBox.information(
                     self,
-                    "Select Action",
-                    "Please select an action from the dropdown first (e.g., 'Concatenate the ea_geocode', 'Delete selected features', 'Generate point geometry', 'Delete duplicate features (retain one)', 'Concatenate the bsn_geoid', or 'Copy the geometry and paste it into the longitude and latitude columns')."
+                    "Choose an Action",
+                    "Please choose an action from the Actions dropdown first."
                 )
 
         btn_update_selected.clicked.connect(_on_trigger_update_selected)
@@ -1995,6 +2030,8 @@ class CbmsmvDialog(QDialog):
         if not save_icon.isNull():
             btn_save_changes.setIcon(save_icon)
         btn_save_changes.setToolTip("Commit edits on GeoJSON and JSON to disk and re-run check (Ctrl+S)")
+        btn_save_changes.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        btn_save_changes.setMinimumWidth(125)
         btn_save_changes.setStyleSheet(f"""
             QPushButton {{
                 background-color: {colors['accent_light']};
@@ -2187,6 +2224,7 @@ class CbmsmvDialog(QDialog):
                     item.setData(Qt.UserRole + 5, df_uuid_str)
                     item.setData(Qt.UserRole + 6, sf_fid_val)
                     item.setData(Qt.UserRole + 7, sf_uuid_str)
+                    item.setData(Qt.UserRole + 20, val_str)
                     table.setItem(row_idx, col_idx + 1, item)
 
                 # Column Action: Edit button only
@@ -2244,10 +2282,9 @@ class CbmsmvDialog(QDialog):
 
         layout.addWidget(table, stretch=1)
 
-        # Auto-scroll to first target column
-        if target_cols:
-            first_target = target_cols[0]
-            QTimer.singleShot(150, lambda: self._scroll_to_column(table, first_target, field_names) if is_valid_qobject(self) else None)
+        # Keep table anchored at Column 0 so row checkboxes and primary IDs are immediately visible
+        if hasattr(table, "horizontalScrollBar") and table.horizontalScrollBar():
+            QTimer.singleShot(50, lambda: table.horizontalScrollBar().setValue(0) if is_valid_qobject(self) and is_valid_qobject(table) else None)
 
         return tab
 
@@ -2772,7 +2809,7 @@ class CbmsmvDialog(QDialog):
                     target_uuids.append(str(best_uuid).strip())
 
         if not target_fids and not target_uuids and not target_rows:
-            QMessageBox.information(self, "No Selection", "Please select at least one row using the checkboxes.")
+            QMessageBox.information(self, "Nothing Selected", "Please tick the box of at least one row first.")
             return
 
         self._execute_fix(
@@ -2802,8 +2839,8 @@ class CbmsmvDialog(QDialog):
         if not handler:
             QMessageBox.warning(
                 self,
-                "No Fix Available",
-                f"No action or automated fix handler is available for '{val_id}'.",
+                "No Automatic Fix",
+                f"There is no automatic fix for this check ('{val_id}'). Please edit the values directly in the table.",
             )
             return
 
@@ -2812,8 +2849,8 @@ class CbmsmvDialog(QDialog):
         if not active_target_layer or not active_target_layer.isValid():
             QMessageBox.critical(
                 self,
-                "Layer Missing",
-                "Cannot run fix: No valid target vector layer is loaded or available.",
+                "Map Layer Missing",
+                "The fix cannot run because the building points layer is not loaded.",
             )
             return
 
@@ -2859,16 +2896,16 @@ class CbmsmvDialog(QDialog):
                 pass
             QMessageBox.critical(
                 self,
-                "Fix Error",
-                f"An error occurred while executing fix for '{val_id}':\n{exc}",
+                "Fix Failed",
+                f"Something went wrong while applying the fix for '{val_id}':\n{exc}",
             )
             return
 
         if not res.get("success"):
             QMessageBox.warning(
                 self,
-                "Fix Incomplete",
-                res.get("message", "Fix did not complete successfully."),
+                "Fix Not Applied",
+                res.get("message", "The fix could not be applied."),
             )
             return
 
@@ -2972,25 +3009,25 @@ class CbmsmvDialog(QDialog):
             self.iface.mapCanvas().refresh()
 
         if fixed_count == 0:
-            self.lbl_footer_status.setText(f"No features fixed for '{val_id}'.")
+            self.lbl_footer_status.setText(f"No records were fixed for '{val_id}'.")
             QMessageBox.warning(
                 self,
-                "Fix Incomplete",
+                "Fix Not Applied",
                 res.get(
                     "message",
-                    f"No features were fixed for '{val_id}'.\n\n"
-                    "Please verify that the selected row contains valid non-zero coordinates ('df_x_current' / 'df_y_current') and is not already present in the layer.",
+                    f"No records were fixed for '{val_id}'.\n\n"
+                    "Please check that the selected row has valid coordinates and is not already on the map.",
                 ),
             )
             return
 
-        self.lbl_footer_status.setText(f"Successfully fixed {fixed_count} feature(s) for '{val_id}'. (Press Ctrl+S to save)")
+        self.lbl_footer_status.setText(f"Fixed {fixed_count} record(s) for '{val_id}'. Click 'Save Changes' (Ctrl+S) to keep them.")
         QMessageBox.information(
             self,
-            "Fix Complete",
-            f"Successfully applied fix to {fixed_count} feature(s) for rule:\n{val_id}\n\n"
-            f"Changes are buffered in the Geotagged Building Points layer.\n"
-            f"Click 'Save Changes' in the toolbar (or press Ctrl+S) to commit to disk and re-run check.",
+            "Fix Applied",
+            f"Fixed {fixed_count} record(s) for:\n{val_id}\n\n"
+            f"These changes are not saved yet.\n"
+            f"Click 'Save Changes' (or press Ctrl+S) to keep them.",
         )
 
     # -----------------------------------------------------------------------
@@ -3415,7 +3452,7 @@ class CbmsmvDialog(QDialog):
             QMessageBox.critical(
                 self,
                 "Save Failed",
-                f"Failed to commit changes to Geotagged Building Points (.geojson):\n{geojson_err}",
+                f"Could not save changes to the building points file:\n{geojson_err}",
             )
             return False
 
@@ -3432,7 +3469,7 @@ class CbmsmvDialog(QDialog):
                     QMessageBox.critical(
                         self,
                         "Save Failed",
-                        f"Failed to commit changes to Form 2 CSV file:\n{form2_msg}",
+                        f"Could not save changes to the Form 2 file:\n{form2_msg}",
                     )
                     return False
                 form2_saved = True
@@ -3457,14 +3494,14 @@ class CbmsmvDialog(QDialog):
                         QMessageBox.critical(
                             self,
                             "Save Failed",
-                            f"Failed to commit changes to Form 2 CSV layer:\n{form2_err}",
+                            f"Could not save changes to the Form 2 file:\n{form2_err}",
                         )
                         return False
                 except Exception as exc:
                     QMessageBox.critical(
                         self,
                         "Save Failed",
-                        f"Error committing Form 2 CSV layer:\n{exc}",
+                        f"Could not save changes to the Form 2 file:\n{exc}",
                     )
                     return False
         elif form2_path.lower().endswith(".json") and self._pending_json_edits:
@@ -3473,7 +3510,7 @@ class CbmsmvDialog(QDialog):
                 QMessageBox.critical(
                     self,
                     "Save Failed",
-                    f"Failed to commit changes to Form 2 Data (.json):\n{form2_msg}",
+                    f"Could not save changes to the Form 2 file:\n{form2_msg}",
                 )
                 return False
             form2_saved = True
@@ -3483,7 +3520,7 @@ class CbmsmvDialog(QDialog):
                 QMessageBox.critical(
                     self,
                     "Save Failed",
-                    f"Failed to commit changes to Form 2 table:\n{form2_msg}",
+                    f"Could not save changes to the Form 2 file:\n{form2_msg}",
                 )
                 return False
             form2_saved = True
@@ -3491,15 +3528,14 @@ class CbmsmvDialog(QDialog):
         # 3. Assemble saved message
         saved_parts = []
         if geojson_saved:
-            saved_parts.append("Building Points (.geojson)")
+            saved_parts.append("Building Points")
         if form2_saved:
-            fmt = "CSV" if form2_path.lower().endswith(".csv") else "JSON"
-            saved_parts.append(f"Form 2 Data ({form2_updated_count} record(s) in .{fmt.lower()})")
+            saved_parts.append(f"Form 2 Data ({form2_updated_count} record(s))")
 
         if saved_parts:
-            saved_msg = f"Successfully saved edits to: {' and '.join(saved_parts)}."
+            saved_msg = f"Saved changes to: {' and '.join(saved_parts)}."
         else:
-            saved_msg = "No unsaved edits pending on disk."
+            saved_msg = "There were no changes to save."
 
         # 4. Determine validation ID to re-run
         val_id = target_val_id
@@ -3530,7 +3566,7 @@ class CbmsmvDialog(QDialog):
             QMessageBox.information(
                 self,
                 "Changes Saved",
-                f"{saved_msg}\n\nAll changes have been successfully committed to disk.",
+                saved_msg,
             )
 
         return True
@@ -3549,7 +3585,7 @@ class CbmsmvDialog(QDialog):
         reply = QMessageBox.question(
             self,
             "Save Changes",
-            "Do you want to save your changes to disk, discard them, or cancel?",
+            "Do you want to save your changes?\n\nSave keeps them. Discard undoes all changes. Cancel goes back.",
             QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
             QMessageBox.Save,
         )
@@ -3559,6 +3595,39 @@ class CbmsmvDialog(QDialog):
         elif reply == QMessageBox.Discard:
             return self._discard_changes(target_val_id)
         return False
+
+    def _revert_table_cells_to_original(self, table: QTableWidget, val_id: Optional[str] = None):
+        """Revert all cells in table to their cached Qt.UserRole + 20 original unedited values."""
+        if not table or not is_valid_qobject(table):
+            return
+        table.setProperty("is_populating", True)
+        try:
+            rule = next((r for r in self._rules if r["id"] == val_id), None) if val_id else None
+            target_cols = [rule["target_column"]] if (rule and rule.get("target_column")) else []
+            for r in range(table.rowCount()):
+                chk_it = table.item(r, 0)
+                if chk_it:
+                    chk_it.setCheckState(Qt.Unchecked)
+                for c in range(1, table.columnCount() - 1):
+                    it = table.item(r, c)
+                    if it:
+                        orig = it.data(Qt.UserRole + 20)
+                        if orig is not None:
+                            it.setText(str(orig))
+                        fname = it.data(Qt.UserRole + 2)
+                        if fname and fname in target_cols:
+                            self._style_table_cell(it, "target")
+                        else:
+                            self._style_table_cell(it, "default")
+                # Reset action cell buttons if present
+                act_w = table.cellWidget(r, table.columnCount() - 1)
+                if act_w:
+                    for btn in act_w.findChildren(QPushButton):
+                        if btn.text() in ("Fixed", "Deleted"):
+                            btn.setText("Edit" if btn.text() == "Fixed" else "Delete")
+                            btn.setEnabled(True)
+        finally:
+            table.setProperty("is_populating", False)
 
     def _discard_changes(self, target_val_id: Optional[str] = None) -> bool:
         """
@@ -3585,14 +3654,26 @@ class CbmsmvDialog(QDialog):
             except Exception:
                 pass
 
-        # 3. Clear pending in-memory Form 2 edits
+        # 3. Roll back any result layers if modified in edit buffer
+        if hasattr(self, "_result_layers") and self._result_layers:
+            for r_info in self._result_layers.values():
+                if isinstance(r_info, dict):
+                    r_lay = r_info.get("layer")
+                    if r_lay and r_lay.isValid() and r_lay.isEditable() and r_lay.isModified():
+                        try:
+                            r_lay.rollBack()
+                            r_lay.startEditing()
+                        except Exception:
+                            pass
+
+        # 4. Clear pending in-memory Form 2 edits
         self._pending_json_edits.clear()
 
-        # 4. Refresh map canvas
+        # 5. Refresh map canvas
         if self.iface and self.iface.mapCanvas():
             self.iface.mapCanvas().refresh()
 
-        # 5. Resolve validation ID to re-run and refresh table to disk state
+        # 6. Resolve validation ID to re-run and refresh table to disk state
         val_id = target_val_id
         if not val_id and hasattr(self, "results_tab_widget"):
             cur_widget = self.results_tab_widget.currentWidget()
@@ -3613,7 +3694,18 @@ class CbmsmvDialog(QDialog):
                         val_id = r["id"]
                         break
 
-        discard_msg = "Unsaved changes discarded. Reverted to disk state."
+        # 7. Revert active table cells in-memory as immediate zero-latency feedback
+        try:
+            if hasattr(self, "results_tab_widget"):
+                cur_w = self.results_tab_widget.currentWidget()
+                if cur_w:
+                    tbl = cur_w.findChild(QTableWidget)
+                    if tbl:
+                        self._revert_table_cells_to_original(tbl, val_id)
+        except Exception:
+            pass
+
+        discard_msg = "Changes discarded. The files are back to how they were."
         if val_id:
             self._rerun_validation_check(val_id, saved_msg=discard_msg)
         else:
@@ -3621,7 +3713,7 @@ class CbmsmvDialog(QDialog):
             QMessageBox.information(
                 self,
                 "Changes Discarded",
-                "All unsaved edits have been discarded and reverted to the on-disk state.",
+                "All unsaved changes were undone.",
             )
 
         return True
@@ -3639,10 +3731,10 @@ class CbmsmvDialog(QDialog):
         base_path = self.file_base.filePath().strip()
 
         if not form2_path or not os.path.exists(form2_path):
-            self.lbl_footer_status.setText(f"{saved_msg} (Cannot re-run: Form 2 JSON missing)")
+            self.lbl_footer_status.setText(f"{saved_msg} (Could not re-check: Form 2 file is missing)")
             return
         if not points_path or not os.path.exists(points_path):
-            self.lbl_footer_status.setText(f"{saved_msg} (Cannot re-run: Building Points file missing)")
+            self.lbl_footer_status.setText(f"{saved_msg} (Could not re-check: Building Points file is missing)")
             return
 
         rule = next((r for r in self._rules if r["id"] == val_id), None)
@@ -3650,19 +3742,19 @@ class CbmsmvDialog(QDialog):
             rule = {"id": val_id, "name": val_id.replace("_", " ").title(), "has_base": False}
 
         if rule.get("has_base") and (not base_path or not os.path.exists(base_path)):
-            self.lbl_footer_status.setText(f"{saved_msg} (Cannot re-run: Base Layers GPKG required)")
+            self.lbl_footer_status.setText(f"{saved_msg} (Could not re-check: Base Layers file is required)")
             return
 
         reg_id = f"gmd_pipeline:{val_id}"
         is_registered = QgsApplication.processingRegistry().algorithmById(reg_id) is not None
         alg = self._get_algorithm_instance(val_id)
         if not is_registered and not alg:
-            self.lbl_footer_status.setText(f"{saved_msg} (Could not instantiate algorithm '{val_id}')")
+            self.lbl_footer_status.setText(f"{saved_msg} (Could not start check '{val_id}')")
             return
 
         alg_target = reg_id if is_registered else alg
 
-        self.lbl_footer_status.setText(f"Re-running check '{val_id}' with fresh data...")
+        self.lbl_footer_status.setText(f"Re-checking '{val_id}'...")
         QApplication.processEvents()
 
         params = {
@@ -3688,8 +3780,8 @@ class CbmsmvDialog(QDialog):
             self._log_error(f"Execution error re-running '{val_id}': {exc}")
             QMessageBox.critical(
                 self,
-                "Re-run Error",
-                f"{saved_msg}\n\nError executing validation algorithm '{val_id}':\n{exc}",
+                "Re-check Failed",
+                f"{saved_msg}\n\nSomething went wrong while re-checking '{val_id}':\n{exc}",
             )
             return
 
@@ -3773,24 +3865,22 @@ class CbmsmvDialog(QDialog):
         # User feedback
         if new_count == 0:
             self._log_success(f"'{val_id}' re-run complete: 0 flagged issues! All issues resolved.")
-            self.lbl_footer_status.setText(f"Check '{val_id}' resolved: 0 flagged features remaining.")
+            self.lbl_footer_status.setText(f"Check '{val_id}': no issues left.")
             QMessageBox.information(
                 self,
-                "Check Re-run: Clean!",
+                "All Issues Resolved",
                 f"{saved_msg}\n\n"
-                f"Re-run of validation check '{val_id}' completed:\n"
-                f"0 flagged issues detected!\n\n"
-                f"All features for this validation check are now consistent and valid.",
+                f"Re-checked '{val_id}':\n"
+                f"No issues found. Everything for this check is now correct.",
             )
-        else:
-            self._log_warning(f"'{val_id}' re-run complete: {new_count:,} flagged feature(s) remaining.")
-            self.lbl_footer_status.setText(f"Changes saved • '{val_id}' re-run: {new_count:,} issue(s) remaining.")
+            status_prefix = "Changes discarded" if (saved_msg and "discarded" in saved_msg.lower()) else "Changes saved"
+            self.lbl_footer_status.setText(f"{status_prefix} • '{val_id}': {new_count:,} issue(s) left.")
             QMessageBox.information(
                 self,
-                "Check Re-run Complete",
+                "Re-check Complete",
                 f"{saved_msg}\n\n"
-                f"Re-run of validation check '{val_id}' completed:\n"
-                f"{new_count:,} flagged feature(s) remaining in this check.",
+                f"Re-checked '{val_id}':\n"
+                f"{new_count:,} record(s) still need fixing.",
             )
 
     # -----------------------------------------------------------------------
@@ -3942,7 +4032,7 @@ class CbmsmvDialog(QDialog):
     def _export_layer_to_csv(self, layer: QgsVectorLayer, val_id: str):
         """Export the result layer attributes to a CSV file."""
         if not layer or not layer.isValid():
-            QMessageBox.warning(self, "Export Error", "Layer is not valid for export.")
+            QMessageBox.warning(self, "Export Failed", "There is no data to export.")
             return
 
         filename, _ = QFileDialog.getSaveFileName(
@@ -3965,11 +4055,11 @@ class CbmsmvDialog(QDialog):
 
             QMessageBox.information(
                 self,
-                "Export Succeeded",
-                f"Successfully exported {layer.featureCount():,} records to:\n{filename}",
+                "Export Complete",
+                f"Exported {layer.featureCount():,} records to:\n{filename}",
             )
         except Exception as exc:
-            QMessageBox.critical(self, "Export Error", f"Failed to export CSV:\n{exc}")
+            QMessageBox.critical(self, "Export Failed", f"Could not export the CSV file:\n{exc}")
 
     # -----------------------------------------------------------------------
     # Review & Fix Dock Integration (Check & Update Pattern)
@@ -4044,9 +4134,9 @@ class CbmsmvDialog(QDialog):
         if is_valid_qobject(self):
             QMessageBox.warning(
                 self,
-                "Missing Building Points Layer",
-                "Geotagged Building Points (.geojson) file path is not configured or does not exist.\n\n"
-                "Please configure a valid points file in the 'Data Config' tab first.",
+                "Building Points File Missing",
+                "The Building Points file was not found.\n\n"
+                "Please choose a Building Points file in the 'Data Config' tab first.",
             )
         return None
 
@@ -4100,14 +4190,14 @@ class CbmsmvDialog(QDialog):
     ):
         """Launch or update the interactive Check & Update Review Dock."""
         if not error_layer or not error_layer.isValid():
-            QMessageBox.warning(self, "Invalid Layer", "The validation error layer is invalid.")
+            QMessageBox.warning(self, "Cannot Open Results", "The results for this check could not be opened.")
             return
 
         if error_layer.featureCount() == 0:
             QMessageBox.information(
                 self,
                 "No Issues",
-                f"Validation check '{val_id}' has 0 flagged issues to review.",
+                f"Check '{val_id}' has no issues to review.",
             )
             return
 
@@ -4167,8 +4257,8 @@ class CbmsmvDialog(QDialog):
         except Exception as exc:
             QMessageBox.critical(
                 self,
-                "Error Launching Review Dock",
-                f"Failed to open review dock:\n{exc}",
+                "Cannot Open Review Panel",
+                f"The review panel could not be opened:\n{exc}",
             )
 
     def _on_review_dock_closed(self):
@@ -4360,7 +4450,7 @@ class CbmsmvDialog(QDialog):
                 reply = QMessageBox.question(
                     self,
                     "Unsaved Changes",
-                    "You have unsaved changes in your GeoJSON / Form 2 JSON data.\n\nDo you want to save them before closing?",
+                    "You have changes that are not saved yet.\n\nDo you want to save them before closing?",
                     QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
                     QMessageBox.Save,
                 )
@@ -4371,6 +4461,8 @@ class CbmsmvDialog(QDialog):
                         if getattr(self, "_is_docked", False) and self._dock_widget:
                             self._dock_widget.show()
                         return
+                elif reply == QMessageBox.Discard:
+                    self._discard_changes()
                 elif reply == QMessageBox.Cancel:
                     event.ignore()
                     self._is_closing = False
@@ -5604,7 +5696,7 @@ class CbmsmvDialog(QDialog):
                     f.write(self.txt_console.toPlainText())
                 self._log_success(f"Log successfully saved to: {filename}")
             except Exception as e:
-                QMessageBox.critical(self, "Save Error", f"Could not save log file:\n{e}")
+                QMessageBox.critical(self, "Save Failed", f"Could not save the log file:\n{e}")
 
     # -----------------------------------------------------------------------
     # Form Reset
@@ -5844,8 +5936,8 @@ class CbmsmvDialog(QDialog):
         if processing is None:
             QMessageBox.critical(
                 self,
-                "Processing Error",
-                "QGIS Processing framework is unavailable in this environment.",
+                "Cannot Run Checks",
+                "The QGIS Processing tools are not available. Please enable the Processing plugin in QGIS.",
             )
             return
 
@@ -5857,8 +5949,8 @@ class CbmsmvDialog(QDialog):
         if not form2_path:
             QMessageBox.warning(
                 self,
-                "Missing Form 2 Data File",
-                "Please specify the Form 2 Data File (.json) in the 'Data Config' tab.",
+                "Form 2 File Missing",
+                "Please choose the Form 2 data file in the 'Data Config' tab.",
             )
             self._switch_to_config(0)
             return
@@ -5866,8 +5958,8 @@ class CbmsmvDialog(QDialog):
         if not points_path:
             QMessageBox.warning(
                 self,
-                "Missing Geotagged Points File",
-                "Please specify the Geotagged Building Points (.geojson) in the 'Data Config' tab.",
+                "Building Points File Missing",
+                "Please choose the Building Points file in the 'Data Config' tab.",
             )
             self._switch_to_config(0)
             return
@@ -5876,7 +5968,7 @@ class CbmsmvDialog(QDialog):
             QMessageBox.critical(
                 self,
                 "File Not Found",
-                f"Form 2 Data File does not exist:\n{form2_path}",
+                f"The Form 2 data file could not be found:\n{form2_path}",
             )
             self._switch_to_config(0)
             return
@@ -5885,7 +5977,7 @@ class CbmsmvDialog(QDialog):
             QMessageBox.critical(
                 self,
                 "File Not Found",
-                f"Geotagged Building Points file does not exist:\n{points_path}",
+                f"The Building Points file could not be found:\n{points_path}",
             )
             self._switch_to_config(0)
             return
@@ -5899,8 +5991,8 @@ class CbmsmvDialog(QDialog):
         if not selected_rules:
             QMessageBox.warning(
                 self,
-                "No Rules Selected",
-                "Please enable at least one validation rule in the 'Validation Rules' tab.",
+                "No Checks Selected",
+                "Please tick at least one check in the 'Validation Rules' tab.",
             )
             self._switch_to_config(1)
             return
@@ -5911,10 +6003,10 @@ class CbmsmvDialog(QDialog):
             rule_list = "\n".join(f"  • [{r['id']}] {r['name']}" for r in rules_requiring_base)
             reply = QMessageBox.question(
                 self,
-                "Base Layers (.gpkg) Not Provided",
-                f"The following {len(rules_requiring_base)} selected rule(s) require a Base Layers (.gpkg) file:\n\n"
+                "Base Layers File Missing",
+                f"These {len(rules_requiring_base)} check(s) need the Base Layers file:\n\n"
                 f"{rule_list}\n\n"
-                f"Do you want to proceed by automatically skipping these {len(rules_requiring_base)} rule(s)?",
+                f"Do you want to continue and skip these {len(rules_requiring_base)} check(s)?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
@@ -5926,8 +6018,8 @@ class CbmsmvDialog(QDialog):
             if not selected_rules:
                 QMessageBox.warning(
                     self,
-                    "No Rules to Run",
-                    "All selected rules require Base Layers (.gpkg). Please provide the Base Layers file to continue.",
+                    "No Checks to Run",
+                    "All selected checks need the Base Layers file. Please choose the Base Layers file to continue.",
                 )
                 self._switch_to_config(0)
                 return
