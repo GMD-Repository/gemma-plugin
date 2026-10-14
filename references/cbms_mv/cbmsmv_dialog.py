@@ -150,19 +150,20 @@ except (ImportError, ValueError):
         from cbmsmv_review_dock import CbmsMvReviewDock
 
 try:
-    from .cbms_mv_fix import get_fix_handler, has_fix
+    from .cbms_mv_fix import get_fix_handler, has_fix, make_unique_feature_key
 except (ImportError, ValueError):
     try:
-        from cbms_mv_fix import get_fix_handler, has_fix
+        from cbms_mv_fix import get_fix_handler, has_fix, make_unique_feature_key
     except (ImportError, ValueError):
         _fix_dir = os.path.join(os.path.dirname(__file__), "cbms_mv_fix")
         if _fix_dir not in sys.path:
             sys.path.insert(0, _fix_dir)
         try:
-            from cbms_mv_fix import get_fix_handler, has_fix
+            from cbms_mv_fix import get_fix_handler, has_fix, make_unique_feature_key
         except Exception:
             get_fix_handler = lambda v: None
             has_fix = lambda v: False
+            make_unique_feature_key = lambda f, u: f"{f}_{u}" if (f and u) else (f"{f}_" if f else (f"_{u}" if u else ""))
 
 try:
     from .cbms_mv_targets import (
@@ -1723,6 +1724,12 @@ class CbmsmvDialog(QDialog):
         else:
             combo_actions.addItem("Concatenate the bsn_geoid")
 
+        copy_geom_ic = QgsApplication.getThemeIcon("mActionEditCopy.svg")
+        if not copy_geom_ic.isNull():
+            combo_actions.addItem(copy_geom_ic, "Copy the geometry and paste it into the longitude and latitude columns")
+        else:
+            combo_actions.addItem("Copy the geometry and paste it into the longitude and latitude columns")
+
         combo_actions.setCursor(Qt.PointingHandCursor)
         combo_actions.setToolTip("Select an action to execute for checked features")
 
@@ -1869,11 +1876,15 @@ class CbmsmvDialog(QDialog):
                 self._on_concatenate_bsn_geoid(
                     val_id, layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
+            elif idx == 6 or ("copy" in combo_actions.itemText(idx).lower() and ("geometry" in combo_actions.itemText(idx).lower() or "longitude" in combo_actions.itemText(idx).lower() or "latitude" in combo_actions.itemText(idx).lower())):
+                self._on_copy_geometry_to_coordinates(
+                    val_id, layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
+                )
             else:
                 QMessageBox.information(
                     self,
                     "Select Action",
-                    "Please select an action from the dropdown first (e.g., 'Concatenate the ea_geocode', 'Delete selected features', 'Generate point geometry', 'Delete duplicate features (retain one)', or 'Concatenate the bsn_geoid')."
+                    "Please select an action from the dropdown first (e.g., 'Concatenate the ea_geocode', 'Delete selected features', 'Generate point geometry', 'Delete duplicate features (retain one)', 'Concatenate the bsn_geoid', or 'Copy the geometry and paste it into the longitude and latitude columns')."
                 )
 
         btn_update_selected.clicked.connect(_on_trigger_update_selected)
@@ -2563,6 +2574,43 @@ class CbmsmvDialog(QDialog):
             btn_update_selected.setText("Update Selected")
             btn_update_selected.setEnabled(False)
 
+    def _on_copy_geometry_to_coordinates(
+        self,
+        val_id: str,
+        layer: QgsVectorLayer,
+        table: QTableWidget,
+        combo_actions: Optional[QComboBox] = None,
+        btn_actions: Optional[Any] = None,
+        btn_update_selected: Optional[QPushButton] = None,
+    ):
+        """Trigger copy geometry to longitude and latitude process from cbms_mv_fix."""
+        if not is_valid_qobject(self):
+            return
+        target_rule = "copy_geometry_to_coordinates"
+        effective_val_id = val_id if (val_id and any(k in str(val_id).lower() for k in ("geometry", "coord", "longitude", "latitude"))) else target_rule
+        try:
+            from .cbms_mv_fix import cbms_mv_fix
+            if hasattr(cbms_mv_fix, "copy_geometry_to_coordinates"):
+                cbms_mv_fix.copy_geometry_to_coordinates(self, effective_val_id, layer, table)
+                if combo_actions:
+                    combo_actions.setItemText(0, "Actions")
+                elif btn_actions:
+                    btn_actions.setText("Actions ▾")
+                if btn_update_selected:
+                    btn_update_selected.setText("Update Selected")
+                    btn_update_selected.setEnabled(False)
+                return
+        except Exception:
+            pass
+        self._fix_selected_features(effective_val_id, layer, table)
+        if combo_actions:
+            combo_actions.setItemText(0, "Actions")
+        elif btn_actions:
+            btn_actions.setText("Actions ▾")
+        if btn_update_selected:
+            btn_update_selected.setText("Update Selected")
+            btn_update_selected.setEnabled(False)
+
     def _on_generate_point_geometry(
         self,
         val_id: str,
@@ -2645,12 +2693,14 @@ class CbmsmvDialog(QDialog):
             btn_update_selected.setEnabled(False)
 
     def _fix_selected_features(self, val_id: str, layer: QgsVectorLayer, table: QTableWidget):
-        """Batch execute fix for all checked rows in the table."""
+        """Batch execute fix for all checked rows in the table, deduplicated by unique (fid + map_uuid)."""
         if not is_valid_qobject(self):
             return
         target_fids = []
         target_uuids = []
         target_rows = []
+        target_keys = set()
+        seen_keys = set()
         for r in range(table.rowCount()):
             item0 = table.item(r, 0)
             if item0 and item0.checkState() == Qt.Checked:
@@ -2663,23 +2713,44 @@ class CbmsmvDialog(QDialog):
                 sf_u = item0.data(Qt.UserRole + 7)
                 # Prioritize primary layer FID (sf_f or s_id) over memory layer err_fid
                 best_fid = sf_f if (sf_f is not None and str(sf_f).strip() not in ("", "NULL", "None")) else s_id
-                if best_fid is not None and str(best_fid).strip() not in ("", "NULL", "None"):
-                    target_fids.append(best_fid)
-                elif df_f is not None and str(df_f).strip() not in ("", "NULL", "None"):
-                    target_fids.append(df_f)
-                elif e_id is not None and str(e_id).strip() not in ("", "NULL", "None"):
-                    target_fids.append(e_id)
+                if not best_fid or str(best_fid).strip() in ("", "NULL", "None"):
+                    best_fid = df_f or e_id
 
                 best_uuid = sf_u or u or df_u
+                if best_uuid and str(best_uuid).strip() in ("", "NULL", "None"):
+                    best_uuid = ""
+
+                ukey = make_unique_feature_key(best_fid, best_uuid)
+                if ukey:
+                    target_keys.add(ukey)
+                    target_keys.add(ukey.lower())
+
+                target_rows.append(r)
+
+                # Deduplicate: Only process unique features once
+                if ukey and ukey in seen_keys:
+                    continue
+                if ukey:
+                    seen_keys.add(ukey)
+
+                if best_fid is not None and str(best_fid).strip() not in ("", "NULL", "None"):
+                    target_fids.append(best_fid)
                 if best_uuid and str(best_uuid).strip() not in ("", "NULL", "None"):
                     target_uuids.append(str(best_uuid).strip())
-                target_rows.append(r)
 
         if not target_fids and not target_uuids and not target_rows:
             QMessageBox.information(self, "No Selection", "Please select at least one row using the checkboxes.")
             return
 
-        self._execute_fix(val_id, layer, table, target_fids=target_fids, target_uuids=target_uuids, target_rows=target_rows)
+        self._execute_fix(
+            val_id,
+            layer,
+            table,
+            target_fids=target_fids,
+            target_uuids=target_uuids,
+            target_rows=target_rows,
+            target_keys=target_keys,
+        )
 
     def _execute_fix(
         self,
@@ -2689,6 +2760,7 @@ class CbmsmvDialog(QDialog):
         target_fids: Optional[List[Any]] = None,
         target_uuids: Optional[List[str]] = None,
         target_rows: Optional[List[int]] = None,
+        target_keys: Optional[Any] = None,
     ):
         """Execute automated fix for one or more features using registered fix handler."""
         if not is_valid_qobject(self):
@@ -2724,6 +2796,7 @@ class CbmsmvDialog(QDialog):
                     table=table,
                     dialog=self,
                     target_rows=target_rows,
+                    target_keys=target_keys,
                 )
             except TypeError as te:
                 te_msg = str(te).lower()
@@ -2758,24 +2831,41 @@ class CbmsmvDialog(QDialog):
         updated_values = res.get("updated_values", {})
         fixed_count = res.get("fixed_count", len(updated_values))
 
-        # Synchronize table cells and layer
+        # Synchronize table cells and layer across all rows matching unique features
         table.setProperty("is_populating", True)
         try:
             if not layer.isEditable():
                 layer.startEditing()
 
-            rows_to_check = target_rows if target_rows is not None else list(range(table.rowCount()))
-            for r in rows_to_check:
+            # Check all rows in table so any duplicate or matching row sharing the unique key updates
+            for r in range(table.rowCount()):
                 item0 = table.item(r, 0)
                 if not item0:
                     continue
                 r_fid = item0.data(Qt.UserRole)
                 r_uuid = str(item0.data(Qt.UserRole + 1)).strip() if item0.data(Qt.UserRole + 1) else ""
                 r_err_fid = item0.data(Qt.UserRole + 3)
+                r_df_fid = item0.data(Qt.UserRole + 4)
+                r_df_uuid = str(item0.data(Qt.UserRole + 5) or "").strip()
+                r_sf_fid = item0.data(Qt.UserRole + 6)
+                r_sf_uuid = str(item0.data(Qt.UserRole + 7) or "").strip()
+
+                best_rfid = r_sf_fid if (r_sf_fid is not None and str(r_sf_fid).strip() not in ("", "NULL", "None")) else r_fid
+                if not best_rfid or str(best_rfid).strip() in ("", "NULL", "None"):
+                    best_rfid = r_df_fid or r_err_fid
+                best_ruuid = r_sf_uuid or r_uuid or r_df_uuid
+
+                # Check unique key match
+                row_ukey = make_unique_feature_key(best_rfid, best_ruuid)
+                alt_ukey = make_unique_feature_key(r_fid, r_uuid)
 
                 # Collect all candidate keys for matching updated_values
                 col_updates = None
                 fid_candidates = []
+                for k in (row_ukey, row_ukey.lower() if row_ukey else None, alt_ukey, alt_ukey.lower() if alt_ukey else None):
+                    if k:
+                        fid_candidates.append(k)
+
                 for role_off in (0, 1, 3, 4, 5, 6, 7):
                     v = item0.data(Qt.UserRole + role_off)
                     if v is not None:
