@@ -139,7 +139,9 @@ def _run_fix_ea_geocode(
     Execute automated fix: computes EA geocode using the 4-step priority logic
     and assigns it to building points layer.
     """
-    if not main_layer or not main_layer.isValid():
+    error_layer = kwargs.get("error_layer")
+    active_layer = main_layer if (main_layer and main_layer.isValid()) else error_layer
+    if not active_layer or not active_layer.isValid():
         return {"success": False, "message": "Invalid or missing Building Points layer.", "fixed_count": 0, "updated_values": {}}
 
     target_keys_set = set(target_keys) if target_keys else set()
@@ -150,30 +152,37 @@ def _run_fix_ea_geocode(
     if is_targeted and not target_set and not target_keys_set:
         return {"success": True, "fixed_count": 0, "updated_values": {}, "message": "No valid target ID or UUID provided."}
 
-    field_names = main_layer.fields().names() if hasattr(main_layer.fields(), "names") else []
+    field_names = active_layer.fields().names() if hasattr(active_layer.fields(), "names") else []
     target_fields = [f for f in ("sf_ea_geocode", "ea_geocode", "geocode") if f in field_names]
 
     if not target_fields:
-        if not main_layer.isEditable():
-            main_layer.startEditing()
-        main_layer.dataProvider().addAttributes([QgsField("ea_geocode", QVariant.String, len=30)])
-        main_layer.updateFields()
+        if not active_layer.isEditable():
+            active_layer.startEditing()
+        active_layer.dataProvider().addAttributes([QgsField("ea_geocode", QVariant.String, len=30)])
+        active_layer.updateFields()
         target_fields.append("ea_geocode")
 
-    if not main_layer.isEditable() and not main_layer.startEditing():
+    if not active_layer.isEditable() and not active_layer.startEditing():
         return {"success": False, "fixed_count": 0, "updated_values": {}, "message": "Failed to start edit session on building points layer."}
+
+    if error_layer and error_layer.isValid() and error_layer != active_layer:
+        if not error_layer.isEditable():
+            try:
+                error_layer.startEditing()
+            except Exception:
+                pass
 
     updated_values: Dict[Any, Dict[str, str]] = {}
     fixed_count = 0
 
-    for feat in main_layer.getFeatures():
+    for feat in active_layer.getFeatures():
         if feedback and feedback.isCanceled():
             break
 
         f_id = feat.id()
         feat_ids = _flatten_ids(f_id)
         feat_uuid = ""
-        for col in ("sf_fid", "fid", "sf_map_uuid", "map_uuid", "uuid"):
+        for col in ("sf_fid", "fid", "df_fid", "sf_map_uuid", "map_uuid", "uuid"):
             if col in field_names:
                 try:
                     val = feat.attribute(col)
@@ -195,14 +204,14 @@ def _run_fix_ea_geocode(
             if not matched:
                 continue
 
-        concat_geocode = compute_ea_geocode_field_calculator(feat, main_layer)
+        concat_geocode = compute_ea_geocode_field_calculator(feat, active_layer)
         if not concat_geocode:
             continue
 
         for tf_name in target_fields:
-            idx = main_layer.fields().indexOf(tf_name)
+            idx = active_layer.fields().indexOf(tf_name)
             if idx != -1:
-                main_layer.changeAttributeValue(f_id, idx, concat_geocode)
+                active_layer.changeAttributeValue(f_id, idx, concat_geocode)
 
         payload = {"sf_ea_geocode": concat_geocode, "ea_geocode": concat_geocode}
         for k in feat_ids:
@@ -212,6 +221,38 @@ def _run_fix_ea_geocode(
             updated_values[ck.lower()] = payload
 
         fixed_count += 1
+
+    # Also synchronize error_layer if active_layer is main_layer
+    if error_layer and error_layer.isValid() and error_layer != active_layer:
+        err_fields = error_layer.fields().names() if hasattr(error_layer.fields(), "names") else []
+        err_target_fields = [f for f in ("sf_ea_geocode", "ea_geocode", "geocode") if f in err_fields]
+        if err_target_fields:
+            for ef in error_layer.getFeatures():
+                ef_ids = _flatten_ids(ef.id())
+                ef_uuid = ""
+                for col in ("sf_fid", "fid", "df_fid", "sf_map_uuid", "map_uuid", "uuid"):
+                    if col in err_fields:
+                        try:
+                            val = ef.attribute(col)
+                            if val is not None and val != NULL:
+                                ef_ids.update(_flatten_ids(val))
+                                if not ef_uuid and col in ("sf_map_uuid", "map_uuid", "uuid"):
+                                    ef_uuid = str(val).strip()
+                        except Exception:
+                            pass
+                cand_ef_keys = {make_unique_feature_key(fid_val, ef_uuid) for fid_val in ef_ids}
+                cand_ef_keys.discard("")
+                matched_k = None
+                for k in list(ef_ids) + list(cand_ef_keys) + [k.lower() for k in cand_ef_keys]:
+                    if k in updated_values:
+                        matched_k = k
+                        break
+                if matched_k:
+                    gc = updated_values[matched_k]["sf_ea_geocode"]
+                    for etf in err_target_fields:
+                        idx = error_layer.fields().indexOf(etf)
+                        if idx != -1:
+                            error_layer.changeAttributeValue(ef.id(), idx, gc)
 
     if feedback:
         feedback.pushInfo(f"Calculated and assigned EA geocode for {fixed_count} feature(s).")
@@ -226,15 +267,24 @@ def _run_fix_ea_geocode(
 
 def concatenate_ea_geocode(
     dialog: Any,
-    val_id: str,
-    layer: Any,
-    table: Any,
+    *args,
+    **kwargs,
 ) -> None:
     """
     Process handler for concatenating EA geocode on checked table rows.
+    Processes the action directly regardless of validation check or file.
     """
+    if len(args) >= 2 and hasattr(args[1], "rowCount"):
+        layer, table = args[0], args[1]
+    elif len(args) >= 3 and hasattr(args[2], "rowCount"):
+        layer, table = args[1], args[2]
+    else:
+        layer = kwargs.get("layer")
+        table = kwargs.get("table")
+
+    action_id = "concatenate_ea_geocode"
     if hasattr(dialog, "_fix_selected_features"):
-        dialog._fix_selected_features("mv_2027_hp_4b_ea_geocode__missing", layer, table)
+        dialog._fix_selected_features(action_id, layer, table)
 
 
 def run_fix(

@@ -322,17 +322,25 @@ def _run_fix_copy_geometry_to_coordinates(
 
 def copy_geometry_to_coordinates(
     dialog: Any,
-    val_id: str,
-    layer: Any,
-    table: Any,
+    *args,
     combo_actions: Optional[Any] = None,
     btn_actions: Optional[Any] = None,
     btn_update_selected: Optional[Any] = None,
+    **kwargs,
 ) -> None:
     """
     Process handler for copying point geometry coordinates and pasting them
     into the longitude and latitude columns for checked table rows.
+    Processes the action directly regardless of validation check or file.
     """
+    if len(args) >= 2 and hasattr(args[1], "rowCount"):
+        layer, table = args[0], args[1]
+    elif len(args) >= 3 and hasattr(args[2], "rowCount"):
+        layer, table = args[1], args[2]
+    else:
+        layer = kwargs.get("layer")
+        table = kwargs.get("table")
+
     target_rule = "copy_geometry_to_coordinates"
     if hasattr(dialog, "_fix_selected_features"):
         dialog._fix_selected_features(target_rule, layer, table)

@@ -233,10 +233,11 @@ def _run_fix_map_uuid_missing(
     Form 2 Geotagged Building Points layer using df_x_current and df_y_current
     from the selected row in mv_2027_hp_1a_map_uuid__missing.
     """
-    if not main_layer or not main_layer.isValid():
+    active_layer = main_layer if (main_layer and main_layer.isValid()) else error_layer
+    if not active_layer or not active_layer.isValid():
         return {
             "success": False,
-            "message": "Invalid or missing Form 2 Building Points layer.",
+            "message": "Invalid or missing Building Points layer.",
             "fixed_count": 0,
             "updated_values": {},
         }
@@ -277,16 +278,16 @@ def _run_fix_map_uuid_missing(
             deduped_rows.append(r)
         rows_to_process = deduped_rows
 
-    # Ensure main_layer is in editing mode
-    if not main_layer.isEditable() and not main_layer.startEditing():
+    # Ensure active_layer is in editing mode
+    if not active_layer.isEditable() and not active_layer.startEditing():
         return {
             "success": False,
-            "message": "Failed to start edit session on Form 2 Building Points layer.",
+            "message": "Failed to start edit session on Building Points layer.",
             "fixed_count": 0,
             "updated_values": {},
         }
 
-    main_fields = main_layer.fields()
+    main_fields = active_layer.fields()
     main_field_names = [f.name() for f in main_fields]
 
     # Coordinate transformation if layer is projected
@@ -353,7 +354,7 @@ def _run_fix_map_uuid_missing(
 
         # 1. Match by explicit existing UUID
         if clean_uuid and uuid_fields:
-            for feat in main_layer.getFeatures():
+            for feat in active_layer.getFeatures():
                 if feat.id() in created_batch_fids:
                     continue
                 for uf in uuid_fields:
@@ -381,9 +382,9 @@ def _run_fix_map_uuid_missing(
                     is_reused_from_batch = True
                     break
 
-        # 2b. Check existing features in main_layer
+        # 2b. Check existing features in active_layer
         if existing_feat_id is None:
-            for feat in main_layer.getFeatures():
+            for feat in active_layer.getFeatures():
                 if feat.id() in created_batch_fids:
                     continue
                 if feat.hasGeometry() and not feat.geometry().isEmpty():
@@ -514,12 +515,12 @@ def _run_fix_map_uuid_missing(
                         except Exception:
                             pass
 
-            if hasattr(main_layer, "addFeature"):
-                main_layer.addFeature(new_feat)
-            elif hasattr(main_layer, "addFeatures"):
-                main_layer.addFeatures([new_feat])
-            elif hasattr(main_layer, "dataProvider") and hasattr(main_layer.dataProvider(), "addFeatures"):
-                main_layer.dataProvider().addFeatures([new_feat])
+            if hasattr(active_layer, "addFeature"):
+                active_layer.addFeature(new_feat)
+            elif hasattr(active_layer, "addFeatures"):
+                active_layer.addFeatures([new_feat])
+            elif hasattr(active_layer, "dataProvider") and hasattr(active_layer.dataProvider(), "addFeatures"):
+                active_layer.dataProvider().addFeatures([new_feat])
             assigned_fid = new_feat.id()
             if assigned_fid is not None:
                 created_batch_fids.add(assigned_fid)
@@ -576,15 +577,15 @@ def _run_fix_map_uuid_missing(
         fixed_count += 1
 
     if fixed_count > 0:
-        if not main_layer.commitChanges():
+        if not active_layer.commitChanges():
             return {
                 "success": False,
                 "fixed_count": 0,
                 "updated_values": {},
-                "message": "Failed to commit changes to Form 2 Building Points (.geojson).",
+                "message": "Failed to commit changes to Building Points layer.",
             }
-        main_layer.startEditing()
-        main_layer.triggerRepaint()
+        active_layer.startEditing()
+        active_layer.triggerRepaint()
 
         dlg = kwargs.get("dialog") or dialog
         if dlg and hasattr(dlg, "iface") and dlg.iface and hasattr(dlg.iface, "mapCanvas") and dlg.iface.mapCanvas():
@@ -592,8 +593,8 @@ def _run_fix_map_uuid_missing(
                 dlg.iface.mapCanvas().refresh()
             except Exception:
                 pass
-    elif main_layer.isEditable():
-        main_layer.rollBack()
+    elif active_layer.isEditable():
+        active_layer.rollBack()
 
     if fixed_count == 0 and failed_rows:
         bad_r, bad_x, bad_y = failed_rows[0]
@@ -625,15 +626,24 @@ def _run_fix_map_uuid_missing(
 
 def generate_point_geometry(
     dialog: Any,
-    val_id: str,
-    layer: Any,
-    table: Any,
+    *args,
+    **kwargs,
 ) -> None:
     """
     Process handler for generating point geometry on checked table rows.
+    Processes the action directly regardless of validation check or file.
     """
+    if len(args) >= 2 and hasattr(args[1], "rowCount"):
+        layer, table = args[0], args[1]
+    elif len(args) >= 3 and hasattr(args[2], "rowCount"):
+        layer, table = args[1], args[2]
+    else:
+        layer = kwargs.get("layer")
+        table = kwargs.get("table")
+
+    action_id = "generate_point_geometry"
     if hasattr(dialog, "_fix_selected_features"):
-        dialog._fix_selected_features("mv_2027_hp_1a_map_uuid__missing", layer, table)
+        dialog._fix_selected_features(action_id, layer, table)
 
 
 def run_fix(

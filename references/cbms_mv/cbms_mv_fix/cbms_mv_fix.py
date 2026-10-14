@@ -132,19 +132,41 @@ FIX_ID_COPY_GEOM = COPY_GEOM_FIX_ID
 FIX_NAME_COPY_GEOM = COPY_GEOM_FIX_NAME
 FIX_DESCRIPTION_COPY_GEOM = COPY_GEOM_FIX_DESCRIPTION
 
+from .delete_selected_features_fix import (
+    delete_selected_features,
+    mark_feature_deleted,
+    run_fix as delete_run_fix,
+    sync_feature_status,
+)
+
 # ---------------------------------------------------------------------------
-# Dispatch Table
+# Dispatch Table (Universal Action Names & Validation IDs)
 # ---------------------------------------------------------------------------
 _FIX_DISPATCH = {
+    # Action Names
+    "concatenate_ea_geocode": _run_fix_ea_geocode,
+    "ea_geocode": _run_fix_ea_geocode,
+    "generate_point_geometry": _run_fix_map_uuid_missing,
+    "generate_geometry": _run_fix_map_uuid_missing,
+    "deduplicate_features": _run_fix_longitude_duplicate,
+    "deduplicate": _run_fix_longitude_duplicate,
+    "concatenate_bsn_geoid": _run_fix_bsn_geoid,
+    "bsn_geoid": _run_fix_bsn_geoid,
+    "copy_geometry_to_coordinates": _run_fix_copy_geometry_to_coordinates,
+    "copy_geometry": _run_fix_copy_geometry_to_coordinates,
+    "delete_selected_features": delete_run_fix,
+    "delete_features": delete_run_fix,
+    # Validation IDs
     "mv_2027_hp_4b_ea_geocode__missing": _run_fix_ea_geocode,
+    "mv_2027_hp_4b_ea_geocode_missing": _run_fix_ea_geocode,
     "mv_2027_hp_1a_map_uuid__missing": _run_fix_map_uuid_missing,
+    "mv_2027_hp_1a_map_uuid_missing": _run_fix_map_uuid_missing,
     "mv_2027_hp_4b_bsn_geoid__invalid": _run_fix_bsn_geoid,
     "mv_2027_hp_4b_bsn_geoid_invalid": _run_fix_bsn_geoid,
     "mv_2027_hp_4b_bsn_geoid__missing": _run_fix_bsn_geoid,
     "mv_2027_hp_4b_bsn_geoid_missing": _run_fix_bsn_geoid,
     "mv_2027_hp_4a_longitude__duplicate": _run_fix_longitude_duplicate,
-    "copy_geometry_to_coordinates": _run_fix_copy_geometry_to_coordinates,
-    "copy_geometry": _run_fix_copy_geometry_to_coordinates,
+    "mv_2027_hp_4a_longitude_duplicate": _run_fix_longitude_duplicate,
     "mv_2027_hp_1a_map_uuid__invalid": _run_fix_copy_geometry_to_coordinates,
     "mv_2027_hp_1a_longitude__invalid": _run_fix_copy_geometry_to_coordinates,
     "mv_2027_hp_1a_latitude__invalid": _run_fix_copy_geometry_to_coordinates,
@@ -159,16 +181,27 @@ def run_fix(
     **kwargs,
 ) -> Dict[str, Any]:
     """
-    Unified dispatcher for all CBMS MV fix algorithms.
-    Routes to the correct handler based on the 'val_id' keyword argument.
-    Falls back to EA geocode fix if val_id is not provided (backward compatible).
+    Unified dispatcher for all CBMS MV fix algorithms and universal action names.
+    Routes to the correct handler based on the action name or validation ID.
+    Works universally across all map validations.
     """
     val_id = kwargs.pop("val_id", None)
+    clean = str(val_id or "").strip().lower()
 
-    if val_id and "bsn_geoid" in str(val_id).lower():
+    if clean in _FIX_DISPATCH:
+        handler = _FIX_DISPATCH[clean]
+    elif "bsn_geoid" in clean:
         handler = _run_fix_bsn_geoid
-    elif val_id and any(k in str(val_id).lower() for k in ("copy_geometry", "copy_geom", "geometry_to_coordinates")):
+    elif any(k in clean for k in ("copy_geometry", "copy_geom", "geometry_to_coord")):
         handler = _run_fix_copy_geometry_to_coordinates
+    elif "ea_geocode" in clean:
+        handler = _run_fix_ea_geocode
+    elif any(k in clean for k in ("generate_point", "map_uuid")):
+        handler = _run_fix_map_uuid_missing
+    elif any(k in clean for k in ("deduplicate", "duplicate")):
+        handler = _run_fix_longitude_duplicate
+    elif any(k in clean for k in ("delete_selected", "soft_delete", "delete_features")):
+        handler = delete_run_fix
     else:
         handler = _FIX_DISPATCH.get(val_id, _run_fix_ea_geocode)
 

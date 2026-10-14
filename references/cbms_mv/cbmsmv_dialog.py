@@ -1858,27 +1858,27 @@ class CbmsmvDialog(QDialog):
 
             if idx == 1:
                 self._on_concatenate_ea_geocode(
-                    val_id, layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
+                    layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
             elif idx == 2:
                 self._delete_selected_features(
-                    val_id, layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
+                    layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
             elif idx == 3:
                 self._on_generate_point_geometry(
-                    val_id, layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
+                    layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
             elif idx == 4:
                 self._on_deduplicate_features(
-                    val_id, layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
+                    layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
             elif idx == 5 or "bsn_geoid" in combo_actions.itemText(idx).lower() or "bsn" in combo_actions.itemText(idx).lower():
                 self._on_concatenate_bsn_geoid(
-                    val_id, layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
+                    layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
             elif idx == 6 or ("copy" in combo_actions.itemText(idx).lower() and ("geometry" in combo_actions.itemText(idx).lower() or "longitude" in combo_actions.itemText(idx).lower() or "latitude" in combo_actions.itemText(idx).lower())):
                 self._on_copy_geometry_to_coordinates(
-                    val_id, layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
+                    layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
             else:
                 QMessageBox.information(
@@ -2481,20 +2481,29 @@ class CbmsmvDialog(QDialog):
 
     def _delete_selected_features(
         self,
-        val_id: str,
-        layer: QgsVectorLayer,
-        table: QTableWidget,
+        *args,
         combo_actions: Optional[QComboBox] = None,
         btn_actions: Optional[Any] = None,
         btn_update_selected: Optional[QPushButton] = None,
+        **kwargs,
     ):
-        """Batch mark all checked features as 'deleted' in the status column via cbms_mv_fix."""
-        if not is_valid_qobject(self) or not is_valid_qobject(table):
+        """Directly mark checked features as 'deleted' regardless of validation check or file."""
+        if not is_valid_qobject(self):
             return
+        if len(args) >= 2 and hasattr(args[1], "rowCount"):
+            layer, table = args[0], args[1]
+        elif len(args) >= 3 and hasattr(args[2], "rowCount"):
+            layer, table = args[1], args[2]
+        else:
+            layer = kwargs.get("layer")
+            table = kwargs.get("table")
+
+        if not is_valid_qobject(table):
+            return
+
         from .cbms_mv_fix import cbms_mv_fix
         cbms_mv_fix.delete_selected_features(
             self,
-            val_id,
             layer,
             table,
             combo_actions=combo_actions,
@@ -2504,31 +2513,24 @@ class CbmsmvDialog(QDialog):
 
     def _on_concatenate_ea_geocode(
         self,
-        val_id: str,
-        layer: QgsVectorLayer,
-        table: QTableWidget,
+        *args,
         combo_actions: Optional[QComboBox] = None,
         btn_actions: Optional[Any] = None,
         btn_update_selected: Optional[QPushButton] = None,
+        **kwargs,
     ):
-        """Trigger EA geocode concatenation process from cbms_mv_fix."""
+        """Directly concatenate EA geocode on checked features regardless of validation check or file."""
         if not is_valid_qobject(self):
             return
-        try:
-            from .cbms_mv_fix import cbms_mv_fix
-            if hasattr(cbms_mv_fix, "concatenate_ea_geocode"):
-                cbms_mv_fix.concatenate_ea_geocode(self, val_id, layer, table)
-                if combo_actions:
-                    combo_actions.setItemText(0, "Actions")
-                elif btn_actions:
-                    btn_actions.setText("Actions ▾")
-                if btn_update_selected:
-                    btn_update_selected.setText("Update Selected")
-                    btn_update_selected.setEnabled(False)
-                return
-        except Exception:
-            pass
-        self._fix_selected_features("mv_2027_hp_4b_ea_geocode__missing", layer, table)
+        if len(args) >= 2 and hasattr(args[1], "rowCount"):
+            layer, table = args[0], args[1]
+        elif len(args) >= 3 and hasattr(args[2], "rowCount"):
+            layer, table = args[1], args[2]
+        else:
+            layer = kwargs.get("layer")
+            table = kwargs.get("table")
+
+        self._fix_selected_features("concatenate_ea_geocode", layer, table)
         if combo_actions:
             combo_actions.setItemText(0, "Actions")
         elif btn_actions:
@@ -2539,33 +2541,24 @@ class CbmsmvDialog(QDialog):
 
     def _on_concatenate_bsn_geoid(
         self,
-        val_id: str,
-        layer: QgsVectorLayer,
-        table: QTableWidget,
+        *args,
         combo_actions: Optional[QComboBox] = None,
         btn_actions: Optional[Any] = None,
         btn_update_selected: Optional[QPushButton] = None,
+        **kwargs,
     ):
-        """Trigger BSN GEOID concatenation process from cbms_mv_fix."""
+        """Directly concatenate BSN GEOID on checked features regardless of validation check or file."""
         if not is_valid_qobject(self):
             return
-        target_rule = "mv_2027_hp_4b_bsn_geoid__invalid"
-        effective_val_id = val_id if (val_id and "bsn_geoid" in str(val_id).lower()) else target_rule
-        try:
-            from .cbms_mv_fix import cbms_mv_fix
-            if hasattr(cbms_mv_fix, "concatenate_bsn_geoid"):
-                cbms_mv_fix.concatenate_bsn_geoid(self, effective_val_id, layer, table)
-                if combo_actions:
-                    combo_actions.setItemText(0, "Actions")
-                elif btn_actions:
-                    btn_actions.setText("Actions ▾")
-                if btn_update_selected:
-                    btn_update_selected.setText("Update Selected")
-                    btn_update_selected.setEnabled(False)
-                return
-        except Exception:
-            pass
-        self._fix_selected_features(effective_val_id, layer, table)
+        if len(args) >= 2 and hasattr(args[1], "rowCount"):
+            layer, table = args[0], args[1]
+        elif len(args) >= 3 and hasattr(args[2], "rowCount"):
+            layer, table = args[1], args[2]
+        else:
+            layer = kwargs.get("layer")
+            table = kwargs.get("table")
+
+        self._fix_selected_features("concatenate_bsn_geoid", layer, table)
         if combo_actions:
             combo_actions.setItemText(0, "Actions")
         elif btn_actions:
@@ -2576,33 +2569,24 @@ class CbmsmvDialog(QDialog):
 
     def _on_copy_geometry_to_coordinates(
         self,
-        val_id: str,
-        layer: QgsVectorLayer,
-        table: QTableWidget,
+        *args,
         combo_actions: Optional[QComboBox] = None,
         btn_actions: Optional[Any] = None,
         btn_update_selected: Optional[QPushButton] = None,
+        **kwargs,
     ):
-        """Trigger copy geometry to longitude and latitude process from cbms_mv_fix."""
+        """Directly copy point geometry to coordinates on checked features regardless of validation check or file."""
         if not is_valid_qobject(self):
             return
-        target_rule = "copy_geometry_to_coordinates"
-        effective_val_id = val_id if (val_id and any(k in str(val_id).lower() for k in ("geometry", "coord", "longitude", "latitude"))) else target_rule
-        try:
-            from .cbms_mv_fix import cbms_mv_fix
-            if hasattr(cbms_mv_fix, "copy_geometry_to_coordinates"):
-                cbms_mv_fix.copy_geometry_to_coordinates(self, effective_val_id, layer, table)
-                if combo_actions:
-                    combo_actions.setItemText(0, "Actions")
-                elif btn_actions:
-                    btn_actions.setText("Actions ▾")
-                if btn_update_selected:
-                    btn_update_selected.setText("Update Selected")
-                    btn_update_selected.setEnabled(False)
-                return
-        except Exception:
-            pass
-        self._fix_selected_features(effective_val_id, layer, table)
+        if len(args) >= 2 and hasattr(args[1], "rowCount"):
+            layer, table = args[0], args[1]
+        elif len(args) >= 3 and hasattr(args[2], "rowCount"):
+            layer, table = args[1], args[2]
+        else:
+            layer = kwargs.get("layer")
+            table = kwargs.get("table")
+
+        self._fix_selected_features("copy_geometry_to_coordinates", layer, table)
         if combo_actions:
             combo_actions.setItemText(0, "Actions")
         elif btn_actions:
@@ -2613,31 +2597,24 @@ class CbmsmvDialog(QDialog):
 
     def _on_generate_point_geometry(
         self,
-        val_id: str,
-        layer: QgsVectorLayer,
-        table: QTableWidget,
+        *args,
         combo_actions: Optional[QComboBox] = None,
         btn_actions: Optional[Any] = None,
         btn_update_selected: Optional[QPushButton] = None,
+        **kwargs,
     ):
-        """Trigger point geometry generation process from cbms_mv_fix."""
+        """Directly generate point geometry for checked features regardless of validation check or file."""
         if not is_valid_qobject(self):
             return
-        try:
-            from .cbms_mv_fix import cbms_mv_fix
-            if hasattr(cbms_mv_fix, "generate_point_geometry"):
-                cbms_mv_fix.generate_point_geometry(self, val_id, layer, table)
-                if combo_actions:
-                    combo_actions.setItemText(0, "Actions")
-                elif btn_actions:
-                    btn_actions.setText("Actions ▾")
-                if btn_update_selected:
-                    btn_update_selected.setText("Update Selected")
-                    btn_update_selected.setEnabled(False)
-                return
-        except Exception:
-            pass
-        self._fix_selected_features("mv_2027_hp_1a_map_uuid__missing", layer, table)
+        if len(args) >= 2 and hasattr(args[1], "rowCount"):
+            layer, table = args[0], args[1]
+        elif len(args) >= 3 and hasattr(args[2], "rowCount"):
+            layer, table = args[1], args[2]
+        else:
+            layer = kwargs.get("layer")
+            table = kwargs.get("table")
+
+        self._fix_selected_features("generate_point_geometry", layer, table)
         if combo_actions:
             combo_actions.setItemText(0, "Actions")
         elif btn_actions:
@@ -2648,42 +2625,37 @@ class CbmsmvDialog(QDialog):
 
     def _on_deduplicate_features(
         self,
-        val_id: str,
-        layer: QgsVectorLayer,
-        table: QTableWidget,
+        *args,
         combo_actions: Optional[QComboBox] = None,
         btn_actions: Optional[Any] = None,
         btn_update_selected: Optional[QPushButton] = None,
         process_all: bool = False,
+        **kwargs,
     ):
-        """Trigger duplicate feature deletion (retain one) via cbms_mv_fix."""
-        if not is_valid_qobject(self) or not is_valid_qobject(table):
+        """Directly deduplicate features regardless of validation check or file."""
+        if not is_valid_qobject(self):
             return
-        try:
-            from .cbms_mv_fix import cbms_mv_fix
-            if hasattr(cbms_mv_fix, "deduplicate_features"):
-                cbms_mv_fix.deduplicate_features(
-                    self,
-                    val_id,
-                    layer,
-                    table,
-                    combo_actions=combo_actions,
-                    btn_actions=btn_actions,
-                    btn_update_selected=btn_update_selected,
-                    process_all=process_all,
-                )
-                if combo_actions:
-                    combo_actions.setItemText(0, "Actions")
-                elif btn_actions:
-                    btn_actions.setText("Actions ▾")
-                if btn_update_selected:
-                    btn_update_selected.setText("Update Selected")
-                    btn_update_selected.setEnabled(False)
-                return
-        except Exception as exc:
-            if hasattr(self, "_log_error"):
-                self._log_error(f"Error in _on_deduplicate_features: {exc}")
-        self._fix_selected_features("mv_2027_hp_4a_longitude__duplicate", layer, table)
+        if len(args) >= 2 and hasattr(args[1], "rowCount"):
+            layer, table = args[0], args[1]
+        elif len(args) >= 3 and hasattr(args[2], "rowCount"):
+            layer, table = args[1], args[2]
+        else:
+            layer = kwargs.get("layer")
+            table = kwargs.get("table")
+
+        if not is_valid_qobject(table):
+            return
+
+        from .cbms_mv_fix.deduplicate_features_fix import deduplicate_features
+        deduplicate_features(
+            self,
+            layer,
+            table,
+            combo_actions=combo_actions,
+            btn_actions=btn_actions,
+            btn_update_selected=btn_update_selected,
+            process_all=process_all,
+        )
         if combo_actions:
             combo_actions.setItemText(0, "Actions")
         elif btn_actions:
@@ -2770,25 +2742,36 @@ class CbmsmvDialog(QDialog):
             QMessageBox.warning(
                 self,
                 "No Fix Available",
-                f"No automated fix algorithm has been registered for '{val_id}'.\n\n"
-                f"To add one, create references/cbms_mv/cbms_mv_fix/{val_id}_fix.py.",
+                f"No action or automated fix handler is available for '{val_id}'.",
             )
             return
 
-        main_layer = self._get_or_load_main_building_layer()
-        if not main_layer or not main_layer.isValid():
+        main_layer = self._get_or_load_main_building_layer() if hasattr(self, "_get_or_load_main_building_layer") else None
+        active_target_layer = main_layer if (main_layer and main_layer.isValid()) else layer
+        if not active_target_layer or not active_target_layer.isValid():
             QMessageBox.critical(
                 self,
                 "Layer Missing",
-                "Cannot run fix: Geotagged Building Points layer is not loaded.",
+                "Cannot run fix: No valid target vector layer is loaded or available.",
             )
             return
+
+        if active_target_layer and active_target_layer.isValid() and not active_target_layer.isEditable():
+            try:
+                active_target_layer.startEditing()
+            except Exception:
+                pass
+        if layer and layer.isValid() and layer != active_target_layer and not layer.isEditable():
+            try:
+                layer.startEditing()
+            except Exception:
+                pass
 
         try:
             feedback = QgsProcessingFeedback()
             try:
                 res = handler(
-                    main_layer,
+                    active_target_layer,
                     target_fids=target_fids,
                     target_uuids=target_uuids,
                     feedback=feedback,
@@ -2801,7 +2784,7 @@ class CbmsmvDialog(QDialog):
             except TypeError as te:
                 te_msg = str(te).lower()
                 if "keyword argument" in te_msg or "positional argument" in te_msg or "takes" in te_msg:
-                    res = handler(main_layer, target_uuids or target_fids, feedback=feedback)
+                    res = handler(active_target_layer, target_uuids or target_fids, feedback=feedback)
                 else:
                     raise te
 
