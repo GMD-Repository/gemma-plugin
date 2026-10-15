@@ -1197,6 +1197,44 @@ class TestEADialogRefresh(unittest.TestCase):
         self.assertIsNone(mock_dlg.merge_table.cellWidget(0, 6))
         self.assertIsNone(mock_dlg.merge_table.cellWidget(0, 7))
 
+    def test_ea_merge_validate_inputs_enables_run_when_replacement_layers_empty(self):
+        """Verify that Tab 3 enables the Run button when EA layer and output folder are set even if replacement layers are empty."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+        from qgis.core import QgsVectorLayer, QgsField, QgsFeature
+        from qgis.PyQt.QtCore import QVariant
+
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "02122_ea2026", "memory")
+        ea_layer.dataProvider().addAttributes([
+            QgsField("geocode", QVariant.String),
+            QgsField("citymun", QVariant.String),
+        ])
+        ea_layer.updateFields()
+        f = QgsFeature(ea_layer.fields())
+        f.setAttribute("geocode", "02122001")
+        f.setAttribute("citymun", "Imus")
+        ea_layer.dataProvider().addFeatures([f])
+
+        mock_dlg.ea_merge_ea_combo = MagicMock()
+        mock_dlg.ea_merge_ea_combo.currentLayer.return_value = ea_layer
+        mock_dlg._ea_merge_replacement_layers = []
+
+        mock_dlg.ea_merge_ea_status_lbl = MagicMock()
+        mock_dlg.ea_merge_val_poly_lbl = MagicMock()
+        mock_dlg.ea_merge_val_name_lbl = MagicMock()
+        mock_dlg.ea_merge_val_geom_lbl = MagicMock()
+        mock_dlg.ea_merge_out_geocode_lbl = MagicMock()
+        mock_dlg.ea_merge_out_layer_lbl = MagicMock()
+        mock_dlg.ea_merge_out_excel_lbl = MagicMock()
+        mock_dlg.ea_merge_output_folder_widget = MagicMock()
+        mock_dlg.ea_merge_output_folder_widget.filePath.return_value = "D:/PSA-GIS/Temporary files/Cavite"
+        mock_dlg.ea_merge_run_btn = MagicMock()
+
+        EALauncherDialog._ea_merge_validate_inputs(mock_dlg)
+
+        # Run button must be enabled even without replacement layers
+        mock_dlg.ea_merge_run_btn.setEnabled.assert_called_with(True)
+
 
 if __name__ == "__main__":
     unittest.main()
