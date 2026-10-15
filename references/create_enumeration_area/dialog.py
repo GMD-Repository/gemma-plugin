@@ -3034,8 +3034,12 @@ class EALauncherDialog(QDialog):
                     candidates["prev_ea"] = layer
 
             elif geom == 0:  # Point
-                if candidates["bldg"] is None and any(k in name_lower for k in building_keywords):
-                    candidates["bldg"] = layer
+                if any(k in name_lower for k in building_keywords):
+                    if "extracted" not in name_lower:
+                        if candidates["bldg"] is None or "extracted" in candidates["bldg"].name().lower():
+                            candidates["bldg"] = layer
+                    elif candidates["bldg"] is None:
+                        candidates["bldg"] = layer
 
             elif geom == 1:  # Line
                 if candidates["river"] is None and any(k in name_lower for k in river_keywords):
