@@ -27,6 +27,7 @@ class TestCbmsMvModularActions(unittest.TestCase):
             "deduplicate_features_fix.py",
             "concatenate_bsn_geoid_fix.py",
             "copy_geometry_to_coordinates_fix.py",
+            "update_datafile_coordinates_fix.py",
             "common.py",
             "cbms_mv_fix.py",
             "__init__.py",
@@ -83,6 +84,13 @@ class TestCbmsMvModularActions(unittest.TestCase):
         self.assertTrue(hasattr(mod, "_run_fix_copy_geometry_to_coordinates"))
         self.assertTrue(hasattr(mod, "run_fix"))
 
+    def test_import_update_datafile_coordinates_fix(self):
+        """Action 7: Update Datafile's Coordinates module."""
+        mod = importlib.import_module("references.cbms_mv.cbms_mv_fix.update_datafile_coordinates_fix")
+        self.assertTrue(hasattr(mod, "update_datafile_coordinates"))
+        self.assertTrue(hasattr(mod, "_run_fix_update_datafile_coordinates"))
+        self.assertTrue(hasattr(mod, "run_fix"))
+
     def test_facade_cbms_mv_fix_reexports_all(self):
         """cbms_mv_fix facade re-exports all action functions and dispatcher."""
         mod = importlib.import_module("references.cbms_mv.cbms_mv_fix.cbms_mv_fix")
@@ -92,6 +100,7 @@ class TestCbmsMvModularActions(unittest.TestCase):
         self.assertTrue(hasattr(mod, "deduplicate_features"))
         self.assertTrue(hasattr(mod, "concatenate_bsn_geoid"))
         self.assertTrue(hasattr(mod, "copy_geometry_to_coordinates"))
+        self.assertTrue(hasattr(mod, "update_datafile_coordinates"))
         self.assertTrue(hasattr(mod, "run_fix"))
 
     def test_get_fix_handler_resolves_all_actions(self):
@@ -103,6 +112,9 @@ class TestCbmsMvModularActions(unittest.TestCase):
         self.assertTrue(callable(pkg.get_fix_handler("mv_2027_hp_4b_bsn_geoid__invalid")))
         self.assertTrue(callable(pkg.get_fix_handler("copy_geometry_to_coordinates")))
         self.assertTrue(callable(pkg.get_fix_handler("delete_selected_features")))
+        self.assertTrue(callable(pkg.get_fix_handler("update_datafiles_coordinates")))
+        self.assertTrue(callable(pkg.get_fix_handler("update_datafile_coordinates")))
+        self.assertTrue(callable(pkg.get_fix_handler("mv_2027_hp_4a_pos_longit__invalid")))
 
     def test_make_unique_feature_key(self):
         """Verify composite unique key generation from fid and map_uuid."""
@@ -284,6 +296,53 @@ class TestCbmsMvModularActions(unittest.TestCase):
         res_copy = copy_handler(None, target_keys=["1_m-1"], error_layer=layer)
         self.assertTrue(res_copy.get("success"))
         self.assertEqual(res_copy.get("fixed_count"), 1)
+
+    def test_update_datafile_coordinates_execution(self):
+        """Verify update_datafile_coordinates correctly copies sf_longitude and sf_latitude to df_longitude and df_latitude."""
+        pkg = importlib.import_module("references.cbms_mv.cbms_mv_fix")
+        from qgis.core import QgsVectorLayer, QgsField, QgsFeature
+        from PyQt5.QtCore import QVariant
+
+        layer = QgsVectorLayer("None", "test_coord_layer", "memory")
+        pr = layer.dataProvider()
+        pr.addAttributes([
+            QgsField("fid", QVariant.Int),
+            QgsField("map_uuid", QVariant.String),
+            QgsField("sf_longitude", QVariant.String),
+            QgsField("sf_latitude", QVariant.String),
+            QgsField("df_longitude", QVariant.String),
+            QgsField("df_latitude", QVariant.String),
+        ])
+        layer.updateFields()
+
+        f = QgsFeature(layer.fields())
+        f.setAttribute("fid", 1)
+        f.setAttribute("map_uuid", "uuid-coords-101")
+        f.setAttribute("sf_longitude", "121.054321")
+        f.setAttribute("sf_latitude", "14.123456")
+        f.setAttribute("df_longitude", "0.0")
+        f.setAttribute("df_latitude", "0.0")
+        pr.addFeatures([f])
+
+        handler = pkg.get_fix_handler("update_datafiles_coordinates")
+        self.assertIsNotNone(handler)
+
+        res = handler(layer, target_keys=["1_uuid-coords-101"], error_layer=layer)
+        self.assertTrue(res.get("success"))
+        self.assertEqual(res.get("fixed_count"), 1)
+
+        # Verify values on layer were updated
+        feat = next(layer.getFeatures())
+        self.assertEqual(str(feat["df_longitude"]), "121.054321")
+        self.assertEqual(str(feat["df_latitude"]), "14.123456")
+
+        # Verify returned payload
+        self.assertIn("1_uuid-coords-101", res.get("updated_values", {}))
+        payload = res["updated_values"]["1_uuid-coords-101"]
+        self.assertEqual(payload.get("df_longitude"), "121.054321")
+        self.assertEqual(payload.get("df_latitude"), "14.123456")
+        self.assertEqual(payload.get("longitude"), "121.054321")
+        self.assertEqual(payload.get("latitude"), "14.123456")
 
 
 if __name__ == "__main__":

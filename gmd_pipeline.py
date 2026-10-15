@@ -43,16 +43,19 @@ class GMDPipeline(object):
         self.toolbar = None
         self.geometry_toolkit_dlg = None
         self.geometry_legacy_dlg = None
+        self.package_layers_dlg = None
         self.check_update_dlg = None
         self.push_dlg = None
-        self.cbmsmv_dlg = None
-        self.cbmsmv_action = None
         self.check_and_update_action = None
         self.comparison_panel_action = None
+        self.projection_finder_action = None
+        self.projection_finder_dlg = None
         self.create_ea_action = None
         self.ea_dlg = None
         self.offline_editing = None
         self.ea_provider = None
+        self.package_style_loader_action = None
+        self.package_style_loader_dlg = None
 
     def gema_add_submenu(self, submenu, icon):
         if self.gema_menu != None:
@@ -209,17 +212,14 @@ class GMDPipeline(object):
         #self.updating_boundaries_menu.addAction(self.comparison_panel_action)
 
         # 2. EA Delineation Submenu
-        self.ea_delineation_menu = QMenu(u'EA Delineation')
-        self.gema_add_submenu(self.ea_delineation_menu, create_ea_icon)
+        #self.ea_delineation_menu = QMenu(u'EA Delineation')
+        #self.gema_add_submenu(self.ea_delineation_menu, create_ea_icon)
 
-        self.create_ea_action = QAction(create_ea_icon, "EA Delineation and Merging", self.iface.mainWindow())
-        self.create_ea_action.triggered.connect(self.show_create_ea_dialog)
-        self.ea_delineation_menu.addAction(self.create_ea_action)
+        #self.create_ea_action = QAction(create_ea_icon, "EA Delineation and Merging", self.iface.mainWindow())
+        #self.create_ea_action.triggered.connect(self.show_create_ea_dialog)
+        #self.ea_delineation_menu.addAction(self.create_ea_action)
 
-        self.package_qfield_action = QAction(packager_icon, "Package for QField", self.iface.mainWindow())
-        self.package_qfield_action.triggered.connect(self.show_package_dialog)
-        self.package_qfield_action.setShortcut("Ctrl+Alt+Q")
-        self.ea_delineation_menu.addAction(self.package_qfield_action)
+        
 
         # 3. Others Submenu
         #self.others_menu = QMenu(u'Others')
@@ -241,7 +241,21 @@ class GMDPipeline(object):
         self.cbmsmv_action.triggered.connect(self.show_cbmsmv_dialog)
         self.cbmsmv_action.setShortcut("Ctrl+Alt+D")
         self.cbmsmv_menu.addAction(self.cbmsmv_action)
+
+        # 5. Package Style Loader
+        package_style_icon = QIcon(os.path.dirname(__file__) + "/icons/package_style_loader.svg")
+        self.package_style_loader_action = QAction(package_style_icon, "Package Style Loader", self.iface.mainWindow())
+        self.package_style_loader_action.triggered.connect(self.show_package_style_loader_dialog)
+        if self.gema_menu is not None:
+            self.gema_menu.addAction(self.package_style_loader_action)
+        else:
+            self.iface.addPluginToMenu("&Gemma", self.package_style_loader_action)
+        self.cbmsmv_menu.addAction(self.package_style_loader_action)
         
+        #self.package_qfield_action = QAction(packager_icon, "Package for QField", self.iface.mainWindow())
+        #self.package_qfield_action.triggered.connect(self.show_package_dialog)
+        #self.package_qfield_action.setShortcut("Ctrl+Alt+Q")
+        #self.cbmsmv_menu.addAction(self.package_qfield_action)
 
         # 1. Check and Update
         #self.check_and_update_toolbar_action = QAction(
@@ -285,6 +299,13 @@ class GMDPipeline(object):
             close_comparison_panel(self.iface)
         except Exception:
             pass
+
+        if self.package_style_loader_dlg is not None:
+            try:
+                self.package_style_loader_dlg.close()
+            except Exception:
+                pass
+            self.package_style_loader_dlg = None
 
         if self.gema_menu is not None:
             self.iface.mainWindow().menuBar().removeAction(self.gema_menu.menuAction())
@@ -393,6 +414,29 @@ class GMDPipeline(object):
     def cbmsmv_dialog_finished(self):
         """Cleanup when the CBMS MV dialog is closed."""
         self.cbmsmv_dlg = None
+
+    def show_package_style_loader_dialog(self):
+        """Open the Package Style Loader dialog."""
+        from .gmd_scripts.package_style_loader import show_package_style_loader_dialog
+
+        if self.package_style_loader_dlg is not None:
+            try:
+                import sip
+                if not sip.isdeleted(self.package_style_loader_dlg):
+                    self.package_style_loader_dlg.showNormal()
+                    self.package_style_loader_dlg.show()
+                    self.package_style_loader_dlg.raise_()
+                    self.package_style_loader_dlg.activateWindow()
+                    return
+            except Exception:
+                pass
+            self.package_style_loader_dlg = None
+
+        self.package_style_loader_dlg = show_package_style_loader_dialog(self.iface)
+
+    def package_style_loader_dialog_finished(self):
+        """Cleanup when Package Style Loader dialog is closed."""
+        self.package_style_loader_dlg = None
 
     def show_check_and_update_dialog(self):
         """Open the Check and Update boundary management dialog."""

@@ -101,6 +101,39 @@ class TestPackageStyleLoader(unittest.TestCase):
         self.assertLess(psa_prio, other_prio, "PSA boundary must be above background layers")
         self.assertLess(lgu_prio, other_prio, "LGU boundary must be above background layers")
 
+    def test_apply_package_styles_to_group_missing_group(self):
+        """Verify apply_package_styles_to_group returns graceful result when group does not exist."""
+        res = self.mod.apply_package_styles_to_group("Nonexistent_Group_XYZ")
+        self.assertIsInstance(res, dict)
+        self.assertEqual(res.get("applied_count"), 0)
+        self.assertIn("message", res)
+
+    def test_apply_package_styles_to_group_functional(self):
+        """Verify apply_package_styles_to_group processes layer tree group nodes."""
+        from qgis.core import QgsProject
+
+        proj = QgsProject.instance()
+        root = proj.layerTreeRoot()
+        grp = root.addGroup("Test_Primary_Inputs_Group")
+
+        try:
+            # Add sample layers to project and group
+            poly_layer = create_sample_polygon_layer("00501_bgy", count=2)
+            pt_layer = create_sample_point_layer("Building Points (pts.geojson)", count=2)
+
+            proj.addMapLayer(poly_layer, False)
+            proj.addMapLayer(pt_layer, False)
+            grp.addLayer(poly_layer)
+            grp.addLayer(pt_layer)
+
+            res = self.mod.apply_package_styles_to_group(grp, project=proj, reorder=True)
+            self.assertIsInstance(res, dict)
+            self.assertIn("applied_count", res)
+            self.assertIn("details", res)
+            self.assertGreaterEqual(len(res["details"]), 2)
+        finally:
+            root.removeChildNode(grp)
+
 
 if __name__ == "__main__":
     unittest.main()

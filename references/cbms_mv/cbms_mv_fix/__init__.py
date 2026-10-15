@@ -11,6 +11,7 @@ from .generate_point_geometry_fix import generate_point_geometry, run_fix as _ru
 from .deduplicate_features_fix import deduplicate_features, run_fix as _run_dup_fix
 from .concatenate_bsn_geoid_fix import concatenate_bsn_geoid, run_fix as _run_bsn_fix
 from .copy_geometry_to_coordinates_fix import copy_geometry_to_coordinates, run_fix as _run_copy_fix
+from .update_datafile_coordinates_fix import update_datafile_coordinates, run_fix as _run_update_coord_fix
 from .common import is_valid_qobject, make_unique_feature_key
 
 _DIRECT_FIX_MAP = {
@@ -31,6 +32,13 @@ _DIRECT_FIX_MAP = {
     "copy_geometry_to_coordinates": _run_copy_fix,
     "copy_geometry": _run_copy_fix,
     "delete_selected_features": _run_del_fix,
+    "update_datafiles_coordinates": _run_update_coord_fix,
+    "update_datafile_coordinates": _run_update_coord_fix,
+    "update_coordinates": _run_update_coord_fix,
+    "mv_2027_hp_4a_pos_longit__invalid": _run_update_coord_fix,
+    "mv_2027_hp_4a_pos_longit_invalid": _run_update_coord_fix,
+    "mv_2027_hp_4a_pos_latitu__invalid": _run_update_coord_fix,
+    "mv_2027_hp_4a_pos_latitu_invalid": _run_update_coord_fix,
 }
 
 
@@ -45,6 +53,8 @@ def get_fix_handler(val_id: str) -> Optional[Callable]:
         return _run_bsn_fix
     if "ea_geocode" in clean:
         return _run_ea_fix
+    if any(k in clean for k in ("update_datafile", "datafile_coord", "datafile_coordinate", "update_coord", "pos_longit", "pos_latitu")):
+        return _run_update_coord_fix
     if any(k in clean for k in ("copy_geometry", "copy_geom", "geometry_to_coord")):
         return _run_copy_fix
     if any(k in clean for k in ("delete_selected", "soft_delete")):
@@ -68,6 +78,7 @@ __all__ = [
     "deduplicate_features",
     "concatenate_bsn_geoid",
     "copy_geometry_to_coordinates",
+    "update_datafile_coordinates",
     "get_fix_handler",
     "has_fix",
     "is_valid_qobject",

@@ -142,6 +142,32 @@ class TestCbmsMvTabSizesAndProcessing(unittest.TestCase):
             self.assertEqual(len(feats), 1)
             self.assertEqual(feats[0]["sf_map_uuid"], "uuid-12345")
 
+    def test_checkbox_properties_safe_when_disabled(self):
+        """Test that should_load_canvas and should_group_layers default safely to False when checkboxes are None."""
+        dlg = CbmsmvDialog(None)
+        self.assertIsNone(dlg.chk_load_canvas)
+        self.assertIsNone(dlg.chk_group_layers)
+        self.assertFalse(dlg.should_load_canvas)
+        self.assertFalse(dlg.should_group_layers)
+
+    def test_checkbox_properties_with_qcheckbox(self):
+        """Test that should_load_canvas and should_group_layers reflect QCheckBox states if attached."""
+        from PyQt5.QtWidgets import QCheckBox
+        dlg = CbmsmvDialog(None)
+        dlg.chk_load_canvas = QCheckBox()
+        dlg.chk_group_layers = QCheckBox()
+
+        dlg.chk_load_canvas.setChecked(False)
+        dlg.chk_group_layers.setChecked(True)
+        self.assertFalse(dlg.should_load_canvas)
+        self.assertTrue(dlg.should_group_layers)
+
+        dlg.chk_load_canvas.setChecked(True)
+        dlg.chk_group_layers.setChecked(False)
+        self.assertTrue(dlg.should_load_canvas)
+        self.assertFalse(dlg.should_group_layers)
+
 
 if __name__ == "__main__":
     unittest.main()
+
