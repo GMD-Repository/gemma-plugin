@@ -41,11 +41,15 @@ from qgis.core import (
     QgsSpatialIndex,
     NULL,
 )
+
+from .helpers.constants import create_qgs_field
 from qgis.gui import QgsMapLayerComboBox
 
 
 class UnmergeEADialog(QDialog):
     """Pop-up dialog to unmerge EA polygons back to previous EA boundaries and recalculate counts in-place."""
+
+    unmergeCompleted = pyqtSignal()
 
     def __init__(
         self,
@@ -60,6 +64,13 @@ class UnmergeEADialog(QDialog):
         self.setWindowTitle("Unmerge EA - Revert Merged Polygons")
         self.setMinimumSize(560, 680)
         self.resize(620, 720)
+        self.setWindowFlags(
+            Qt.Window |
+            Qt.WindowTitleHint |
+            Qt.WindowMinimizeButtonHint |
+            Qt.WindowMaximizeButtonHint |
+            Qt.WindowCloseButtonHint
+        )
 
         self.default_output_dir = default_output_dir or ""
         self.default_geocode = default_geocode or ""
@@ -534,13 +545,13 @@ class UnmergeEADialog(QDialog):
             merged_field_names_lower = [merged_fields.at(i).name().lower() for i in range(merged_fields.count())]
             fields_to_add = []
             if "hh_count" not in merged_field_names_lower:
-                fields_to_add.append(QgsField("hh_count", QVariant.Int))
+                fields_to_add.append(create_qgs_field("hh_count", QVariant.Int))
             if "bldg_count" not in merged_field_names_lower:
-                fields_to_add.append(QgsField("bldg_count", QVariant.Int))
+                fields_to_add.append(create_qgs_field("bldg_count", QVariant.Int))
             if "new_ean" not in merged_field_names_lower:
-                fields_to_add.append(QgsField("new_ean", QVariant.String))
+                fields_to_add.append(create_qgs_field("new_ean", QVariant.String))
             if not any(f in merged_field_names_lower for f in ("ea_type", "eatype", "type")):
-                fields_to_add.append(QgsField("ea_type", QVariant.String))
+                fields_to_add.append(create_qgs_field("ea_type", QVariant.String))
 
             if fields_to_add:
                 merged_layer.dataProvider().addAttributes(fields_to_add)
@@ -570,6 +581,8 @@ class UnmergeEADialog(QDialog):
                     prev_fields = pf.fields()
                     for pfld in prev_fields:
                         pf_name = pfld.name()
+                        if pf_name.lower() in ("fid", "ogc_fid", "ogcfid"):
+                            continue
                         val = pf.attribute(pf_name)
                         if val is not None and val != NULL:
                             # Match case-insensitively to merged_layer fields
@@ -577,6 +590,12 @@ class UnmergeEADialog(QDialog):
                                 if mfld.name().lower() == pf_name.lower():
                                     new_feat.setAttribute(mfld.name(), val)
                                     break
+
+                    # Ensure primary key / fid field is explicitly NULL so OGR autoincrements a new unique fid
+                    for fid_name in ("fid", "ogc_fid", "ogcfid"):
+                        f_idx = merged_fields.lookupField(fid_name)
+                        if f_idx != -1:
+                            new_feat.setAttribute(f_idx, NULL)
 
                     # Recalculate bldg_count and hh_count from building points inside pg
                     inside_bldg_count = 0
@@ -604,13 +623,34 @@ class UnmergeEADialog(QDialog):
                                     inside_hh_float += 1.0
 
                     inside_hh_count = int(math.ceil(inside_hh_float))
+                    if not bldg_spatial_index:
+                        base_hh = pf.attribute("hhcount")
+                        if base_hh is None or base_hh == NULL or str(base_hh).strip() == "":
+                            base_hh = pf.attribute("hh_count") or 0.0
+                        try:
+                            inside_hh_count = int(round(float(base_hh)))
+                        except Exception:
+                            inside_hh_count = 0
 
-                    # Set calculated counts in new feature
+                    # Ensure baseline hhcount and bldgcount are preserved from pf
+                    for base_col in ("hhcount", "bldgcount"):
+                        m_idx = merged_fields.lookupField(base_col)
+                        if m_idx != -1 and (new_feat.attribute(m_idx) is None or new_feat.attribute(m_idx) == NULL):
+                            p_idx = prev_fields.lookupField(base_col)
+                            if p_idx == -1:
+                                alt_name = "hh_count" if base_col == "hhcount" else "bldg_count"
+                                p_idx = prev_fields.lookupField(alt_name)
+                            if p_idx != -1:
+                                p_val = pf.attribute(p_idx)
+                                if p_val is not None and p_val != NULL:
+                                    new_feat.setAttribute(m_idx, p_val)
+
+                    # ONLY update calculated hh_count and bldg_count, leaving baseline hhcount/bldgcount unchanged
                     for mfld in merged_fields:
                         m_name_lower = mfld.name().lower()
-                        if m_name_lower in ("hh_count", "hhcount", "household"):
+                        if m_name_lower == "hh_count":
                             new_feat.setAttribute(mfld.name(), inside_hh_count)
-                        elif m_name_lower in ("bldg_count", "bldgcount"):
+                        elif m_name_lower == "bldg_count":
                             new_feat.setAttribute(mfld.name(), inside_bldg_count)
                         elif m_name_lower in ("ea_type", "eatype", "type"):
                             if new_feat.attribute(mfld.name()) in (None, NULL, ""):
@@ -650,6 +690,23 @@ class UnmergeEADialog(QDialog):
                 f"Unmerge successful! Restored {len(new_features_to_add)} previous EAs in '{merged_layer.name()}'."
             )
             self.status_banner.setStyleSheet("color: #27ae60; font-weight: bold;")
+
+            # Emit unmerge completion signal
+            self.unmergeCompleted.emit()
+
+            # Refresh parent dialog's Merge Preview if available
+            parent_dlg = self.parent()
+            if parent_dlg:
+                if hasattr(parent_dlg, "refresh_merge_preview"):
+                    try:
+                        parent_dlg.refresh_merge_preview()
+                    except Exception as exc:
+                        self._log(f"Notice: Failed to refresh merge preview: {exc}", "WARNING")
+                elif hasattr(parent_dlg, "generate_preview"):
+                    try:
+                        parent_dlg.generate_preview()
+                    except Exception as exc:
+                        self._log(f"Notice: Failed to refresh preview: {exc}", "WARNING")
 
             QMessageBox.information(
                 self,

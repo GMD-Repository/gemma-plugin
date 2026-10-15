@@ -36,7 +36,6 @@ class TestDelineatedEAThreshold(unittest.TestCase):
             MERGED_OUTPUT = "MERGED_OUTPUT"
             SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
             DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
-            MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
             EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
 
             def parameterAsSink(self, params, name, ctx, fields, wkb, crs):
@@ -138,7 +137,6 @@ class TestDelineatedEAThreshold(unittest.TestCase):
             MERGED_OUTPUT = "MERGED_OUTPUT"
             SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
             DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
-            MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
             EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
 
         alg = DummyAlg()

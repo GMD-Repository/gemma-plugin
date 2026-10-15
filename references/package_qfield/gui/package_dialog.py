@@ -120,6 +120,18 @@ BUILTIN_PRESETS = {
             "is_group": True,
             "checked": True
         }
+    ],
+    "KumoniAksyon": [
+        {
+            "path": ["CBMS Geotagging Layer"],
+            "is_group": True,
+            "checked": True
+        },
+        {
+            "path": ["Base Layers"],
+            "is_group": True,
+            "checked": True
+        }
     ]
 }
 

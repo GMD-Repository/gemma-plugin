@@ -30,10 +30,20 @@ EXCLUDE_PATTERNS = [
     ".agents",
     ".agents/*",
     ".antigravity*",
+    ".claude",
+    ".claude/*",
     "docs",
     "docs/*",
     "scripts",
     "scripts/*",
+    "tests",
+    "tests/*",
+    "test",
+    "test/*",
+    ".pytest_cache",
+    ".pytest_cache/*",
+    "scratch",
+    "scratch/*",
     "node_modules",
     "node_modules/*",
     "__pycache__",
@@ -46,6 +56,8 @@ EXCLUDE_PATTERNS = [
     "tsconfig*.json",
     ".gitignore",
     "README.md",
+    "skills-lock.json",
+    "vercel.json",
 ]
 
 
@@ -127,7 +139,7 @@ def _copy_plugin_files(source: Path, dest: Path) -> None:
 def _should_exclude(path: Path, root: Path) -> bool:
     """Check if a file/directory should be excluded from the ZIP."""
     name = path.name
-    rel_path = str(path.relative_to(root))
+    rel_path = path.relative_to(root).as_posix()
 
     for pattern in EXCLUDE_PATTERNS:
         # Handle glob-style patterns

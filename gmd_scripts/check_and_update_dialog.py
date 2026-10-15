@@ -35,6 +35,10 @@ class DigitizeDockWidget(QDockWidget):
         self.parent_dialog = parent_dialog
         self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea | Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea)
 
+        palette = self.palette()
+        bg_color = palette.color(palette.Window)
+        self.is_dark = bg_color.lightness() < 128
+
         main_widget = QWidget(self)
         layout = QVBoxLayout(main_widget)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -44,43 +48,15 @@ class DigitizeDockWidget(QDockWidget):
         dropdown_layout = QHBoxLayout()
         dropdown_layout.setSpacing(6)
 
-        title_lbl = QLabel("Feature:")
-        title_lbl.setStyleSheet("font-weight: bold; font-size: 12px; color: #2C3E50;")
-        dropdown_layout.addWidget(title_lbl)
+        self.title_lbl = QLabel("Feature:")
+        dropdown_layout.addWidget(self.title_lbl)
 
         self.feature_combo = QComboBox()
-        self.feature_combo.setStyleSheet("""
-            QComboBox {
-                font-weight: bold;
-                padding: 3px 6px;
-                border: 1px solid #BDC3C7;
-                border-radius: 4px;
-                background-color: white;
-                color: #2C3E50;
-            }
-            QComboBox QAbstractItemView {
-                border: 1px solid #BDC3C7;
-                background-color: white;
-                color: #2C3E50;
-                selection-background-color: #2980B9;
-                selection-color: white;
-            }
-            QComboBox QAbstractItemView::item {
-                min-height: 22px;
-                color: #2C3E50;
-            }
-            QComboBox QAbstractItemView::item:hover {
-                background-color: #2980B9;
-                color: white;
-            }
-            QComboBox QAbstractItemView::item:selected {
-                background-color: #2980B9;
-                color: white;
-            }
-        """)
         self.populate_feature_combo()
         self.feature_combo.currentIndexChanged.connect(self._on_feature_selected)
         dropdown_layout.addWidget(self.feature_combo, 1)
+
+        self._apply_theme()
 
         layout.addLayout(dropdown_layout)
 
@@ -147,6 +123,84 @@ class DigitizeDockWidget(QDockWidget):
 
         layout.addLayout(btn_layout)
         self.setWidget(main_widget)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        palette = self.palette()
+        bg_color = palette.color(palette.Window)
+        new_is_dark = bg_color.lightness() < 128
+        if new_is_dark != getattr(self, "is_dark", False):
+            self.is_dark = new_is_dark
+            self._apply_theme()
+
+    def _apply_theme(self):
+        """Apply adaptive styling for light or dark mode on DigitizeDockWidget."""
+        if getattr(self, "is_dark", False):
+            title_color = "#ECEFF1"
+            combo_style = """
+                QComboBox {
+                    font-weight: bold;
+                    padding: 3px 6px;
+                    border: 1px solid #455A64;
+                    border-radius: 4px;
+                    background-color: #263238;
+                    color: #ECEFF1;
+                }
+                QComboBox QAbstractItemView {
+                    border: 1px solid #455A64;
+                    background-color: #263238;
+                    color: #ECEFF1;
+                    selection-background-color: #1976D2;
+                    selection-color: white;
+                }
+                QComboBox QAbstractItemView::item {
+                    min-height: 22px;
+                    color: #ECEFF1;
+                }
+                QComboBox QAbstractItemView::item:hover {
+                    background-color: #37474F;
+                    color: white;
+                }
+                QComboBox QAbstractItemView::item:selected {
+                    background-color: #1976D2;
+                    color: white;
+                }
+            """
+        else:
+            title_color = "#2C3E50"
+            combo_style = """
+                QComboBox {
+                    font-weight: bold;
+                    padding: 3px 6px;
+                    border: 1px solid #BDC3C7;
+                    border-radius: 4px;
+                    background-color: white;
+                    color: #2C3E50;
+                }
+                QComboBox QAbstractItemView {
+                    border: 1px solid #BDC3C7;
+                    background-color: white;
+                    color: #2C3E50;
+                    selection-background-color: #2980B9;
+                    selection-color: white;
+                }
+                QComboBox QAbstractItemView::item {
+                    min-height: 22px;
+                    color: #2C3E50;
+                }
+                QComboBox QAbstractItemView::item:hover {
+                    background-color: #2980B9;
+                    color: white;
+                }
+                QComboBox QAbstractItemView::item:selected {
+                    background-color: #2980B9;
+                    color: white;
+                }
+            """
+        if hasattr(self, "title_lbl"):
+            self.title_lbl.setStyleSheet(f"font-weight: bold; font-size: 12px; color: {title_color};")
+        if hasattr(self, "feature_combo"):
+            self.feature_combo.setStyleSheet(combo_style)
 
     def populate_feature_combo(self):
         """Populate the feature combo box from parent_dialog.adjust_feature_combo."""
@@ -225,6 +279,10 @@ class CheckAndUpdateDialog(QDialog):
         self.setWindowFlags(
             self.windowFlags() | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint
         )
+        palette = self.palette()
+        bg_color = palette.color(palette.Window)
+        self.is_dark = bg_color.lightness() < 128
+
         self.last_error_layer = None
         self.last_repaired_layer = None
         self.active_edit_layer = None
@@ -233,6 +291,16 @@ class CheckAndUpdateDialog(QDialog):
         self.guard_guarding = False
         self.digitize_dock = None
         self._build_ui()
+        self._apply_theme()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        palette = self.palette()
+        bg_color = palette.color(palette.Window)
+        new_is_dark = bg_color.lightness() < 128
+        if new_is_dark != getattr(self, "is_dark", False):
+            self.is_dark = new_is_dark
+            self._apply_theme()
 
     def _build_ui(self):
         main_layout = QVBoxLayout(self)
@@ -240,44 +308,20 @@ class CheckAndUpdateDialog(QDialog):
         main_layout.setSpacing(8)
 
         # Header Title
-        title_label = QLabel("Check and Update — Boundary Management")
-        title_label.setWordWrap(True)
-        title_label.setStyleSheet("font-size: 15px; font-weight: bold; color: #2C3E50; padding: 2px 0;")
-        main_layout.addWidget(title_label)
+        self.title_label = QLabel("Check and Update — Boundary Management")
+        self.title_label.setWordWrap(True)
+        main_layout.addWidget(self.title_label)
 
-        sub_label = QLabel("Integrated workflow for raster georeferencing, geometry check & repair, and metadata updates.")
-        sub_label.setWordWrap(True)
-        sub_label.setStyleSheet("color: #7F8C8D; font-size: 11px; margin-bottom: 4px;")
-        main_layout.addWidget(sub_label)
+        self.sub_label = QLabel("Integrated workflow for raster georeferencing, geometry check & repair, and metadata updates.")
+        self.sub_label.setWordWrap(True)
+        main_layout.addWidget(self.sub_label)
 
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("color: #BDC3C7;")
-        main_layout.addWidget(line)
+        self.sep_line = QFrame()
+        self.sep_line.setFrameShape(QFrame.HLine)
+        main_layout.addWidget(self.sep_line)
 
         # Tabbed Widget
         self.tabs = QTabWidget()
-        self.tabs.setStyleSheet("""
-            QTabBar::tab {
-                font-weight: bold;
-                font-size: 12px;
-                min-width: 180px;
-                padding: 10px 24px;
-                margin-right: 2px;
-                background-color: #EAEDED;
-                color: #2C3E50;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
-            }
-            QTabBar::tab:selected {
-                background-color: #FFFFFF;
-                color: #2980B9;
-                border-bottom: 3px solid #3498DB;
-            }
-            QTabBar::tab:hover:!selected {
-                background-color: #D5D8DC;
-            }
-        """)
 
         # Create Tab Pages
         self.tab1 = QWidget()
@@ -307,34 +351,21 @@ class CheckAndUpdateDialog(QDialog):
         layout.setSpacing(12)
 
         # Step Progression Header Banner
-        header_banner = QLabel("Georeferencing  ➔  Digitize  ➔  Update and Export")
-        header_banner.setAlignment(Qt.AlignCenter)
-        header_banner.setStyleSheet("""
-            QLabel {
-                background-color: #EBF5FB;
-                color: #1F618D;
-                font-weight: bold;
-                font-size: 12px;
-                padding: 8px 12px;
-                border: 1px solid #AED6F1;
-                border-radius: 4px;
-            }
-        """)
-        layout.addWidget(header_banner)
+        self.header_banner = QLabel("Georeferencing  ➔  Digitize  ➔  Update and Export")
+        self.header_banner.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.header_banner)
 
         # ── Georeferencing Section ───────────────────────────────────────────
-        step1_group = QGroupBox("Georeferencing")
-        step1_group.setStyleSheet("QGroupBox { font-weight: bold; font-size: 12px; }")
-        step1_layout = QVBoxLayout(step1_group)
+        self.step1_group = QGroupBox("Georeferencing")
+        step1_layout = QVBoxLayout(self.step1_group)
         step1_layout.setSpacing(8)
 
-        step1_desc = QLabel(
+        self.step1_desc = QLabel(
             "Georeference scanned maps, barangay sketches, or raster basemaps to true spatial coordinates.\n"
             "Clicking the button below opens QGIS's built-in Georeferencer tool pre-routed to C:\\PSA-GIS."
         )
-        step1_desc.setWordWrap(True)
-        step1_desc.setStyleSheet("font-size: 11px; color: #34495E;")
-        step1_layout.addWidget(step1_desc)
+        self.step1_desc.setWordWrap(True)
+        step1_layout.addWidget(self.step1_desc)
 
         georef_btn = QPushButton("Open QGIS Georeferencer")
         georef_btn.setIcon(QIcon(":/images/themes/default/mActionGeoref.svg"))
@@ -353,31 +384,27 @@ class CheckAndUpdateDialog(QDialog):
         """)
         georef_btn.clicked.connect(self._run_georeferencer)
         step1_layout.addWidget(georef_btn, alignment=Qt.AlignLeft)
-        layout.addWidget(step1_group)
+        layout.addWidget(self.step1_group)
 
         # ── Digitize Section ─────────────────────────────────────────────────
-        step2_group = QGroupBox("Digitize")
-        step2_group.setStyleSheet("QGroupBox { font-weight: bold; font-size: 12px; }")
-        step2_layout = QVBoxLayout(step2_group)
+        self.step2_group = QGroupBox("Digitize")
+        step2_layout = QVBoxLayout(self.step2_group)
         step2_layout.setSpacing(8)
 
-        step2_desc = QLabel(
+        self.step2_desc = QLabel(
             "Configure reference layer opacity and cycle through target editable layers for vertex digitizing."
         )
-        step2_desc.setWordWrap(True)
-        step2_desc.setStyleSheet("font-size: 11px; color: #34495E;")
-        step2_layout.addWidget(step2_desc)
+        self.step2_desc.setWordWrap(True)
+        step2_layout.addWidget(self.step2_desc)
 
         # Row 1: PSA Reference Layer & Opacity
         ctrls_layout = QHBoxLayout()
         ctrls_layout.setSpacing(10)
 
-        psa_label = QLabel("PSA Reference Layer:")
-        psa_label.setStyleSheet("font-size: 11px; font-weight: bold;")
+        self.psa_label = QLabel("PSA Reference Layer:")
         self.psa_layer_combo = QgsMapLayerComboBox()
 
-        opacity_label = QLabel("Opacity:")
-        opacity_label.setStyleSheet("font-size: 11px; font-weight: bold;")
+        self.opacity_label = QLabel("Opacity:")
         self.opacity_spin = QSpinBox()
         self.opacity_spin.setRange(0, 100)
         self.opacity_spin.setValue(25)
@@ -401,9 +428,9 @@ class CheckAndUpdateDialog(QDialog):
         """)
         apply_btn.clicked.connect(self._apply_layer_opacity)
 
-        ctrls_layout.addWidget(psa_label)
+        ctrls_layout.addWidget(self.psa_label)
         ctrls_layout.addWidget(self.psa_layer_combo, stretch=1)
-        ctrls_layout.addWidget(opacity_label)
+        ctrls_layout.addWidget(self.opacity_label)
         ctrls_layout.addWidget(self.opacity_spin)
         ctrls_layout.addWidget(apply_btn)
         step2_layout.addLayout(ctrls_layout)
@@ -412,8 +439,7 @@ class CheckAndUpdateDialog(QDialog):
         adjust_layout = QHBoxLayout()
         adjust_layout.setSpacing(10)
 
-        adjust_label = QLabel("Adjust Feature:")
-        adjust_label.setStyleSheet("font-size: 11px; font-weight: bold;")
+        self.adjust_label = QLabel("Adjust Feature:")
         self.adjust_feature_combo = QComboBox()
 
         edit_btn = QPushButton("Edit")
@@ -484,7 +510,7 @@ class CheckAndUpdateDialog(QDialog):
         """)
         done_btn.clicked.connect(self._run_done_editing)
 
-        adjust_layout.addWidget(adjust_label)
+        adjust_layout.addWidget(self.adjust_label)
         adjust_layout.addWidget(self.adjust_feature_combo, stretch=1)
         adjust_layout.addWidget(edit_btn)
         adjust_layout.addWidget(prev_btn)
@@ -502,20 +528,18 @@ class CheckAndUpdateDialog(QDialog):
         # Populate Adjust Feature dropdown from selected PSA Reference Layer
         self._populate_adjust_features()
 
-        layout.addWidget(step2_group)
+        layout.addWidget(self.step2_group)
 
         # ── Update and Export Section ─────────────────────────────────────────
-        step3_group = QGroupBox("Update and Export")
-        step3_group.setStyleSheet("QGroupBox { font-weight: bold; font-size: 12px; }")
-        step3_layout = QVBoxLayout(step3_group)
+        self.step3_group = QGroupBox("Update and Export")
+        step3_layout = QVBoxLayout(self.step3_group)
         step3_layout.setSpacing(8)
 
-        step3_desc = QLabel(
+        self.step3_desc = QLabel(
             "Auto-populate PSGC metadata, standard 15-attribute schemas, and administrative codes for the selected boundary layer."
         )
-        step3_desc.setWordWrap(True)
-        step3_desc.setStyleSheet("font-size: 11px; color: #34495E;")
-        step3_layout.addWidget(step3_desc)
+        self.step3_desc.setWordWrap(True)
+        step3_layout.addWidget(self.step3_desc)
 
         form_layout = QFormLayout()
         form_layout.setSpacing(6)
@@ -555,7 +579,7 @@ class CheckAndUpdateDialog(QDialog):
         save_btn_layout.addStretch()
 
         step3_layout.addLayout(save_btn_layout)
-        layout.addWidget(step3_group)
+        layout.addWidget(self.step3_group)
 
         layout.addStretch()
 
@@ -1471,12 +1495,243 @@ class CheckAndUpdateDialog(QDialog):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
-        toolkit_tabs = QTabWidget()
+        self.toolkit_tabs = QTabWidget()
         self.geom_toolkit_checker = CheckerTab()
         self.geom_toolkit_help = HelpInfoTab()
 
-        toolkit_tabs.addTab(self.geom_toolkit_checker, "Geometry Fixer")
-        toolkit_tabs.addTab(self.geom_toolkit_help, "Help and Information")
+        self.toolkit_tabs.addTab(self.geom_toolkit_checker, "Geometry Fixer")
+        self.toolkit_tabs.addTab(self.geom_toolkit_help, "Help and Information")
 
-        layout.addWidget(toolkit_tabs, stretch=1)
+        layout.addWidget(self.toolkit_tabs, stretch=1)
+
+    def _apply_theme(self):
+        """Apply adaptive styling for light or dark mode."""
+        if getattr(self, "is_dark", False):
+            title_color = "#ECEFF1"
+            sub_color = "#B0BEC5"
+            line_color = "#455A64"
+            desc_color = "#CFD8DC"
+            lbl_color = "#ECEFF1"
+            grp_color = "#ECEFF1"
+            banner_style = """
+                QLabel {
+                    background-color: #1A365D;
+                    color: #90CDF4;
+                    font-weight: bold;
+                    font-size: 12px;
+                    padding: 8px 12px;
+                    border: 1px solid #2B6CB0;
+                    border-radius: 4px;
+                }
+            """
+            tab_style = """
+                QTabBar::tab {
+                    font-weight: bold;
+                    font-size: 12px;
+                    min-width: 180px;
+                    padding: 10px 24px;
+                    margin-right: 2px;
+                    background-color: #263238;
+                    color: #B0BEC5;
+                    border-top-left-radius: 4px;
+                    border-top-right-radius: 4px;
+                }
+                QTabBar::tab:selected {
+                    background-color: #37474F;
+                    color: #4FC3F7;
+                    border-bottom: 3px solid #29B6F6;
+                }
+                QTabBar::tab:hover:!selected {
+                    background-color: #324148;
+                    color: #ECEFF1;
+                }
+                QTabWidget::pane {
+                    border: 1px solid #455A64;
+                }
+            """
+            toolkit_tab_style = """
+                QTabBar::tab {
+                    font-weight: bold;
+                    font-size: 12px;
+                    padding: 8px 18px;
+                    margin-right: 2px;
+                    background-color: #263238;
+                    color: #B0BEC5;
+                    border-top-left-radius: 4px;
+                    border-top-right-radius: 4px;
+                }
+                QTabBar::tab:selected {
+                    background-color: #37474F;
+                    color: #4FC3F7;
+                    border-bottom: 3px solid #29B6F6;
+                }
+                QTabBar::tab:hover:!selected {
+                    background-color: #324148;
+                    color: #ECEFF1;
+                }
+                QTabWidget::pane {
+                    border: 1px solid #455A64;
+                }
+            """
+        else:
+            title_color = "#2C3E50"
+            sub_color = "#7F8C8D"
+            line_color = "#BDC3C7"
+            desc_color = "#34495E"
+            lbl_color = "#2C3E50"
+            grp_color = "#2C3E50"
+            banner_style = """
+                QLabel {
+                    background-color: #EBF5FB;
+                    color: #1F618D;
+                    font-weight: bold;
+                    font-size: 12px;
+                    padding: 8px 12px;
+                    border: 1px solid #AED6F1;
+                    border-radius: 4px;
+                }
+            """
+            tab_style = """
+                QTabBar::tab {
+                    font-weight: bold;
+                    font-size: 12px;
+                    min-width: 180px;
+                    padding: 10px 24px;
+                    margin-right: 2px;
+                    background-color: #EAEDED;
+                    color: #2C3E50;
+                    border-top-left-radius: 4px;
+                    border-top-right-radius: 4px;
+                }
+                QTabBar::tab:selected {
+                    background-color: #FFFFFF;
+                    color: #2980B9;
+                    border-bottom: 3px solid #3498DB;
+                }
+                QTabBar::tab:hover:!selected {
+                    background-color: #D5D8DC;
+                }
+                QTabWidget::pane {
+                    border: 1px solid #BDC3C7;
+                }
+            """
+            toolkit_tab_style = ""
+
+        if hasattr(self, "title_label"):
+            self.title_label.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {title_color}; padding: 2px 0;")
+        if hasattr(self, "sub_label"):
+            self.sub_label.setStyleSheet(f"color: {sub_color}; font-size: 11px; margin-bottom: 4px;")
+        if hasattr(self, "sep_line"):
+            self.sep_line.setStyleSheet(f"color: {line_color};")
+        if hasattr(self, "tabs"):
+            self.tabs.setStyleSheet(tab_style)
+        if hasattr(self, "header_banner"):
+            self.header_banner.setStyleSheet(banner_style)
+        if hasattr(self, "step1_desc"):
+            self.step1_desc.setStyleSheet(f"font-size: 11px; color: {desc_color};")
+        if hasattr(self, "step2_desc"):
+            self.step2_desc.setStyleSheet(f"font-size: 11px; color: {desc_color};")
+        if hasattr(self, "step3_desc"):
+            self.step3_desc.setStyleSheet(f"font-size: 11px; color: {desc_color};")
+        if hasattr(self, "psa_label"):
+            self.psa_label.setStyleSheet(f"font-size: 11px; font-weight: bold; color: {lbl_color};")
+        if hasattr(self, "opacity_label"):
+            self.opacity_label.setStyleSheet(f"font-size: 11px; font-weight: bold; color: {lbl_color};")
+        if hasattr(self, "adjust_label"):
+            self.adjust_label.setStyleSheet(f"font-size: 11px; font-weight: bold; color: {lbl_color};")
+        if hasattr(self, "step1_group"):
+            self.step1_group.setStyleSheet(f"QGroupBox {{ font-weight: bold; font-size: 12px; color: {grp_color}; }}")
+        if hasattr(self, "step2_group"):
+            self.step2_group.setStyleSheet(f"QGroupBox {{ font-weight: bold; font-size: 12px; color: {grp_color}; }}")
+        if hasattr(self, "step3_group"):
+            self.step3_group.setStyleSheet(f"QGroupBox {{ font-weight: bold; font-size: 12px; color: {grp_color}; }}")
+        if hasattr(self, "toolkit_tabs"):
+            self.toolkit_tabs.setStyleSheet(toolkit_tab_style)
+
+        if hasattr(self, "geom_toolkit_checker") and hasattr(self, "geom_toolkit_help"):
+            self._apply_geom_toolkit_theme(self.geom_toolkit_checker, self.geom_toolkit_help, getattr(self, "is_dark", False))
+
+    def _apply_geom_toolkit_theme(self, checker, help_tab, is_dark: bool):
+        """Apply adaptive styling to the embedded geometry repair toolkit widgets."""
+        try:
+            if hasattr(help_tab, "apply_theme"):
+                help_tab.apply_theme(is_dark)
+
+            if is_dark:
+                if hasattr(checker, "layer_count_label"):
+                    checker.layer_count_label.setStyleSheet("color: #B0BEC5; font-size: 11px;")
+                if hasattr(checker, "summary"):
+                    checker.summary.setStyleSheet("font-size: 13px; font-weight: 600; color: #ECEFF1;")
+                if hasattr(checker, "log_box"):
+                    checker.log_box.setStyleSheet(
+                        "background: #1E2327; color: #ECEFF1; font-family: Consolas, monospace; font-size: 11px; border: 1px solid #37474F;"
+                    )
+                if hasattr(checker, "layer_list"):
+                    checker.layer_list.setStyleSheet("""
+                        QListWidget {
+                            border: 1px solid #455A64;
+                            border-radius: 4px;
+                            background-color: #263238;
+                            color: #ECEFF1;
+                        }
+                        QListWidget::item {
+                            padding: 3px 4px;
+                            color: #ECEFF1;
+                        }
+                        QListWidget::item:hover {
+                            background-color: #37474F;
+                        }
+                        QListWidget::indicator:checked {
+                            background-color: #1976D2;
+                            border: 1px solid #1976D2;
+                        }
+                    """)
+                if hasattr(checker, "table"):
+                    checker.table.setStyleSheet("""
+                        QTableWidget {
+                            background-color: #263238;
+                            alternate-background-color: #1E2327;
+                            color: #ECEFF1;
+                            gridline-color: #37474F;
+                            selection-background-color: #1976D2;
+                            selection-color: white;
+                        }
+                        QHeaderView::section {
+                            background-color: #37474F;
+                            color: #ECEFF1;
+                            border: 1px solid #455A64;
+                            padding: 4px;
+                        }
+                    """)
+            else:
+                if hasattr(checker, "layer_count_label"):
+                    checker.layer_count_label.setStyleSheet("color: #455a64; font-size: 11px;")
+                if hasattr(checker, "summary"):
+                    checker.summary.setStyleSheet("font-size: 13px; font-weight: 600; color: #37474f;")
+                if hasattr(checker, "log_box"):
+                    checker.log_box.setStyleSheet(
+                        "background: #FFFFFF; color: #1F2937; font-family: Consolas, monospace; font-size: 11px; border: 1px solid #BDC3C7;"
+                    )
+                if hasattr(checker, "layer_list"):
+                    checker.layer_list.setStyleSheet("""
+                        QListWidget {
+                            border: 1px solid #b0bec5;
+                            outline: 0;
+                        }
+                        QListWidget::item {
+                            padding: 3px 4px;
+                        }
+                        QListWidget::indicator:checked {
+                            background-color: #1565c0;
+                            border: 1px solid #1565c0;
+                        }
+                    """)
+                if hasattr(checker, "table"):
+                    checker.table.setStyleSheet("")
+        except Exception:
+            pass
+
+    def _apply_dark_mode_to_geom_toolkit(self, checker, help_tab):
+        """Backward-compatible alias for _apply_geom_toolkit_theme in dark mode."""
+        self._apply_geom_toolkit_theme(checker, help_tab, True)
 

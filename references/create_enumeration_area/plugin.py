@@ -106,5 +106,5 @@ class EADelineationPlugin:
         full Processing parameter dialog.
         """
         from .dialog import EALauncherDialog
-        dlg = EALauncherDialog(self.iface.mainWindow())
+        dlg = EALauncherDialog(self.iface.mainWindow(), iface=self.iface)
         dlg.exec_()
