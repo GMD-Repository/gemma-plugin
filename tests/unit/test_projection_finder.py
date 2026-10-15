@@ -126,9 +126,92 @@ class TestProjectionFinder(unittest.TestCase):
             dlg = self.mod.ProjectionToolkit()
             self.assertIsNotNone(dlg)
             self.assertEqual(dlg.windowTitle(), "Know Your Projection")
+            self.assertTrue(hasattr(dlg, "finder_tab"))
+            self.assertTrue(hasattr(dlg, "point_repair_tab"))
+            self.assertTrue(hasattr(dlg, "help_tab"))
         except Exception as e:
             self.skipTest(f"Skipping dialog UI test in headless environment: {e}")
+
+    def test_audit_point_coordinates(self):
+        """Verify scanning and anomaly detection for point layers with outliers/nulls."""
+        from tests.mocks.qgis_mock import QgsVectorLayer, QgsField, QgsFields, QgsFeature, QgsGeometry, QgsPointXY
+        from qgis.PyQt.QtCore import QVariant
+
+        layer = QgsVectorLayer("Point?crs=EPSG:4326", "Test_Building_Points", "memory")
+        fields = QgsFields()
+        fields.append(QgsField("fid", getattr(QVariant, "Int", 2)))
+        fields.append(QgsField("longitude", getattr(QVariant, "Double", 6)))
+        fields.append(QgsField("latitude", getattr(QVariant, "Double", 6)))
+        layer.dataProvider().addAttributes(list(fields))
+        layer.updateFields()
+
+        features = []
+        for i in range(1, 4):
+            f = QgsFeature(layer.fields())
+            f.setAttributes([i, 124.20 + i * 0.01, 13.80 + i * 0.01])
+            f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(124.20 + i * 0.01, 13.80 + i * 0.01)))
+            features.append(f)
+        f_out = QgsFeature(layer.fields())
+        f_out.setAttributes([4, 124.2844, 13.8480])
+        f_out.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(638807.0, 1531293.0)))
+        features.append(f_out)
+        f_null = QgsFeature(layer.fields())
+        f_null.setAttributes([5, 124.2900, 13.8500])
+        f_null.setGeometry(QgsGeometry())
+        features.append(f_null)
+
+        layer.dataProvider().addFeatures(features)
+        layer.updateExtents()
+
+        res = self.mod.audit_point_coordinates(layer)
+        self.assertEqual(res['total'], 5)
+        self.assertEqual(res['normal_count'], 3)
+        self.assertEqual(res['outlier_count'], 1)
+        self.assertEqual(res['null_count'], 1)
+        self.assertEqual(res['repairable_count'], 2)
+        self.assertEqual(res['lon_field'], 'longitude')
+        self.assertEqual(res['lat_field'], 'latitude')
+
+    def test_repair_point_outliers(self):
+        """Verify in-place repair of point outliers and nulls from lon/lat columns."""
+        from tests.mocks.qgis_mock import QgsVectorLayer, QgsField, QgsFields, QgsFeature, QgsGeometry, QgsPointXY
+        from qgis.PyQt.QtCore import QVariant
+
+        layer = QgsVectorLayer("Point?crs=EPSG:4326", "Test_Repair_Points", "memory")
+        fields = QgsFields()
+        fields.append(QgsField("fid", getattr(QVariant, "Int", 2)))
+        fields.append(QgsField("longitude", getattr(QVariant, "Double", 6)))
+        fields.append(QgsField("latitude", getattr(QVariant, "Double", 6)))
+        layer.dataProvider().addAttributes(list(fields))
+        layer.updateFields()
+
+        features = []
+        f1 = QgsFeature(layer.fields())
+        f1.setAttributes([1, 124.25, 13.85])
+        f1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(124.25, 13.85)))
+        features.append(f1)
+        f2 = QgsFeature(layer.fields())
+        f2.setAttributes([2, 124.28, 13.84])
+        f2.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(638807.0, 1531293.0)))
+        features.append(f2)
+
+        layer.dataProvider().addFeatures(features)
+        layer.updateExtents()
+
+        repaired, skipped = self.mod.repair_point_outliers(layer)
+        self.assertEqual(repaired, 1)
+        self.assertEqual(skipped, 0)
+
+        if layer.isEditable():
+            layer.commitChanges()
+
+        for f in layer.getFeatures():
+            if f['fid'] == 2:
+                pt = f.geometry().asPoint()
+                self.assertAlmostEqual(pt.x(), 124.28, places=4)
+                self.assertAlmostEqual(pt.y(), 13.84, places=4)
 
 
 if __name__ == "__main__":
     unittest.main()
+

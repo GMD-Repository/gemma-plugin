@@ -577,7 +577,16 @@ class JoinBarangayAttributes(QgsProcessingAlgorithm):
         # ── Filter Records for Target City/Municipality ──────────────
         filtered_records = []
         if code_filter:
-            filtered_records = [r for r in all_records if str(r.get("lgu_code", "")) == code_filter or str(r.get("geocode", "")).startswith(code_filter)]
+            # The layer code is PPPMM (province + city/mun). The sheet geocode is
+            # RRPPPMMBBB (10 digits), so a plain startswith() on geocode would match
+            # the wrong LGU (e.g. 01028 -> Adams, Ilocos Norte: 01|028|01|001).
+            def _lgu_key(r):
+                if r.get("lgu_code"):
+                    return str(r["lgu_code"])
+                geo = str(r.get("geocode", ""))
+                return geo[2:7] if len(geo) == 10 else ""
+
+            filtered_records = [r for r in all_records if _lgu_key(r) == code_filter]
 
         if not filtered_records and citymun_name:
             clean_layer = citymun_name.lower().replace("_", " ")
