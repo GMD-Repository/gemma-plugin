@@ -46,7 +46,7 @@ class TestCbmsMvDropdownActions(unittest.TestCase):
         self.assertIn('toolbar.addWidget(combo_actions)', content)
 
         # Check Update Selected button placed on the right side of Action dropdown
-        self.assertIn('btn_update_selected = QPushButton("Update Selected")', content)
+        self.assertIn('btn_update_selected = QPushButton("Apply Fix Action")', content)
         self.assertIn('toolbar.addWidget(btn_update_selected)', content)
 
         # Check order: combo_actions followed by btn_update_selected
