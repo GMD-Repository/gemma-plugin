@@ -76,7 +76,7 @@ class QgisLogObserver(QObject):
 
 
 class QgisLogHandler(logging.Handler):
-    source = "libqfieldsync"
+    source = "gemma_sync"
 
     def __init__(self, qgis_log_observer: QgisLogObserver, *args, **kwargs) -> None:
         self.qgis_log_observer = qgis_log_observer
@@ -102,8 +102,8 @@ class QgisLogHandler(logging.Handler):
 qgis_log_observer = QgisLogObserver()
 qgis_log_handler = QgisLogHandler(qgis_log_observer)
 
-logger_exists = bool(logging.Logger.manager.loggerDict.get("libqfieldsync"))
-logger = logging.getLogger("libqfieldsync")
+logger_exists = bool(logging.Logger.manager.loggerDict.get("gemma_sync"))
+logger = logging.getLogger("gemma_sync")
 
 if not logger_exists:
     logger.setLevel(logging.DEBUG)

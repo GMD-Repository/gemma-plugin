@@ -7,9 +7,9 @@ from typing import Callable, Dict, List, Optional
 from qgis.core import Qgis, QgsMapLayer, QgsProject
 from qgis.PyQt.QtCore import QObject
 
-from libqfieldsync.layer import LayerSource, SyncAction, UnsupportedPrimaryKeyError
-from libqfieldsync.project import ProjectConfiguration, ProjectProperties
-from libqfieldsync.utils.file_utils import is_valid_filepath, isascii
+from .layer import LayerSource, SyncAction, UnsupportedPrimaryKeyError
+from .project import ProjectConfiguration, ProjectProperties
+from .utils.file_utils import is_valid_filepath, isascii
 
 from .offline_converter import ExportType
 
