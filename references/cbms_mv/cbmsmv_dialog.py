@@ -3202,11 +3202,11 @@ class CbmsmvDialog(QDialog):
                 uuid_idx = header_lower.index(target)
                 break
 
-        # Locate or append updated_variables column
-        updated_var_idx = header_lower.index("updated_variables") if "updated_variables" in header_lower else None
+        # Locate or append updated_columns column
+        updated_var_idx = header_lower.index("updated_columns") if "updated_columns" in header_lower else None
         if updated_var_idx is None:
-            header.append("updated_variables")
-            header_lower.append("updated_variables")
+            header.append("updated_columns")
+            header_lower.append("updated_columns")
             updated_var_idx = len(header) - 1
             for r in rows:
                 r.append("")
@@ -3260,7 +3260,7 @@ class CbmsmvDialog(QDialog):
                     if col_idx is not None:
                         actual_col_name = header[col_idx]
                         row[col_idx] = str(new_val) if new_val is not None else ""
-                        if actual_col_name.lower() != "updated_variables":
+                        if actual_col_name.lower() != "updated_columns":
                             var_name = actual_col_name[3:] if actual_col_name.lower().startswith("df_") else actual_col_name
                             changed_cols_for_row.append(var_name)
 
@@ -3442,14 +3442,14 @@ class CbmsmvDialog(QDialog):
                                 typed_val = new_val
                     target_dict[final_key] = typed_val
 
-                # Track updated_variables in JSON record
-                updated_key = "updated_variables"
+                # Track updated_columns in JSON record
+                updated_key = "updated_columns"
                 existing_uv = str(target_dict.get(updated_key) or "").strip()
                 existing_tokens = [t.strip() for t in existing_uv.split("|") if t.strip()]
                 new_tokens = [
                     (p[3:] if p.lower().startswith("df_") else p)
                     for p in props_to_update.keys()
-                    if p.lower() != "updated_variables"
+                    if p.lower() != "updated_columns"
                 ]
                 if new_tokens:
                     combined = list(dict.fromkeys(existing_tokens + new_tokens))
