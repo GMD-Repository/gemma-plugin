@@ -21,7 +21,7 @@
  ***************************************************************************/
 """
 
-from libqfieldsync.project_checker import ProjectCheckerFeedback
+from gemma_sync.project_checker import ProjectCheckerFeedback
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import QLabel, QTableWidget, QTableWidgetItem
 

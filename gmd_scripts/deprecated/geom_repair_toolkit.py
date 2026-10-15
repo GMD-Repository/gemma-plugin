@@ -1,3 +1,48 @@
+# -*- coding: utf-8 -*-
+"""
+Geometry Repair Toolkit (Interactive Dialog)
+
+A standalone interactive QGIS tool for topology inspection, canvas-level error
+highlighting, and in-place automated repair of polygon vector layers.
+
+Overview:
+    This module provides a GUI dialog (CheckerTab) coupled with multi-threaded
+    workers (TopologyEngine, PolygonFixerWorker, NullFixerWorker) that inspect
+    vector polygon layers for topological invalidities and perform in-place
+    geometry repairs directly on the active layer within QGIS edit mode.
+
+Key Error Types Handled:
+    - Invalid Geometry / Self Intersection: Repaired via full polygon reconstruction
+      (ring extraction, unary union planarization, face matching, and hole restoration).
+    - Duplicate Vertex: Detected via QGIS's internal validator and resolved through
+      progressive coordinate tolerance sweeps and node-clustering deduplication. The
+      repaired geometry is re-validated before it is counted as fixed — a sweep that
+      only partially clears a feature's duplicate nodes is written (the nodes it did
+      remove are genuinely gone) but reported as needing manual review, not as fixed.
+      A ring collapsed to fewer than 4 distinct points (typically a sub-millimetre
+      self-snap that produced a degenerate hole) cannot be de-duplicated at any
+      tolerance without destroying the ring; the log names the ring and its size and
+      the ring must be deleted by hand, not repeatedly re-scanned.
+    - Null / Empty / Missing Geometry: Reconstructed from surrounding polygon
+      spatial boundaries.
+    - Ring/Structure Error: Detected when QGIS validator reports structural arrangement
+      issues (e.g. holes outside exterior ring, nested parts). These are non-auto-fixable
+      because GEOS considers them valid and makeValid() cannot alter them; they require
+      manual correction via the QGIS Vertex Tool.
+    - Duplicate Geometry & Dangles: Flagged for manual review and deduplication.
+
+Architecture:
+    - TopologyError: Defines error constants, metadata container, and bounding box logic.
+    - TopologyEngine: Executes multi-threaded validation passes across layer features.
+    - CheckerTab: Main UI containing the layer selector, error data table, canvas
+      rubber-band / marker highlights, error filter controls, and repair dispatchers.
+    - PolygonFixerWorker: Background worker executing polygon fixes with detailed
+      per-feature diagnostic reporting.
+    - NullFixerWorker: Background worker recovering missing geometries from neighbors.
+    - HelpInfoTab: Embedded rich-text documentation viewer presenting reference
+      tables, repair workflows, and operational limitations.
+"""
+
 from qgis.PyQt.QtCore import QVariant, QThread, QObject, pyqtSignal, Qt, QRect, QEvent
 from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -182,12 +227,26 @@ def resolve_processing_output_layer(output_value, context):
 
 
 class TopologyError:
+    """Represents a single geometry or topology defect detected on a layer feature.
+
+    Attributes:
+        error_type (str): The classification string (e.g. TopologyError.INVALID_GEOMETRY).
+        fid (int): The QGIS feature ID exhibiting the defect.
+        layer_name (str): Display name of the layer containing the feature.
+        geometry (QgsGeometry): Precise point or defect geometry (not the full feature).
+        description (str): Explanatory message detailing the specific validation issue.
+    """
     DUPLICATE_GEOMETRY = "Duplicate Geometry"
     SELF_INTERSECTION  = "Self Intersection"
     INVALID_GEOMETRY   = "Invalid Geometry"
     DANGLE             = "Dangle (Loose End)"
     WRONG_TYPE_GEOMETRY = "Wrong-type Geometry"
     DUPLICATE_VERTEX   = "Duplicate Vertex"
+    # GEOS accepts the geometry, but QGIS's internal validator objects to how
+    # its rings/parts are arranged (e.g. "ring 1 of polygon 0 not in exterior
+    # ring"). This is NOT a duplicate vertex and removing nodes cannot fix it,
+    # so it is deliberately kept out of FIXABLE_TYPES — see CheckerTab.
+    RING_STRUCTURE_ERROR = "Ring/Structure Error"
     NULL_GEOMETRY      = "Null Geometry"
 
     def __init__(self, error_type, fid, layer_name, geometry, description=""):
@@ -224,12 +283,24 @@ ERROR_TYPE_DESCRIPTIONS = {
     TopologyError.WRONG_TYPE_GEOMETRY: "The feature's geometry type does not match the layer's declared geometry type (e.g. a line or GeometryCollection stored in a polygon layer).",
     TopologyError.DUPLICATE_GEOMETRY: "This feature's geometry is an exact duplicate of another feature's.",
     TopologyError.DANGLE: "A line endpoint doesn't connect to any other line (a loose end).",
-    TopologyError.DUPLICATE_VERTEX: "GEOS considers this geometry technically valid, but QGIS's stricter "
-                                     "internal validator flagged something — commonly caused by an accidental "
-                                     "self-snap while manually editing a gap or overlap (a duplicate/near-"
-                                     "duplicate vertex or a zero-length segment). Repaired by removing the "
-                                     "duplicate/near-duplicate vertex.",
+    TopologyError.DUPLICATE_VERTEX: "The ring contains a duplicate or near-duplicate vertex (or a zero-length "
+                                     "segment) — commonly an accidental self-snap while manually editing a gap "
+                                     "or overlap. GEOS still accepts the geometry; QGIS's stricter internal "
+                                     "validator reports it. Usually repaired automatically by removing the extra "
+                                     "vertex; a ring collapsed to fewer than 4 distinct points cannot be swept "
+                                     "clean and is flagged for manual review instead.",
+    TopologyError.RING_STRUCTURE_ERROR: "GEOS accepts this geometry, but QGIS's internal validator objects to how "
+                                     "its rings or parts are arranged — e.g. a hole (interior ring) that is not "
+                                     "fully inside its outer ring, or a part nested inside another part. There is "
+                                     "no vertex to delete and makeValid() leaves it unchanged, so this cannot be "
+                                     "repaired automatically. Open the feature with the Vertex Tool and correct "
+                                     "the ring manually.",
 }
+
+# Appended to every log line that reports a feature the repair could not fix,
+# so the operator is told what to do next instead of just that it failed.
+MANUAL_HINT = ("Check this feature manually: select it in the table above to zoom to the "
+               "error, then use the Vertex Tool to correct it.")
 
 
 def _precise_invalidity_point(geom):
@@ -279,6 +350,12 @@ def _self_intersection_point(geom):
 
 
 class TopologyEngine(QObject):
+    """Multi-threaded topology and geometry validation engine for vector layers.
+
+    Evaluates vector layers against enabled topological rules, identifying invalidities
+    using GEOS validation and QGIS's internal validator. Emits progress updates and
+    TopologyError instances as defects are discovered.
+    """
 
     progress    = pyqtSignal(int, str)
     error_found = pyqtSignal(object)
@@ -311,7 +388,13 @@ class TopologyEngine(QObject):
         if layer is None or not layer.isValid():
             return errors
 
-        features  = list(layer.getFeatures())
+        # GeometryNoCheck is set explicitly, exactly as the repair workers do.
+        # A plain getFeatures() inherits whatever invalid-geometry filtering the
+        # request defaults to, and this scan MUST see invalid features — they are
+        # the entire point of it. Never let a filter silently hide the errors the
+        # checker exists to report.
+        _req = QgsFeatureRequest().setInvalidGeometryCheck(QgsFeatureRequest.GeometryNoCheck)
+        features  = list(layer.getFeatures(_req))
         total     = len(features)
         if total == 0:
             return errors
@@ -393,10 +476,29 @@ class TopologyEngine(QObject):
                         detail = first.what()
                     except Exception:
                         detail = "flagged by QGIS's internal validator"
-                    err = TopologyError(TopologyError.DUPLICATE_VERTEX, fid,
-                                        layer_name, loc,
-                                        "Duplicate/near-duplicate vertex (e.g. from an accidental "
-                                        "self-snap): {}".format(detail))
+
+                    # validateGeometry() reports several unrelated problems, and
+                    # only one of them is actually a duplicate vertex. Classify by
+                    # what it SAID rather than labelling everything DUPLICATE_VERTEX
+                    # — the label decides which repair runs, and running the
+                    # remove-duplicate-nodes fixer on, say, a misplaced interior
+                    # ring can never succeed and leaves the row stuck forever.
+                    #   "line 1 contains 2 duplicate node(s) starting at vertex 2"
+                    #       -> a real duplicate vertex, auto-fixable
+                    #   "ring 1 of polygon 0 not in exterior ring"
+                    #   "Polygon 1 lies inside polygon 0"
+                    #       -> ring/part arrangement, NOT auto-fixable
+                    if "duplicate node" in detail.lower():
+                        err = TopologyError(TopologyError.DUPLICATE_VERTEX, fid,
+                                            layer_name, loc,
+                                            "Duplicate/near-duplicate vertex (e.g. from an accidental "
+                                            "self-snap): {}".format(detail))
+                    else:
+                        err = TopologyError(TopologyError.RING_STRUCTURE_ERROR, fid,
+                                            layer_name, loc,
+                                            "QGIS's internal validator reports: {}. This is not a duplicate "
+                                            "vertex — there is no node to delete — so it cannot be repaired "
+                                            "automatically.".format(detail))
                     errors.append(err); self.error_found.emit(err)
 
             if TopologyError.WRONG_TYPE_GEOMETRY in enabled_checks:
@@ -692,6 +794,12 @@ def _track_canvas_marker(item):
 
 
 class CheckerTab(QWidget):
+    """Primary interactive UI tab for Geometry Repair Toolkit.
+
+    Provides controls for selecting input layers, launching background topology scans,
+    displaying issues in an interactive table, highlighting errors on the QGIS map
+    canvas, and routing fixable rows to automated in-place repair workers.
+    """
 
     # Which TopologyError / issue-type strings each internal repair mechanism
     # handles. "Repair Selected Features" is the single user-facing action;
@@ -816,7 +924,9 @@ class CheckerTab(QWidget):
             "Repairs every checked row directly on the ORIGINAL layer using the appropriate "
             "fixer automatically:\n"
             "- Invalid Geometry / Wrong-type Geometry / Self Intersection -> thorough polygon reconstruction\n"
-            "- Duplicate Vertex -> removes the duplicate/near-duplicate vertex directly\n"
+            "- Duplicate Vertex -> removes the duplicate/near-duplicate vertex directly (a row stays "
+            "listed after repair if the sweep could only partially clear it — that's a manual-review "
+            "row, not a failed repair)\n"
             "- Null / Empty Geometry -> recovery from surrounding polygons\n\n"
             "Changes are left UNSAVED (the layer enters edit mode) — use QGIS's Save Edits to "
             "keep them, or Cancel Edits to discard and revert.")
@@ -1124,18 +1234,23 @@ class CheckerTab(QWidget):
                 key = (layer.id(), "quick")
                 jobs.setdefault(key, {"layer": layer, "kind": "quick", "issues": []})["issues"].append(d)
             else:
-                skipped.append(f"FID {d['feature_id']} ({issue})")
+                reason = d.get("description") or ERROR_TYPE_DESCRIPTIONS.get(issue, "")
+                skipped.append(f"FID {d['feature_id']} ({issue}) — {reason}" if reason
+                               else f"FID {d['feature_id']} ({issue})")
 
         if not jobs:
             return QMessageBox.warning(
                 self, "No Fixable Errors",
-                "The checked rows are not handled by Repair Selected Features."
+                "None of the checked rows can be repaired automatically.\n\n"
+                "They are listed in the log with the reason for each one. "
+                "These features have to be corrected manually with the Vertex Tool."
             )
 
         if skipped:
-            self._log("Skipped rows with no automatic fix:")
+            self._log("These checked rows have NO automatic fix and need manual repair:")
             for msg in skipped[:20]: self._log("  - " + msg)
             if len(skipped) > 20: self._log(f"  ...and {len(skipped)-20} more")
+            self._log(f"  {MANUAL_HINT}")
 
         self.fix_queue = list(jobs.values())
         self.fix_total_jobs = len(self.fix_queue)
@@ -1288,7 +1403,7 @@ class CheckerTab(QWidget):
     def _done_fixer(self, fixed, copied):
         self.fix_done_jobs += 1
         self._apply_worker_repaired_geometries(self.worker, self.current_job_layer)
-        self._log(f"Fixed: {fixed}   Left unchanged: {copied}")
+        self._log(f"Fixed: {fixed}   Needs manual review: {copied}")
         key = self.current_job_layer.id()
         self.fix_edited_layers[key] = self.current_job_layer
         self.fix_touched_fids.setdefault(key, set()).update(getattr(self.worker, "touched_fids", set()))
@@ -1456,7 +1571,21 @@ class CheckerTab(QWidget):
 # =============================================================================
 
 class PolygonFixerWorker(QThread):
-    """Mirrors 2_geometry_fixer.py logic."""
+    """Background worker thread performing in-place geometry repair on polygon layers.
+
+    Applies progressive tolerance sweeps for duplicate node removal, full polygon
+    reconstructions (planarization, polygonization, hole assignment), and makeValid
+    fallbacks, providing detailed per-feature diagnostic logging when errors cannot
+    be automatically repaired.
+
+    A feature only counts as "fixed" once the repaired geometry has been re-validated
+    and no longer reports the error that flagged it — a partially-cleaned duplicate
+    vertex sweep is written to the layer (the nodes it did remove stay removed) but
+    reported as needing manual review, so re-scanning it afterward is expected, not
+    a bug. See `_undeduplicatable_rings()` for the case that can never be swept clean:
+    a ring whose points collapse to fewer than 4 distinct positions has to be deleted,
+    not de-duplicated.
+    """
     log      = pyqtSignal(str)
     progress = pyqtSignal(int)
     finished = pyqtSignal(int, int)   # fixed, copied
@@ -1519,6 +1648,157 @@ class PolygonFixerWorker(QThread):
             except Exception:
                 pass
         return g
+
+    @staticmethod
+    def _polygon_parts(geom):
+        """Every polygonal part of a geometry, as a flat list."""
+        if geom is None or geom.isEmpty():
+            return []
+        try:
+            parts = geom.asGeometryCollection() if geom.isMultipart() else [geom]
+        except Exception:
+            return []
+        return [p for p in parts
+                if p and not p.isEmpty()
+                and QgsWkbTypes.geometryType(p.wkbType()) == QgsWkbTypes.PolygonGeometry]
+
+    def _fit_dedup_result(self, candidate, orig, output_wkb):
+        """Coerce a Duplicate Vertex repair back to the geometry type the feature already had.
+
+        The dedup fast path only ever runs on a geometry GEOS already accepts, so the
+        one thing the repair is allowed to change is the vertex list. makeValid() does
+        not honour that: on a polygon carrying a dangling edge it returns a
+        GeometryCollection (the polygon plus the leftover lines), and on a single-type
+        layer it can hand back a multipart. Writing either straight back is what turned
+        features that were fine into Wrong-type Geometry rows on the next Check run.
+
+        So: drop the non-polygonal leftovers, restore single/multi to whatever the
+        feature itself already was (never to whatever makeValid felt like returning),
+        and reject the candidate outright if that would cost a part or any area — a
+        feature reported as needing manual repair is recoverable, a silently mangled
+        one is not.
+        """
+        if candidate is None or candidate.isEmpty():
+            return None
+        g = QgsGeometry(candidate)
+
+        # 1. GeometryCollection (or anything else non-polygonal) -> polygons only.
+        try:
+            if QgsWkbTypes.geometryType(g.wkbType()) != QgsWkbTypes.PolygonGeometry:
+                tmp = QgsGeometry(g)
+                if not tmp.convertGeometryCollectionToSubclass(QgsWkbTypes.PolygonGeometry):
+                    return None
+                g = tmp
+            if (g.isEmpty()
+                    or QgsWkbTypes.geometryType(g.wkbType()) != QgsWkbTypes.PolygonGeometry):
+                return None
+        except Exception:
+            return None
+
+        # 2. Single/multi follows the ORIGINAL feature, not makeValid's preference.
+        #    Mirroring the original is always safe to write back — the provider
+        #    already accepted that exact wkb type for this very feature.
+        want_multi = bool(orig.isMultipart()) or QgsWkbTypes.isMultiType(output_wkb)
+        try:
+            if want_multi and not g.isMultipart():
+                g.convertToMultiType()
+            elif not want_multi and g.isMultipart():
+                parts = self._polygon_parts(g)
+                if len(parts) != 1:
+                    # Collapsing to one part here would throw real polygons away,
+                    # and a dedup that splits a feature in two is not a dedup.
+                    return None
+                g = parts[0]
+        except Exception:
+            return None
+        if g is None or g.isEmpty():
+            return None
+
+        # 3. Removing a duplicate vertex changes neither the part count nor the area.
+        #    Anything that does is makeValid rebuilding the feature, not a dedup.
+        if len(self._polygon_parts(g)) < len(self._polygon_parts(orig)):
+            return None
+        try:
+            a0, a1 = orig.area(), g.area()
+            if a0 > 0 and abs(a0 - a1) > a0 * 1e-6:
+                return None
+        except Exception:
+            pass
+
+        # 4. Never hand back something worse than what we started from.
+        try:
+            if not g.isGeosValid():
+                return None
+        except Exception:
+            pass
+        return g
+
+    @staticmethod
+    def _rings_of(geom):
+        """Every ring of every polygon part, as (part index, ring label, ring)."""
+        out = []
+        if geom is None or geom.isEmpty():
+            return out
+        try:
+            parts = geom.asGeometryCollection() if geom.isMultipart() else [geom]
+        except Exception:
+            return out
+        for pi, part in enumerate(parts):
+            try:
+                poly = part.constGet()
+                ext = poly.exteriorRing()
+            except Exception:
+                continue
+            if ext is not None:
+                out.append((pi, "outer ring", ext))
+            try:
+                for ri in range(poly.numInteriorRings()):
+                    r = poly.interiorRing(ri)
+                    if r is not None:
+                        out.append((pi, "hole {}".format(ri + 1), r))
+            except Exception:
+                pass
+        return out
+
+    def _undeduplicatable_rings(self, geom, tol):
+        """Rings whose duplicate nodes cannot be removed, with a plain-language reason.
+
+        A closed ring has to keep at least four points, so removeDuplicateNodes()
+        will not collapse one whose points are all within `tol` of each other — it
+        would destroy the ring. The ring therefore survives every tolerance in the
+        sweep, and QGIS's validator goes on reporting its duplicate nodes on every
+        single scan. That is the "I fixed it but it keeps coming back" case: these
+        are sub-millimetre holes left by an accidental self-snap while digitizing,
+        and the only real repair is to DELETE the ring — a shape change, so it is
+        the operator's call, not ours.
+
+        Returns a list of human-readable descriptions (empty if there are none).
+        """
+        found = []
+        for pi, label, ring in self._rings_of(geom):
+            try:
+                n = ring.numPoints()
+                if n < 3:
+                    continue
+                # Cluster the ring's points at the sweep's widest tolerance. Fewer
+                # than 3 distinct positions left means it cannot even form a
+                # triangle, so there is no valid ring to dedup down to.
+                kept = []
+                for k in range(n):
+                    x, y = ring.xAt(k), ring.yAt(k)
+                    if not any(abs(x - kx) <= tol and abs(y - ky) <= tol
+                               for kx, ky in kept):
+                        kept.append((x, y))
+                if len(kept) >= 3:
+                    continue
+                xs = [ring.xAt(k) for k in range(n)]
+                ys = [ring.yAt(k) for k in range(n)]
+                span = max(max(xs) - min(xs), max(ys) - min(ys))
+            except Exception:
+                continue
+            found.append("part {} {}: {} points collapsing to {} distinct position(s) "
+                         "across {:.3g} map unit(s)".format(pi + 1, label, n, len(kept), span))
+        return found
 
     def _clean_try_makevalid_buffer(self, geom, output_wkb):
         if geom is None or geom.isEmpty():
@@ -1656,6 +1936,36 @@ class PolygonFixerWorker(QThread):
         except Exception:
             return None
 
+    def _why_unfixable(self, geom):
+        """Best-effort, plain-language explanation of why a feature could not be
+        repaired, so the log tells the operator what is actually wrong instead of
+        only that the attempt failed."""
+        if geom is None or geom.isNull() or geom.isEmpty():
+            return "the feature has no geometry at all"
+        try:
+            mv = geom.makeValid()
+        except Exception:
+            mv = None
+        if mv is None or mv.isEmpty():
+            return "makeValid() could not produce any geometry from it"
+        try:
+            gt = QgsWkbTypes.geometryType(mv.wkbType())
+        except Exception:
+            gt = None
+        if gt == QgsWkbTypes.LineGeometry:
+            return ("it encloses no area — the outline collapses to a line (a zero-width sliver, "
+                    "or vertices that all fall on one straight line), so there is no polygon left "
+                    "to rebuild. This feature has to be re-digitised or deleted")
+        if gt == QgsWkbTypes.PointGeometry:
+            return "it collapses to a single point — the outline has no extent"
+        try:
+            errs = geom.validateGeometry()
+            if errs:
+                return errs[0].what()
+        except Exception:
+            pass
+        return "the rebuilt geometry still did not pass the polygon validity check"
+
     def _make_selected_input_layer(self, source_layer, selected_ids):
         """Create a temporary in-memory polygon layer from the chosen FIDs.
 
@@ -1723,42 +2033,54 @@ class PolygonFixerWorker(QThread):
         self.log.emit("Selected feature ID(s): " + ", ".join(str(fid) for fid in sel_ids))
         self.log.emit("Preparing selected feature boundaries…"); self.progress.emit(5)
 
+        # Set up BEFORE the candidate-building steps below. Those steps used to
+        # bail out with finished(0, 0) whenever they produced nothing, which
+        # returned before this point — so repaired_geometries was never even
+        # created, every per-feature fallback below was skipped, and the operator
+        # got a single opaque line ("No repair candidate was created.") with no
+        # indication of which features were involved or why. The candidate faces
+        # are an optimisation, not a prerequisite: the loop below already handles
+        # an empty candidate set and repairs each feature on its own.
+        self.output_layer = layer
+        self.repaired_geometries = {}
+
+        p_feats = []; p_idx = QgsSpatialIndex(); p_lookup = {}
+        ll = None; pl = None
+
         try:
             lr = processing.run("native:polygonstolines", {"INPUT":src,"OUTPUT":"TEMPORARY_OUTPUT"},
                                 context=ctx, feedback=fb, is_child_algorithm=False)
             ll = resolve_processing_output_layer(lr["OUTPUT"], ctx)
         except Exception as e:
-            self.log.emit(f"Preparing selected feature boundaries failed: {e}"); self.finished.emit(0, 0); return
+            self.log.emit(f"Preparing selected feature boundaries failed: {e}")
 
         if ll is None or ll.featureCount() == 0:
-            self.log.emit("No repair boundary was created."); self.finished.emit(0, 0); return
+            self.log.emit("No repair boundary could be built from the selected feature(s).")
+        else:
+            self.log.emit("Building repair candidates…"); self.progress.emit(25)
+            try:
+                pr = processing.run("native:polygonize", {"INPUT":ll,"KEEP_FIELDS":False,"OUTPUT":"TEMPORARY_OUTPUT"},
+                                    context=ctx, feedback=fb, is_child_algorithm=False)
+                pl = resolve_processing_output_layer(pr["OUTPUT"], ctx)
+            except Exception as e:
+                self.log.emit(f"Building repair candidates failed: {e}")
 
-        self.log.emit("Building repair candidates…"); self.progress.emit(25)
-        try:
-            pr = processing.run("native:polygonize", {"INPUT":ll,"KEEP_FIELDS":False,"OUTPUT":"TEMPORARY_OUTPUT"},
-                                context=ctx, feedback=fb, is_child_algorithm=False)
-            pl = resolve_processing_output_layer(pr["OUTPUT"], ctx)
-        except Exception as e:
-            self.log.emit(f"Building repair candidates failed: {e}"); self.finished.emit(0, 0); return
-
-        if pl is None or pl.featureCount() == 0:
-            self.log.emit("No repair candidate was created."); self.finished.emit(0, 0); return
-
-        self.log.emit(f"Repair candidates created: {pl.featureCount()}")
-        self.log.emit("Analyzing repair candidates…"); self.progress.emit(45)
-
-        p_feats = []; p_idx = QgsSpatialIndex()
-        for pf in pl.getFeatures():
-            cg = self._clean(pf.geometry())
-            if cg is None or cg.isEmpty(): continue
-            pf.setGeometry(cg); p_feats.append(pf); p_idx.addFeature(pf)
-        p_lookup = {f.id(): f for f in p_feats}
+            if pl is None or pl.featureCount() == 0:
+                self.log.emit("No repair candidate was created from those boundaries.")
+            else:
+                self.log.emit(f"Repair candidates created: {pl.featureCount()}")
+                self.log.emit("Analyzing repair candidates…"); self.progress.emit(45)
+                for pf in pl.getFeatures():
+                    cg = self._clean(pf.geometry())
+                    if cg is None or cg.isEmpty(): continue
+                    pf.setGeometry(cg); p_feats.append(pf); p_idx.addFeature(pf)
+                p_lookup = {f.id(): f for f in p_feats}
+                if not p_feats:
+                    self.log.emit("None of the repair candidates produced a usable polygon.")
 
         if not p_feats:
-            self.log.emit("No valid polygonized geometry."); self.finished.emit(0, 0); return
-
-        self.output_layer = layer
-        self.repaired_geometries = {}
+            self.log.emit("Continuing without repair candidates — each selected feature will be "
+                          "examined individually and reported on below.")
 
         self.log.emit("Calculating repaired geometries…"); self.progress.emit(60)
 
@@ -1773,7 +2095,8 @@ class PolygonFixerWorker(QThread):
 
             if orig is not None and not orig.isEmpty() and orig.isGeosValid() and orig.isSimple():
                 deduped = None
-                had_dupes = False
+                had_dupes = False        # True only if removeDuplicateNodes() actually removed something
+                best_remaining = None    # validator errors left on the best candidate so far
 
                 try:
                     bb = orig.boundingBox()
@@ -1782,6 +2105,9 @@ class PolygonFixerWorker(QThread):
                     diag = 0
                 if not diag or diag <= 0:
                     diag = 1.0
+                # Widest tolerance the sweep below reaches — also what counts as
+                # "these points are all the same place" when explaining a failure.
+                dedup_tol_max = diag * 1e-6
 
                 for scale in (1e-12, 5e-12, 1e-11, 5e-11, 1e-10, 5e-10,
                               1e-9, 5e-9, 1e-8, 5e-8, 1e-7, 5e-7, 1e-6):
@@ -1802,28 +2128,145 @@ class PolygonFixerWorker(QThread):
                     if not remaining:
                         deduped = candidate
                         had_dupes = True
+                        best_remaining = 0
                         break
-                    if deduped is None:
+                    # Keep the BEST candidate, not the first one that changed
+                    # anything. The first tolerance that removes a node often
+                    # removes only the exactly-coincident ones and leaves the
+                    # near-duplicates behind; a wider tolerance further down the
+                    # sweep clears more of them. Keeping the first result meant
+                    # the layer was rewritten with a worse geometry than the sweep
+                    # had already found.
+                    if deduped is None or len(remaining) < best_remaining:
                         deduped = candidate
                         had_dupes = True
+                        best_remaining = len(remaining)
 
                 if not had_dupes or (deduped is not None and deduped.validateGeometry()):
                     try:
                         mv_src = deduped if (deduped is not None and not deduped.isEmpty()) else orig
                         mv = mv_src.makeValid()
+                        # Fit BEFORE validating: makeValid() likes to return a
+                        # GeometryCollection (polygon + leftover dangling lines) or a
+                        # multipart on a single-type layer, and validateGeometry() is
+                        # perfectly happy with both — which is how a feature that had
+                        # the right geometry type came back out of the repair as a
+                        # Wrong-type Geometry. _fit_dedup_result() strips it back to
+                        # the feature's own type, or rejects it if that costs anything.
+                        mv = self._fit_dedup_result(mv, orig, layer.wkbType()) if mv else None
                         if mv and not mv.isEmpty() and not mv.validateGeometry():
                             deduped = mv
-                            had_dupes = True
+                            # NOTE: deliberately does NOT set had_dupes. This path
+                            # removed no vertices, and claiming otherwise is what made
+                            # the log report "repaired by removing duplicate vertex(es)"
+                            # for features that were already clean.
                     except Exception:
                         pass
 
-                if had_dupes and deduped is not None and not deduped.isEmpty():
-                    new_geom = deduped
+                # A repair only counts if the geometry actually changed. Without this
+                # guard the makeValid() fallback above reported every already-clean
+                # feature as repaired — inflating "Fixed: n" and marking the layer
+                # modified for nothing (re-running Repair without re-scanning did
+                # exactly that, reporting Fixed: 3 on features fixed in the first pass).
+                # NOTE: equals() alone is the wrong test here — it compares shape,
+                # and deleting a duplicate vertex does not change the shape, so a
+                # genuine dedup would look like a no-op. Treat it as unchanged only
+                # when the shape AND the vertex count both match.
+                candidate_geom = deduped if (deduped is not None and not deduped.isEmpty()) else None
+                # Single choke point: nothing leaves this fast path without matching
+                # the geometry type the feature already had. The tolerance sweep above
+                # preserves the type, but this is the one place every candidate passes
+                # through, so the guarantee is enforced here rather than per-branch.
+                rejected_by_type_guard = False
+                if candidate_geom is not None:
+                    fitted = self._fit_dedup_result(candidate_geom, orig, layer.wkbType())
+                    rejected_by_type_guard = fitted is None
+                    candidate_geom = fitted
+                if candidate_geom is not None:
+                    try:
+                        same_shape = orig.equals(candidate_geom)
+                        same_verts = (sum(1 for _ in orig.vertices())
+                                      == sum(1 for _ in candidate_geom.vertices()))
+                        if same_shape and same_verts:
+                            candidate_geom = None
+                    except Exception:
+                        pass
+
+                # Does the repaired geometry actually pass the check that flagged it?
+                # Nothing used to ask. A partially-cleaned geometry (some duplicate
+                # nodes gone, others still there) was written to the layer and counted
+                # as "Fixed", so the run reported Fixed: 2 while the very same features
+                # came back on every re-scan, for ever. Only a geometry the validator
+                # now accepts is a fix; anything less is progress at best.
+                still_bad = []
+                if candidate_geom is not None:
+                    try:
+                        still_bad = candidate_geom.validateGeometry()
+                    except Exception:
+                        still_bad = []
+
+                if candidate_geom is not None and not still_bad:
+                    new_geom = candidate_geom
                     fixed += 1
-                    self.log.emit(f"   FID {feat.id()} repaired by removing duplicate/near-duplicate vertex(es).")
-                else:
+                    if had_dupes:
+                        self.log.emit(f"   FID {feat.id()} repaired by removing duplicate/near-duplicate vertex(es).")
+                    else:
+                        self.log.emit(f"   FID {feat.id()} repaired by makeValid() — no duplicate vertex was present.")
+                elif candidate_geom is not None:
+                    # Keep the partial improvement — the duplicate nodes it did remove
+                    # are genuinely gone — but report it honestly as unfinished so the
+                    # feature is not silently counted as repaired.
+                    new_geom = candidate_geom
                     copied += 1
-                    self.log.emit(f"   FID {feat.id()} was already valid with no duplicate vertices found — left unchanged.")
+                    n_before = len(orig.validateGeometry())
+                    self.log.emit(
+                        f"   FID {feat.id()} only PARTIALLY repaired — needs manual review. "
+                        f"{n_before - len(still_bad)} of {n_before} reported problem(s) were removed; "
+                        f"{len(still_bad)} remain(s), first: {still_bad[0].what()}.")
+                    for line in self._undeduplicatable_rings(candidate_geom, dedup_tol_max):
+                        self.log.emit(
+                            f"      Cannot be auto-fixed — {line}. A ring must keep at least 4 "
+                            f"points, so the duplicate nodes in it cannot be removed without "
+                            f"destroying the ring; it has to be DELETED instead.")
+                    self.log.emit(f"      {MANUAL_HINT}")
+                elif rejected_by_type_guard:
+                    # The repair produced something, but not something that is still
+                    # the same kind of feature — a GeometryCollection, a split part, or
+                    # a shape that lost area. Leaving the original alone is the correct
+                    # outcome: the old behaviour saved it anyway and the next Check run
+                    # reported the feature as Wrong-type Geometry.
+                    copied += 1
+                    self.log.emit(
+                        f"   FID {feat.id()} was NOT changed. The duplicate-vertex repair came back as a "
+                        f"different kind of geometry than the feature started with (geometry collection, "
+                        f"split parts, or lost area), so it was discarded rather than saved — saving it "
+                        f"would have turned this into a Wrong-type Geometry error. {MANUAL_HINT}")
+                else:
+                    try:
+                        v_errs = orig.validateGeometry()
+                    except Exception:
+                        v_errs = []
+                    if not v_errs:
+                        # Nothing is wrong with it any more — typically Repair was run
+                        # a second time without re-running Check, so the table still
+                        # lists rows that have already been fixed. Not a failure, and
+                        # not something to send the operator off to fix by hand.
+                        self.log.emit(f"   FID {feat.id()} is already valid — nothing to repair. "
+                                      f"(Re-run Check Selected Layers to refresh the error list.)")
+                    else:
+                        copied += 1
+                        self.log.emit(
+                            f"   FID {feat.id()} could NOT be repaired automatically — needs manual review. "
+                            f"Reason: {v_errs[0].what()}. There is no duplicate node that can be deleted, "
+                            f"and makeValid() leaves the geometry unchanged because GEOS already considers "
+                            f"it valid.")
+                        for line in self._undeduplicatable_rings(orig, dedup_tol_max):
+                            self.log.emit(
+                                f"      {line}. A ring must keep at least 4 points, so the duplicate "
+                                f"nodes in it cannot be removed without destroying the ring — this is a "
+                                f"collapsed sliver ring (usually an accidental self-snap while digitizing) "
+                                f"and it has to be DELETED rather than de-duplicated.")
+                        self.log.emit(f"      {MANUAL_HINT}")
 
                 if new_geom is not None:
                     self.repaired_geometries[feat.id()] = new_geom
@@ -1847,7 +2290,8 @@ class PolygonFixerWorker(QThread):
                         self.log.emit(f"   FID {feat.id()} repaired using raw makeValid() last-resort fallback.")
                     else:
                         copied += 1
-                        self.log.emit(f"   FID {feat.id()} couldn't be cleaned — left unchanged.")
+                        self.log.emit(f"   FID {feat.id()} could NOT be repaired automatically. "
+                                      f"Reason: {self._why_unfixable(orig)}. {MANUAL_HINT}")
             else:
                 cands = []
                 for cid in p_idx.intersects(co.boundingBox()):
@@ -1893,6 +2337,11 @@ class PolygonFixerWorker(QThread):
                                     self.log.emit(f"   FID {feat.id()} repaired using raw makeValid() last-resort fallback.")
                                 else:
                                     copied += 1
+                                    # This was the only silent failure in the loop —
+                                    # it produced "Fixed: 0  Left unchanged: n" with no
+                                    # per-feature line, leaving nothing to diagnose.
+                                    self.log.emit(f"   FID {feat.id()} could NOT be repaired automatically. "
+                                                  f"Reason: {self._why_unfixable(orig)}. {MANUAL_HINT}")
                 else:
                     fallback = self._finalize_fixed_geom(co, layer.wkbType())
                     if fallback and not fallback.isEmpty():
@@ -1910,7 +2359,8 @@ class PolygonFixerWorker(QThread):
                                 self.log.emit(f"   FID {feat.id()} repaired using raw makeValid() last-resort fallback.")
                             else:
                                 copied += 1
-                                self.log.emit(f"   FID {feat.id()} no polygonized match — left unchanged.")
+                                self.log.emit(f"   FID {feat.id()} could NOT be repaired automatically. "
+                                              f"Reason: {self._why_unfixable(orig)}. {MANUAL_HINT}")
 
             if new_geom is not None:
                 try:
@@ -1931,13 +2381,23 @@ class PolygonFixerWorker(QThread):
                 self.touched_fids.add(feat.id())
 
         self.progress.emit(100)
-        self.log.emit(f"\nFinished. Fixed: {fixed}   Left unchanged: {copied}   "
-                      f"(unsaved — edit {layer.name()} to keep, or Cancel Edits to discard)")
+        self.log.emit(f"\nFinished. Fixed: {fixed}   Needs manual review: {copied}")
+        if copied:
+            self.log.emit(f"   {copied} feature(s) could not be fully repaired automatically — see the "
+                          f"line(s) above for the reason on each one. These will still be listed by the "
+                          f"next Check run; that is correct, not a failed repair.")
+        # Keyed off what was actually written, not off `fixed`. A partial repair is
+        # written too but is deliberately not counted as fixed, and warning about
+        # unsaved edits only when fixed > 0 would have hidden those from the operator.
+        written = len(self.touched_fids)
+        if written:
+            self.log.emit(f"   {written} feature(s) were changed and are UNSAVED. Use Layer > Save Layer "
+                          f"Edits on '{layer.name()}' to keep them — Cancel Edits will discard every repair.")
         self.finished.emit(fixed, copied)
 
 
 class NullFixerWorker(QThread):
-    """Mirrors 3_null_and_missing_fixer.py logic."""
+    """Background worker thread recovering missing or null geometries from surrounding polygons."""
     log      = pyqtSignal(str)
     progress = pyqtSignal(int)
     finished = pyqtSignal(int, int, int)   # recovered, copied, manual
@@ -2285,8 +2745,15 @@ class GeometryFixerTab(QWidget):
 # =============================================================================
 
 class HelpInfoTab(QWidget):
-    def __init__(self):
+    """Embedded HTML documentation and reference guide tab for Geometry Repair Toolkit."""
+    def __init__(self, is_dark=None):
         super().__init__()
+        if is_dark is None:
+            palette = self.palette()
+            bg_color = palette.color(palette.Window)
+            self.is_dark = bg_color.lightness() < 128
+        else:
+            self.is_dark = is_dark
         self._build()
 
     def _build(self):
@@ -2297,170 +2764,278 @@ class HelpInfoTab(QWidget):
         self.text = QTextBrowser()
         self.text.setReadOnly(True)
         self.text.setOpenExternalLinks(True)
-        self.text.setStyleSheet(
-            "QTextBrowser { background-color: #ffffff; color: #1f2937; font-size: 12px; border: 1px solid #d1d5db; border-radius: 4px; padding: 8px; }"
-        )
-        self.text.setHtml("""
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1f2937; line-height: 1.5; font-size: 12px;">
+        self.apply_theme(self.is_dark)
+        root.addWidget(self.text, stretch=1)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        palette = self.palette()
+        bg_color = palette.color(palette.Window)
+        new_is_dark = bg_color.lightness() < 128
+        if new_is_dark != getattr(self, "is_dark", False):
+            self.apply_theme(new_is_dark)
+
+    def apply_theme(self, is_dark: bool = False):
+        """Apply adaptive styling and rendered HTML documentation for light or dark mode."""
+        self.is_dark = is_dark
+        if is_dark:
+            self.text.setStyleSheet("""
+                QTextBrowser {
+                    background-color: #263238;
+                    color: #ECEFF1;
+                    font-size: 12px;
+                    border: 1px solid #455A64;
+                    border-radius: 4px;
+                    padding: 8px;
+                }
+                QScrollBar:vertical {
+                    background: #1E2327;
+                    width: 10px;
+                    margin: 0px;
+                }
+                QScrollBar::handle:vertical {
+                    background: #455A64;
+                    min-height: 20px;
+                    border-radius: 4px;
+                }
+                QScrollBar::handle:vertical:hover {
+                    background: #546E7A;
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    height: 0px;
+                }
+            """)
+        else:
+            self.text.setStyleSheet(
+                "QTextBrowser { background-color: #ffffff; color: #1f2937; font-size: 12px; border: 1px solid #d1d5db; border-radius: 4px; padding: 8px; }"
+            )
+        self.text.setHtml(self._get_html(is_dark))
+
+    def _get_html(self, is_dark: bool = False) -> str:
+        if is_dark:
+            body_color = "#ECEFF1"
+            h2_color = "#FFFFFF"
+            sub_color = "#B0BEC5"
+            border_color = "#455A64"
+            header_border = "#455A64"
+            callout_bg = "#1E2327"
+            callout_border = "#455A64"
+            callout_accent = "#29B6F6"
+            callout_title = "#FFFFFF"
+            callout_text = "#ECEFF1"
+            h3_color = "#4FC3F7"
+            table_border = "#455A64"
+            row_even_bg = "#263238"
+            row_odd_bg = "#1E2327"
+            row_border = "#37474F"
+            step_title_color = "#FFFFFF"
+            table_ref_border = "#455A64"
+            th_bg = "#37474F"
+            th_color = "#FFFFFF"
+            td_border = "#37474F"
+            err_title_color = "#FFFFFF"
+            ring_err_color = "#FBBF24"
+            footer_color = "#90A4AE"
+        else:
+            body_color = "#1f2937"
+            h2_color = "#111827"
+            sub_color = "#4b5563"
+            border_color = "#e5e7eb"
+            header_border = "#374151"
+            callout_bg = "#f9fafb"
+            callout_border = "#e5e7eb"
+            callout_accent = "#4b5563"
+            callout_title = "#111827"
+            callout_text = "#374151"
+            h3_color = "#111827"
+            table_border = "#e5e7eb"
+            row_even_bg = "#ffffff"
+            row_odd_bg = "#f9fafb"
+            row_border = "#f3f4f6"
+            step_title_color = "#111827"
+            table_ref_border = "#d1d5db"
+            th_bg = "#f3f4f6"
+            th_color = "#111827"
+            td_border = "#e5e7eb"
+            err_title_color = "#111827"
+            ring_err_color = "#b45309"
+            footer_color = "#4b5563"
+
+        return f"""
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: {body_color}; line-height: 1.5; font-size: 12px;">
 
           <!-- Header Section -->
-          <div style="border-bottom: 2px solid #374151; padding-bottom: 8px; margin-bottom: 14px;">
-            <h2 style="margin: 0 0 4px 0; color: #111827; font-size: 17px; font-weight: bold;">
+          <div style="border-bottom: 2px solid {header_border}; padding-bottom: 8px; margin-bottom: 14px;">
+            <h2 style="margin: 0 0 4px 0; color: {h2_color}; font-size: 17px; font-weight: bold;">
               Geometry Repair Toolkit
             </h2>
-            <div style="color: #4b5563; font-size: 12px;">
+            <div style="color: {sub_color}; font-size: 12px;">
               Direct In-Place Topology Validation and Automated Polygon Geometry Reconstruction
             </div>
           </div>
 
           <!-- Overview & In-Place Editing -->
-          <div style="background-color: #f9fafb; border: 1px solid #e5e7eb; border-left: 4px solid #4b5563; padding: 10px 14px; margin-bottom: 16px;">
-            <b style="color: #111827;">In-Place Editing Mode:</b>
-            <span style="color: #374151;">
+          <div style="background-color: {callout_bg}; border: 1px solid {callout_border}; border-left: 4px solid {callout_accent}; padding: 10px 14px; margin-bottom: 16px;">
+            <b style="color: {callout_title};">In-Place Editing Mode:</b>
+            <span style="color: {callout_text};">
               This tool checks polygon layers for geometry errors and repairs them directly on the <b>original layer</b>. Features are edited in-place inside QGIS's active editing mode (unsaved buffer marked with a pencil icon). No duplicate output layers are created. You can inspect changes on the map canvas and choose <b>Save Edits</b> to write to disk or <b>Cancel Edits</b> to discard and revert to the original state.
             </span>
           </div>
 
           <!-- Section 1: How to Use -->
-          <h3 style="color: #111827; font-size: 14px; font-weight: bold; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
+          <h3 style="color: {h3_color}; font-size: 14px; font-weight: bold; border-bottom: 1px solid {border_color}; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
             How to Use
           </h3>
-          <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px; border: 1px solid #e5e7eb; font-size: 11px;">
-            <tr style="background-color: #ffffff;">
-              <td width="65" style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 1</td>
-              <td style="border-bottom: 1px solid #f3f4f6;"><b>Select Input Layers:</b> Select one or more polygon layers from the <i>Input Layers</i> list.</td>
+          <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px; border: 1px solid {table_border}; font-size: 11px;">
+            <tr style="background-color: {row_even_bg};">
+              <td width="65" style="font-weight: bold; vertical-align: top; border-bottom: 1px solid {row_border}; color: {step_title_color};">Step 1</td>
+              <td style="border-bottom: 1px solid {row_border}; color: {body_color};"><b>Select Input Layers:</b> Select one or more polygon layers from the <i>Input Layers</i> list.</td>
             </tr>
-            <tr style="background-color: #f9fafb;">
-              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 2</td>
-              <td style="border-bottom: 1px solid #f3f4f6;"><b>Scan Layers:</b> Click <i>Scan Layers</i> to execute multi-threaded geometry checks across selected layers.</td>
+            <tr style="background-color: {row_odd_bg};">
+              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid {row_border}; color: {step_title_color};">Step 2</td>
+              <td style="border-bottom: 1px solid {row_border}; color: {body_color};"><b>Scan Layers:</b> Click <i>Scan Layers</i> to execute multi-threaded geometry checks across selected layers.</td>
             </tr>
-            <tr style="background-color: #ffffff;">
-              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 3</td>
-              <td style="border-bottom: 1px solid #f3f4f6;"><b>Inspect Detected Errors:</b> Review issues in the results table. Double-click any row to zoom and highlight the defect on the map canvas with bounding outlines and vertex markers.</td>
+            <tr style="background-color: {row_even_bg};">
+              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid {row_border}; color: {step_title_color};">Step 3</td>
+              <td style="border-bottom: 1px solid {row_border}; color: {body_color};"><b>Inspect Detected Errors:</b> Review issues in the results table. Double-click any row to zoom and highlight the defect on the map canvas with bounding outlines and vertex markers.</td>
             </tr>
-            <tr style="background-color: #f9fafb;">
-              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 4</td>
-              <td style="border-bottom: 1px solid #f3f4f6;"><b>Select Errors to Repair:</b> Check individual rows or click the checkbox in the table header to select or clear all auto-fixable errors at once.</td>
+            <tr style="background-color: {row_odd_bg};">
+              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid {row_border}; color: {step_title_color};">Step 4</td>
+              <td style="border-bottom: 1px solid {row_border}; color: {body_color};"><b>Select Errors to Repair:</b> Check individual rows or click the checkbox in the table header to select or clear all auto-fixable errors at once.</td>
             </tr>
-            <tr style="background-color: #ffffff;">
-              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 5</td>
-              <td style="border-bottom: 1px solid #f3f4f6;"><b>Repair Selected Features:</b> Click <i>Repair Selected Features</i>. The toolkit automatically routes each checked row to its specific repair mechanism directly on the source layer.</td>
+            <tr style="background-color: {row_even_bg};">
+              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid {row_border}; color: {step_title_color};">Step 5</td>
+              <td style="border-bottom: 1px solid {row_border}; color: {body_color};"><b>Repair Selected Features:</b> Click <i>Repair Selected Features</i>. The toolkit automatically routes each checked row to its specific repair mechanism directly on the source layer.</td>
             </tr>
-            <tr style="background-color: #f9fafb;">
-              <td style="font-weight: bold; vertical-align: top; color: #111827;">Step 6</td>
-              <td><b>Verify & Commit:</b> Re-run <i>Scan Layers</i> to confirm all errors are resolved on the unsaved layer. Use QGIS's <b>Save Edits</b> to write changes to disk, or <b>Cancel Edits</b> to discard.</td>
+            <tr style="background-color: {row_odd_bg};">
+              <td style="font-weight: bold; vertical-align: top; color: {step_title_color};">Step 6</td>
+              <td style="color: {body_color};"><b>Verify & Commit:</b> Re-run <i>Scan Layers</i> to confirm all errors are resolved on the unsaved layer. Use QGIS's <b>Save Edits</b> to write changes to disk, or <b>Cancel Edits</b> to discard.</td>
             </tr>
           </table>
 
           <!-- Section 2: Error Types Reference Table -->
-          <h3 style="color: #111827; font-size: 14px; font-weight: bold; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
+          <h3 style="color: {h3_color}; font-size: 14px; font-weight: bold; border-bottom: 1px solid {border_color}; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
             Error Types Reference
           </h3>
-          <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px; border: 1px solid #d1d5db; font-size: 11px;">
+          <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px; border: 1px solid {table_ref_border}; font-size: 11px;">
             <thead>
-              <tr style="background-color: #f3f4f6; color: #111827; text-align: left;">
-                <th style="border: 1px solid #d1d5db; padding: 7px 10px; width: 170px;">Error Type</th>
-                <th style="border: 1px solid #d1d5db; padding: 7px 10px;">Description</th>
-                <th style="border: 1px solid #d1d5db; padding: 7px 10px; width: 220px;">Repair Mechanism</th>
+              <tr style="background-color: {th_bg}; color: {th_color}; text-align: left;">
+                <th style="border: 1px solid {table_ref_border}; padding: 7px 10px; width: 170px; color: {th_color};">Error Type</th>
+                <th style="border: 1px solid {table_ref_border}; padding: 7px 10px; color: {th_color};">Description</th>
+                <th style="border: 1px solid {table_ref_border}; padding: 7px 10px; width: 220px; color: {th_color};">Repair Mechanism</th>
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; font-weight: bold;">Null Geometry</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">The feature record exists, but there is no geometry object.</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Spatial gap recovery from surrounding polygons.</td>
+              <tr style="background-color: {row_even_bg};">
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; font-weight: bold; color: {err_title_color};">Null Geometry</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">The feature record exists, but there is no geometry object.</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">Spatial gap recovery from surrounding polygons.</td>
               </tr>
-              <tr style="background-color: #f9fafb;">
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; font-weight: bold;">Empty/Missing Geometry</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">The feature exists, but its geometry has no usable shape or coordinates.</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Spatial void recovery from surrounding polygons.</td>
+              <tr style="background-color: {row_odd_bg};">
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; font-weight: bold; color: {err_title_color};">Empty/Missing Geometry</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">The feature exists, but its geometry has no usable shape or coordinates.</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">Spatial void recovery from surrounding polygons.</td>
               </tr>
-              <tr>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; font-weight: bold;">Invalid Geometry</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">The polygon has geometry errors such as ring errors, spikes, or folded edges.</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Thorough polygon reconstruction.</td>
+              <tr style="background-color: {row_even_bg};">
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; font-weight: bold; color: {err_title_color};">Invalid Geometry</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">The polygon has geometry errors such as ring errors, spikes, or folded edges.</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">Thorough polygon reconstruction.</td>
               </tr>
-              <tr style="background-color: #f9fafb;">
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; font-weight: bold;">Self Intersection</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">The polygon boundary crosses itself (e.g. bowtie or figure-8 loop).</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Thorough polygon reconstruction.</td>
+              <tr style="background-color: {row_odd_bg};">
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; font-weight: bold; color: {err_title_color};">Self Intersection</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">The polygon boundary crosses itself (e.g. bowtie or figure-8 loop).</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">Thorough polygon reconstruction.</td>
               </tr>
-              <tr>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; font-weight: bold;">Wrong-type Geometry</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">The feature's geometry type does not match the layer's declared geometry type (e.g. a line or GeometryCollection stored in a polygon layer).</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Thorough polygon reconstruction.</td>
+              <tr style="background-color: {row_even_bg};">
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; font-weight: bold; color: {err_title_color};">Wrong-type Geometry</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">The feature's geometry type does not match the layer's declared geometry type (e.g. a line or GeometryCollection stored in a polygon layer).</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">Thorough polygon reconstruction.</td>
               </tr>
-              <tr style="background-color: #f9fafb;">
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px; font-weight: bold;">Duplicate Vertex</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Commonly an accidental self-snap made while manually digitizing a polygon (a duplicate/near-duplicate vertex or zero-length segment).</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 10px;">Direct duplicate vertex removal via progressive tolerance sweep.</td>
+              <tr style="background-color: {row_odd_bg};">
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; font-weight: bold; color: {err_title_color};">Duplicate Vertex</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">Commonly an accidental self-snap made while manually digitizing a polygon (a duplicate/near-duplicate vertex or zero-length segment). Reported only when QGIS's validator actually names a duplicate node.</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">Direct duplicate vertex removal via progressive tolerance sweep.</td>
+              </tr>
+              <tr style="background-color: {row_even_bg};">
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; font-weight: bold; color: {err_title_color};">Ring/Structure Error</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {body_color};">GEOS accepts the geometry, but QGIS's internal validator objects to how its rings or parts are arranged &mdash; e.g. a hole (interior ring) that is not fully inside its outer ring, or a part nested inside another part.</td>
+                <td style="border: 1px solid {td_border}; padding: 6px 10px; color: {ring_err_color};"><b>No automatic repair.</b> There is no vertex to delete and makeValid() leaves it unchanged. Correct the ring manually with the Vertex Tool.</td>
               </tr>
             </tbody>
           </table>
 
           <!-- Section 3: Repair Mechanics & Original Layer Editing -->
-          <h3 style="color: #111827; font-size: 14px; font-weight: bold; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
+          <h3 style="color: {h3_color}; font-size: 14px; font-weight: bold; border-bottom: 1px solid {border_color}; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
             Repair Selected Features & In-Place Processing
           </h3>
-          <p style="margin: 0 0 10px 0;">
+          <p style="margin: 0 0 10px 0; color: {body_color};">
             Clicking <b>Repair Selected Features</b> inspects each checked error row and automatically routes it to the correct repair mechanism directly on the source layer:
           </p>
-          <ul style="margin: 0 0 12px 0; padding-left: 20px;">
+          <ul style="margin: 0 0 12px 0; padding-left: 20px; color: {body_color};">
             <li style="margin-bottom: 4px;"><b>Invalid Geometry / Wrong-type Geometry / Self Intersection:</b> Thorough polygon reconstruction (ring decomposition, unary union planarization, face matching, and hole restoration).</li>
-            <li style="margin-bottom: 4px;"><b>Duplicate Vertex:</b> Removes duplicate and near-duplicate vertices directly via progressive tolerance sweep ($10^{-12}$ to $10^{-6}$ bbox scale) and node-clustering deduplication.</li>
+            <li style="margin-bottom: 4px;"><b>Duplicate Vertex:</b> Removes duplicate and near-duplicate vertices directly via progressive tolerance sweep ($10^{{-12}}$ to $10^{{-6}}$ bbox scale) and node-clustering deduplication.</li>
             <li style="margin-bottom: 4px;"><b>Null / Empty / Missing Geometry:</b> Recovers missing geometry from surrounding polygon spatial boundary context.</li>
+            <li style="margin-bottom: 4px;"><b>Ring/Structure Error:</b> <span style="color: {ring_err_color};">Not repaired automatically.</span> These rows stay greyed out with the checkbox disabled, because no automatic mechanism can fix them &mdash; they must be corrected by hand.</li>
           </ul>
-          <p style="margin: 0 0 10px 0;">
-            <b>Multipart Resolution & Sliver Cleanup:</b> Polygon reconstruction can occasionally produce multiple parts when resolving a self-intersecting bowtie shape. The toolkit automatically drops negligible artifact slivers (< 0.1% area ratio) and keeps the union of real parts. Pre-existing legitimate multipart features that were not repaired are left completely untouched.
+          <p style="margin: 0 0 12px 0; color: {body_color};">
+            <b>When a feature cannot be repaired:</b> the log names the feature and states the reason &mdash; for example
+            <i>"FID 12 could NOT be repaired automatically. Reason: it encloses no area &mdash; the outline collapses to a line&hellip;"</i>
+            &mdash; followed by a prompt to check it manually. The run summary reports these as
+            <b>Needs manual review</b>, separately from the features it fixed. A feature that reports
+            <i>"encloses no area"</i> has to be re-digitised or deleted; nothing can rebuild a polygon that has none.
           </p>
-          <p style="margin: 0 0 12px 0;">
+          <p style="margin: 0 0 10px 0; color: {body_color};">
+            <b>Multipart Resolution & Sliver Cleanup:</b> Polygon reconstruction can occasionally produce multiple parts when resolving a self-intersecting bowtie shape. The toolkit automatically drops negligible artifact slivers (&lt; 0.1% area ratio) and keeps the union of real parts. Pre-existing legitimate multipart features that were not repaired are left completely untouched.
+          </p>
+          <p style="margin: 0 0 12px 0; color: {body_color};">
             <b>Multiple Error Types on One Feature:</b> When a feature has multiple geometry defects (such as Invalid Geometry + Self Intersection), they are processed together or can be re-scanned and repaired in sequence.
           </p>
 
           <!-- Section 4: Review and Limitations -->
-          <h3 style="color: #111827; font-size: 14px; font-weight: bold; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
+          <h3 style="color: {h3_color}; font-size: 14px; font-weight: bold; border-bottom: 1px solid {border_color}; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
             Review and Limitations
           </h3>
-          <ul style="margin: 0 0 14px 0; padding-left: 20px;">
+          <ul style="margin: 0 0 14px 0; padding-left: 20px; color: {body_color};">
             <li style="margin-bottom: 4px;">Always visually inspect repaired features before saving edits to disk.</li>
             <li style="margin-bottom: 4px;">Re-run <b>Scan Layers</b> on the layer while still in edit mode to confirm all errors are resolved.</li>
             <li style="margin-bottom: 4px;">Completely deleted attribute records cannot be recovered by this tool.</li>
             <li style="margin-bottom: 4px;">Outer boundary edge polygons cannot be safely reconstructed when adjacent boundaries are unknown (return to LGU for corrected boundary geometry).</li>
             <li style="margin-bottom: 4px;"><b>CRS Reprojection:</b> Validity is evaluated in the layer's native CRS. Reprojecting a layer shifts vertices slightly and can alter geometry validity; always re-run Scan Layers after reprojection.</li>
+            <li style="margin-bottom: 4px;"><b>Collapsed rings need manual deletion:</b> a Duplicate Vertex row that keeps re-appearing after repeated repair attempts almost always has a ring collapsed to fewer than 4 distinct points (see the log's <i>"Cannot be auto-fixed"</i> line naming the part and ring). This is expected &mdash; the ring must be deleted with the Vertex Tool, no automatic sweep can remove it.</li>
           </ul>
 
           <!-- Section 5: Map Canvas & Table Controls -->
-          <h3 style="color: #111827; font-size: 14px; font-weight: bold; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
+          <h3 style="color: {h3_color}; font-size: 14px; font-weight: bold; border-bottom: 1px solid {border_color}; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
             Map Canvas & Table Controls
           </h3>
-          <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px; border: 1px solid #e5e7eb; font-size: 11px;">
-            <tr style="background-color: #f9fafb;">
-              <td width="160" style="font-weight: bold; border-bottom: 1px solid #e5e7eb;">Double-Click Error Row</td>
-              <td style="border-bottom: 1px solid #e5e7eb;">Pans and zooms the map canvas to the feature and places a red outline and vertex marker at the error location.</td>
+          <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 16px; border: 1px solid {table_border}; font-size: 11px;">
+            <tr style="background-color: {row_odd_bg};">
+              <td width="160" style="font-weight: bold; border-bottom: 1px solid {table_border}; color: {step_title_color};">Double-Click Error Row</td>
+              <td style="border-bottom: 1px solid {table_border}; color: {body_color};">Pans and zooms the map canvas to the feature and places a red outline and vertex marker at the error location.</td>
             </tr>
-            <tr>
-              <td style="font-weight: bold; border-bottom: 1px solid #e5e7eb;">Header Checkbox</td>
-              <td style="border-bottom: 1px solid #e5e7eb;">One-click toggle in column 1 header to select all or clear all auto-fixable rows.</td>
+            <tr style="background-color: {row_even_bg};">
+              <td style="font-weight: bold; border-bottom: 1px solid {table_border}; color: {step_title_color};">Header Checkbox</td>
+              <td style="border-bottom: 1px solid {table_border}; color: {body_color};">One-click toggle in column 1 header to select all or clear all auto-fixable rows.</td>
             </tr>
-            <tr style="background-color: #f9fafb;">
-              <td style="font-weight: bold; border-bottom: 1px solid #e5e7eb;">Clear Button / Esc Key</td>
-              <td style="border-bottom: 1px solid #e5e7eb;">Clears the results table and removes canvas rubber-band outlines and markers.</td>
+            <tr style="background-color: {row_odd_bg};">
+              <td style="font-weight: bold; border-bottom: 1px solid {table_border}; color: {step_title_color};">Clear Button / Esc Key</td>
+              <td style="border-bottom: 1px solid {table_border}; color: {body_color};">Clears the results table and removes canvas rubber-band outlines and markers.</td>
             </tr>
-            <tr>
-              <td style="font-weight: bold;">Save / Cancel Edits</td>
-              <td>Use QGIS's native editing toolbar to save in-place repairs permanently to disk or cancel edits to revert back to original geometry.</td>
+            <tr style="background-color: {row_even_bg};">
+              <td style="font-weight: bold; color: {step_title_color};">Save / Cancel Edits</td>
+              <td style="color: {body_color};">Use QGIS's native editing toolbar to save in-place repairs permanently to disk or cancel edits to revert back to original geometry.</td>
             </tr>
           </table>
 
           <!-- Footer Section -->
-          <div style="text-align: center; color: #4b5563; font-size: 11px; padding: 14px 0 6px 0; border-top: 1px solid #e5e7eb; margin-top: 16px;">
+          <div style="text-align: center; color: {footer_color}; font-size: 11px; padding: 14px 0 6px 0; border-top: 1px solid {border_color}; margin-top: 16px;">
             <b>Geometry Repair Toolkit</b> &bull; Version 1.5.1<br>
             Philippine Statistics Authority &bull; Geospatial Management Division<br>
             Project 1MAP
           </div>
 
         </div>
-        """)
+        """
         root.addWidget(self.text, stretch=1)
 
 

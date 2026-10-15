@@ -23,7 +23,7 @@
 import os
 from typing import Callable
 
-from libqfieldsync.layer import LayerSource, SyncAction
+from gemma_sync.layer import LayerSource, SyncAction
 from PyQt5.QtWidgets import QPushButton
 from qgis.core import Qgis, QgsMapLayerModel, QgsProject
 from qgis.PyQt.QtCore import Qt

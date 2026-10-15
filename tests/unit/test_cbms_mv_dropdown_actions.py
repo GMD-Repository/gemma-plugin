@@ -60,6 +60,7 @@ class TestCbmsMvDropdownActions(unittest.TestCase):
         self.assertIn('combo_actions.addItem(del_icon_menu, "Delete selected features")', content)
         self.assertIn('combo_actions.addItem(geom_ic, "Generate point geometry")', content)
         self.assertIn('combo_actions.addItem(copy_geom_ic, "Copy the geometry and paste it into the longitude and latitude columns")', content)
+        self.assertIn('combo_actions.addItem(update_coord_ic, "Update Datafile\'s Coordinates")', content)
 
         # Verify redundant delete button was removed from toolbar
         self.assertNotIn('toolbar.addWidget(btn_delete_selected)', content)
@@ -70,6 +71,7 @@ class TestCbmsMvDropdownActions(unittest.TestCase):
         self.assertIn('def _delete_selected_features(', content)
         self.assertIn('def _on_generate_point_geometry(', content)
         self.assertIn('def _on_copy_geometry_to_coordinates(', content)
+        self.assertIn('def _on_update_datafile_coordinates(', content)
 
     def test_save_button_confirmation_dialog(self):
         """Verify Save Changes button triggers Save / Discard / Cancel confirmation."""

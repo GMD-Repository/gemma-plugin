@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Unit test module for CBMS MV _save_csv_changes and updated_variables tracking.
+Unit test module for CBMS MV _save_csv_changes and updated_columns tracking.
 Verifies:
 - _save_csv_changes updates CSV row attributes on disk
-- updated_variables column records pipe-delimited modified column names
+- updated_columns column records pipe-delimited modified column names
 - Subsequent saves accumulate column names without duplicates
 """
 
@@ -19,17 +19,17 @@ setup_qgis_mock_if_needed()
 
 
 class TestCbmsMvSaveChanges(unittest.TestCase):
-    """Test suite for CBMS MV CSV saving and updated_variables tracking."""
+    """Test suite for CBMS MV CSV saving and updated_columns tracking."""
 
     def setUp(self):
         self.dialog_mod = importlib.import_module("references.cbms_mv.cbmsmv_dialog")
 
-    def test_save_csv_changes_records_updated_variables(self):
-        """Verify _save_csv_changes writes edited column names to updated_variables."""
+    def test_save_csv_changes_records_updated_columns(self):
+        """Verify _save_csv_changes writes edited column names to updated_columns."""
         # Create a temporary CSV file
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="", delete=False, suffix=".csv") as f:
             writer = csv.writer(f)
-            writer.writerow(["fid", "map_uuid", "barangay_code", "ean", "remarks", "updated_variables"])
+            writer.writerow(["fid", "map_uuid", "barangay_code", "ean", "remarks", "updated_columns"])
             writer.writerow(["1", "uuid-001", "001", "001", "original note", ""])
             writer.writerow(["2", "uuid-002", "002", "002", "original note 2", ""])
             temp_csv_path = f.name
@@ -64,7 +64,7 @@ class TestCbmsMvSaveChanges(unittest.TestCase):
                 rows = list(csv.reader(f))
             header = rows[0]
             row1 = rows[1]
-            uv_idx = header.index("updated_variables")
+            uv_idx = header.index("updated_columns")
             bg_idx = header.index("barangay_code")
             self.assertEqual(row1[bg_idx], "099")
             self.assertEqual(row1[uv_idx], "barangay_code")
@@ -88,7 +88,7 @@ class TestCbmsMvSaveChanges(unittest.TestCase):
             self.assertEqual(row1[ean_idx], "088")
             self.assertEqual(row1[uv_idx], "barangay_code|ean")
 
-            # 3. Third edit: edit barangay_code again (should not duplicate in updated_variables)
+            # 3. Third edit: edit barangay_code again (should not duplicate in updated_columns)
             dialog._pending_json_edits = {
                 "fid_1": {
                     "df_fid": "1",
@@ -110,8 +110,8 @@ class TestCbmsMvSaveChanges(unittest.TestCase):
             if os.path.exists(temp_csv_path):
                 os.remove(temp_csv_path)
 
-    def test_save_csv_changes_creates_missing_updated_variables_column(self):
-        """Verify _save_csv_changes dynamically creates updated_variables if not present in CSV."""
+    def test_save_csv_changes_creates_missing_updated_columns_column(self):
+        """Verify _save_csv_changes dynamically creates updated_columns if not present in CSV."""
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="", delete=False, suffix=".csv") as f:
             writer = csv.writer(f)
             writer.writerow(["fid", "map_uuid", "city_mun_code", "remarks"])
@@ -142,8 +142,8 @@ class TestCbmsMvSaveChanges(unittest.TestCase):
                 rows = list(csv.reader(f))
             header = rows[0]
             row1 = rows[1]
-            self.assertIn("updated_variables", header)
-            uv_idx = header.index("updated_variables")
+            self.assertIn("updated_columns", header)
+            uv_idx = header.index("updated_columns")
             self.assertEqual(row1[uv_idx], "city_mun_code|remarks")
         finally:
             if os.path.exists(temp_csv_path):
@@ -155,7 +155,7 @@ class TestCbmsMvSaveChanges(unittest.TestCase):
 
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="", delete=False, suffix=".csv") as f:
             writer = csv.writer(f)
-            writer.writerow(["fid", "map_uuid", "barangay_code", "updated_variables"])
+            writer.writerow(["fid", "map_uuid", "barangay_code", "updated_columns"])
             writer.writerow(["1", "uuid-201", "001", ""])
             temp_csv_path = f.name
 
@@ -188,7 +188,7 @@ class TestCbmsMvSaveChanges(unittest.TestCase):
             header = rows[0]
             row1 = rows[1]
             bg_idx = header.index("barangay_code")
-            uv_idx = header.index("updated_variables")
+            uv_idx = header.index("updated_columns")
             self.assertEqual(row1[bg_idx], "999")
             self.assertEqual(row1[uv_idx], "barangay_code")
         finally:
@@ -199,7 +199,7 @@ class TestCbmsMvSaveChanges(unittest.TestCase):
         """Verify _discard_changes clears in-memory edits without modifying disk files."""
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="", delete=False, suffix=".csv") as f:
             writer = csv.writer(f)
-            writer.writerow(["fid", "map_uuid", "barangay_code", "updated_variables"])
+            writer.writerow(["fid", "map_uuid", "barangay_code", "updated_columns"])
             writer.writerow(["1", "uuid-301", "original_bg", ""])
             temp_csv_path = f.name
 

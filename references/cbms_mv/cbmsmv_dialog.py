@@ -17,6 +17,7 @@ import ast
 import json
 import csv
 import datetime
+import tempfile
 from typing import Optional, List, Dict, Any, Tuple, Callable
 
 from qgis.core import (
@@ -419,6 +420,8 @@ class CbmsmvDialog(QDialog):
         self.project = project or QgsProject.instance()
         self.offline_editing = offline_editing
         self.settings = QgsSettings()
+        self.chk_load_canvas = None
+        self.chk_group_layers = None
 
         # Theme detection: check application / widget palette brightness
         palette = self.palette()
@@ -481,6 +484,18 @@ class CbmsmvDialog(QDialog):
         was_docked = self.settings.value("cbms_mv/is_docked", False, type=bool)
         if was_docked and self.iface and hasattr(self.iface, "addDockWidget"):
             QTimer.singleShot(50, lambda: self.dock_window() if is_valid_qobject(self) else None)
+
+    @property
+    def should_load_canvas(self) -> bool:
+        """Safely determine if validation result layers should be added to QGIS canvas."""
+        chk = getattr(self, "chk_load_canvas", None)
+        return bool(chk and hasattr(chk, "isChecked") and chk.isChecked())
+
+    @property
+    def should_group_layers(self) -> bool:
+        """Safely determine if validation result layers should be grouped under '2027 CBMS MV Results'."""
+        chk = getattr(self, "chk_group_layers", None)
+        return bool(chk and hasattr(chk, "isChecked") and chk.isChecked())
 
     @property
     def is_dark(self) -> bool:
@@ -1823,6 +1838,12 @@ class CbmsmvDialog(QDialog):
         else:
             combo_actions.addItem("Copy the geometry and paste it into the longitude and latitude columns")
 
+        update_coord_ic = QgsApplication.getThemeIcon("mActionCalculateField.svg")
+        if not update_coord_ic.isNull():
+            combo_actions.addItem(update_coord_ic, "Update Datafile's Coordinates")
+        else:
+            combo_actions.addItem("Update Datafile's Coordinates")
+
         combo_actions.setCursor(Qt.PointingHandCursor)
         combo_actions.setToolTip("Select an action to execute for checked features")
 
@@ -1974,6 +1995,10 @@ class CbmsmvDialog(QDialog):
                 )
             elif idx == 6 or ("copy" in combo_actions.itemText(idx).lower() and ("geometry" in combo_actions.itemText(idx).lower() or "longitude" in combo_actions.itemText(idx).lower() or "latitude" in combo_actions.itemText(idx).lower())):
                 self._on_copy_geometry_to_coordinates(
+                    layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
+                )
+            elif idx == 7 or ("update" in combo_actions.itemText(idx).lower() and "coordinate" in combo_actions.itemText(idx).lower()):
+                self._on_update_datafile_coordinates(
                     layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
             else:
@@ -2769,6 +2794,34 @@ class CbmsmvDialog(QDialog):
             btn_update_selected.setText("Apply Fix Action")
             btn_update_selected.setEnabled(False)
 
+    def _on_update_datafile_coordinates(
+        self,
+        *args,
+        combo_actions: Optional[QComboBox] = None,
+        btn_actions: Optional[Any] = None,
+        btn_update_selected: Optional[QPushButton] = None,
+        **kwargs,
+    ):
+        """Directly update datafile coordinates (df_longitude, df_latitude) based on sf_longitude and sf_latitude."""
+        if not is_valid_qobject(self):
+            return
+        if len(args) >= 2 and hasattr(args[1], "rowCount"):
+            layer, table = args[0], args[1]
+        elif len(args) >= 3 and hasattr(args[2], "rowCount"):
+            layer, table = args[1], args[2]
+        else:
+            layer = kwargs.get("layer")
+            table = kwargs.get("table")
+
+        self._fix_selected_features("update_datafiles_coordinates", layer, table)
+        if combo_actions:
+            combo_actions.setItemText(0, "Actions")
+        elif btn_actions:
+            btn_actions.setText("Actions ▾")
+        if btn_update_selected:
+            btn_update_selected.setText("Apply Fix Action")
+            btn_update_selected.setEnabled(False)
+
     def _on_generate_point_geometry(
         self,
         *args,
@@ -3202,11 +3255,11 @@ class CbmsmvDialog(QDialog):
                 uuid_idx = header_lower.index(target)
                 break
 
-        # Locate or append updated_variables column
-        updated_var_idx = header_lower.index("updated_variables") if "updated_variables" in header_lower else None
+        # Locate or append updated_columns column
+        updated_var_idx = header_lower.index("updated_columns") if "updated_columns" in header_lower else None
         if updated_var_idx is None:
-            header.append("updated_variables")
-            header_lower.append("updated_variables")
+            header.append("updated_columns")
+            header_lower.append("updated_columns")
             updated_var_idx = len(header) - 1
             for r in rows:
                 r.append("")
@@ -3260,7 +3313,7 @@ class CbmsmvDialog(QDialog):
                     if col_idx is not None:
                         actual_col_name = header[col_idx]
                         row[col_idx] = str(new_val) if new_val is not None else ""
-                        if actual_col_name.lower() != "updated_variables":
+                        if actual_col_name.lower() != "updated_columns":
                             var_name = actual_col_name[3:] if actual_col_name.lower().startswith("df_") else actual_col_name
                             changed_cols_for_row.append(var_name)
 
@@ -3289,6 +3342,12 @@ class CbmsmvDialog(QDialog):
                     writer = csv.writer(f)
                     writer.writerow(header)
                     writer.writerows(rows)
+        except PermissionError as e:
+            return False, 0, (
+                f"Permission denied while saving Form 2 CSV to disk:\n{e}\n\n"
+                "Tip: The file is currently open and locked by another program (e.g., Microsoft Excel).\n"
+                "Please close Microsoft Excel (or the application viewing this CSV) and try saving again."
+            )
         except Exception as e:
             return False, 0, f"Error saving Form 2 CSV to disk:\n{e}"
         finally:
@@ -3442,14 +3501,14 @@ class CbmsmvDialog(QDialog):
                                 typed_val = new_val
                     target_dict[final_key] = typed_val
 
-                # Track updated_variables in JSON record
-                updated_key = "updated_variables"
+                # Track updated_columns in JSON record
+                updated_key = "updated_columns"
                 existing_uv = str(target_dict.get(updated_key) or "").strip()
                 existing_tokens = [t.strip() for t in existing_uv.split("|") if t.strip()]
                 new_tokens = [
                     (p[3:] if p.lower().startswith("df_") else p)
                     for p in props_to_update.keys()
-                    if p.lower() != "updated_variables"
+                    if p.lower() != "updated_columns"
                 ]
                 if new_tokens:
                     combined = list(dict.fromkeys(existing_tokens + new_tokens))
@@ -3467,6 +3526,12 @@ class CbmsmvDialog(QDialog):
             except PermissionError:
                 with open(form2_path, "w", encoding="utf-8") as f:
                     json.dump(data, f, indent=2, ensure_ascii=False)
+        except PermissionError as e:
+            return False, 0, (
+                f"Permission denied while saving Form 2 JSON to disk:\n{e}\n\n"
+                "Tip: The file is currently open and locked by another program or text editor.\n"
+                "Please close any application holding this file and try saving again."
+            )
         except Exception as e:
             return False, 0, f"Error saving Form 2 JSON to disk:\n{e}"
         finally:
@@ -3751,8 +3816,14 @@ class CbmsmvDialog(QDialog):
 
         # 6. Resolve validation ID to re-run and refresh table to disk state
         val_id = target_val_id
-        if not val_id and hasattr(self, "results_tab_widget"):
-            cur_widget = self.results_tab_widget.currentWidget()
+        results_tab = None
+        try:
+            results_tab = getattr(self, "results_tab_widget", None)
+        except RuntimeError:
+            pass
+
+        if not val_id and results_tab:
+            cur_widget = results_tab.currentWidget()
             if cur_widget:
                 val_id = cur_widget.property("val_id")
                 if not val_id:
@@ -3912,7 +3983,7 @@ class CbmsmvDialog(QDialog):
 
         # Update QGIS Canvas Layer if canvas loading is enabled
         proj = self.project if self.project else QgsProject.instance()
-        if proj and self.chk_load_canvas.isChecked():
+        if proj and self.should_load_canvas:
             # Remove old layer for this val_id if present
             matching_ids = [
                 l.id() for l in proj.mapLayers().values()
@@ -3924,7 +3995,7 @@ class CbmsmvDialog(QDialog):
             # If new issues exist, load updated layer into group or project
             if new_count > 0 and out_layer.isValid():
                 out_layer.setName(f"{val_id} ({new_count})")
-                if self.chk_group_layers.isChecked():
+                if self.should_group_layers:
                     grp = self._get_or_create_layer_group("2027 CBMS MV Results")
                     proj.addMapLayer(out_layer, False)
                     grp.addLayer(out_layer)
@@ -4748,16 +4819,16 @@ class CbmsmvDialog(QDialog):
         vbox_output.addWidget(self.gpkg_widget)
 
         # Checkboxes
-        self.chk_load_canvas = QCheckBox("Add generated error/flag layers directly into QGIS Canvas")
-        self.chk_load_canvas.setChecked(False)
-        vbox_output.addWidget(self.chk_load_canvas)
+        #self.chk_load_canvas = QCheckBox("Add generated error/flag layers directly into QGIS Canvas")
+        #self.chk_load_canvas.setChecked(False)
+        #vbox_output.addWidget(self.chk_load_canvas)
 
-        self.chk_group_layers = QCheckBox("Group validation result layers under '2027 CBMS MV Results'")
-        self.chk_group_layers.setChecked(False)
-        vbox_output.addWidget(self.chk_group_layers)
+        #self.chk_group_layers = QCheckBox("Group validation result layers under '2027 CBMS MV Results'")
+        #self.chk_group_layers.setChecked(False)
+        #vbox_output.addWidget(self.chk_group_layers)
 
         self.chk_summary_report = QCheckBox("Generate validation audit report (JSON && Summary CSV)")
-        self.chk_summary_report.setChecked(False)
+        self.chk_summary_report.setChecked(True)
         vbox_output.addWidget(self.chk_summary_report)
 
         container_layout.addWidget(grp_output)
@@ -6127,7 +6198,7 @@ class CbmsmvDialog(QDialog):
         self._load_primary_input_sources_if_requested(form2_path, points_path, base_path)
 
         # Remove existing '2027 CBMS MV Results' group to prevent stale error layers
-        if self.chk_group_layers.isChecked():
+        if self.should_group_layers:
             if self._remove_layer_group("2027 CBMS MV Results"):
                 self._log_info("Detected existing '2027 CBMS MV Results' layer group. Removed previous results before writing new layers.")
 
@@ -6240,7 +6311,7 @@ class CbmsmvDialog(QDialog):
                     }
 
                     # Add layer to QGIS canvas
-                    if self.chk_load_canvas.isChecked():
+                    if self.should_load_canvas:
                         if hasattr(self.context, "takeResultLayer"):
                             try:
                                 take_lyr = self.context.takeResultLayer(out_dest if isinstance(out_dest, str) else out_layer.id())
@@ -6253,7 +6324,7 @@ class CbmsmvDialog(QDialog):
                         out_layer.setName(f"{val_id} ({flagged_count})")
                         proj = self.project if self.project else QgsProject.instance()
 
-                        if self.chk_group_layers.isChecked():
+                        if self.should_group_layers:
                             grp = self._get_or_create_layer_group("2027 CBMS MV Results")
                             proj.addMapLayer(out_layer, False)
                             grp.addLayer(out_layer)
@@ -6275,7 +6346,7 @@ class CbmsmvDialog(QDialog):
                         aux_layer = proj.mapLayer(aux_dest)
 
                 if aux_layer and aux_layer.isValid() and aux_layer.featureCount() > 0:
-                    if self.chk_load_canvas.isChecked():
+                    if self.should_load_canvas:
                         if hasattr(self.context, "takeResultLayer"):
                             try:
                                 take_aux = self.context.takeResultLayer(aux_dest if isinstance(aux_dest, str) else aux_layer.id())
@@ -6287,7 +6358,7 @@ class CbmsmvDialog(QDialog):
                         aux_layer.setName(f"{val_id}_summary ({aux_layer.featureCount()})")
                         proj = self.project if self.project else QgsProject.instance()
 
-                        if self.chk_group_layers.isChecked():
+                        if self.should_group_layers:
                             grp = self._get_or_create_layer_group("2027 CBMS MV Results")
                             proj.addMapLayer(aux_layer, False)
                             grp.addLayer(aux_layer)
@@ -6323,8 +6394,15 @@ class CbmsmvDialog(QDialog):
 
         # Generate summary audit report file if selected
         if self.chk_summary_report.isChecked():
-            report_dir = os.path.dirname(points_path)
-            report_path = os.path.join(report_dir, f"cbms_mv_summary_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+            report_dir = r"C:\PSA-GIS\UAT Logs"
+            try:
+                os.makedirs(report_dir, exist_ok=True)
+            except Exception:
+                report_dir = os.path.dirname(points_path) if points_path and os.path.exists(os.path.dirname(points_path)) else tempfile.gettempdir()
+
+            ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            report_path = os.path.join(report_dir, f"cbms_mv_summary_{ts}.json")
+            csv_path = os.path.join(report_dir, f"cbms_mv_summary_{ts}.csv")
             try:
                 with open(report_path, "w", encoding="utf-8") as rf:
                     json.dump({
@@ -6336,7 +6414,23 @@ class CbmsmvDialog(QDialog):
                         "total_issues_flagged": total_flagged_issues,
                         "results": execution_summary,
                     }, rf, indent=2)
+
+                with open(csv_path, "w", newline="", encoding="utf-8-sig") as cf:
+                    writer = csv.writer(cf)
+                    writer.writerow(["Check ID", "Check Name", "Status", "Flagged Count"])
+                    for row in execution_summary:
+                        writer.writerow([
+                            row.get("id", ""),
+                            row.get("name", ""),
+                            row.get("status", ""),
+                            row.get("features_flagged", 0),
+                        ])
+                    writer.writerow([])
+                    writer.writerow(["Total Checks Run", len(execution_summary)])
+                    writer.writerow(["Total Flagged Issues", total_flagged_issues])
+
                 self._log_success(f"Audit report saved to: {report_path}")
+                self._log_success(f"Summary CSV saved to: {csv_path}")
             except Exception as r_exc:
                 self._log_warning(f"Could not write audit report file: {r_exc}")
 

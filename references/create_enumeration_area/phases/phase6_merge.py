@@ -8,6 +8,7 @@ from qgis.core import (
 from qgis.PyQt.QtCore import QCoreApplication, QThread
 
 from ..helpers.constants import _PHASE_LABELS
+from ..helpers.spatial import deduplicate_building_points
 
 
 def run_phase_6(alg, parameters, context, feedback, multi_feedback, p1, p2, p5):
@@ -55,7 +56,7 @@ def is_merge_candidate(ea_item, min_household, merge_candidate_ids=None):
     if ea_item.get('is_special_ea', False):
         return False
     if ea_item.get('from_merge', False):
-        return ea_item.get('hh_count', 0.0) <= min_household
+        return False
     orig_id = ea_item.get('original_id')
     merge_set = merge_candidate_ids or set()
     return (orig_id in merge_set) or (ea_item.get('hh_count', 0.0) <= min_household)
@@ -76,6 +77,9 @@ def process_barangay_merge(
     full_ea_by_id = full_ea_by_id or {}
     delineation_candidate_ids = delineation_candidate_ids or set()
     merge_candidate_ids = merge_candidate_ids or set()
+
+    if not bar_code or str(bar_code).strip().lower() in ("", "none", "unknown", "null"):
+        return bar_eas
 
     iteration = 0
     max_iterations = 10
@@ -104,7 +108,7 @@ def process_barangay_merge(
 
             ea = bar_eas[idx]
 
-            if ea.get('from_split', False) or ea.get('is_special_ea', False):
+            if ea.get('from_split', False) or ea.get('is_special_ea', False) or ea.get('from_merge', False):
                 new_eas.append(ea)
                 continue
 
@@ -117,7 +121,9 @@ def process_barangay_merge(
                         continue
 
                     neighbor = bar_eas[j]
-                    if neighbor.get('from_split', False) or neighbor.get('is_special_ea', False):
+                    if neighbor.get('from_split', False) or neighbor.get('is_special_ea', False) or neighbor.get('from_merge', False):
+                        continue
+                    if neighbor.get('parent_barangay') != bar_code or ea.get('parent_barangay') != bar_code:
                         continue
                     if is_delineation_candidate(neighbor, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
                         continue
@@ -149,13 +155,22 @@ def process_barangay_merge(
                         prevailing_ean = neighbor_code
                         max_orig_hh = neighbor_max_orig
 
+                    merged_bldgs = list(ea.get('buildings', [])) + list(neighbor.get('buildings', []))
+                    deduped_bldgs, drop_cnt = deduplicate_building_points(merged_bldgs)
+                    for b in deduped_bldgs:
+                        b['parent_ean'] = prevailing_ean
+                        b['merge_role'] = 'Merged'
+
+                    computed_hh = sum(b.get('pop', 0.0) for b in deduped_bldgs) if deduped_bldgs else (ea['hh_count'] + neighbor['hh_count'])
+                    computed_bldg = len(deduped_bldgs) if deduped_bldgs else (ea.get('bldg_count', 0) + neighbor.get('bldg_count', 0))
+
                     merged_ea = {
                         'geom': merged_geom,
-                        'buildings': ea.get('buildings', []) + neighbor.get('buildings', []),
-                        'hh_count': ea['hh_count'] + neighbor['hh_count'],
+                        'buildings': deduped_bldgs,
+                        'hh_count': computed_hh,
                         'original_hhcount': ea.get('original_hhcount', ea.get('hh_count', 0.0)),
                         'original_bldgcount': ea.get('original_bldgcount', ea.get('bldg_count', 0)),
-                        'bldg_count': ea.get('bldg_count', 0) + neighbor.get('bldg_count', 0),
+                        'bldg_count': computed_bldg,
                         'attributes': list(ea['attributes']),
                         'original_id': ea['original_id'],
                         'original_code': ea['original_code'],
@@ -164,6 +179,7 @@ def process_barangay_merge(
                         'is_new': False,
                         'split_by': ea.get('split_by', 'none'),
                         'from_merge': True,
+                        'merge_partner_count': 1,
                         'ea_type': 'MERGED',
                         'parent_barangay': bar_code
                     }
@@ -194,7 +210,9 @@ def process_barangay_merge(
                         continue
 
                     neighbor = bar_eas[j]
-                    if neighbor.get('from_split', False) or neighbor.get('is_special_ea', False):
+                    if neighbor.get('from_split', False) or neighbor.get('is_special_ea', False) or neighbor.get('from_merge', False):
+                        continue
+                    if neighbor.get('parent_barangay') != bar_code or ea.get('parent_barangay') != bar_code:
                         continue
                     if is_delineation_candidate(neighbor, max_household, eadel_indi_col_idx, full_ea_by_id, delineation_candidate_ids):
                         continue
@@ -237,13 +255,22 @@ def process_barangay_merge(
                         prevailing_ean = neighbor_code
                         max_orig_hh = neighbor_max_orig
 
+                    merged_bldgs = list(ea.get('buildings', [])) + list(neighbor.get('buildings', []))
+                    deduped_bldgs, drop_cnt = deduplicate_building_points(merged_bldgs)
+                    for b in deduped_bldgs:
+                        b['parent_ean'] = prevailing_ean
+                        b['merge_role'] = 'Merged'
+
+                    computed_hh = sum(b.get('pop', 0.0) for b in deduped_bldgs) if deduped_bldgs else (ea['hh_count'] + neighbor['hh_count'])
+                    computed_bldg = len(deduped_bldgs) if deduped_bldgs else (ea.get('bldg_count', 0) + neighbor.get('bldg_count', 0))
+
                     merged_ea = {
                         'geom': merged_geom,
-                        'buildings': ea.get('buildings', []) + neighbor.get('buildings', []),
-                        'hh_count': ea['hh_count'] + neighbor['hh_count'],
+                        'buildings': deduped_bldgs,
+                        'hh_count': computed_hh,
                         'original_hhcount': ea.get('original_hhcount', ea.get('hh_count', 0.0)),
                         'original_bldgcount': ea.get('original_bldgcount', ea.get('bldg_count', 0)),
-                        'bldg_count': ea.get('bldg_count', 0) + neighbor.get('bldg_count', 0),
+                        'bldg_count': computed_bldg,
                         'attributes': list(ea['attributes']),
                         'original_id': ea['original_id'],
                         'original_code': ea['original_code'],
@@ -252,6 +279,7 @@ def process_barangay_merge(
                         'is_new': False,
                         'split_by': ea.get('split_by', 'none'),
                         'from_merge': True,
+                        'merge_partner_count': 1,
                         'ea_type': 'MERGED',
                         'parent_barangay': bar_code
                     }
@@ -296,8 +324,8 @@ def run_phase_6(alg, parameters, context, feedback, multi_feedback, p1, p2, p5):
     Returns dictionary containing:
     - merged_eas: List[dict] of EAs after iterative merging
     """
-    eadel_indi_col_idx = p1["eadel_indi_col_idx"]
-    full_ea_by_id = p2["full_ea_by_id"]
+    eadel_indi_col_idx = p1.get("eadel_indi_col_idx", -1)
+    full_ea_by_id = p2.get("full_ea_by_id", {})
     min_household = p1["min_household"]
     max_household = p1["max_household"]
     num_cores = p1.get("num_cores", QThread.idealThreadCount())
@@ -306,6 +334,14 @@ def run_phase_6(alg, parameters, context, feedback, multi_feedback, p1, p2, p5):
     merge_candidate_ids = p2["merge_candidate_ids"]
 
     split_eas = p5["split_eas"]
+
+    exec_mode = p1.get("execution_mode", "all")
+    if exec_mode == "delineation":
+        feedback.pushInfo("[Phase 6] Skipping EA merging (delineation execution mode).")
+        return {
+            "merged_eas": split_eas,
+            "proposed_lines": p5.get("proposed_lines", []),
+        }
 
     barangay_split_groups = {}
     for ea in split_eas:
@@ -321,7 +357,8 @@ def run_phase_6(alg, parameters, context, feedback, multi_feedback, p1, p2, p5):
 
     merge_bar_keys = [
         bar_code for bar_code in sorted_split_bar_keys
-        if any(is_merge_candidate(ea, min_household, merge_candidate_ids) or ea['hh_count'] == 0 for ea in barangay_split_groups[bar_code])
+        if bar_code and str(bar_code).strip().lower() not in ("", "none", "unknown", "null")
+        and any(is_merge_candidate(ea, min_household, merge_candidate_ids) or ea['hh_count'] == 0 for ea in barangay_split_groups[bar_code])
     ]
 
     multi_feedback.setCurrentStep(5)

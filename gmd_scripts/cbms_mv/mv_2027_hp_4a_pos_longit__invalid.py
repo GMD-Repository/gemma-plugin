@@ -127,7 +127,7 @@ class mv_2027_hp_4a_pos_longit__invalid(QgsProcessingAlgorithm):
             "native:extractbyexpression",
             {
                 "INPUT": layer_with_dist,
-                "EXPRESSION": '"distance_m" IS NULL OR "distance_m" > 50.0',
+                "EXPRESSION": '("distance_m" IS NULL OR "distance_m" > 50.0) AND ("sf_remarks" IS NULL OR "sf_remarks" != \'Justified\')',
                 "OUTPUT": "memory:",
             },
             context=context,

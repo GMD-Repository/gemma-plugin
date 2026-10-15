@@ -34,6 +34,7 @@ export default defineConfig({
             items: [
               { text: 'MBI Checker', link: '/tools/mbi-checker' },
               { text: 'MBI Validator', link: '/tools/mbi-validator' },
+              { text: 'Run Analysis', link: '/tools/run-analysis' },
               { text: 'Fill Polygon Gaps', link: '/tools/fill-polygon-gaps' },
               { text: 'Export Preliminary Polygons', link: '/tools/export-preliminary-polygons' },
               { text: 'Update Metadata', link: '/tools/update-metadata' },
@@ -42,6 +43,9 @@ export default defineConfig({
               { text: 'Join Barangay Attributes', link: '/tools/join-barangay-attributes' },
               { text: 'Check and Update', link: '/tools/check-and-update' },
               { text: 'PSA - LGU Boundary Comparison', link: '/tools/psa-lgu-comparison' },
+              { text: 'Know Your Projection!', link: '/tools/know-your-projection' },
+              { text: 'Package Layers by City/Mun', link: '/tools/package-layers-by-citymun' },
+              { text: 'Package Style Loader', link: '/tools/package-style-loader' },
             ]
           },
           {
@@ -63,7 +67,7 @@ export default defineConfig({
         ]
       },
       {
-        text: 'v1.0.2',
+        text: 'v1.0.8',
         items: [
           { text: 'Changelog', link: '/changelog' },
           { text: 'Download Latest', link: 'https://github.com/GMD-Repository/gemma-plugin/releases/latest' },
@@ -86,6 +90,7 @@ export default defineConfig({
         items: [
           { text: 'MBI Checker', link: '/tools/mbi-checker' },
           { text: 'MBI Validator', link: '/tools/mbi-validator' },
+          { text: 'Run Analysis', link: '/tools/run-analysis' },
           { text: 'Fill Polygon Gaps', link: '/tools/fill-polygon-gaps' },
           { text: 'Export Preliminary Polygons', link: '/tools/export-preliminary-polygons' },
           { text: 'Update Metadata', link: '/tools/update-metadata' },
@@ -94,6 +99,9 @@ export default defineConfig({
           { text: 'Join Barangay Attributes', link: '/tools/join-barangay-attributes' },
           { text: 'Check and Update', link: '/tools/check-and-update' },
           { text: 'PSA - LGU Boundary Comparison', link: '/tools/psa-lgu-comparison' },
+          { text: 'Know Your Projection!', link: '/tools/know-your-projection' },
+          { text: 'Package Layers by City/Mun', link: '/tools/package-layers-by-citymun' },
+          { text: 'Package Style Loader', link: '/tools/package-style-loader' },
         ]
       },
       {

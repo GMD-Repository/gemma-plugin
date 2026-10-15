@@ -47,6 +47,21 @@ def run_phase_1(
     preview_only = alg.parameterAsBoolean(parameters, alg.PREVIEW_ONLY, context)
     allow_candidate_merge = alg.parameterAsBoolean(parameters, getattr(alg, 'ALLOW_CANDIDATE_MERGE', 'ALLOW_CANDIDATE_MERGE'), context)
 
+    exec_mode = "all"
+    exec_mode_param = getattr(alg, 'EXECUTION_MODE', 'EXECUTION_MODE')
+    if exec_mode_param in parameters and parameters[exec_mode_param] is not None:
+        try:
+            val = alg.parameterAsEnum(parameters, exec_mode_param, context)
+            mode_map = {0: "all", 1: "delineation", 2: "merging"}
+            exec_mode = mode_map.get(val, "all")
+        except Exception:
+            raw_val = parameters.get(exec_mode_param, "all")
+            if isinstance(raw_val, int):
+                exec_mode = {0: "all", 1: "delineation", 2: "merging"}.get(raw_val, "all")
+            elif isinstance(raw_val, str):
+                s = raw_val.strip().lower()
+                exec_mode = s if s in ("all", "delineation", "merging") else "all"
+
     # Resolve dynamic field names from Previous EA Layer case-insensitively
     ea_fields = previous_ea_source.fields()
     eadel_indi_col_idx = -1
@@ -88,23 +103,26 @@ def run_phase_1(
 
     bldg_fields = building_source.fields()
     bldg_hh_field = "hhcount"
-    for i in range(bldg_fields.count()):
-        if bldg_fields.at(i).name().lower() == "hhcount":
-            bldg_hh_field = bldg_fields.at(i).name()
+    for cand in ["est_hhcount", "est_hh_count", "est_hh", "hhcount", "hh_count", "pop", "population"]:
+        found = False
+        for i in range(bldg_fields.count()):
+            if bldg_fields.at(i).name().lower() == cand:
+                bldg_hh_field = bldg_fields.at(i).name()
+                found = True
+                break
+        if found:
             break
 
     barangay_id_field = "geocode"
     for i in range(ea_fields.count()):
-        name_lower = ea_fields.at(i).name().lower()
-        if name_lower in ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code"]:
+        if ea_fields.at(i).name().lower() == "geocode":
             barangay_id_field = ea_fields.at(i).name()
             break
 
     bar_fields = barangay_source.fields()
     bar_geocode_field = "geocode"
     for i in range(bar_fields.count()):
-        name_lower = bar_fields.at(i).name().lower()
-        if name_lower in ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code"]:
+        if bar_fields.at(i).name().lower() == "geocode":
             bar_geocode_field = bar_fields.at(i).name()
             break
 
@@ -240,7 +258,7 @@ def run_phase_1(
                 if raw_bar_geo.endswith(".0"):
                     raw_bar_geo = raw_bar_geo[:-2]
                 if not raw_bar_geo or raw_bar_geo.lower() in ('null', 'none'):
-                    for col_name in ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code", "psgc"]:
+                    for col_name in ["geocode"]:
                         col_idx = best_bar_feat.fields().indexOf(col_name)
                         if col_idx != -1:
                             val = best_bar_feat.attribute(col_idx)
@@ -385,7 +403,7 @@ def run_phase_1(
                 if raw_bar_geo.endswith(".0"):
                     raw_bar_geo = raw_bar_geo[:-2]
                 if not raw_bar_geo or raw_bar_geo.lower() in ('null', 'none'):
-                    for col_name in ["geocode", "bgy_geocode", "brgy_geocode", "barangay_code", "psgc"]:
+                    for col_name in ["geocode"]:
                         col_idx = best_bar_feat.fields().indexOf(col_name)
                         if col_idx != -1:
                             val = best_bar_feat.attribute(col_idx)
@@ -489,7 +507,7 @@ def run_phase_1(
                 spec_bldg_map = {}
                 _spec_bldg_hh_idx = building_source.fields().indexOf(bldg_hh_field)
                 if _spec_bldg_hh_idx == -1:
-                    for _cname in ["hhcount", "hh_count", "household", "household_count", "pop", "population"]:
+                    for _cname in ["est_hhcount", "est_hh_count", "est_hh", "hhcount", "hh_count", "household", "household_count", "pop", "population"]:
                         if building_source.fields().indexOf(_cname) != -1:
                             _spec_bldg_hh_idx = building_source.fields().indexOf(_cname)
                             break
@@ -728,6 +746,7 @@ def run_phase_1(
         "snap_tolerance_m": snap_tolerance_m,
         "preview_only": preview_only,
         "allow_candidate_merge": allow_candidate_merge,
+        "execution_mode": exec_mode,
         "split_strategy": split_strategy,
         "split_type": split_type,
         "eadel_indi_col_idx": eadel_indi_col_idx,

@@ -405,9 +405,10 @@ def spatial_match(checker_layer, reference_features, reference_crs):
     return results
 
 
-def evaluate_reference_case(rf, spatially_confirmed):
+def evaluate_reference_case(rf, spatially_confirmed, checker_available=True):
     """
     Runs attribute-based rules on a single reference feature.
+
     Returns (category, reason) where category is one of:
       "status_mismatch", "mismatch_with_remarks", "pending_cases",
       "still_active", "confirmed_resolved", "no_status"
@@ -427,6 +428,13 @@ def evaluate_reference_case(rf, spatially_confirmed):
       - no_status: status field is blank
       - still_active: legitimately open case that isn't Pending
         (kept for any other non-Pending, non-Updated status values)
+
+    checker_available=False means no Checker layer was supplied for this case
+    type at all, so spatially_confirmed carries no information. In that mode
+    only attribute-driven verdicts are returned: a case is never reported as
+    "no longer detected by Checker" or "Confirmed Resolved" on the strength of
+    a comparison that was never run, and anything the attributes alone cannot
+    settle falls through to still_active.
     """
     status = safe_get(rf, STATUS_CANDIDATES)
     bp = get_num_bldg_pts(rf)
@@ -451,7 +459,7 @@ def evaluate_reference_case(rf, spatially_confirmed):
     remarks_reasons = []
 
     # Rule A: claimed resolved, but checker still finds it
-    if status in RESOLVED_STATUSES and spatially_confirmed:
+    if checker_available and status in RESOLVED_STATUSES and spatially_confirmed:
         plain_reasons.append(f"'{status}' but case still detected by Checker.")
 
     # Rule C: 1_Updated but still has building points
@@ -470,6 +478,12 @@ def evaluate_reference_case(rf, spatially_confirmed):
 
     if remarks_reasons:
         return "mismatch_with_remarks", "; ".join(remarks_reasons)
+
+    if not checker_available:
+        return "still_active", (
+            f"Status='{status}'; no Checker layer supplied for this case type, "
+            "so spatial verification was skipped."
+        )
 
     if status in RESOLVED_STATUSES and not spatially_confirmed:
         return "confirmed_resolved", f"Status='{status}' and no longer detected by Checker."
@@ -565,10 +579,16 @@ def output_fields():
     fields.append(QgsField("barangay", QVariant.String, len=100))
     fields.append(QgsField("mbi_type", QVariant.String, len=50))
     fields.append(QgsField("ref_status", QVariant.String, len=60))
-    fields.append(QgsField("ref_remarks", QVariant.String, len=255))
-    fields.append(QgsField("ref_involved_bgys", QVariant.String, len=255))
+    # ref_remarks / ref_involved_bgys / remarks are unbounded: ref_remarks and
+    # ref_involved_bgys copy free-text / concatenated-list source fields
+    # (pso_remarks, involved_bgys) that carry no length cap, and remarks can
+    # itself be a "; "-joined combination of several mismatch reasons. A
+    # len=255 cap here previously rejected any longer value outright
+    # ("String of length N exceeds maximum field length (255)").
+    fields.append(QgsField("ref_remarks", QVariant.String))
+    fields.append(QgsField("ref_involved_bgys", QVariant.String))
     fields.append(QgsField("ref_num_bldg_pts", QVariant.Int))
-    fields.append(QgsField("remarks", QVariant.String, len=255))
+    fields.append(QgsField("remarks", QVariant.String))
     return fields
 
 
@@ -659,8 +679,15 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
             "new case sitting next to an old one is correctly classified as "
             "a New Case.\n\n"
             "Inputs:\n"
-            "Reference layer is required. Leave a Checker input empty if "
-            "that case type doesn't apply.\n\n"
+            "Reference layer is required. A clean MBI Checker run still emits "
+            "an empty Gaps/Overlaps layer, so supply it as usual — its zero "
+            "features are what confirm those cases as resolved.\n\n"
+            "Leave a Checker input empty only if that case type doesn't apply. "
+            "Nothing is then compared for it, so its cases are reported as "
+            "unverified Remaining Cases rather than being called resolved. "
+            "Both Checker inputs may be left empty — the algorithm then runs an "
+            "attribute-only review of the Reference layer, which still produces "
+            "Pending Cases, No Status and Disputed Areas for export.\n\n"
             "GeoPackage Output:\n"
             "Optionally tick 'Save outputs as GeoPackage' and pick a destination "
             "folder (required only if checkbox is checked) — selected non-empty "
@@ -672,7 +699,7 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
             "- Mismatch with Remarks: Updated w/ nonzero bldg pts but remarks ARE present (verify justification)\n"
             "- Pending Cases: all Pending status cases, except Pending w/ 0 bldg pts and no remarks (which goes to Status Mismatch instead)\n"
             "- New Cases: Checker case with no genuine Reference overlap\n"
-            "- Remaining Cases: in Reference layer and detected by Checker (open cases, non-Pending)\n"
+            "- Remaining Cases: in Reference layer and detected by Checker (open cases, non-Pending), plus cases left unverified because no Checker layer was supplied for their type\n"
             "- Confirmed Resolved: claimed resolved and Checker agrees\n"
             "- No Status: Reference case with blank status\n"
             "- Manual Review: one Checker case overlaps multiple Reference cases\n"
@@ -722,7 +749,7 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterFeatureSource(
             self.CHK_GAP, self.tr("Checker GAP layer"),
             [QgsProcessing.TypeVectorPolygon],
-            optional=True,
+            optional=False,
             defaultValue=default_gap))
 
         default_overlap = find_matching_layer_id(
@@ -732,7 +759,7 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(QgsProcessingParameterFeatureSource(
             self.CHK_OVERLAP, self.tr("Checker OVERLAP layer"),
             [QgsProcessing.TypeVectorPolygon],
-            optional=True,
+            optional=False,
             defaultValue=default_overlap))
 
         self.addParameter(QgsProcessingParameterBoolean(
@@ -811,10 +838,16 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
                 self.tr("Reference layer is required.")
             )
 
+        # Both Checker layers are optional. With neither supplied the run is a
+        # pure attribute review of the Reference layer -- no spatial matching is
+        # possible, so no case is claimed to be "still detected" or "no longer
+        # detected", but Pending Cases, No Status, Disputed Areas and the
+        # attribute-only mismatches are still produced and can be exported.
         if not chk_g and not chk_o:
-            raise QgsProcessingException(
-                self.tr("Please provide at least one Checker layer (GAP or OVERLAP).")
-            )
+            feedback.pushInfo(self.tr(
+                "No Checker layer supplied -- running an attribute-only review "
+                "of the Reference layer. Spatial verification is skipped."
+            ))
 
         if not get_layer_field(ref_layer, STATUS_CANDIDATES):
             raise QgsProcessingException(
@@ -912,7 +945,8 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
         for case_type, chk_layer in (("Gap", chk_g), ("Overlap", chk_o)):
             if chk_layer is None:
                 for rf in get_reference_subset(ref_layer, case_type):
-                    category, reason = evaluate_reference_case(rf, spatially_confirmed=False)
+                    category, reason = evaluate_reference_case(
+                        rf, spatially_confirmed=False, checker_available=False)
                     if category == "status_mismatch":
                         remarks = reason
                         collected["status_mismatch"].append((rf.geometry(), case_type, remarks, "", rf, None))

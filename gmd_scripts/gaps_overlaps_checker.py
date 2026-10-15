@@ -1,7 +1,7 @@
 # ----------------------------------------------------------------------
 # MBI Gaps / Overlaps / Disputed Areas Checker
-# Last updated: 2026-09-03
-# Version: v12
+# Last updated: 2026-09-30
+# Version: v13
 #
 # Changelog:
 #   v1 - Initial Gaps/Overlaps detection between LGU and PSA polygons.
@@ -48,6 +48,13 @@
 #         test. Overlap detection now groups by feature (by_feature=True),
 #         so each polygon counts separately. Gap detection keeps the
 #         original per-barangay grouping.
+#   v13 - The Gaps and Overlaps layers are now emitted even when detection
+#         finds nothing, instead of being skipped. An empty layer is positive
+#         evidence that the check ran and the case type is clean, which lets
+#         MBI Validator report those reference cases as Confirmed Resolved.
+#         A *missing* layer is ambiguous (detection not run for that mode, or
+#         output never loaded) and left the Validator nothing to verify
+#         against. Layers whose mode did not run are still not emitted.
 # ----------------------------------------------------------------------
 
 __author__ = 'Geospatial Management Division'
@@ -752,14 +759,20 @@ class GapsOverlaps(QgsProcessingAlgorithm):
                 if total:
                     feedback.setProgress(20 + int((i / total) * 35))
 
+            # The layer is emitted even when empty. An empty 'Overlaps' layer is
+            # positive evidence that overlap detection ran and found nothing,
+            # which MBI Validator can act on; a *missing* layer is ambiguous
+            # (not run, or never loaded) and leaves it nothing to verify against.
             if ovl_feats:
                 out_ovl.dataProvider().addFeatures(ovl_feats)
                 out_ovl.updateExtents()
-                results['OVERLAPS'] = load_layer(out_ovl, 'Overlaps')
                 feedback.pushInfo(f"  {len(ovl_feats)} overlap feature(s) written.")
             else:
-                feedback.pushInfo("No overlaps detected.")
-                results['OVERLAPS'] = None
+                feedback.pushInfo(
+                    "No overlaps detected -- emitting an empty Overlaps layer so "
+                    "MBI Validator can confirm these cases as resolved."
+                )
+            results['OVERLAPS'] = load_layer(out_ovl, 'Overlaps')
 
             feedback.setProgress(55 if run_gaps else 100)
 
@@ -924,16 +937,20 @@ class GapsOverlaps(QgsProcessingAlgorithm):
                     if out_feat:
                         gap_feats.append(out_feat)
 
+            # Emitted even when empty -- see the matching note in the overlap
+            # block above.
             if gap_feats:
                 out_gap.dataProvider().addFeatures(gap_feats)
                 out_gap.updateExtents()
-                results['GAPS'] = load_layer(out_gap, 'Gaps')
                 feedback.pushInfo(f"  {len(gap_feats)} gap feature(s) written.")
             else:
-                feedback.pushInfo("No gaps detected.")
-                results['GAPS'] = None
+                feedback.pushInfo(
+                    "No gaps detected -- emitting an empty Gaps layer so "
+                    "MBI Validator can confirm these cases as resolved."
+                )
+            results['GAPS'] = load_layer(out_gap, 'Gaps')
 
             feedback.setProgress(100)
 
-        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v12.")
+        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v13.")
         return results
