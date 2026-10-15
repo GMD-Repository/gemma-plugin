@@ -7300,7 +7300,8 @@ class EALauncherDialog(QDialog):
 
         # Enable/Disable Run button
         has_output = bool(self.ea_merge_output_folder_widget.filePath().strip()) if hasattr(self, 'ea_merge_output_folder_widget') else False
-        can_run = bool(ea_layer and has_repl and all_poly and all_8digits and geo_code and has_output)
+        repl_valid = (not has_repl) or (all_poly and all_8digits and all_valid_geom)
+        can_run = bool(ea_layer and repl_valid and geo_code and has_output)
         self.ea_merge_run_btn.setEnabled(can_run)
 
     def _ea_merge_cancel(self):
@@ -7343,8 +7344,23 @@ class EALauncherDialog(QDialog):
             self._ea_merge_append_log("<span style='color:#cf222e; font-weight:bold;'>[ERROR] Previous EA Layer is required.</span>")
             return
         if not repl_layers:
-            self._ea_merge_append_log("<span style='color:#cf222e; font-weight:bold;'>[ERROR] At least one Replacement Polygon Layer is required.</span>")
-            return
+            self._ea_merge_append_log(
+                "<span style='color:#0969da; font-weight:bold;'>[INFO] No replacement polygon layers selected. "
+                "Consolidating Previous EA Layer directly.</span>"
+            )
+        else:
+            pat = _EA_MERGE_8DIGIT_RE
+            for lyr in repl_layers:
+                if not lyr or lyr.geometryType() != QgsWkbTypes.PolygonGeometry:
+                    self._ea_merge_append_log(
+                        f"<span style='color:#cf222e; font-weight:bold;'>[ERROR] Replacement layer '{lyr.name() if lyr else 'None'}' is not a polygon layer.</span>"
+                    )
+                    return
+                if not pat.match(lyr.name()):
+                    self._ea_merge_append_log(
+                        f"<span style='color:#cf222e; font-weight:bold;'>[ERROR] Replacement layer '{lyr.name()}' does not follow the required 8-digit numeric naming convention.</span>"
+                    )
+                    return
 
         # Guard: don't start a second run if one is already in flight
         if getattr(self, '_ea_merge_thread', None) and self._ea_merge_thread.isRunning():
