@@ -3,8 +3,9 @@
 CBMS Map Validation - Delete Selected Features Process (Soft Delete)
 Action: "Delete selected features"
 
-Batch marks checked features as 'deleted' in the status column and synchronizes
-across table rows, in-memory layers, and the primary building points layer.
+Batch marks checked features as deleted by setting boolean is_deleted column to True.
+Synchronizes across table rows, in-memory layers, and the primary building points layer.
+Does not touch or modify the status column.
 """
 from typing import Any, Dict, List, Optional
 
@@ -50,9 +51,21 @@ except ImportError:
 FIX_ID = "delete_selected_features"
 FIX_NAME = "Delete selected features"
 FIX_DESCRIPTION = (
-    "Batch marks checked features as 'deleted' in the status column and synchronizes "
+    "Batch marks checked features as deleted (sets is_deleted to True) and synchronizes "
     "across table rows, in-memory layers, and the primary building points layer."
 )
+
+
+def _is_deleted_val(val: Any) -> bool:
+    """Check if a value represents a deleted / True state."""
+    if val is True:
+        return True
+    if val is False or val is None or val == NULL:
+        return False
+    if isinstance(val, (int, float)):
+        return val == 1
+    s = str(val).strip().lower()
+    return s in ("true", "1", "t", "yes", "y", "deleted")
 
 
 def delete_selected_features(
@@ -63,7 +76,7 @@ def delete_selected_features(
     btn_update_selected: Optional[Any] = None,
     **kwargs,
 ) -> None:
-    """Batch mark all checked features as 'deleted' in the status column, deduplicated by unique (fid + map_uuid)."""
+    """Batch mark all checked features as deleted (setting is_deleted to True), deduplicated by unique (fid + map_uuid)."""
     if len(args) >= 2 and hasattr(args[1], "rowCount"):
         layer, table = args[0], args[1]
     elif len(args) >= 3 and hasattr(args[2], "rowCount"):
@@ -181,29 +194,28 @@ def delete_selected_features(
                 for c in range(1, table.columnCount() - 1):
                     h_it = table.horizontalHeaderItem(c)
                     h_text = h_it.text().strip().lower() if h_it else ""
-                    if h_text in ("status", "sf_status"):
+                    if h_text in ("is_deleted", "sf_is_deleted"):
                         cell_item = table.item(r, c)
                         if cell_item:
                             table.setProperty("is_populating", True)
                             try:
-                                cell_item.setText("deleted")
+                                cell_item.setText("true")
                                 if hasattr(dialog, "_style_table_cell"):
                                     dialog._style_table_cell(cell_item, "deleted")
                             finally:
                                 table.setProperty("is_populating", False)
-                        break
 
     if combo_actions:
         combo_actions.setItemText(0, "Actions")
     elif btn_actions:
         btn_actions.setText("Actions ▾")
     if btn_update_selected:
-        btn_update_selected.setText("Update Selected")
+        btn_update_selected.setText("Apply Fix Action")
         btn_update_selected.setEnabled(False)
 
     if hasattr(dialog, "lbl_footer_status") and dialog.lbl_footer_status:
         dialog.lbl_footer_status.setText(
-            f"Marked {deleted_count} record(s) as deleted. Click 'Save Changes' (Ctrl+S) to keep them."
+            f"Marked {deleted_count} record(s) as deleted (is_deleted = true). Click 'Save Changes' (Ctrl+S) to keep them."
         )
     if hasattr(dialog, "iface") and dialog.iface and dialog.iface.mapCanvas():
         dialog.iface.mapCanvas().refresh()
@@ -223,7 +235,8 @@ def mark_feature_deleted(
     target_row: Optional[int] = None,
 ) -> None:
     """
-    Mark a single feature as 'deleted' in its status column.
+    Mark a single feature as deleted by setting its boolean 'is_deleted' column to True
+    (or False if restoring). Does not modify the status column.
     Updates the QTableWidget cell, the memory result layer, and the primary
     Geotagged Building Points layer (ready for Ctrl+S persistence).
     """
@@ -250,42 +263,55 @@ def mark_feature_deleted(
                 target_row = r
                 break
 
-    # 2. Locate status column in table
-    status_col_idx = None
+    # 2. Locate is_deleted column in table
+    del_col_indices = []
     for c in range(1, table.columnCount() - 1):
         h_it = table.horizontalHeaderItem(c)
         h_text = h_it.text().strip().lower() if h_it else ""
-        if h_text in ("status", "sf_status"):
-            status_col_idx = c
-            break
+        if h_text in ("is_deleted", "sf_is_deleted"):
+            del_col_indices.append(c)
 
-    # If table doesn't have status or sf_status column, insert it before Action
-    if status_col_idx is None:
+    # If table doesn't have is_deleted column, insert it before Action
+    if not del_col_indices:
         act_col = table.columnCount() - 1
         table.insertColumn(act_col)
         if QTableWidgetItem:
-            table.setHorizontalHeaderItem(act_col, QTableWidgetItem("sf_status"))
-        status_col_idx = act_col
+            table.setHorizontalHeaderItem(act_col, QTableWidgetItem("is_deleted"))
+        del_col_indices.append(act_col)
         table.setProperty("is_populating", True)
         try:
             for r in range(table.rowCount()):
-                b_item = QTableWidgetItem("") if QTableWidgetItem else None
+                b_item = QTableWidgetItem("false") if QTableWidgetItem else None
                 if b_item:
                     b_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
-                    table.setItem(r, status_col_idx, b_item)
+                    b_item.setData(Qt.UserRole + 2, "is_deleted")
+                    item0 = table.item(r, 0)
+                    if item0:
+                        b_item.setData(Qt.UserRole, item0.data(Qt.UserRole))
+                        b_item.setData(Qt.UserRole + 1, item0.data(Qt.UserRole + 1))
+                        b_item.setData(Qt.UserRole + 3, item0.data(Qt.UserRole + 3))
+                        b_item.setData(Qt.UserRole + 6, item0.data(Qt.UserRole + 6))
+                        b_item.setData(Qt.UserRole + 7, item0.data(Qt.UserRole + 7))
+                    table.setItem(r, act_col, b_item)
         finally:
             table.setProperty("is_populating", False)
 
-    # 3. Determine current status and new status
-    current_status = ""
-    if target_row is not None and status_col_idx is not None:
-        c_item = table.item(target_row, status_col_idx)
-        if c_item:
-            current_status = c_item.text().strip().lower()
+    # 3. Determine current status and decide to_delete
+    is_currently_deleted = False
+    if target_row is not None:
+        for c in del_col_indices:
+            c_item = table.item(target_row, c)
+            if c_item and _is_deleted_val(c_item.text()):
+                is_currently_deleted = True
+                break
 
-    is_currently_deleted = (current_status == "deleted")
     if target_status is not None:
-        new_status = target_status
+        if isinstance(target_status, bool):
+            to_delete = target_status
+        elif str(target_status).strip().lower() in ("deleted", "true", "1"):
+            to_delete = True
+        else:
+            to_delete = False
     elif is_currently_deleted:
         if prompt_confirm and QMessageBox:
             reply = QMessageBox.question(
@@ -298,74 +324,90 @@ def mark_feature_deleted(
             )
             if reply != QMessageBox.Yes:
                 return
-        new_status = ""
+        to_delete = False
     else:
-        new_status = "deleted"
+        to_delete = True
 
-    # 4. Update QTableWidget cell
-    if target_row is not None and status_col_idx is not None:
-        cell_item = table.item(target_row, status_col_idx)
-        if not cell_item:
-            cell_item = QTableWidgetItem() if QTableWidgetItem else None
-            if cell_item:
-                cell_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
-                table.setItem(target_row, status_col_idx, cell_item)
+    bool_val = True if to_delete else False
+    bool_str = "true" if to_delete else "false"
 
-        if cell_item:
-            table.setProperty("is_populating", True)
-            try:
-                cell_item.setText(new_status)
-                if hasattr(dialog, "_style_table_cell"):
-                    if new_status.lower() == "deleted":
-                        dialog._style_table_cell(cell_item, "deleted")
-                    else:
-                        dialog._style_table_cell(cell_item, "normal")
-            finally:
-                table.setProperty("is_populating", False)
+    # 4. Update QTableWidget is_deleted cells
+    if target_row is not None:
+        table.setProperty("is_populating", True)
+        try:
+            for c in del_col_indices:
+                cell_item = table.item(target_row, c)
+                if not cell_item and QTableWidgetItem:
+                    cell_item = QTableWidgetItem()
+                    cell_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
+                    table.setItem(target_row, c, cell_item)
+                if cell_item:
+                    cell_item.setText(bool_str)
+                    if hasattr(dialog, "_style_table_cell"):
+                        dialog._style_table_cell(cell_item, "deleted" if to_delete else "normal")
+        finally:
+            table.setProperty("is_populating", False)
 
     # 5. Update Result Memory Layer
     if layer and hasattr(layer, "isValid") and layer.isValid():
-        f_idx = -1
-        for fld in layer.fields():
-            if fld.name().lower() in ("status", "sf_status"):
-                f_idx = layer.fields().indexOf(fld.name())
-                break
-        if f_idx == -1:
-            try:
-                layer.dataProvider().addAttributes([QgsField("sf_status", QVariant.String)])
-                layer.updateFields()
-                f_idx = layer.fields().indexOf("sf_status")
-            except Exception:
-                pass
-
-        if f_idx != -1:
+        target_f_id = err_fid if err_fid is not None else source_fid
+        if target_f_id is not None:
             if not layer.isEditable():
-                layer.startEditing()
-            target_f_id = err_fid if err_fid is not None else source_fid
-            layer.changeAttributeValue(target_f_id, f_idx, new_status)
+                try:
+                    layer.startEditing()
+                except Exception:
+                    pass
 
-    # 6. Update Primary Geotagged Building Points Layer
+            del_f_indices = [
+                layer.fields().indexOf(fld.name())
+                for fld in layer.fields()
+                if fld.name().lower() in ("is_deleted", "sf_is_deleted")
+            ]
+            if not del_f_indices:
+                try:
+                    layer.dataProvider().addAttributes([QgsField("sf_is_deleted", QVariant.Bool)])
+                    layer.updateFields()
+                    idx = layer.fields().indexOf("sf_is_deleted")
+                    if idx != -1:
+                        del_f_indices.append(idx)
+                except Exception:
+                    pass
+
+            for f_idx in del_f_indices:
+                f_type = layer.fields().at(f_idx).type()
+                val_to_set = bool_val if f_type == QVariant.Bool else bool_str
+                layer.changeAttributeValue(target_f_id, f_idx, val_to_set)
+
+    # 6. Update Primary Geotagged Building Points Layer (main_layer)
     main_layer = dialog._get_or_load_main_building_layer() if hasattr(dialog, "_get_or_load_main_building_layer") else None
     if main_layer and hasattr(main_layer, "isValid") and main_layer.isValid():
         main_feat = dialog._find_main_feature(main_layer, fid=source_fid, map_uuid=map_uuid) if hasattr(dialog, "_find_main_feature") else None
         if main_feat:
-            m_idx = -1
-            for fld in main_layer.fields():
-                if fld.name().lower() in ("status", "sf_status"):
-                    m_idx = main_layer.fields().indexOf(fld.name())
-                    break
-            if m_idx == -1:
+            if not main_layer.isEditable():
                 try:
-                    main_layer.dataProvider().addAttributes([QgsField("status", QVariant.String)])
-                    main_layer.updateFields()
-                    m_idx = main_layer.fields().indexOf("status")
+                    main_layer.startEditing()
                 except Exception:
                     pass
 
-            if m_idx != -1:
-                if not main_layer.isEditable():
-                    main_layer.startEditing()
-                main_layer.changeAttributeValue(main_feat.id(), m_idx, new_status)
+            m_del_indices = [
+                main_layer.fields().indexOf(fld.name())
+                for fld in main_layer.fields()
+                if fld.name().lower() in ("is_deleted", "sf_is_deleted")
+            ]
+            if not m_del_indices:
+                try:
+                    main_layer.dataProvider().addAttributes([QgsField("is_deleted", QVariant.Bool)])
+                    main_layer.updateFields()
+                    idx = main_layer.fields().indexOf("is_deleted")
+                    if idx != -1:
+                        m_del_indices.append(idx)
+                except Exception:
+                    pass
+
+            for m_idx in m_del_indices:
+                f_type = main_layer.fields().at(m_idx).type()
+                val_to_set = bool_val if f_type == QVariant.Bool else bool_str
+                main_layer.changeAttributeValue(main_feat.id(), m_idx, val_to_set)
 
     # 7. Update Button Text & Style
     if not button and target_row is not None:
@@ -377,20 +419,19 @@ def mark_feature_deleted(
                     break
 
     if button:
-        is_del = (new_status.lower() == "deleted")
-        button.setText("Deleted" if is_del else "Delete")
+        button.setText("Deleted" if to_delete else "Delete")
         if hasattr(dialog, "_style_row_delete_button"):
-            dialog._style_row_delete_button(button, is_deleted=is_del)
+            dialog._style_row_delete_button(button, is_deleted=to_delete)
 
     # 8. Update Footer Status
     if hasattr(dialog, "lbl_footer_status") and dialog.lbl_footer_status:
-        if new_status.lower() == "deleted":
+        if to_delete:
             dialog.lbl_footer_status.setText(
-                f"Marked record #{source_fid or err_fid} as deleted. Click 'Save Changes' (Ctrl+S) to keep it."
+                f"Marked record #{source_fid or err_fid} as deleted (is_deleted = true). Click 'Save Changes' (Ctrl+S) to keep it."
             )
         else:
             dialog.lbl_footer_status.setText(
-                f"Restored record #{source_fid or err_fid}. Click 'Save Changes' (Ctrl+S) to keep it."
+                f"Restored record #{source_fid or err_fid} (is_deleted = false). Click 'Save Changes' (Ctrl+S) to keep it."
             )
 
     if hasattr(dialog, "iface") and dialog.iface and dialog.iface.mapCanvas():
@@ -402,15 +443,18 @@ def sync_feature_status(
     val_id: str,
     source_fid: Any = None,
     map_uuid: Optional[str] = None,
-    new_status: str = "deleted",
+    new_status: Any = "deleted",
 ) -> None:
     """
-    Synchronize a status update initiated from outside the table (e.g. Review Dock)
-    into the corresponding result layer tab's QTableWidget.
+    Synchronize a deletion status update initiated from outside the table (e.g. Review Dock)
+    into the corresponding result layer tab's QTableWidget is_deleted cell.
     """
     tabs = getattr(dialog, "results_tab_widget", None) or getattr(dialog, "tab_results", None)
     if not tabs:
         return
+
+    to_delete = _is_deleted_val(new_status)
+    bool_str = "true" if to_delete else "false"
 
     target_table = None
     for table in tabs.findChildren(QTableWidget):
@@ -432,30 +476,33 @@ def sync_feature_status(
             r_fid = item0.data(Qt.UserRole)
             r_uuid = str(item0.data(Qt.UserRole + 1) or "").strip()
             if (source_fid is not None and str(r_fid) == str(source_fid)) or (map_uuid and r_uuid == str(map_uuid).strip()):
-                status_col_idx = None
-                for c in range(1, table.columnCount() - 1):
-                    h_it = table.horizontalHeaderItem(c)
-                    h_text = h_it.text().strip().lower() if h_it else ""
-                    if h_text in ("status", "sf_status"):
-                        status_col_idx = c
-                        break
-                if status_col_idx is not None:
-                    cell_item = table.item(r, status_col_idx)
-                    if not cell_item and QTableWidgetItem:
-                        cell_item = QTableWidgetItem()
-                        cell_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
-                        table.setItem(r, status_col_idx, cell_item)
-                    if cell_item:
-                        table.setProperty("is_populating", True)
-                        try:
-                            cell_item.setText(new_status)
-                            if hasattr(dialog, "_style_table_cell"):
-                                if new_status.lower() == "deleted":
-                                    dialog._style_table_cell(cell_item, "deleted")
-                                else:
-                                    dialog._style_table_cell(cell_item, "normal")
-                        finally:
-                            table.setProperty("is_populating", False)
+                table.setProperty("is_populating", True)
+                try:
+                    for c in range(1, table.columnCount() - 1):
+                        h_it = table.horizontalHeaderItem(c)
+                        h_text = h_it.text().strip().lower() if h_it else ""
+                        if h_text in ("is_deleted", "sf_is_deleted"):
+                            cell_item = table.item(r, c)
+                            if not cell_item and QTableWidgetItem:
+                                cell_item = QTableWidgetItem()
+                                cell_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
+                                table.setItem(r, c, cell_item)
+                            if cell_item:
+                                cell_item.setText(bool_str)
+                                if hasattr(dialog, "_style_table_cell"):
+                                    dialog._style_table_cell(cell_item, "deleted" if to_delete else "normal")
+                finally:
+                    table.setProperty("is_populating", False)
+
+                # Update row action button if present
+                act_w = table.cellWidget(r, table.columnCount() - 1)
+                if act_w:
+                    for child in act_w.findChildren(QPushButton):
+                        if child.text() in ("Delete", "Deleted"):
+                            child.setText("Deleted" if to_delete else "Delete")
+                            if hasattr(dialog, "_style_row_delete_button"):
+                                dialog._style_row_delete_button(child, is_deleted=to_delete)
+                            break
                 break
 
 
@@ -467,7 +514,7 @@ def run_fix(
     target_keys: Optional[Any] = None,
     **kwargs,
 ) -> Dict[str, Any]:
-    """Execute automated fix for soft delete."""
+    """Execute automated fix for soft delete (sets is_deleted to True). Does not modify status column."""
     if not main_layer or not main_layer.isValid():
         return {"success": False, "message": "The map layer is missing or could not be opened.", "fixed_count": 0, "updated_values": {}}
 
@@ -479,15 +526,19 @@ def run_fix(
     if not main_layer.isEditable() and not main_layer.startEditing():
         return {"success": False, "message": "The map layer could not be opened for editing.", "fixed_count": 0, "updated_values": {}}
 
-    m_idx = -1
+    # Locate or create is_deleted column
+    del_idx = -1
     for fld in main_layer.fields():
-        if fld.name().lower() in ("status", "sf_status"):
-            m_idx = main_layer.fields().indexOf(fld.name())
+        if fld.name().lower() in ("is_deleted", "sf_is_deleted"):
+            del_idx = main_layer.fields().indexOf(fld.name())
             break
-    if m_idx == -1:
-        main_layer.dataProvider().addAttributes([QgsField("status", QVariant.String)])
+    if del_idx == -1:
+        main_layer.dataProvider().addAttributes([QgsField("is_deleted", QVariant.Bool)])
         main_layer.updateFields()
-        m_idx = main_layer.fields().indexOf("status")
+        del_idx = main_layer.fields().indexOf("is_deleted")
+
+    f_type = main_layer.fields().at(del_idx).type() if del_idx != -1 else QVariant.Bool
+    val_to_set = True if f_type == QVariant.Bool else "true"
 
     fixed_count = 0
     updated_values = {}
@@ -517,8 +568,13 @@ def run_fix(
             if not matched:
                 continue
 
-        main_layer.changeAttributeValue(f_id, m_idx, "deleted")
-        del_payload = {"status": "deleted", "sf_status": "deleted"}
+        if del_idx != -1:
+            main_layer.changeAttributeValue(f_id, del_idx, val_to_set)
+
+        del_payload = {
+            "is_deleted": True,
+            "sf_is_deleted": True,
+        }
         for k in feat_ids:
             updated_values[k] = del_payload
         for ck in cand_keys:
@@ -530,5 +586,5 @@ def run_fix(
         "success": True,
         "fixed_count": fixed_count,
         "updated_values": updated_values,
-        "message": f"Marked {fixed_count} record(s) as deleted.",
+        "message": f"Marked {fixed_count} record(s) as deleted (is_deleted = true).",
     }

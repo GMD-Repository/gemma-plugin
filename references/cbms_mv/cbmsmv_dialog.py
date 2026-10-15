@@ -1470,7 +1470,7 @@ class CbmsmvDialog(QDialog):
             # 0. Status Badge
             if flags > 0:
                 status_item = SortableTableWidgetItem("Flagged")
-                crit_icon = QgsApplication.getThemeIcon("mIconCritical.svg")
+                crit_icon = QgsApplication.getThemeIcon("mIndicatorBadLayer.svg")
                 if not crit_icon.isNull():
                     status_item.setIcon(crit_icon)
                 status_item.setForeground(QColor("#FC8181" if self.is_dark else "#C53030"))
@@ -1886,7 +1886,7 @@ class CbmsmvDialog(QDialog):
         """)
 
         # Update Selected Button (placed to the right of the Action dropdown button)
-        btn_update_selected = QPushButton("Update Selected")
+        btn_update_selected = QPushButton("Apply Fix Action")
         apply_icon = QgsApplication.getThemeIcon("mActionApply.svg")
         if not apply_icon.isNull():
             btn_update_selected.setIcon(apply_icon)
@@ -2002,7 +2002,7 @@ class CbmsmvDialog(QDialog):
                             visible_count += 1
                 table.setProperty("is_populating", False)
                 table.selectAll()
-                btn_update_selected.setText(f"Update Selected ({visible_count})" if visible_count > 0 else "Update Selected")
+                btn_update_selected.setText(f"Apply Fix Action ({visible_count})" if visible_count > 0 else "Apply Fix Action")
                 btn_update_selected.setEnabled(visible_count > 0)
                 if btn_select_all:
                     btn_select_all.setText("Select None")
@@ -2014,7 +2014,7 @@ class CbmsmvDialog(QDialog):
                     1 for r in range(table.rowCount())
                     if not table.isRowHidden(r) and table.item(r, 0) and table.item(r, 0).checkState() == Qt.Checked
                 )
-                btn_update_selected.setText(f"Update Selected ({checked_count})" if checked_count > 0 else "Update Selected")
+                btn_update_selected.setText(f"Apply Fix Action ({checked_count})" if checked_count > 0 else "Apply Fix Action")
                 btn_update_selected.setEnabled(checked_count > 0)
 
         combo_actions.currentIndexChanged.connect(_on_combo_actions_changed)
@@ -2198,7 +2198,9 @@ class CbmsmvDialog(QDialog):
                     val_str = "" if val is None else str(val)
                     item = QTableWidgetItem(val_str)
                     fn_lower = fname.lower()
-                    if fn_lower in ("status", "sf_status") and val_str.strip().lower() == "deleted":
+                    if (fn_lower in ("status", "sf_status") and val_str.strip().lower() == "deleted") or (
+                        fn_lower in ("is_deleted", "sf_is_deleted") and (val is True or val_str.strip().lower() in ("true", "1", "deleted"))
+                    ):
                         is_row_deleted = True
                         self._style_table_cell(item, "deleted")
                     elif fn_lower in ("fid", "sf_fid", "df_fid", "ref_fid"):
@@ -2319,7 +2321,7 @@ class CbmsmvDialog(QDialog):
             elif btn_actions:
                 btn_actions.setText("Actions ▾")
             if btn_update_selected:
-                btn_update_selected.setText(f"Update Selected ({checked_count})" if checked_count > 0 else "Update Selected")
+                btn_update_selected.setText(f"Apply Fix Action ({checked_count})" if checked_count > 0 else "Apply Fix Action")
                 btn_update_selected.setEnabled(checked_count > 0 or bool(combo_actions and combo_actions.currentIndex() == 4))
             return
 
@@ -2329,34 +2331,103 @@ class CbmsmvDialog(QDialog):
 
         # Case 3: Data attribute cell edited in-place
         field_name = item.data(Qt.UserRole + 2)
-        target_fid = item.data(Qt.UserRole)
-        map_uuid = item.data(Qt.UserRole + 1)
-        err_fid = item.data(Qt.UserRole + 3)
-        df_fid = item.data(Qt.UserRole + 4)
-        df_uuid = item.data(Qt.UserRole + 5)
-        sf_fid = item.data(Qt.UserRole + 6) or target_fid
-        sf_uuid = item.data(Qt.UserRole + 7) or map_uuid
-        fn_lower = field_name.lower()
-        if not field_name or fn_lower in ("fid", "sf_fid", "df_fid", "ref_fid") or fn_lower.startswith("ref_"):
+        if not field_name:
+            h_it = table.horizontalHeaderItem(col)
+            field_name = h_it.text().strip() if h_it else ""
+            if field_name:
+                item.setData(Qt.UserRole + 2, field_name)
+
+        if not field_name:
             return
 
+        fn_lower = str(field_name).strip().lower()
+        if fn_lower in ("fid", "sf_fid", "df_fid", "ref_fid", "action", "") or fn_lower.startswith("ref_"):
+            return
+
+        chk_item = table.item(row, 0)
+        target_fid = item.data(Qt.UserRole) if item.data(Qt.UserRole) is not None else (chk_item.data(Qt.UserRole) if chk_item else None)
+        map_uuid = item.data(Qt.UserRole + 1) or (chk_item.data(Qt.UserRole + 1) if chk_item else None)
+        err_fid = item.data(Qt.UserRole + 3) if item.data(Qt.UserRole + 3) is not None else (chk_item.data(Qt.UserRole + 3) if chk_item else None)
+        df_fid = item.data(Qt.UserRole + 4) if item.data(Qt.UserRole + 4) is not None else (chk_item.data(Qt.UserRole + 4) if chk_item else None)
+        df_uuid = item.data(Qt.UserRole + 5) or (chk_item.data(Qt.UserRole + 5) if chk_item else None)
+        sf_fid = item.data(Qt.UserRole + 6) or (chk_item.data(Qt.UserRole + 6) if chk_item else None) or target_fid
+        sf_uuid = item.data(Qt.UserRole + 7) or (chk_item.data(Qt.UserRole + 7) if chk_item else None) or map_uuid
+
         new_val_str = item.text().strip()
+        is_del_field = fn_lower in ("is_deleted", "sf_is_deleted")
 
         # If map_uuid was edited, keep cached UUID in table items synchronized
         if fn_lower in ("map_uuid", "sf_map_uuid"):
             sf_uuid = new_val_str
             item.setData(Qt.UserRole + 7, new_val_str)
             item.setData(Qt.UserRole + 1, new_val_str)
-            chk_item = table.item(row, 0)
             if chk_item:
                 chk_item.setData(Qt.UserRole + 7, new_val_str)
                 chk_item.setData(Qt.UserRole + 1, new_val_str)
         elif fn_lower == "df_map_uuid":
             df_uuid = new_val_str
             item.setData(Qt.UserRole + 5, new_val_str)
-            chk_item = table.item(row, 0)
             if chk_item:
                 chk_item.setData(Qt.UserRole + 5, new_val_str)
+
+        # Handle boolean is_deleted editing: parse any input gracefully
+        if is_del_field:
+            raw_clean = new_val_str.lower()
+            is_del = raw_clean in ("true", "1", "t", "yes", "y", "deleted")
+            normalized_str = "true" if is_del else "false"
+            bool_to_save = is_del
+
+            # Normalize the text in the cell if user typed something else (e.g. "yes", "T", "random text")
+            if item.text() != normalized_str:
+                table.setProperty("is_populating", True)
+                try:
+                    item.setText(normalized_str)
+                finally:
+                    table.setProperty("is_populating", False)
+
+            # Style the cell based on deletion state
+            self._style_table_cell(item, "deleted" if is_del else "normal")
+
+            # Update row action button if present
+            act_w = table.cellWidget(row, table.columnCount() - 1)
+            if act_w:
+                for child in act_w.findChildren(QPushButton):
+                    if child.text() in ("Delete", "Deleted"):
+                        child.setText("Deleted" if is_del else "Delete")
+                        self._style_row_delete_button(child, is_deleted=is_del)
+
+            # 1. Update in results memory layer
+            if layer and layer.isValid():
+                f_idx = layer.fields().indexOf(field_name)
+                if f_idx != -1:
+                    if not layer.isEditable():
+                        layer.startEditing()
+                    f_type = layer.fields().at(f_idx).type()
+                    val_to_set_layer = bool_to_save if f_type == QVariant.Bool else normalized_str
+                    layer.changeAttributeValue(err_fid if err_fid is not None else target_fid, f_idx, val_to_set_layer)
+
+            # 2. Update main building points layer
+            main_layer = self._get_or_load_main_building_layer()
+            if main_layer and main_layer.isValid():
+                main_feat = self._find_main_feature(main_layer, fid=sf_fid, map_uuid=sf_uuid)
+                if main_feat:
+                    target_m_name = (
+                        field_name[3:]
+                        if (field_name.startswith("sf_") and field_name not in [f.name() for f in main_layer.fields()])
+                        else field_name
+                    )
+                    m_idx = main_layer.fields().indexOf(target_m_name)
+                    if m_idx != -1:
+                        if not main_layer.isEditable():
+                            main_layer.startEditing()
+                        m_type = main_layer.fields().at(m_idx).type()
+                        val_to_set_main = bool_to_save if m_type == QVariant.Bool else normalized_str
+                        main_layer.changeAttributeValue(main_feat.id(), m_idx, val_to_set_main)
+
+            self.lbl_footer_status.setText(
+                f"Set '{field_name}' = '{normalized_str}' ({'deleted' if is_del else 'active'}) for feature FID #{sf_fid} (Press Ctrl+S to save)"
+            )
+            return
 
         # 1. Update in results memory layer
         if layer and layer.isValid():
@@ -2410,10 +2481,15 @@ class CbmsmvDialog(QDialog):
                     if m_idx != -1:
                         if not main_layer.isEditable():
                             main_layer.startEditing()
-                        main_layer.changeAttributeValue(main_feat.id(), m_idx, new_val_str)
+                        field_type = main_layer.fields().at(m_idx).type()
+                        if field_type == QVariant.Bool:
+                            val_to_set = new_val_str.strip().lower() in ("true", "1", "t", "yes", "deleted")
+                        else:
+                            val_to_set = new_val_str
+                        main_layer.changeAttributeValue(main_feat.id(), m_idx, val_to_set)
             self.lbl_footer_status.setText(f"Updated '{field_name}' = '{new_val_str}' for feature FID #{sf_fid} (Press Ctrl+S to save)")
 
-        # If status column was edited directly, update cell style and Delete button in that row
+        # Update cell styling for other fields
         if fn_lower in ("status", "sf_status"):
             is_del = (new_val_str.lower() == "deleted")
             self._style_table_cell(item, "deleted" if is_del else "modified")
@@ -2568,7 +2644,7 @@ class CbmsmvDialog(QDialog):
         elif btn_actions:
             btn_actions.setText("Actions ▾")
         if btn_update_selected:
-            btn_update_selected.setText(f"Update Selected ({checked_count})" if checked_count > 0 else "Update Selected")
+            btn_update_selected.setText(f"Apply Fix Action ({checked_count})" if checked_count > 0 else "Apply Fix Action")
             btn_update_selected.setEnabled(checked_count > 0)
         btn_select_all.setText("Select None" if target_state == Qt.Checked else "Select All")
         toggle_ic = QgsApplication.getThemeIcon(
@@ -2634,7 +2710,7 @@ class CbmsmvDialog(QDialog):
         elif btn_actions:
             btn_actions.setText("Actions ▾")
         if btn_update_selected:
-            btn_update_selected.setText("Update Selected")
+            btn_update_selected.setText("Apply Fix Action")
             btn_update_selected.setEnabled(False)
 
     def _on_concatenate_bsn_geoid(
@@ -2662,7 +2738,7 @@ class CbmsmvDialog(QDialog):
         elif btn_actions:
             btn_actions.setText("Actions ▾")
         if btn_update_selected:
-            btn_update_selected.setText("Update Selected")
+            btn_update_selected.setText("Apply Fix Action")
             btn_update_selected.setEnabled(False)
 
     def _on_copy_geometry_to_coordinates(
@@ -2690,7 +2766,7 @@ class CbmsmvDialog(QDialog):
         elif btn_actions:
             btn_actions.setText("Actions ▾")
         if btn_update_selected:
-            btn_update_selected.setText("Update Selected")
+            btn_update_selected.setText("Apply Fix Action")
             btn_update_selected.setEnabled(False)
 
     def _on_generate_point_geometry(
@@ -2718,7 +2794,7 @@ class CbmsmvDialog(QDialog):
         elif btn_actions:
             btn_actions.setText("Actions ▾")
         if btn_update_selected:
-            btn_update_selected.setText("Update Selected")
+            btn_update_selected.setText("Apply Fix Action")
             btn_update_selected.setEnabled(False)
 
     def _on_deduplicate_features(
@@ -2759,7 +2835,7 @@ class CbmsmvDialog(QDialog):
         elif btn_actions:
             btn_actions.setText("Actions ▾")
         if btn_update_selected:
-            btn_update_selected.setText("Update Selected")
+            btn_update_selected.setText("Apply Fix Action")
             btn_update_selected.setEnabled(False)
 
     def _fix_selected_features(self, val_id: str, layer: QgsVectorLayer, table: QTableWidget):
@@ -4007,7 +4083,7 @@ class CbmsmvDialog(QDialog):
         if combo_actions:
             combo_actions.setItemText(0, "Actions")
         if btn_update_selected:
-            btn_update_selected.setText(f"Update Selected ({checked_count})" if checked_count > 0 else "Update Selected")
+            btn_update_selected.setText(f"Apply Fix Action ({checked_count})" if checked_count > 0 else "Apply Fix Action")
             btn_update_selected.setEnabled(checked_count > 0)
 
         # Trigger canvas zoom and feature flash
