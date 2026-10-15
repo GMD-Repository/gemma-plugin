@@ -1469,12 +1469,12 @@ def run_phase_8(
 
                 if ea.get('from_merge', False):
                     ea_role = "Merged"
+                elif ea.get('from_split', False) or _ea_orig_id in delineation_candidate_ids:
+                    ea_role = "Delineation Candidate"
                 elif _ea_orig_id in merge_candidate_ids:
                     ea_role = "Candidate"
                 elif _ea_orig_id in adjacent_ea_ids:
                     ea_role = "Merge Partner"
-                elif _ea_orig_id in delineation_candidate_ids:
-                    ea_role = "Delineation Candidate"
                 else:
                     ea_role = "Other"
 

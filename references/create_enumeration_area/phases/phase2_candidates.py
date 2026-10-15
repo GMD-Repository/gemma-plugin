@@ -965,7 +965,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                         nb_ean_str = str(nb_ean).strip() if nb_ean is not None else ""
                         if nb_ean_str.endswith(".0"):
                             nb_ean_str = nb_ean_str[:-2]
-                        if nb_ean_str:
+                        if nb_ean_str and nb_feat.id() not in delineation_candidate_ids:
                             adjacent_ea_ids.add(nb_feat.id())
                             if _mc_ean_str:
                                 partner_to_candidate_eans.setdefault(nb_feat.id(), set()).add(_mc_ean_str)
@@ -1077,15 +1077,15 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
                     if _p_ean_str.endswith(".0"):
                         _p_ean_str = _p_ean_str[:-2]
 
-                    if parent_ea_id in merge_candidate_ids:
+                    if parent_ea_id in delineation_candidate_ids:
+                        m_role = "Delineation Candidate"
+                        cand_ean = ""
+                    elif parent_ea_id in merge_candidate_ids:
                         m_role = "Candidate"
                         cand_ean = _p_ean_str
                     elif parent_ea_id in adjacent_ea_ids:
                         m_role = "Merge Partner"
                         cand_ean = ", ".join(sorted(partner_to_candidate_eans.get(parent_ea_id, set())))
-                    elif parent_ea_id in delineation_candidate_ids:
-                        m_role = "Delineation Candidate"
-                        cand_ean = ""
                     else:
                         m_role = "Other"
                         cand_ean = ""
