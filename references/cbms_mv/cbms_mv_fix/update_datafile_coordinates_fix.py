@@ -291,8 +291,12 @@ def _run_fix_update_datafile_coordinates(
         payload = {
             "df_x_current": lon_str,
             "df_y_current": lat_str,
+            "x_current": lon_str,
+            "y_current": lat_str,
             "longitude": lon_str,
             "latitude": lat_str,
+            "df_longitude": lon_str,
+            "df_latitude": lat_str,
         }
         for k in feat_ids:
             updated_values[k] = payload
@@ -310,6 +314,8 @@ def _run_fix_update_datafile_coordinates(
                     "uuid": rec_uuid,
                     "props": {},
                 }
+            dialog._pending_json_edits[rec_k]["props"]["x_current"] = lon_str
+            dialog._pending_json_edits[rec_k]["props"]["y_current"] = lat_str
             dialog._pending_json_edits[rec_k]["props"]["longitude"] = lon_str
             dialog._pending_json_edits[rec_k]["props"]["latitude"] = lat_str
 

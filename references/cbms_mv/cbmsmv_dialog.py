@@ -4504,7 +4504,7 @@ class CbmsmvDialog(QDialog):
                 self.btn_dock.setText("Undock Window")
                 self.btn_dock.setToolTip("Undock to a floating standalone window (Ctrl+D)")
             self.settings.setValue("cbms_mv/is_docked", True)
-            self.lbl_footer_status.setText("Docked at bottom of QGIS workspace.")
+            #self.lbl_footer_status.setText("Docked at bottom of QGIS workspace.")
         finally:
             self._is_switching_dock = False
 
@@ -4537,7 +4537,7 @@ class CbmsmvDialog(QDialog):
             self.activateWindow()
             self.update()
             self.settings.setValue("cbms_mv/is_docked", False)
-            self.lbl_footer_status.setText("Undocked as floating window.")
+            #self.lbl_footer_status.setText("Undocked as floating window.")
         finally:
             self._is_switching_dock = False
 

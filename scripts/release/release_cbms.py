@@ -126,7 +126,15 @@ def patch_cbms_staged_plugin(
         m_content = m_content.replace('addPluginToMenu("&Gemma",', 'addPluginToMenu("&Gemma (CBMS)",')
         # Toolbar name
         m_content = m_content.replace('addToolBar("Gemma Toolbar")', 'addToolBar("Gemma CBMS Toolbar")')
-        m_content = m_content.replace('setObjectName("Gemma Toolbar")', 'setObjectName("Gemma CBMS Toolbar")')
+        # Guard against addAction calls on commented/None submenus in CBMS release
+        for menu_name in ("updating_boundaries_menu", "others_menu", "ea_delineation_menu"):
+            if f"#self.{menu_name} = QMenu" in m_content or f"#{menu_name} = QMenu" in m_content:
+                m_content = re.sub(
+                    rf"^([ \t]{{8}})(self\.{menu_name}\.addAction\(.*?\))$",
+                    rf"\1if self.{menu_name} is not None:\n\1    \2",
+                    m_content,
+                    flags=re.MULTILINE,
+                )
         main_py_file.write_text(m_content, encoding="utf-8")
         logger.info("  ✓ gmd_pipeline.py patched: menu='Gemma (CBMS)', toolbar='Gemma CBMS Toolbar'")
 
