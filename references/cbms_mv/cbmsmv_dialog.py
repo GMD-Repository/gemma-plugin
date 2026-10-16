@@ -3899,7 +3899,7 @@ class CbmsmvDialog(QDialog):
             self.lbl_footer_status.setText(f"{saved_msg} (Could not start check '{val_id}')")
             return
 
-        alg_target = reg_id if is_registered else alg
+        alg_target = alg if alg is not None else reg_id
 
         self.lbl_footer_status.setText(f"Re-checking '{val_id}'...")
         QApplication.processEvents()
@@ -5883,9 +5883,12 @@ class CbmsmvDialog(QDialog):
         """
         alg = None
         # 1. Processing registry check
-        reg_alg = QgsApplication.processingRegistry().algorithmById(f"gmd_pipeline:{val_id}")
-        if reg_alg:
-            alg = reg_alg.createInstance()
+        try:
+            reg_alg = QgsApplication.processingRegistry().algorithmById(f"gmd_pipeline:{val_id}")
+            if reg_alg:
+                alg = reg_alg.createInstance()
+        except Exception:
+            alg = None
 
         # 2. Package relative import
         if not alg:
@@ -6237,9 +6240,9 @@ class CbmsmvDialog(QDialog):
                 })
                 continue
 
-            # Pass registered ID string if registered in QGIS (native Processing engine execution),
-            # otherwise pass the alg instance.
-            alg_target = reg_id if is_registered else alg
+            # Prefer direct alg instance execution to avoid registry SIP/createInstance lookup issues;
+            # fall back to registered string ID if direct instance was not loaded.
+            alg_target = alg if alg is not None else reg_id
 
             # Assemble standardized parameter dictionary
             params: Dict[str, Any] = {

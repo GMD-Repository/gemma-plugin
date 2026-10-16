@@ -66,6 +66,8 @@ class GMDPipeline(object):
 
 
     def initProcessing(self):
+        if getattr(self, "provider", None) is not None:
+            return
         try:
             from processing.core.Processing import Processing
             Processing.initialize()
