@@ -310,8 +310,8 @@ class TestCbmsMvModularActions(unittest.TestCase):
             QgsField("map_uuid", QVariant.String),
             QgsField("sf_longitude", QVariant.String),
             QgsField("sf_latitude", QVariant.String),
-            QgsField("df_longitude", QVariant.String),
-            QgsField("df_latitude", QVariant.String),
+            QgsField("df_x_current", QVariant.String),
+            QgsField("df_y_current", QVariant.String),
         ])
         layer.updateFields()
 
@@ -320,8 +320,8 @@ class TestCbmsMvModularActions(unittest.TestCase):
         f.setAttribute("map_uuid", "uuid-coords-101")
         f.setAttribute("sf_longitude", "121.054321")
         f.setAttribute("sf_latitude", "14.123456")
-        f.setAttribute("df_longitude", "0.0")
-        f.setAttribute("df_latitude", "0.0")
+        f.setAttribute("df_x_current", "0.0")
+        f.setAttribute("df_y_current", "0.0")
         pr.addFeatures([f])
 
         handler = pkg.get_fix_handler("update_datafiles_coordinates")
@@ -333,14 +333,14 @@ class TestCbmsMvModularActions(unittest.TestCase):
 
         # Verify values on layer were updated
         feat = next(layer.getFeatures())
-        self.assertEqual(str(feat["df_longitude"]), "121.054321")
-        self.assertEqual(str(feat["df_latitude"]), "14.123456")
+        self.assertEqual(str(feat["df_x_current"]), "121.054321")
+        self.assertEqual(str(feat["df_y_current"]), "14.123456")
 
         # Verify returned payload
         self.assertIn("1_uuid-coords-101", res.get("updated_values", {}))
         payload = res["updated_values"]["1_uuid-coords-101"]
-        self.assertEqual(payload.get("df_longitude"), "121.054321")
-        self.assertEqual(payload.get("df_latitude"), "14.123456")
+        self.assertEqual(payload.get("df_x_current"), "121.054321")
+        self.assertEqual(payload.get("df_y_current"), "14.123456")
         self.assertEqual(payload.get("longitude"), "121.054321")
         self.assertEqual(payload.get("latitude"), "14.123456")
 
