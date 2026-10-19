@@ -1025,8 +1025,12 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     if not combined_bbox.isEmpty():
         buf_x = max(combined_bbox.width() * 0.05, 0.001 if previous_ea_source.sourceCrs().isGeographic() else 20.0)
         buf_y = max(combined_bbox.height() * 0.05, 0.001 if previous_ea_source.sourceCrs().isGeographic() else 20.0)
-        buffered_bbox = QgsRectangle(combined_bbox)
-        buffered_bbox.grow(buf_x, buf_y)
+        buffered_bbox = QgsRectangle(
+            combined_bbox.xMinimum() - buf_x,
+            combined_bbox.yMinimum() - buf_y,
+            combined_bbox.xMaximum() + buf_x,
+            combined_bbox.yMaximum() + buf_y
+        )
         request.setFilterRect(buffered_bbox)
 
     bldg_processed_count = 0

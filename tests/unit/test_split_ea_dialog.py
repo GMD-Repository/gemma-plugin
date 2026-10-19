@@ -85,7 +85,7 @@ class TestSplitEADialog(unittest.TestCase):
         QgsProject.instance().addMapLayer(bldg_lyr)
 
         try:
-            dlg = SplitEADialog()
+            dlg = SplitEADialog(default_geocode="01728")
             curr_poly = dlg.poly_combo.currentLayer()
             if hasattr(curr_poly, "name") and not isinstance(curr_poly, MockGenericClass):
                 self.assertEqual(curr_poly.name(), "01728_delineated_ea2026")
