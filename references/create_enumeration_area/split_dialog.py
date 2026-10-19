@@ -10,6 +10,7 @@ and recalculates 'hh_count' (from est_hhcount of building points) and 'bldg_coun
 import os
 import sys
 import math
+import re
 from typing import Optional, Dict, Any, List, Tuple
 
 from qgis.PyQt.QtCore import Qt, QObject, pyqtSignal, QVariant
@@ -41,12 +42,16 @@ from qgis.core import (
     QgsCoordinateTransform,
     QgsProcessingFeedback,
     QgsField,
+    QgsFields,
+    QgsFeatureRequest,
+    QgsVectorFileWriter,
     QgsMapLayerProxyModel,
     QgsSpatialIndex,
     NULL,
 )
 
 from .helpers.constants import create_qgs_field
+from .helpers.style import apply_qml_to_layer
 from qgis.gui import QgsMapLayerComboBox
 
 try:
@@ -346,9 +351,13 @@ class SplitEADialog(QDialog):
             name = lyr.name().lower()
             feat_count = lyr.featureCount()
             score = 0
-            if geo and geo in name and ("bldgpts" in name or "extracted_bldgpts" in name or "bldg_point" in name or "bldgpoint" in name or "bldg_points" in name or "building_point" in name or "building_points" in name):
+            if geo and geo in name and ("extracted_bldgpts" in name or "extracted_bldg" in name):
+                score = 120
+            elif geo and geo in name and ("bldgpts" in name or "bldg_point" in name or "bldgpoint" in name or "bldg_points" in name or "building_point" in name or "building_points" in name):
                 score = 110
-            elif "bldgpts" in name or "extracted_bldgpts" in name:
+            elif "extracted_bldgpts" in name or "extracted_bldg" in name:
+                score = 95
+            elif "bldgpts" in name:
                 score = 90
             elif geo and geo in name and ("geotagged" in name or "structure" in name):
                 score = 85
@@ -1914,6 +1923,18 @@ class SplitEADialog(QDialog):
                     "SUCCESS",
                 )
 
+            # 8. Extract and synchronize building points layer (<geo5>_extracted_bldgpts)
+            if bldg_spatial_index and bldg_layer and bldg_layer.isValid():
+                self._extract_and_sync_building_points(
+                    poly_layer=poly_layer,
+                    bldg_layer=bldg_layer,
+                    new_features=new_features,
+                    bldg_spatial_index=bldg_spatial_index,
+                    bldg_lookup=bldg_lookup,
+                    bldg_hh_idx=bldg_hh_idx,
+                    bldg_to_poly_xform=bldg_to_poly_xform,
+                )
+
             self._log(f"Successfully updated '{poly_layer.name()}' with {out_poly_count} features.", "SUCCESS")
             self.progress_bar.setValue(100)
 
@@ -1945,3 +1966,250 @@ class SplitEADialog(QDialog):
         finally:
             self.run_btn.setEnabled(True)
             self.close_btn.setEnabled(True)
+
+    def _extract_and_sync_building_points(
+        self,
+        poly_layer: QgsVectorLayer,
+        bldg_layer: QgsVectorLayer,
+        new_features: List[QgsFeature],
+        bldg_spatial_index: QgsSpatialIndex,
+        bldg_lookup: Dict[Any, QgsFeature],
+        bldg_hh_idx: int,
+        bldg_to_poly_xform: Any = None,
+    ):
+        """Extract building points inside delineated EA polygons and sync or create the extracted_bldgpts layer."""
+        if not bldg_spatial_index or not poly_layer or not poly_layer.isValid() or not bldg_layer or not bldg_layer.isValid():
+            return
+
+        geo5 = (self.default_geocode or "").strip()
+        if not geo5:
+            geo5 = self._extract_geocode_from_layer(poly_layer)
+        if not geo5 and poly_layer.name():
+            m = re.match(r"^(\d+)", poly_layer.name())
+            if m:
+                geo5 = m.group(1)
+
+        extracted_layer_name = f"{geo5}_extracted_bldgpts" if geo5 else "extracted_bldgpts"
+        project = QgsProject.instance()
+
+        # Check if an extracted buildings layer already exists in the project
+        existing_extracted_layer = None
+        for lyr in project.mapLayers().values():
+            if isinstance(lyr, QgsVectorLayer) and lyr.isValid() and lyr.geometryType() == QgsWkbTypes.PointGeometry:
+                lname = lyr.name().lower()
+                if lname == extracted_layer_name.lower() or "extracted_bldg" in lname or (geo5 and f"{geo5.lower()}_extracted_bldg" in lname):
+                    existing_extracted_layer = lyr
+                    break
+
+        if existing_extracted_layer and existing_extracted_layer.isValid():
+            try:
+                ext_fields = existing_extracted_layer.fields()
+                flds_to_add = []
+                if ext_fields.indexOf("parent_ean") == -1:
+                    flds_to_add.append(create_qgs_field("parent_ean", QVariant.String))
+                if ext_fields.indexOf("candidate_ean") == -1:
+                    flds_to_add.append(create_qgs_field("candidate_ean", QVariant.String))
+                if ext_fields.indexOf("bldgpoints_value") == -1:
+                    flds_to_add.append(create_qgs_field("bldgpoints_value", QVariant.Double))
+                if ext_fields.indexOf("pop") == -1:
+                    flds_to_add.append(create_qgs_field("pop", QVariant.Double))
+                if ext_fields.indexOf("merge_role") == -1:
+                    flds_to_add.append(create_qgs_field("merge_role", QVariant.String))
+                if flds_to_add:
+                    existing_extracted_layer.dataProvider().addAttributes(flds_to_add)
+                    existing_extracted_layer.updateFields()
+                    ext_fields = existing_extracted_layer.fields()
+
+                p_ean_idx = ext_fields.indexOf("parent_ean")
+                cand_ean_idx = ext_fields.indexOf("candidate_ean")
+                m_role_idx = ext_fields.indexOf("merge_role")
+                pop_idx = ext_fields.indexOf("pop")
+
+                existing_extracted_layer.startEditing()
+                xform_p_to_eb = None
+                if poly_layer.crs().isValid() and existing_extracted_layer.crs().isValid() and poly_layer.crs() != existing_extracted_layer.crs():
+                    try:
+                        xform_p_to_eb = QgsCoordinateTransform(poly_layer.crs(), existing_extracted_layer.crs(), project)
+                    except Exception:
+                        xform_p_to_eb = None
+
+                updated_eb_count = 0
+                for feat in new_features:
+                    f_geom = feat.geometry()
+                    if not f_geom or f_geom.isEmpty():
+                        continue
+                    tg_geom = QgsGeometry(f_geom)
+                    if xform_p_to_eb:
+                        try:
+                            tg_geom.transform(xform_p_to_eb)
+                        except Exception:
+                            pass
+
+                    f_ean = str(feat.attribute("new_ean") or feat.attribute("ean") or "").strip()
+                    if not f_ean or f_ean in ("None", "NULL"):
+                        code_6, _ = self._extract_parent_code_and_prefix(feat, poly_layer.fields())
+                        f_ean = code_6
+
+                    is_delin = str(feat.attribute("ea_type") or "").upper() == "DELINEATED"
+                    role_val = "Delineated" if is_delin else "Retained"
+
+                    req = QgsFeatureRequest().setFilterRect(tg_geom.boundingBox())
+                    for eb_f in existing_extracted_layer.getFeatures(req):
+                        eb_g = eb_f.geometry()
+                        if eb_g and not eb_g.isEmpty() and (tg_geom.contains(eb_g) or tg_geom.intersects(eb_g)):
+                            if p_ean_idx != -1:
+                                existing_extracted_layer.changeAttributeValue(eb_f.id(), p_ean_idx, f_ean)
+                            if cand_ean_idx != -1:
+                                existing_extracted_layer.changeAttributeValue(eb_f.id(), cand_ean_idx, f_ean)
+                            if m_role_idx != -1:
+                                existing_extracted_layer.changeAttributeValue(eb_f.id(), m_role_idx, role_val)
+                            updated_eb_count += 1
+
+                existing_extracted_layer.commitChanges()
+                existing_extracted_layer.updateExtents()
+                existing_extracted_layer.triggerRepaint()
+                apply_qml_to_layer(existing_extracted_layer, "extracted_bldgpts.qml")
+                self._log(
+                    f"Synchronized {updated_eb_count:,} building points in existing '{existing_extracted_layer.name()}'.",
+                    "SUCCESS",
+                )
+            except Exception as e:
+                if existing_extracted_layer.isEditable():
+                    existing_extracted_layer.rollBack()
+                self._log(f"Notice: Failed to synchronize existing extracted building points: {e}", "WARNING")
+        else:
+            # Create a new extracted building points layer from bldg_layer points inside the EAs
+            try:
+                out_fields = QgsFields()
+                for fld in bldg_layer.fields():
+                    out_fields.append(fld)
+
+                if out_fields.indexOf("parent_ean") == -1:
+                    out_fields.append(create_qgs_field("parent_ean", QVariant.String))
+                if out_fields.indexOf("candidate_ean") == -1:
+                    out_fields.append(create_qgs_field("candidate_ean", QVariant.String))
+                if out_fields.indexOf("bldgpoints_value") == -1:
+                    out_fields.append(create_qgs_field("bldgpoints_value", QVariant.Double))
+                if out_fields.indexOf("pop") == -1:
+                    out_fields.append(create_qgs_field("pop", QVariant.Double))
+                if out_fields.indexOf("merge_role") == -1:
+                    out_fields.append(create_qgs_field("merge_role", QVariant.String))
+
+                extracted_lyr = QgsVectorLayer(
+                    f"Point?crs={poly_layer.crs().authid()}",
+                    extracted_layer_name,
+                    "memory"
+                )
+                dp_ext = extracted_lyr.dataProvider()
+                dp_ext.addAttributes(list(out_fields))
+                extracted_lyr.updateFields()
+
+                pts_to_add = []
+                seen_ids = set()
+
+                p_ean_idx = extracted_lyr.fields().indexOf("parent_ean")
+                cand_ean_idx = extracted_lyr.fields().indexOf("candidate_ean")
+                bval_idx = extracted_lyr.fields().indexOf("bldgpoints_value")
+                pop_idx = extracted_lyr.fields().indexOf("pop")
+                m_role_idx = extracted_lyr.fields().indexOf("merge_role")
+
+                for feat in new_features:
+                    f_geom = feat.geometry()
+                    if not f_geom or f_geom.isEmpty():
+                        continue
+                    chk_geom = f_geom
+                    if hasattr(f_geom, "isGeosValid"):
+                        try:
+                            if not f_geom.isGeosValid() and hasattr(f_geom, "makeValid"):
+                                chk_geom = f_geom.makeValid()
+                        except Exception:
+                            chk_geom = f_geom
+
+                    f_ean = str(feat.attribute("new_ean") or feat.attribute("ean") or "").strip()
+                    if not f_ean or f_ean in ("None", "NULL"):
+                        code_6, _ = self._extract_parent_code_and_prefix(feat, poly_layer.fields())
+                        f_ean = code_6
+
+                    is_delin = str(feat.attribute("ea_type") or "").upper() == "DELINEATED"
+                    role_val = "Delineated" if is_delin else "Retained"
+
+                    cand_ids = bldg_spatial_index.intersects(chk_geom.boundingBox())
+                    for bid in cand_ids:
+                        if bid in seen_ids:
+                            continue
+                        bfeat = bldg_lookup.get(bid)
+                        if not bfeat:
+                            continue
+                        bg = bfeat.geometry()
+                        if not bg or bg.isEmpty():
+                            continue
+                        if chk_geom.contains(bg) or chk_geom.intersects(bg):
+                            seen_ids.add(bid)
+                            pt_hh = 1.0
+                            if bldg_hh_idx != -1:
+                                raw_val = bfeat.attribute(bldg_hh_idx)
+                                if raw_val is not None and raw_val != NULL:
+                                    try:
+                                        pt_hh = float(raw_val)
+                                    except (ValueError, TypeError):
+                                        pt_hh = 1.0
+
+                            new_bf = QgsFeature(extracted_lyr.fields())
+                            new_bf.setGeometry(QgsGeometry(bg))
+
+                            # Copy original matching attributes
+                            for fld in bldg_layer.fields():
+                                idx_orig = bldg_layer.fields().indexOf(fld.name())
+                                idx_new = extracted_lyr.fields().indexOf(fld.name())
+                                if idx_orig != -1 and idx_new != -1:
+                                    new_bf.setAttribute(idx_new, bfeat.attribute(idx_orig))
+
+                            if p_ean_idx != -1:
+                                new_bf.setAttribute(p_ean_idx, f_ean)
+                            if cand_ean_idx != -1:
+                                new_bf.setAttribute(cand_ean_idx, f_ean)
+                            if bval_idx != -1:
+                                new_bf.setAttribute(bval_idx, pt_hh)
+                            if pop_idx != -1:
+                                new_bf.setAttribute(pop_idx, pt_hh)
+                            if m_role_idx != -1:
+                                new_bf.setAttribute(m_role_idx, role_val)
+
+                            pts_to_add.append(new_bf)
+
+                if pts_to_add:
+                    dp_ext.addFeatures(pts_to_add)
+                    extracted_lyr.updateExtents()
+
+                    apply_qml_to_layer(extracted_lyr, "extracted_bldgpts.qml")
+
+                    # Add to QGIS Project under Reference Layers
+                    root = project.layerTreeRoot()
+                    ref_group = None
+                    if root:
+                        for grp_name in ["Reference Layers", "Reference", "Base Layers"]:
+                            ref_group = root.findGroup(grp_name)
+                            if ref_group:
+                                break
+                    project.addMapLayer(extracted_lyr, False)
+                    if ref_group:
+                        ref_group.addLayer(extracted_lyr)
+                    elif root:
+                        root.addLayer(extracted_lyr)
+
+                    if self.default_output_dir and os.path.isdir(self.default_output_dir):
+                        gpkg_path = os.path.join(self.default_output_dir, f"{extracted_layer_name}.gpkg")
+                        try:
+                            opts = QgsVectorFileWriter.SaveVectorOptions()
+                            opts.driverName = "GPKG"
+                            opts.layerName = extracted_layer_name
+                            QgsVectorFileWriter.writeAsVectorFormatV3(extracted_lyr, gpkg_path, project.transformContext(), opts)
+                        except Exception:
+                            pass
+
+                    self._log(
+                        f"Successfully extracted {len(pts_to_add):,} building points into '{extracted_layer_name}'.",
+                        "SUCCESS",
+                    )
+            except Exception as e:
+                self._log(f"Notice: Could not generate extracted building points layer: {e}", "WARNING")
