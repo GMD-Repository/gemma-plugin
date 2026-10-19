@@ -2186,6 +2186,91 @@ class TestSplitEADialog(unittest.TestCase):
         self.assertIn((1, 15), pairs)
         self.assertIn((1, 25), pairs)
 
+    def test_bldg_input_determined_from_parent_input(self):
+        """Verify that when default_bldg_layer is supplied from parent inputs, it is prioritized and set in bldg_combo."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+        bldg_input = QgsVectorLayer("Point?crs=epsg:4326", "02122_bldg_point", "memory")
+        dp = bldg_input.dataProvider()
+        dp.addAttributes([create_qgs_field("est_hhcount", QVariant.Double)])
+        bldg_input.updateFields()
+        f = QgsFeature(bldg_input.fields())
+        f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(1, 1)))
+        f.setAttributes([5.0])
+        dp.addFeatures([f])
+
+        other_bldg = QgsVectorLayer("Point?crs=epsg:4326", "02122_extracted_bldgpts", "memory")
+        QgsProject.instance().addMapLayers([bldg_input, other_bldg])
+        try:
+            dlg = SplitEADialog(default_bldg_layer=bldg_input)
+            self.assertEqual(dlg.bldg_combo.currentLayer(), bldg_input)
+        finally:
+            QgsProject.instance().removeAllMapLayers()
+
+    def test_bldg_input_dynamically_updates_on_poly_layer_change(self):
+        """Verify that switching target EA polygon layer dynamically switches building points to matching geocode."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+        poly_02122 = QgsVectorLayer("Polygon?crs=epsg:4326", "02122_delineated_ea", "memory")
+        poly_01728 = QgsVectorLayer("Polygon?crs=epsg:4326", "01728_delineated_ea", "memory")
+
+        bldg_02122 = QgsVectorLayer("Point?crs=epsg:4326", "02122_bldg_point", "memory")
+        dp_b1 = bldg_02122.dataProvider()
+        dp_b1.addAttributes([create_qgs_field("est_hhcount", QVariant.Double)])
+        bldg_02122.updateFields()
+        f1 = QgsFeature(bldg_02122.fields())
+        f1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(1, 1)))
+        f1.setAttributes([10.0])
+        dp_b1.addFeatures([f1])
+
+        bldg_01728 = QgsVectorLayer("Point?crs=epsg:4326", "01728_bldg_point", "memory")
+        dp_b2 = bldg_01728.dataProvider()
+        dp_b2.addAttributes([create_qgs_field("est_hhcount", QVariant.Double)])
+        bldg_01728.updateFields()
+        f2 = QgsFeature(bldg_01728.fields())
+        f2.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(2, 2)))
+        f2.setAttributes([20.0])
+        dp_b2.addFeatures([f2])
+
+        QgsProject.instance().addMapLayers([poly_02122, poly_01728, bldg_02122, bldg_01728])
+        try:
+            dlg = SplitEADialog(default_poly_layer=poly_02122)
+            # Initially, 02122 polygon should pair with 02122 bldg point
+            self.assertEqual(dlg.bldg_combo.currentLayer(), bldg_02122)
+
+            # When poly_combo is switched to 01728, building combo dynamically follows
+            dlg.poly_combo.setLayer(poly_01728)
+            dlg._on_layer_selection_changed()
+            self.assertEqual(dlg.bldg_combo.currentLayer(), bldg_01728)
+        finally:
+            QgsProject.instance().removeAllMapLayers()
+
+    def test_bldg_user_manual_selection_preserved_when_matching(self):
+        """Verify that user explicit selection of building layer is preserved when matching."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+        poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "02122_delineated_ea", "memory")
+        bldg_1 = QgsVectorLayer("Point?crs=epsg:4326", "02122_bldg_point", "memory")
+        bldg_2 = QgsVectorLayer("Point?crs=epsg:4326", "02122_bldgpts", "memory")
+        dp = bldg_2.dataProvider()
+        dp.addAttributes([create_qgs_field("est_hhcount", QVariant.Double)])
+        bldg_2.updateFields()
+        f = QgsFeature(bldg_2.fields())
+        f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(1, 1)))
+        f.setAttributes([3.0])
+        dp.addFeatures([f])
+
+        QgsProject.instance().addMapLayers([poly_lyr, bldg_1, bldg_2])
+        try:
+            dlg = SplitEADialog(default_poly_layer=poly_lyr)
+            # User manually selects bldg_2
+            dlg.bldg_combo.setLayer(bldg_2)
+            dlg._on_bldg_layer_changed()
+            self.assertTrue(dlg._bldg_user_selected)
+
+            # Re-running layer selection changed shouldn't overwrite user selection since it matches geocode
+            dlg._on_layer_selection_changed()
+            self.assertEqual(dlg.bldg_combo.currentLayer(), bldg_2)
+        finally:
+            QgsProject.instance().removeAllMapLayers()
+
 
 if __name__ == "__main__":
     unittest.main()

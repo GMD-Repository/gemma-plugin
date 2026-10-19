@@ -91,6 +91,8 @@ class SplitEADialog(QDialog):
         self._prev_line_layer = None
         self._poly_user_toggled = False
         self._line_user_toggled = False
+        self._bldg_user_selected = False
+        self._is_syncing_layers = False
 
         self._init_ui()
         self._auto_detect_layers()
@@ -162,11 +164,11 @@ class SplitEADialog(QDialog):
         inputs_layout.addSpacing(4)
 
         # Building Points Layer
-        inputs_layout.addWidget(QLabel("Building Point Layer (bldgpts)*:"))
+        inputs_layout.addWidget(QLabel("Building Point Layer (Point)*:"))
         self.bldg_combo = QgsMapLayerComboBox(self)
         self.bldg_combo.setMinimumHeight(28)
         self.bldg_combo.setFilters(QgsMapLayerProxyModel.PointLayer)
-        self.bldg_combo.layerChanged.connect(self._on_layer_selection_changed)
+        self.bldg_combo.layerChanged.connect(self._on_bldg_layer_changed)
         inputs_layout.addWidget(self.bldg_combo)
 
         self.bldg_status_lbl = QLabel("No building point layer selected.")
@@ -298,21 +300,42 @@ class SplitEADialog(QDialog):
 
         return best_layer if best_score > 0 else None
 
-    def _find_best_bldg_layer(self) -> Optional[QgsVectorLayer]:
+    def _extract_geocode_from_layer(self, layer: Optional[QgsVectorLayer]) -> str:
+        """Extract numeric geocode prefix or token from layer name."""
+        if not layer or not layer.isValid():
+            return ""
+        name = layer.name().lower()
+        parts = name.split("_")
+        for part in parts:
+            digits = "".join(c for c in part if c.isdigit())
+            if len(digits) in (5, 9, 10):
+                return digits
+        digits_all = "".join(c for c in name if c.isdigit())
+        if len(digits_all) >= 5:
+            return digits_all[:5]
+        return ""
+
+    def _bldg_layer_matches_poly(self, bldg_layer: Optional[QgsVectorLayer], poly_layer: Optional[QgsVectorLayer]) -> bool:
+        """Check if building point layer matches the target polygon layer geocode."""
+        if not bldg_layer or not bldg_layer.isValid() or not poly_layer or not poly_layer.isValid():
+            return False
+        poly_geo = self._extract_geocode_from_layer(poly_layer)
+        if not poly_geo:
+            return True
+        bldg_name = bldg_layer.name().lower()
+        return poly_geo in bldg_name
+
+    def _find_best_bldg_layer(self, ref_poly_layer: Optional[QgsVectorLayer] = None) -> Optional[QgsVectorLayer]:
         """Find the best matching building points vector layer in QgsProject."""
         project = QgsProject.instance()
         all_layers = list(project.mapLayers().values())
         best_layer = None
         best_score = -1
-        geo = (self.default_geocode or "").strip().lower()
 
-        # If default_geocode not explicitly supplied, extract from polygon layer name if possible
-        if not geo:
-            curr_poly = self.default_poly_layer or (self.poly_combo.currentLayer() if hasattr(self, "poly_combo") else None)
-            if curr_poly and curr_poly.isValid():
-                digits = "".join([c for c in curr_poly.name().split("_")[0] if c.isdigit()])
-                if digits:
-                    geo = digits.lower()
+        target_poly = ref_poly_layer or (self.poly_combo.currentLayer() if hasattr(self, "poly_combo") else self.default_poly_layer)
+        geo = (self.default_geocode or "").strip().lower()
+        if not geo and target_poly and target_poly.isValid():
+            geo = self._extract_geocode_from_layer(target_poly)
 
         for lyr in all_layers:
             if not isinstance(lyr, QgsVectorLayer) or not lyr.isValid():
@@ -323,11 +346,11 @@ class SplitEADialog(QDialog):
             name = lyr.name().lower()
             feat_count = lyr.featureCount()
             score = 0
-            if geo and geo in name and ("bldgpts" in name or "extracted_bldgpts" in name or "bldg_point" in name):
+            if geo and geo in name and ("bldgpts" in name or "extracted_bldgpts" in name or "bldg_point" in name or "bldgpoint" in name or "bldg_points" in name or "building_point" in name or "building_points" in name):
                 score = 110
             elif "bldgpts" in name or "extracted_bldgpts" in name:
                 score = 90
-            elif geo and geo in name and ("bldg_point" in name or "bldgpoint" in name or "geotagged" in name or "bldg_points" in name):
+            elif geo and geo in name and ("geotagged" in name or "structure" in name):
                 score = 85
             elif "bldg_point" in name or "bldgpoint" in name or "bldg_points" in name or "building_point" in name or "building_points" in name or "geotagged" in name:
                 score = 75
@@ -387,16 +410,22 @@ class SplitEADialog(QDialog):
                         line_candidate = lyr
                         break
 
-        # Detect building points
-        if not bldg_candidate or bldg_candidate.featureCount() == 0:
-            bldg_candidate = self._find_best_bldg_layer()
-
+        # Set polygon and line candidates first so UI and comboboxes are initialized
         if poly_candidate:
             self.poly_combo.setLayer(poly_candidate)
         if line_candidate:
             self.line_combo.setLayer(line_candidate)
+
+        # Detect building points using poly_candidate to determine matching input
+        if not bldg_candidate or bldg_candidate.featureCount() == 0:
+            bldg_candidate = self._find_best_bldg_layer(ref_poly_layer=poly_candidate)
+
         if bldg_candidate:
-            self.bldg_combo.setLayer(bldg_candidate)
+            self._is_syncing_layers = True
+            try:
+                self.bldg_combo.setLayer(bldg_candidate)
+            finally:
+                self._is_syncing_layers = False
 
         self._on_layer_selection_changed()
 
@@ -468,6 +497,12 @@ class SplitEADialog(QDialog):
             self.line_selected_chk.setEnabled(False)
             self._line_user_toggled = False
 
+    def _on_bldg_layer_changed(self):
+        """Handle building layer combobox change."""
+        if not getattr(self, "_is_syncing_layers", False):
+            self._bldg_user_selected = True
+        self._on_layer_selection_changed()
+
     def _on_layer_selection_changed(self):
         """Update layer info labels and dynamic selection listeners when layers change."""
         poly_layer = self.poly_combo.currentLayer()
@@ -484,6 +519,18 @@ class SplitEADialog(QDialog):
                     poly_layer.selectionChanged.connect(self._update_poly_selection_ui)
                 except Exception:
                     pass
+
+            # Dynamically determine / synchronize building layer with the selected input polygon layer
+            if poly_layer and poly_layer.isValid():
+                curr_bldg = self.bldg_combo.currentLayer()
+                if not getattr(self, "_bldg_user_selected", False) or not self._bldg_layer_matches_poly(curr_bldg, poly_layer):
+                    best_bldg = self._find_best_bldg_layer(ref_poly_layer=poly_layer)
+                    if best_bldg and best_bldg != curr_bldg:
+                        self._is_syncing_layers = True
+                        try:
+                            self.bldg_combo.setLayer(best_bldg)
+                        finally:
+                            self._is_syncing_layers = False
 
         line_layer = self.line_combo.currentLayer()
         if self._prev_line_layer != line_layer:
@@ -1021,10 +1068,14 @@ class SplitEADialog(QDialog):
 
         # Ensure building point layer is auto-resolved if not set or empty
         if not bldg_layer or not bldg_layer.isValid() or bldg_layer.featureCount() == 0:
-            auto_bldg = self._find_best_bldg_layer()
+            auto_bldg = self._find_best_bldg_layer(ref_poly_layer=poly_layer)
             if auto_bldg and auto_bldg.isValid():
                 bldg_layer = auto_bldg
-                self.bldg_combo.setLayer(bldg_layer)
+                self._is_syncing_layers = True
+                try:
+                    self.bldg_combo.setLayer(bldg_layer)
+                finally:
+                    self._is_syncing_layers = False
 
         if not poly_layer or not poly_layer.isValid():
             self._warn_user("Invalid Input", "Please select a valid EA polygon layer (delineated_ea).")

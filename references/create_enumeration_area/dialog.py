@@ -7527,6 +7527,11 @@ class EALauncherDialog(QDialog):
                 bldg_layer = self.bldg_combo.currentLayer()
             except Exception:
                 bldg_layer = None
+        if not bldg_layer and hasattr(self, "merge_bldg_combo") and self.merge_bldg_combo:
+            try:
+                bldg_layer = self.merge_bldg_combo.currentLayer()
+            except Exception:
+                bldg_layer = None
 
         min_hh = 99
         if hasattr(self, "min_hh_spin") and self.min_hh_spin:
@@ -7551,11 +7556,11 @@ class EALauncherDialog(QDialog):
                 name_l = lyr.name().lower()
                 feat_cnt = lyr.featureCount()
                 score = 0
-                if geo5 and geo5 in name_l and ("bldgpts" in name_l or "extracted_bldgpts" in name_l):
+                if geo5 and geo5 in name_l and ("bldgpts" in name_l or "extracted_bldgpts" in name_l or "bldg_point" in name_l or "bldgpoint" in name_l or "bldg_points" in name_l or "building_point" in name_l):
                     score = 100
                 elif "bldgpts" in name_l or "extracted_bldgpts" in name_l:
                     score = 90
-                elif geo5 and geo5 in name_l and ("bldg_point" in name_l or "bldgpoint" in name_l or "geotagged" in name_l or "bldg_points" in name_l):
+                elif geo5 and geo5 in name_l and ("geotagged" in name_l or "structure" in name_l):
                     score = 80
                 elif "bldg_point" in name_l or "bldgpoint" in name_l or "geotagged" in name_l or "building_point" in name_l or "bldg_points" in name_l or "building_points" in name_l:
                     score = 70
