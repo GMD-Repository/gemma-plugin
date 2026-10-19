@@ -3034,8 +3034,12 @@ class EALauncherDialog(QDialog):
                     candidates["prev_ea"] = layer
 
             elif geom == 0:  # Point
-                if candidates["bldg"] is None and any(k in name_lower for k in building_keywords):
-                    candidates["bldg"] = layer
+                if any(k in name_lower for k in building_keywords):
+                    if "extracted" not in name_lower:
+                        if candidates["bldg"] is None or "extracted" in candidates["bldg"].name().lower():
+                            candidates["bldg"] = layer
+                    elif candidates["bldg"] is None:
+                        candidates["bldg"] = layer
 
             elif geom == 1:  # Line
                 if candidates["river"] is None and any(k in name_lower for k in river_keywords):
@@ -7296,7 +7300,8 @@ class EALauncherDialog(QDialog):
 
         # Enable/Disable Run button
         has_output = bool(self.ea_merge_output_folder_widget.filePath().strip()) if hasattr(self, 'ea_merge_output_folder_widget') else False
-        can_run = bool(ea_layer and has_repl and all_poly and all_8digits and geo_code and has_output)
+        repl_valid = (not has_repl) or (all_poly and all_8digits and all_valid_geom)
+        can_run = bool(ea_layer and repl_valid and geo_code and has_output)
         self.ea_merge_run_btn.setEnabled(can_run)
 
     def _ea_merge_cancel(self):
@@ -7339,8 +7344,23 @@ class EALauncherDialog(QDialog):
             self._ea_merge_append_log("<span style='color:#cf222e; font-weight:bold;'>[ERROR] Previous EA Layer is required.</span>")
             return
         if not repl_layers:
-            self._ea_merge_append_log("<span style='color:#cf222e; font-weight:bold;'>[ERROR] At least one Replacement Polygon Layer is required.</span>")
-            return
+            self._ea_merge_append_log(
+                "<span style='color:#0969da; font-weight:bold;'>[INFO] No replacement polygon layers selected. "
+                "Consolidating Previous EA Layer directly.</span>"
+            )
+        else:
+            pat = _EA_MERGE_8DIGIT_RE
+            for lyr in repl_layers:
+                if not lyr or lyr.geometryType() != QgsWkbTypes.PolygonGeometry:
+                    self._ea_merge_append_log(
+                        f"<span style='color:#cf222e; font-weight:bold;'>[ERROR] Replacement layer '{lyr.name() if lyr else 'None'}' is not a polygon layer.</span>"
+                    )
+                    return
+                if not pat.match(lyr.name()):
+                    self._ea_merge_append_log(
+                        f"<span style='color:#cf222e; font-weight:bold;'>[ERROR] Replacement layer '{lyr.name()}' does not follow the required 8-digit numeric naming convention.</span>"
+                    )
+                    return
 
         # Guard: don't start a second run if one is already in flight
         if getattr(self, '_ea_merge_thread', None) and self._ea_merge_thread.isRunning():
@@ -7515,12 +7535,75 @@ class EALauncherDialog(QDialog):
             except Exception:
                 min_hh = 99
 
+        # Automatically resolve delineated_ea polygon, eadel_update cut lines, and building point layers
+        delineated_poly = None
+        eadel_line = None
+        if not bldg_layer or not bldg_layer.isValid() or bldg_layer.featureCount() == 0:
+            best_bldg = None
+            best_bldg_score = -1
+            all_pt_layers = []
+            for lyr in QgsProject.instance().mapLayers().values():
+                if not isinstance(lyr, QgsVectorLayer) or not lyr.isValid():
+                    continue
+                if lyr.geometryType() != QgsWkbTypes.PointGeometry:
+                    continue
+                all_pt_layers.append(lyr)
+                name_l = lyr.name().lower()
+                feat_cnt = lyr.featureCount()
+                score = 0
+                if geo5 and geo5 in name_l and ("bldgpts" in name_l or "extracted_bldgpts" in name_l):
+                    score = 100
+                elif "bldgpts" in name_l or "extracted_bldgpts" in name_l:
+                    score = 90
+                elif geo5 and geo5 in name_l and ("bldg_point" in name_l or "bldgpoint" in name_l or "geotagged" in name_l or "bldg_points" in name_l):
+                    score = 80
+                elif "bldg_point" in name_l or "bldgpoint" in name_l or "geotagged" in name_l or "building_point" in name_l or "bldg_points" in name_l or "building_points" in name_l:
+                    score = 70
+                elif "bldg" in name_l or "building" in name_l:
+                    score = 60
+                elif any(f.name().lower() in ("est_hhcount", "est_hh", "hh_count", "hhcount") for f in lyr.fields()):
+                    score = 50
+
+                if feat_cnt > 0:
+                    score += 30
+                else:
+                    score -= 60
+
+                if score > best_bldg_score:
+                    best_bldg_score = score
+                    best_bldg = lyr
+
+            if not best_bldg or best_bldg_score <= 0:
+                populated_pts = [l for l in all_pt_layers if l.featureCount() > 0]
+                if populated_pts:
+                    best_bldg = max(populated_pts, key=lambda l: l.featureCount())
+
+            if best_bldg:
+                bldg_layer = best_bldg
+
+        for lyr in QgsProject.instance().mapLayers().values():
+            if not isinstance(lyr, QgsVectorLayer) or not lyr.isValid():
+                continue
+            name_lower = lyr.name().lower()
+            if lyr.geometryType() == QgsWkbTypes.PolygonGeometry:
+                if geo5 and geo5 in name_lower and "delineated_ea" in name_lower:
+                    delineated_poly = lyr
+                elif not delineated_poly and "delineated_ea" in name_lower:
+                    delineated_poly = lyr
+            elif lyr.geometryType() == QgsWkbTypes.LineGeometry:
+                if geo5 and geo5 in name_lower and "eadel_update" in name_lower:
+                    eadel_line = lyr
+                elif not eadel_line and "eadel_update" in name_lower:
+                    eadel_line = lyr
+
         dlg = SplitEADialog(
             self,
             default_output_dir=out_dir,
             default_geocode=geo5,
             default_bldg_layer=bldg_layer,
             default_min_hh=min_hh,
+            default_poly_layer=delineated_poly,
+            default_line_layer=eadel_line,
         )
         dlg.setWindowFlags(
             Qt.Window |

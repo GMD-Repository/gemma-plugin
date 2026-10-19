@@ -251,6 +251,24 @@ class TestModeBuildingFiltering(unittest.TestCase):
         eans = {f.attribute("parent_ean") for f in bldg_sink.features}
         self.assertEqual(eans, {"002000", "001000"})
 
+    def test_phase8_delineation_candidate_takes_precedence_over_adjacent_partner(self):
+        """Verify that an EA in both delineation_candidate_ids and adjacent_ea_ids gets 'Delineation Candidate' role."""
+        p1, p2, p3, p4, p7, bldg_sink = self._setup_pipeline_fixtures(exec_mode="delineation")
+        # Simulate EA 1 also being in adjacent_ea_ids (e.g. adjacent to merge candidate EA 2)
+        p2["adjacent_ea_ids"] = {1}
+
+        run_phase_8(self.alg, {}, None, self.feedback, None, p1, p2, p3, p4, p7)
+
+        self.assertEqual(len(bldg_sink.features), 1)
+        feat = bldg_sink.features[0]
+        self.assertEqual(feat.attribute("parent_ean"), "002000")
+        self.assertEqual(
+            feat.attribute("merge_role"),
+            "Delineation Candidate",
+            "Delineation Candidate must take precedence over Merge Partner to prevent QGIS filter exclusion."
+        )
+
+
     def test_dialog_pipeline_populates_execution_mode(self):
         """Verify dialog.run_pipeline sets parameters['EXECUTION_MODE'] correctly per mode."""
         import inspect
@@ -266,3 +284,5 @@ class TestModeBuildingFiltering(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

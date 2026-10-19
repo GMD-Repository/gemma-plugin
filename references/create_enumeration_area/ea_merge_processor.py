@@ -329,11 +329,10 @@ class EAMergeProcessor:
             "table export (<code>&lt;5-digit geocode&gt;_earf_&lt;citymun&gt;.xlsx</code>).</p>"
 
             "<h4>Inputs</h4>"
-            "<b>Required</b>"
             "<ul>"
-            "<li><b>Previous EA Layer</b> (polygon) — Starting/existing EA layer. Attributes and fields are preserved. "
+            "<li><b>Previous EA Layer</b> (polygon, required) — Starting/existing EA layer. Attributes and fields are preserved. "
             "Auto-detected by <code>*_ea</code>, <code>*_ea2024</code>, <code>*_ea2026</code>, or <code>*_ea_preprocessed</code>.</li>"
-            "<li><b>Replacement Polygon Layers</b> (polygon, multi-input) — One or more replacement polygon layers from "
+            "<li><b>Replacement Polygon Layers</b> (polygon, multi-input, optional) — One or more replacement polygon layers from "
             "the project. Each layer name must follow the <b>8-digit numeric convention</b> (e.g. <code>01001000</code>).</li>"
             "</ul>"
 
@@ -430,12 +429,8 @@ class EAMergeProcessor:
 
             # ── Phase 5: Determine CityMun ─────────────────────────────────
             citymun = self._determine_citymun(self.ea_layer)
-            if citymun is None:
-                self._fail(
-                    "Unable to determine the City/Municipality name required "
-                    "for the Excel filename."
-                )
-                return self._result
+            if not citymun:
+                citymun = "Unknown"
             self._citymun = citymun
             self._log(f"[INFO] City/Municipality: {citymun}")
             self._progress(25)
@@ -446,7 +441,7 @@ class EAMergeProcessor:
             replacement_features, combined_geom, repl_feat_count = (
                 self._prepare_replacement_geometries(out_fields)
             )
-            if combined_geom is None or combined_geom.isNull():
+            if self.replacement_layers and (combined_geom is None or combined_geom.isNull()):
                 self._fail("Failed to combine replacement geometries.")
                 return self._result
             summary.replacement_feature_count = repl_feat_count
@@ -555,7 +550,7 @@ class EAMergeProcessor:
                         if not gpkg_layer.isValid():
                             gpkg_layer = QgsVectorLayer(output_file_path, final_layer_name, "ogr")
 
-                        if gpkg_layer.isValid():
+                        if gpkg_layer.isValid() and (gpkg_layer.featureCount() > 0 or output_layer.featureCount() == 0):
                             from .helpers.style import apply_qml_to_layer
                             apply_qml_to_layer(gpkg_layer, "ea_output.qml")
                             output_layer = gpkg_layer
@@ -564,7 +559,12 @@ class EAMergeProcessor:
                             summary.output_file_path = output_file_path
                             saved_to_gpkg = True
                         else:
-                            self._log(f"[ERROR] Could not load saved GeoPackage layer from: {output_file_path}")
+                            if not gpkg_layer.isValid():
+                                self._log(f"[WARNING] Could not load saved GeoPackage layer from: {output_file_path}")
+                            else:
+                                self._log(f"[INFO] Preserving memory output layer ({output_layer.featureCount()} features) over empty GeoPackage readback.")
+                            summary.output_layer_name = final_layer_name
+                            summary.output_file_path = output_file_path
                     else:
                         self._log(f"[ERROR] Failed to save GeoPackage (.gpkg) to {output_file_path}")
                 except Exception as save_err:
@@ -724,8 +724,11 @@ class EAMergeProcessor:
     def _validate_replacement_layers(self) -> bool:
         """Validate each replacement layer: polygon type, 8-digit name, non-empty."""
         if not self.replacement_layers:
-            self._fail("At least one Replacement Polygon Layer is required.")
-            return False
+            self._log(
+                "[INFO] No replacement polygon layers provided. "
+                "Proceeding with Previous EA Layer consolidation."
+            )
+            return True
 
         self._log("[INFO] Validating replacement layer names...")
 
@@ -989,7 +992,17 @@ class EAMergeProcessor:
                             ):
                                 val = int(round(float(val)))
                             elif ea_field.type() == QVariant.String:
-                                val = str(val)
+                                if ea_field_name == "sy":
+                                    s_val = str(val).strip()
+                                    if s_val.endswith(".0"):
+                                        s_val = s_val[:-2]
+                                    try:
+                                        f_val = float(s_val)
+                                        val = str(int(round(f_val)))
+                                    except (ValueError, TypeError):
+                                        val = s_val
+                                else:
+                                    val = str(val)
                         except (ValueError, TypeError):
                             pass
                         out_feat.setAttribute(ea_i, val)
@@ -1030,9 +1043,12 @@ class EAMergeProcessor:
         if out_fields is None:
             out_fields = self._build_output_fields()
         # Build spatial index on EA layer for efficient candidate selection
-        ea_index = QgsSpatialIndex(self.ea_layer.getFeatures())
-        combined_bbox = combined_replacement.boundingBox()
-        candidate_id_set = set(ea_index.intersects(combined_bbox))
+        if combined_replacement is not None and not combined_replacement.isNull() and not combined_replacement.isEmpty():
+            ea_index = QgsSpatialIndex(self.ea_layer.getFeatures())
+            combined_bbox = combined_replacement.boundingBox()
+            candidate_id_set = set(ea_index.intersects(combined_bbox))
+        else:
+            candidate_id_set = set()
 
         ea_fields = self.ea_layer.fields()
         ea_name_to_idx = {
@@ -1127,6 +1143,8 @@ class EAMergeProcessor:
                         val = _extract_feature_attribute(feat, ea_name_to_idx, "bldg_count")
                     elif ea_field_name == "new_ean":
                         val = _extract_feature_attribute(feat, ea_name_to_idx, "ean")
+                    elif ea_field_name == "sy":
+                        val = "2024"
                     elif ea_field_name == "ea_type":
                         val = "RETAINED"
 
@@ -1140,7 +1158,17 @@ class EAMergeProcessor:
                         ):
                             val = int(round(float(val)))
                         elif ea_field.type() == QVariant.String:
-                            val = str(val)
+                            if ea_field_name == "sy":
+                                s_val = str(val).strip()
+                                if s_val.endswith(".0"):
+                                    s_val = s_val[:-2]
+                                try:
+                                    f_val = float(s_val)
+                                    val = str(int(round(f_val)))
+                                except (ValueError, TypeError):
+                                    val = s_val
+                            else:
+                                val = str(val)
                     except (ValueError, TypeError):
                         pass
                     out_feat.setAttribute(ea_i, val)
@@ -1513,7 +1541,21 @@ class EAMergeProcessor:
                 row = []
                 for i in range(flds.count()):
                     val = feat.attribute(i)
-                    row.append(None if (val == NULL or val is None) else val)
+                    if val == NULL or val is None:
+                        row.append(None)
+                    else:
+                        fname = flds.at(i).name().lower()
+                        if fname == "sy":
+                            s_val = str(val).strip()
+                            if s_val.endswith(".0"):
+                                s_val = s_val[:-2]
+                            try:
+                                f_val = float(s_val)
+                                row.append(int(round(f_val)))
+                            except (ValueError, TypeError):
+                                row.append(s_val)
+                        else:
+                            row.append(val)
                 return row
 
             # Data rows — spatial features
@@ -1551,7 +1593,19 @@ class EAMergeProcessor:
                         row.append(None)
                     else:
                         val = ghost_feat.attribute(idx)
-                        row.append(None if (val == NULL or val is None) else val)
+                        if val == NULL or val is None:
+                            row.append(None)
+                        elif fname.lower() == "sy":
+                            s_val = str(val).strip()
+                            if s_val.endswith(".0"):
+                                s_val = s_val[:-2]
+                            try:
+                                f_val = float(s_val)
+                                row.append(int(round(f_val)))
+                            except (ValueError, TypeError):
+                                row.append(s_val)
+                        else:
+                            row.append(val)
                 ws.append(row)
 
             wb.save(path)

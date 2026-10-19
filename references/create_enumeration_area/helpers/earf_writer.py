@@ -152,6 +152,25 @@ _CENTER_COLS = {
 }
 
 
+def _clean_sy(val: Any, default: Any = "") -> Any:
+    """Ensure Source Year is returned as a whole number integer if numeric."""
+    if val is None:
+        return default
+    s = str(val).strip()
+    if not s or s.upper() in ("NULL", "NONE"):
+        return default
+    try:
+        f = float(s)
+        return int(round(f))
+    except (ValueError, TypeError):
+        if s.endswith(".0"):
+            try:
+                return int(s[:-2])
+            except ValueError:
+                return s[:-2]
+        return s
+
+
 # ===========================================================================
 # EARFWriter
 # ===========================================================================
@@ -373,7 +392,7 @@ class EARFWriter:
                 "hh_count":   _num(feat, "hh_count"),
                 "bldg_count": _num(feat, "bldg_count"),
                 "ea_type":    _str(feat, "ea_type")  or "RETAINED",
-                "sy":         _str(feat, "sy")        or "2026",
+                "sy":         _clean_sy(_str(feat, "sy"), default=2026),
                 "remarks":    remarks_val,
                 # Row type
                 "is_province_summary": False,
@@ -494,7 +513,7 @@ class EARFWriter:
                 "hh_count":   None,
                 "bldg_count": None,
                 "ea_type":    _g_str("ea_type") or "MERGED",
-                "sy":         _g_str("sy")       or "2024",
+                "sy":         _clean_sy(_g_str("sy"), default=2024),
                 "remarks":    ghost_rmk,
                 # Row type
                 "is_province_summary": False,
@@ -821,7 +840,7 @@ class EARFWriter:
             row_data.get("hh_count"),
             row_data.get("bldg_count"),
             row_data.get("ea_type",    ""),
-            row_data.get("sy",         ""),
+            _clean_sy(row_data.get("sy", ""), default=""),
             row_data.get("remarks",    ""),
         ]
 
@@ -838,6 +857,8 @@ class EARFWriter:
                     cell.number_format = "#,##0"
             elif zero in _CENTER_COLS:
                 cell.alignment = styles.align_center
+                if zero == _COL_SY and isinstance(val, int):
+                    cell.number_format = "0"
             else:
                 cell.alignment = styles.align_left
 
