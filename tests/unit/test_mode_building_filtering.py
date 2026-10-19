@@ -281,6 +281,83 @@ class TestModeBuildingFiltering(unittest.TestCase):
         self.assertIn("elif mode == \"merging\":", src)
         self.assertIn("exec_mode_val = 2", src)
 
+    def test_phase8_extracts_buildings_for_candidate_with_proposed_split_cut_line(self):
+        """Verify that an over-threshold EA with has_proposed_split=True (from_split=False) has buildings extracted."""
+        p1, p2, p3, p4, p7, bldg_sink = self._setup_pipeline_fixtures(exec_mode="delineation")
+
+        # Configure EA 020000 with 349 HH and proposed split cut line (un-split whole polygon)
+        poly = QgsGeometry.fromPolygonXY([[QgsPointXY(20, 20), QgsPointXY(25, 20), QgsPointXY(25, 25), QgsPointXY(20, 25), QgsPointXY(20, 20)]])
+        bldg_pt = {
+            "point": QgsPointXY(22.0, 22.0),
+            "pop": 349.0,
+            "bldgpoints_value": 1.0,
+            "attributes": [99, 999, 1.0, 349.0],
+            "parent_ean": "020000",
+        }
+        ea_cand = {
+            "original_id": 99,
+            "original_code": "020000",
+            "new_ea_code": "020000",
+            "parent_barangay": "01101003",
+            "geom": poly,
+            "buildings": [bldg_pt],
+            "hh_count": 349,
+            "original_hhcount": 349,
+            "bldg_count": 1,
+            "has_proposed_split": True,
+            "from_split": False,
+            "from_merge": False,
+        }
+        p7["eas"] = [ea_cand]
+        p2["delineation_candidate_ids"] = {99}
+
+        run_phase_8(self.alg, {}, None, self.feedback, None, p1, p2, p3, p4, p7)
+
+        self.assertEqual(len(bldg_sink.features), 1, "Candidate EA with proposed split must have its buildings extracted.")
+        feat = bldg_sink.features[0]
+        self.assertEqual(feat.attribute("parent_ean"), "020000")
+        self.assertEqual(feat.attribute("candidate_ean"), "020000")
+        self.assertEqual(feat.attribute("merge_role"), "Delineation Candidate")
+
+    def test_phase8_fallback_queries_building_source_when_ea_buildings_empty(self):
+        """Verify fallback to direct building_source spatial query when ea.get('buildings') is empty."""
+        p1, p2, p3, p4, p7, bldg_sink = self._setup_pipeline_fixtures(exec_mode="delineation")
+
+        # EA 020000 with empty buildings list
+        poly = QgsGeometry.fromPolygonXY([[QgsPointXY(30, 30), QgsPointXY(35, 30), QgsPointXY(35, 35), QgsPointXY(30, 35), QgsPointXY(30, 30)]])
+        ea_cand = {
+            "original_id": 100,
+            "original_code": "020000",
+            "new_ea_code": "020000",
+            "parent_barangay": "01101003",
+            "geom": poly,
+            "buildings": [],  # Empty
+            "hh_count": 349,
+            "original_hhcount": 349,
+            "bldg_count": 0,
+            "has_proposed_split": True,
+            "from_split": False,
+            "from_merge": False,
+        }
+        p7["eas"] = [ea_cand]
+        p2["delineation_candidate_ids"] = {100}
+
+        # Add building point directly into building_source
+        bldg_layer = p1["building_source"]
+        feat = QgsFeature(bldg_layer.fields())
+        feat.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(32.0, 32.0)))
+        feat.setAttributes([501, 5001, 1.0, 5.0])
+        bldg_layer.dataProvider().addFeatures([feat])
+        bldg_layer.updateExtents()
+
+        run_phase_8(self.alg, {}, None, self.feedback, None, p1, p2, p3, p4, p7)
+
+        self.assertGreaterEqual(len(bldg_sink.features), 1, "Fallback query must extract building point from building_source.")
+        feat_out = bldg_sink.features[0]
+        self.assertEqual(feat_out.attribute("parent_ean"), "020000")
+        self.assertEqual(feat_out.attribute("candidate_ean"), "020000")
+        self.assertEqual(feat_out.attribute("merge_role"), "Delineation Candidate")
+
 
 if __name__ == "__main__":
     unittest.main()

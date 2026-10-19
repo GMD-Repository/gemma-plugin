@@ -22,6 +22,8 @@ from qgis.core import (
     QgsProject,
     QgsVectorLayer,
     QgsPointXY,
+    QgsFeatureRequest,
+    QgsRectangle,
     NULL,
 )
 
@@ -898,6 +900,7 @@ def run_phase_8(
 
     final_geom_by_candidate = {}
     written_delineation_candidate_ids = set()
+    written_extracted_ea_ids = set()
 
     for i, ea in enumerate(eas):
         if (multi_feedback and multi_feedback.isCanceled()) or (feedback and feedback.isCanceled()):
@@ -1346,7 +1349,8 @@ def run_phase_8(
                             feedback.reportError(f"Failed to add EA {i} to delineated sink.")
             elif exec_mode != "merging" and not ea.get('from_split', False) and not ea.get('is_special_ea', False):
                 _orig_cand_id = ea.get('original_id')
-                if _orig_cand_id in delineation_candidate_ids:
+                _orig_hh_val = ea.get('original_hhcount', ea.get('hh_count', 0.0))
+                if _orig_cand_id in delineation_candidate_ids or ea.get('has_proposed_split', False) or _orig_hh_val > max_household:
                     if _orig_cand_id not in written_delineation_candidate_ids:
                         written_delineation_candidate_ids.add(_orig_cand_id)
                         parent_feat = full_ea_by_id.get(_orig_cand_id)
@@ -1357,8 +1361,7 @@ def run_phase_8(
                             cand_geom = QgsGeometry(ea['geom'])
 
                         if cand_geom and not cand_geom.isEmpty():
-                            _orig_hh_val = ea.get('original_hhcount', ea.get('hh_count', 0.0))
-                            if _orig_hh_val > max_household:
+                            if _orig_hh_val > max_household or ea.get('has_proposed_split', False):
                                 if delineated_sink is not None:
                                     if barangay_to_target:
                                         cand_geom.transform(barangay_to_target)
@@ -1444,32 +1447,35 @@ def run_phase_8(
             _ea_orig_id = ea.get('original_id')
             _ea_orig_code = ea.get('original_code', '')
             parent_ean_val = ea.get('new_ea_code', _ea_orig_code)
+
+            _is_delineation_cand = (
+                _ea_orig_id in delineation_candidate_ids
+                or ea.get('from_split', False)
+                or ea.get('has_proposed_split', False)
+                or ea.get('hh_count', 0) > max_household
+                or ea.get('original_hhcount', 0) > max_household
+                or "proposed for delineation" in str(ea.get('remarks', '')).lower()
+                or "proposed cut line" in str(ea.get('remarks', '')).lower()
+            )
+            _is_merge_cand = (
+                _ea_orig_id in merge_candidate_ids
+                or ea.get('from_merge', False)
+                or _ea_orig_id in adjacent_ea_ids
+            )
             if exec_mode == "delineation":
-                _is_target_ea = (
-                    ea.get('from_split', False)
-                    or _ea_orig_id in delineation_candidate_ids
-                )
+                _is_target_ea = _is_delineation_cand
             elif exec_mode == "merging":
-                _is_target_ea = (
-                    ea.get('from_merge', False)
-                    or _ea_orig_id in merge_candidate_ids
-                    or _ea_orig_id in adjacent_ea_ids
-                )
+                _is_target_ea = _is_merge_cand
             else:
-                _is_target_ea = (
-                    ea.get('from_split', False)
-                    or ea.get('from_merge', False)
-                    or _ea_orig_id in delineation_candidate_ids
-                    or _ea_orig_id in merge_candidate_ids
-                    or _ea_orig_id in adjacent_ea_ids
-                )
+                _is_target_ea = _is_delineation_cand or _is_merge_cand
+
             if _is_target_ea:
-                ea_bldgs = ea.get('buildings', [])
-                deduped_ea_bldgs, _ = deduplicate_building_points(ea_bldgs)
+                if _ea_orig_id is not None:
+                    written_extracted_ea_ids.add(_ea_orig_id)
 
                 if ea.get('from_merge', False):
                     ea_role = "Merged"
-                elif ea.get('from_split', False) or _ea_orig_id in delineation_candidate_ids:
+                elif _is_delineation_cand:
                     ea_role = "Delineation Candidate"
                 elif _ea_orig_id in merge_candidate_ids:
                     ea_role = "Candidate"
@@ -1477,6 +1483,91 @@ def run_phase_8(
                     ea_role = "Merge Partner"
                 else:
                     ea_role = "Other"
+
+                ea_bldgs = list(ea.get('buildings') or [])
+                if not ea_bldgs and _ea_orig_id is not None:
+                    ea_bldgs = list(p2.get('ea_id_to_buildings', {}).get(_ea_orig_id, []))
+
+                # Fallback: Query building_source directly inside candidate geometry if buildings list is empty
+                if not ea_bldgs and building_source is not None and ea.get('geom') and not ea['geom'].isEmpty():
+                    cand_poly = QgsGeometry(ea['geom'])
+                    if hasattr(cand_poly, 'isGeosValid') and not cand_poly.isGeosValid():
+                        cand_poly = cand_poly.makeValid()
+
+                    bldg_crs = building_source.sourceCrs()
+                    target_ea_crs = previous_ea_source.sourceCrs()
+                    bldg_to_ea_tr = None
+                    ea_to_bldg_tr = None
+                    if bldg_crs.isValid() and target_ea_crs.isValid() and bldg_crs != target_ea_crs:
+                        try:
+                            bldg_to_ea_tr = QgsCoordinateTransform(bldg_crs, target_ea_crs, context.transformContext())
+                            ea_to_bldg_tr = QgsCoordinateTransform(target_ea_crs, bldg_crs, context.transformContext())
+                        except Exception:
+                            bldg_to_ea_tr = None
+                            ea_to_bldg_tr = None
+
+                    search_rect = cand_poly.boundingBox()
+                    if ea_to_bldg_tr:
+                        try:
+                            search_rect = ea_to_bldg_tr.transformBoundingBox(search_rect)
+                        except Exception:
+                            pass
+
+                    bldg_req = QgsFeatureRequest().setFilterRect(search_rect)
+                    for bf in building_source.getFeatures(bldg_req):
+                        bg = bf.geometry()
+                        if not bg or bg.isEmpty():
+                            continue
+                        if bldg_to_ea_tr:
+                            bg = QgsGeometry(bg)
+                            try:
+                                bg.transform(bldg_to_ea_tr)
+                            except Exception:
+                                pass
+
+                        if bg.isMultipart():
+                            pts = bg.asMultiPoint()
+                            bp = pts[0] if pts else bg.centroid().asPoint()
+                        elif bg.type() == QgsWkbTypes.PolygonGeometry:
+                            bp = bg.centroid().asPoint()
+                        else:
+                            bp = bg.asPoint()
+
+                        bpt_geom = QgsGeometry.fromPointXY(bp)
+                        if cand_poly.contains(bpt_geom) or cand_poly.intersects(bpt_geom):
+                            pop_val = bf.attribute(bldg_hh_field)
+                            if pop_val is None or (isinstance(pop_val, QVariant) and pop_val.isNull()) or str(pop_val).strip() == "":
+                                pop_val = 1.0
+                            else:
+                                try:
+                                    pop_val = float(pop_val)
+                                    if pop_val <= 0.0:
+                                        pop_val = 1.0
+                                except (TypeError, ValueError):
+                                    pop_val = 1.0
+
+                            bldg_val = None
+                            bldg_val_idx = bf.fields().indexOf("bldgpoints_value")
+                            if bldg_val_idx == -1:
+                                bldg_val_idx = bf.fields().indexOf("bldgpts_val")
+                            if bldg_val_idx != -1:
+                                b_val = bf.attribute(bldg_val_idx)
+                                try:
+                                    bldg_val = float(b_val) if b_val is not None else None
+                                except (TypeError, ValueError):
+                                    bldg_val = None
+
+                            ea_bldgs.append({
+                                'point': bp,
+                                'pop': pop_val,
+                                'bldgpoints_value': bldg_val,
+                                'attributes': bf.attributes(),
+                                'parent_ean': parent_ean_val,
+                                'merge_role': ea_role,
+                                'candidate_ean': str(parent_ean_val),
+                            })
+
+                deduped_ea_bldgs, _ = deduplicate_building_points(ea_bldgs)
 
                 for b in deduped_ea_bldgs:
                     b_feat = QgsFeature(bldg_out_fields)
@@ -1501,7 +1592,10 @@ def run_phase_8(
                     if role_idx != -1:
                         b_attrs[role_idx] = ea_role
                     if cand_ean_idx != -1:
-                        b_attrs[cand_ean_idx] = str(b.get('candidate_ean', ''))
+                        c_ean = b.get('candidate_ean')
+                        if not c_ean or str(c_ean).strip() in ('', 'None', 'NULL'):
+                            c_ean = str(parent_ean_val)
+                        b_attrs[cand_ean_idx] = str(c_ean)
 
                     bldg_fid = extracted_bldg_feat_count + 1
                     fid_idx_bldg = bldg_out_fields.indexOf("fid")
@@ -1525,6 +1619,142 @@ def run_phase_8(
 
     if multi_feedback:
         multi_feedback.setProgress(100)
+
+    # ── Write any remaining candidate EAs not yet processed to extracted buildings sink ──
+    if extracted_buildings_sink is not None:
+        target_remaining_ids = set()
+        if exec_mode in ("delineation", "all"):
+            target_remaining_ids.update(set(delineation_candidate_ids) - written_extracted_ea_ids)
+        if exec_mode in ("merging", "all"):
+            target_remaining_ids.update(set(merge_candidate_ids) - written_extracted_ea_ids)
+
+        for rem_id in sorted(target_remaining_ids):
+            rem_feat = full_ea_by_id.get(rem_id)
+            if not rem_feat or not rem_feat.hasGeometry() or rem_feat.geometry().isEmpty():
+                continue
+
+            rem_geom = QgsGeometry(rem_feat.geometry())
+            if hasattr(rem_geom, 'isGeosValid') and not rem_geom.isGeosValid():
+                rem_geom = rem_geom.makeValid()
+
+            rem_ean = get_text_attr(rem_feat, ["ean", "code", "ea_code", ea_id_field], prefer_text=False) or ""
+            rem_role = "Delineation Candidate" if rem_id in delineation_candidate_ids else "Candidate"
+
+            rem_bldgs = list(p2.get('ea_id_to_buildings', {}).get(rem_id, []))
+            if not rem_bldgs and building_source is not None:
+                bldg_crs = building_source.sourceCrs()
+                target_ea_crs = previous_ea_source.sourceCrs()
+                bldg_to_ea_tr = None
+                ea_to_bldg_tr = None
+                if bldg_crs.isValid() and target_ea_crs.isValid() and bldg_crs != target_ea_crs:
+                    try:
+                        bldg_to_ea_tr = QgsCoordinateTransform(bldg_crs, target_ea_crs, context.transformContext())
+                        ea_to_bldg_tr = QgsCoordinateTransform(target_ea_crs, bldg_crs, context.transformContext())
+                    except Exception:
+                        bldg_to_ea_tr = None
+                        ea_to_bldg_tr = None
+
+                search_rect = rem_geom.boundingBox()
+                if ea_to_bldg_tr:
+                    try:
+                        search_rect = ea_to_bldg_tr.transformBoundingBox(search_rect)
+                    except Exception:
+                        pass
+
+                bldg_req = QgsFeatureRequest().setFilterRect(search_rect)
+                for bf in building_source.getFeatures(bldg_req):
+                    bg = bf.geometry()
+                    if not bg or bg.isEmpty():
+                        continue
+                    if bldg_to_ea_tr:
+                        bg = QgsGeometry(bg)
+                        try:
+                            bg.transform(bldg_to_ea_tr)
+                        except Exception:
+                            pass
+
+                    if bg.isMultipart():
+                        pts = bg.asMultiPoint()
+                        bp = pts[0] if pts else bg.centroid().asPoint()
+                    elif bg.type() == QgsWkbTypes.PolygonGeometry:
+                        bp = bg.centroid().asPoint()
+                    else:
+                        bp = bg.asPoint()
+
+                    bpt_geom = QgsGeometry.fromPointXY(bp)
+                    if rem_geom.contains(bpt_geom) or rem_geom.intersects(bpt_geom):
+                        pop_val = bf.attribute(bldg_hh_field)
+                        if pop_val is None or (isinstance(pop_val, QVariant) and pop_val.isNull()) or str(pop_val).strip() == "":
+                            pop_val = 1.0
+                        else:
+                            try:
+                                pop_val = float(pop_val)
+                                if pop_val <= 0.0:
+                                    pop_val = 1.0
+                            except (TypeError, ValueError):
+                                pop_val = 1.0
+
+                        bldg_val = None
+                        bldg_val_idx = bf.fields().indexOf("bldgpoints_value")
+                        if bldg_val_idx == -1:
+                            bldg_val_idx = bf.fields().indexOf("bldgpts_val")
+                        if bldg_val_idx != -1:
+                            b_val = bf.attribute(bldg_val_idx)
+                            try:
+                                bldg_val = float(b_val) if b_val is not None else None
+                            except (TypeError, ValueError):
+                                bldg_val = None
+
+                        rem_bldgs.append({
+                            'point': bp,
+                            'pop': pop_val,
+                            'bldgpoints_value': bldg_val,
+                            'attributes': bf.attributes(),
+                            'parent_ean': rem_ean,
+                            'merge_role': rem_role,
+                            'candidate_ean': str(rem_ean),
+                        })
+
+            deduped_rem_bldgs, _ = deduplicate_building_points(rem_bldgs)
+            for b in deduped_rem_bldgs:
+                b_feat = QgsFeature(bldg_out_fields)
+                b_geom = QgsGeometry.fromPointXY(b['point'])
+                if barangay_to_target:
+                    b_geom.transform(barangay_to_target)
+                b_feat.setGeometry(b_geom)
+
+                b_attrs = list(b['attributes']) if 'attributes' in b else []
+                needed = bldg_out_fields.count() - len(b_attrs)
+                if needed > 0:
+                    b_attrs.extend([None] * needed)
+                elif len(b_attrs) > bldg_out_fields.count():
+                    b_attrs = b_attrs[:bldg_out_fields.count()]
+
+                if bldgpts_idx != -1:
+                    b_attrs[bldgpts_idx] = b.get('bldgpoints_value')
+                if pop_out_idx != -1:
+                    b_attrs[pop_out_idx] = b.get('pop')
+                if parent_ean_idx != -1:
+                    b_attrs[parent_ean_idx] = str(rem_ean)
+                if role_idx != -1:
+                    b_attrs[role_idx] = rem_role
+                if cand_ean_idx != -1:
+                    c_ean = b.get('candidate_ean')
+                    if not c_ean or str(c_ean).strip() in ('', 'None', 'NULL'):
+                        c_ean = str(rem_ean)
+                    b_attrs[cand_ean_idx] = str(c_ean)
+
+                bldg_fid = extracted_bldg_feat_count + 1
+                fid_idx_bldg = bldg_out_fields.indexOf("fid")
+                if fid_idx_bldg != -1:
+                    b_attrs[fid_idx_bldg] = bldg_fid
+
+                b_feat.setAttributes(b_attrs)
+                b_feat.setId(bldg_fid)
+                if extracted_buildings_sink.addFeature(b_feat, QgsFeatureSink.Flag.FastInsert):
+                    extracted_bldg_feat_count += 1
+                else:
+                    feedback.reportWarning("Failed to add building point to extracted buildings sink.")
 
     # ── Write internally detected Barangay gaps & overlaps to SPECIAL_EA_OUTPUT ──
     # These include gaps inside Barangay boundaries and EA-to-EA overlaps that

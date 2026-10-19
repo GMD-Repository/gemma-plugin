@@ -1250,7 +1250,7 @@ class SplitEADialog(QDialog):
                 for bf in bldg_layer.getFeatures():
                     if bf and bf.hasGeometry() and not bf.geometry().isEmpty():
                         bg = QgsGeometry(bf.geometry())
-                        if bldg_to_poly_xform and bldg_to_poly_xform.isValid():
+                        if bldg_to_poly_xform:
                             try:
                                 bg.transform(bldg_to_poly_xform)
                             except Exception:
@@ -2154,8 +2154,16 @@ class SplitEADialog(QDialog):
                                     except (ValueError, TypeError):
                                         pt_hh = 1.0
 
+                            if bg.isMultipart():
+                                pts = bg.asMultiPoint()
+                                p = pts[0] if pts else bg.centroid().asPoint()
+                            elif bg.type() == QgsWkbTypes.PolygonGeometry:
+                                p = bg.centroid().asPoint()
+                            else:
+                                p = bg.asPoint()
+
                             new_bf = QgsFeature(extracted_lyr.fields())
-                            new_bf.setGeometry(QgsGeometry(bg))
+                            new_bf.setGeometry(QgsGeometry.fromPointXY(p))
 
                             # Copy original matching attributes
                             for fld in bldg_layer.fields():
