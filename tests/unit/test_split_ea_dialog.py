@@ -2271,6 +2271,103 @@ class TestSplitEADialog(unittest.TestCase):
         finally:
             QgsProject.instance().removeAllMapLayers()
 
+    @patch("references.create_enumeration_area.split_dialog.processing.run")
+    def test_user_chosen_building_layer_strictly_used_in_split_process(self, mock_proc_run):
+        """Verify that whatever building point layer is chosen in bldg_combo is strictly used in run_split."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+
+        poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "02122_delineated_ea", "memory")
+        dp_poly = poly_lyr.dataProvider()
+        dp_poly.addAttributes([
+            create_qgs_field("ean", QVariant.String),
+            create_qgs_field("hh_count", QVariant.Int),
+            create_qgs_field("bldg_count", QVariant.Int),
+        ])
+        poly_lyr.updateFields()
+
+        poly_feat = QgsFeature(poly_lyr.fields())
+        poly_feat.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        poly_feat.setAttribute("ean", "001000")
+        poly_feat.setAttribute("hh_count", 0)
+        poly_feat.setAttribute("bldg_count", 0)
+        dp_poly.addFeatures([poly_feat])
+        poly_lyr.updateExtents()
+
+        line_lyr = QgsVectorLayer("LineString?crs=epsg:4326", "02122_eadel_update", "memory")
+        dp_line = line_lyr.dataProvider()
+        line_feat = QgsFeature()
+        line_feat.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(5, -1), QgsPointXY(5, 11)]))
+        dp_line.addFeatures([line_feat])
+        line_lyr.updateExtents()
+
+        # Alternate / auto building layer with 5 HH (should NOT be used)
+        auto_bldg = QgsVectorLayer("Point?crs=epsg:4326", "02122_extracted_bldgpts", "memory")
+        dp_auto = auto_bldg.dataProvider()
+        dp_auto.addAttributes([create_qgs_field("est_hhcount", QVariant.Double)])
+        auto_bldg.updateFields()
+        f_auto = QgsFeature(auto_bldg.fields())
+        f_auto.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(2, 2)))
+        f_auto.setAttribute("est_hhcount", 5.0)
+        dp_auto.addFeatures([f_auto])
+        auto_bldg.updateExtents()
+
+        # User-selected building layer with 2 points: 15 HH + 25 HH = 40 HH (MUST be used)
+        user_bldg = QgsVectorLayer("Point?crs=epsg:4326", "02122_bldg_point", "memory")
+        dp_user = user_bldg.dataProvider()
+        dp_user.addAttributes([create_qgs_field("est_hhcount", QVariant.Double)])
+        user_bldg.updateFields()
+        u1 = QgsFeature(user_bldg.fields())
+        u1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(2, 2)))
+        u1.setAttribute("est_hhcount", 15.0)
+        u2 = QgsFeature(user_bldg.fields())
+        u2.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(7, 7)))
+        u2.setAttribute("est_hhcount", 25.0)
+        dp_user.addFeatures([u1, u2])
+        user_bldg.updateExtents()
+
+        # Split output with 2 parts
+        split_res = QgsVectorLayer("Polygon?crs=epsg:4326", "split_res", "memory")
+        dp_s = split_res.dataProvider()
+        dp_s.addAttributes([create_qgs_field("hh_count", QVariant.Int), create_qgs_field("bldg_count", QVariant.Int)])
+        split_res.updateFields()
+        s1 = QgsFeature(split_res.fields())
+        s1.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(5, 0), QgsPointXY(5, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        s2 = QgsFeature(split_res.fields())
+        s2.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(5, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(5, 10), QgsPointXY(5, 0)
+        ]]))
+        dp_s.addFeatures([s1, s2])
+        split_res.updateExtents()
+
+        mock_proc_run.return_value = {"OUTPUT": split_res}
+
+        QgsProject.instance().addMapLayers([poly_lyr, line_lyr, auto_bldg, user_bldg])
+        try:
+            dlg = SplitEADialog()
+            dlg.poly_combo.setLayer(poly_lyr)
+            dlg.line_combo.setLayer(line_lyr)
+
+            # User explicitly chooses 02122_bldg_point in dropdown
+            dlg.bldg_combo.setLayer(user_bldg)
+            dlg._on_bldg_layer_changed()
+            self.assertEqual(dlg.bldg_combo.currentLayer(), user_bldg)
+
+            dlg.run_split()
+
+            # Process must strictly use user_bldg: 2 points total (u1: 15 HH in part 1, u2: 25 HH in part 2)
+            updated = list(poly_lyr.getFeatures())
+            self.assertEqual(len(updated), 2)
+            hh_vals = sorted([f.attribute("hh_count") for f in updated])
+            bldg_vals = sorted([f.attribute("bldg_count") for f in updated])
+            self.assertEqual(hh_vals, [15, 25])
+            self.assertEqual(bldg_vals, [1, 1])
+        finally:
+            QgsProject.instance().removeAllMapLayers()
+
 
 if __name__ == "__main__":
     unittest.main()

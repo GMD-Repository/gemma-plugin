@@ -520,17 +520,15 @@ class SplitEADialog(QDialog):
                 except Exception:
                     pass
 
-            # Dynamically determine / synchronize building layer with the selected input polygon layer
-            if poly_layer and poly_layer.isValid():
-                curr_bldg = self.bldg_combo.currentLayer()
-                if not getattr(self, "_bldg_user_selected", False) or not self._bldg_layer_matches_poly(curr_bldg, poly_layer):
-                    best_bldg = self._find_best_bldg_layer(ref_poly_layer=poly_layer)
-                    if best_bldg and best_bldg != curr_bldg:
-                        self._is_syncing_layers = True
-                        try:
-                            self.bldg_combo.setLayer(best_bldg)
-                        finally:
-                            self._is_syncing_layers = False
+            # If the user has not manually selected a building layer, auto-sync building layer to match this polygon
+            if poly_layer and poly_layer.isValid() and not getattr(self, "_bldg_user_selected", False):
+                best_bldg = self._find_best_bldg_layer(ref_poly_layer=poly_layer)
+                if best_bldg and best_bldg != self.bldg_combo.currentLayer():
+                    self._is_syncing_layers = True
+                    try:
+                        self.bldg_combo.setLayer(best_bldg)
+                    finally:
+                        self._is_syncing_layers = False
 
         line_layer = self.line_combo.currentLayer()
         if self._prev_line_layer != line_layer:
@@ -1057,17 +1055,26 @@ class SplitEADialog(QDialog):
             delineated_poly = self._find_best_layer(QgsWkbTypes.PolygonGeometry, "delineated_ea")
             if delineated_poly and delineated_poly.isValid():
                 poly_layer = delineated_poly
-                self.poly_combo.setLayer(poly_layer)
+                self._is_syncing_layers = True
+                try:
+                    self.poly_combo.setLayer(poly_layer)
+                finally:
+                    self._is_syncing_layers = False
 
         # Ensure cut lines layer is eadel_update if available in project
         if not line_layer or not line_layer.isValid() or "eadel_update" not in line_layer.name().lower():
             eadel_line = self._find_best_layer(QgsWkbTypes.LineGeometry, "eadel_update")
             if eadel_line and eadel_line.isValid():
                 line_layer = eadel_line
-                self.line_combo.setLayer(line_layer)
+                self._is_syncing_layers = True
+                try:
+                    self.line_combo.setLayer(line_layer)
+                finally:
+                    self._is_syncing_layers = False
 
-        # Ensure building point layer is auto-resolved if not set or empty
-        if not bldg_layer or not bldg_layer.isValid() or bldg_layer.featureCount() == 0:
+        # Ensure building point layer: whatever the user chose in the dropdown is strictly used.
+        # Fallback to auto-detection only if no valid building layer is selected at all.
+        if not bldg_layer or not bldg_layer.isValid():
             auto_bldg = self._find_best_bldg_layer(ref_poly_layer=poly_layer)
             if auto_bldg and auto_bldg.isValid():
                 bldg_layer = auto_bldg
@@ -1076,6 +1083,9 @@ class SplitEADialog(QDialog):
                     self.bldg_combo.setLayer(bldg_layer)
                 finally:
                     self._is_syncing_layers = False
+        else:
+            # Re-read from combo in case anything changed
+            bldg_layer = self.bldg_combo.currentLayer()
 
         if not poly_layer or not poly_layer.isValid():
             self._warn_user("Invalid Input", "Please select a valid EA polygon layer (delineated_ea).")
@@ -1218,7 +1228,7 @@ class SplitEADialog(QDialog):
             bldg_hh_idx, bldg_hh_name = -1, ""
             bldg_ea_geo_idx, bldg_ea_geo_name = -1, ""
 
-            if bldg_layer and bldg_layer.isValid() and bldg_layer.featureCount() > 0:
+            if bldg_layer and bldg_layer.isValid():
                 bldg_hh_idx, bldg_hh_name = self._resolve_bldg_hh_field(bldg_layer)
                 bldg_ea_geo_idx, bldg_ea_geo_name = self._resolve_bldg_ea_geocode_field(bldg_layer)
                 crs_info = f" [reprojecting from {bldg_layer.crs().authid()} to {poly_layer.crs().authid()}]" if bldg_to_poly_xform else ""
@@ -1227,6 +1237,7 @@ class SplitEADialog(QDialog):
                     f"(household field: '{bldg_hh_name or 'none [fallback 1/point]'}'{crs_info})..."
                 )
                 bldg_spatial_index = QgsSpatialIndex()
+                indexed_count = 0
                 for bf in bldg_layer.getFeatures():
                     if bf and bf.hasGeometry() and not bf.geometry().isEmpty():
                         bg = QgsGeometry(bf.geometry())
@@ -1240,6 +1251,11 @@ class SplitEADialog(QDialog):
                         bldg_spatial_index.addFeature(feat_clone)
                         bldg_lookup[feat_clone.id()] = feat_clone
                         bldg_lookup[bf.id()] = feat_clone
+                        indexed_count += 1
+                if indexed_count == 0:
+                    bldg_spatial_index = None
+                else:
+                    self._log(f"Indexed {indexed_count} building points from '{bldg_layer.name()}'.")
 
             # Resolve EA layer geocode field strictly
             ea_geo_idx, ea_geo_name = self._resolve_ea_geocode_field(poly_layer)
