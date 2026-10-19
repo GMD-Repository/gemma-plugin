@@ -121,7 +121,7 @@ BUILTIN_PRESETS = {
             "checked": True
         }
     ],
-    "KumoniAksyon": [
+    "KomuniAksyon": [
         {
             "path": ["CBMS Geotagging Layer"],
             "is_group": True,
