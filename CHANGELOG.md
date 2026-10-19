@@ -5,6 +5,21 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.12] - 2026-10-19
+
+### Added
+- add KumoniAksyon QML style and QField package dialog component ([@nbacquiano-ui](https://github.com/nbacquiano-ui)) ([#335](https://github.com/GMD-Repository/gemma-plugin/pull/335))
+- support eadel_update splitting, zero-HH sub-EA preservation, and spatial building recalculation ([@pacoleslaw](https://github.com/pacoleslaw)) ([#376](https://github.com/GMD-Repository/gemma-plugin/pull/376))
+- add KumoniAksyon QML style and QField package dialog component ([@nbacquiano-ui](https://github.com/nbacquiano-ui))
+- add Phase 2 candidate identification, Phase 8 output, and unit tests for building filtering ([@pacoleslaw](https://github.com/pacoleslaw))
+- add custom processing UI dialog module for EA delineation and merging workflow ([@pacoleslaw](https://github.com/pacoleslaw))
+- add enumeration area merge processor, tests, and user documentation ([@pacoleslaw](https://github.com/pacoleslaw))
+- add unit tests and dialog implementations for split EA functionality ([@pacoleslaw](https://github.com/pacoleslaw))
+
+### Fixed
+- resolve candidate role precedence and prioritize raw building layer detection ([@pacoleslaw](https://github.com/pacoleslaw)) ([#365](https://github.com/GMD-Repository/gemma-plugin/pull/365))
+- support direct EA merge consolidation, format whole-number Source Year in EARF, and resolve candidate role precedence ([@pacoleslaw](https://github.com/pacoleslaw)) ([#366](https://github.com/GMD-Repository/gemma-plugin/pull/366))
+
 ## [1.0.11] - 2026-10-05
 
 ### Fixed
