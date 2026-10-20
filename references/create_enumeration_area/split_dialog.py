@@ -37,6 +37,7 @@ from qgis.core import (
     QgsFeature,
     QgsGeometry,
     QgsPointXY,
+    QgsRectangle,
     QgsWkbTypes,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
@@ -1169,6 +1170,7 @@ class SplitEADialog(QDialog):
                 except Exception:
                     pass
             new_lf = QgsFeature(lf)
+            new_lf.setId(lf.id())
             new_lf.setGeometry(geom)
             selected_line_feats.append(new_lf)
 
@@ -1343,18 +1345,33 @@ class SplitEADialog(QDialog):
                             "INFO",
                         )
 
+                # Safe endpoint extension distance:
+                # Ensure cut line endpoints cleanly cross the polygon boundary from exterior to exterior
+                # so GEOS topological splitting algorithms (splitwithlines, planar polygonization, splitGeometry)
+                # reliably bifurcate polygons without failing on boundary endpoint vertices.
+                default_min_extend = 0.00005 if is_geographic else 1.0
+                safe_extend_dist = max(extend_dist_map_units, default_min_extend)
+
                 # Find cut lines that intersect this specific polygon
                 if use_selected_lines:
                     candidate_lines = selected_line_feats
                 else:
-                    cand_line_ids = line_spatial_index.intersects(poly_geom.boundingBox())
+                    bbox = poly_geom.boundingBox()
+                    search_rect = QgsRectangle(
+                        bbox.xMinimum() - safe_extend_dist,
+                        bbox.yMinimum() - safe_extend_dist,
+                        bbox.xMaximum() + safe_extend_dist,
+                        bbox.yMaximum() + safe_extend_dist,
+                    )
+                    cand_line_ids = line_spatial_index.intersects(search_rect)
                     candidate_lines = [line_lookup[lid] for lid in cand_line_ids if lid in line_lookup]
 
                 matching_lines = []
                 for lfeat in candidate_lines:
                     if lfeat and lfeat.geometry() and not lfeat.geometry().isEmpty():
                         lg = lfeat.geometry()
-                        if poly_geom.intersects(lg):
+                        ext_lg = self._extend_line_endpoints(lg, safe_extend_dist)
+                        if poly_geom.intersects(lg) or poly_geom.intersects(ext_lg):
                             matching_lines.append(lfeat)
 
                 if not matching_lines:
@@ -1368,13 +1385,20 @@ class SplitEADialog(QDialog):
                     parent_split_groups.append({"parent": poly_feat, "parts": [poly_geom]})
                     continue
 
+                # Ensure polygon geometry is valid and converted to MultiPolygon for processing
+                clean_poly_geom = poly_geom.makeValid() if hasattr(poly_geom, "makeValid") else poly_geom
+                if not clean_poly_geom or clean_poly_geom.isEmpty():
+                    clean_poly_geom = poly_geom
+                if not clean_poly_geom.isMultipart():
+                    clean_poly_geom.convertToMultiType()
+
                 # Create single polygon layer for isolated split (MultiPolygon supports both Polygon and MultiPolygon)
                 single_poly_layer = QgsVectorLayer(f"MultiPolygon?crs={crs_auth}", "single_poly", "memory")
                 dp_poly = single_poly_layer.dataProvider()
                 dp_poly.addAttributes(poly_layer.fields())
                 single_poly_layer.updateFields()
                 pf_copy = QgsFeature(poly_layer.fields())
-                pf_copy.setGeometry(poly_geom)
+                pf_copy.setGeometry(clean_poly_geom)
                 for fld in poly_layer.fields():
                     val = poly_feat.attribute(fld.name())
                     if val is not None and val != NULL:
@@ -1391,10 +1415,11 @@ class SplitEADialog(QDialog):
                 prepared_line_feats = []
                 for lf in matching_lines:
                     lg = lf.geometry()
-                    if extend_tol > 0.0:
-                        lg = self._extend_line_endpoints(lg, extend_dist_map_units)
+                    lg_ext = self._extend_line_endpoints(lg, safe_extend_dist)
+                    if not lg_ext.isMultipart():
+                        lg_ext.convertToMultiType()
                     new_lf = QgsFeature(line_layer.fields())
-                    new_lf.setGeometry(lg)
+                    new_lf.setGeometry(lg_ext)
                     prepared_line_feats.append(new_lf)
                 dp_lines.addFeatures(prepared_line_feats)
                 single_lines_layer.updateExtents()
@@ -1432,6 +1457,7 @@ class SplitEADialog(QDialog):
 
                 # Attempt 2: Planar Polygonization fallback (combines polygon boundary + cut lines)
                 if len(child_geoms) <= 1 and processing:
+                    child_geoms = []
                     try:
                         boundary_res = processing.run(
                             "native:boundary",
@@ -1463,7 +1489,7 @@ class SplitEADialog(QDialog):
                                 pg = p_feat.geometry()
                                 if pg and not pg.isEmpty():
                                     pt_surface = pg.pointOnSurface()
-                                    if poly_geom.contains(pt_surface) or poly_geom.intersects(pt_surface):
+                                    if poly_geom.contains(pt_surface) or (poly_geom.intersects(pg) and pg.intersection(poly_geom).area() > 0.5 * pg.area()):
                                         cand_parts.append(pg)
                             if len(cand_parts) > 1:
                                 child_geoms = cand_parts
@@ -1472,6 +1498,7 @@ class SplitEADialog(QDialog):
 
                 # Attempt 3: Iterative QgsGeometry.splitGeometry across all matching lines
                 if len(child_geoms) <= 1:
+                    child_geoms = []
                     # Deconstruct polygon into constituent parts to handle both single and multi-polygons
                     if poly_geom.isMultipart():
                         raw_parts = [QgsGeometry.fromPolygonXY(p) for p in poly_geom.asMultiPolygon()]
