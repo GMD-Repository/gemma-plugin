@@ -71,6 +71,7 @@ class SplitEADialog(QDialog):
         default_geocode: str = "",
         default_bldg_layer: Optional[QgsVectorLayer] = None,
         default_min_hh: int = 99,
+        default_max_hh: int = 300,
         default_poly_layer: Optional[QgsVectorLayer] = None,
         default_line_layer: Optional[QgsVectorLayer] = None,
     ):
@@ -90,6 +91,7 @@ class SplitEADialog(QDialog):
         self.default_geocode = default_geocode or ""
         self.default_bldg_layer = default_bldg_layer
         self.default_min_hh = int(default_min_hh or 99)
+        self.default_max_hh = int(default_max_hh or 300)
         self.default_poly_layer = default_poly_layer
         self.default_line_layer = default_line_layer
 
@@ -189,19 +191,31 @@ class SplitEADialog(QDialog):
         settings_layout.setContentsMargins(10, 10, 10, 10)
         settings_layout.setSpacing(6)
 
-        # Minimum Household Threshold
-        min_hh_layout = QHBoxLayout()
-        min_hh_layout.addWidget(QLabel("Minimum Household Threshold per EA:"))
+        # Household Thresholds (Min and Max)
+        thresh_layout = QHBoxLayout()
+        thresh_layout.addWidget(QLabel("Min Household:"))
         self.min_hh_spin = QSpinBox()
         self.min_hh_spin.setMinimumHeight(26)
         self.min_hh_spin.setRange(1, 99999)
         self.min_hh_spin.setValue(self.default_min_hh)
         self.min_hh_spin.setToolTip(
-            "Minimum household count required per EA. If any resulting split part falls below this threshold, the split for that EA is prevented to avoid creating under-threshold EAs."
+            "Minimum household reference threshold per EA (default: 99). Sub-EAs falling below this will be assessed as Under-Threshold."
         )
-        min_hh_layout.addWidget(self.min_hh_spin)
-        min_hh_layout.addStretch()
-        settings_layout.addLayout(min_hh_layout)
+        thresh_layout.addWidget(self.min_hh_spin)
+
+        thresh_layout.addSpacing(15)
+
+        thresh_layout.addWidget(QLabel("Max Household:"))
+        self.max_hh_spin = QSpinBox()
+        self.max_hh_spin.setMinimumHeight(26)
+        self.max_hh_spin.setRange(1, 99999)
+        self.max_hh_spin.setValue(self.default_max_hh)
+        self.max_hh_spin.setToolTip(
+            "Maximum household reference threshold per EA (default: 300). Sub-EAs exceeding this will be assessed as Exceeds Maximum."
+        )
+        thresh_layout.addWidget(self.max_hh_spin)
+        thresh_layout.addStretch()
+        settings_layout.addLayout(thresh_layout)
 
         # Line extension tolerance
         tol_layout = QHBoxLayout()
@@ -1632,6 +1646,11 @@ class SplitEADialog(QDialog):
                 except ValueError:
                     pass
 
+            total_split_sub_eas = 0
+            total_qualified_sub_eas = 0
+            total_under_min_sub_eas = 0
+            total_over_max_sub_eas = 0
+
             for group in parent_split_groups:
                 parent_feat = group["parent"]
                 parts = group["parts"]
@@ -1809,26 +1828,66 @@ class SplitEADialog(QDialog):
                             "INFO",
                         )
 
-                # ── Process sub-EAs and log threshold notice without rejecting split ──
+                # ── Process sub-EAs and assess qualification against Min and Max Thresholds ──
                 if len(part_data) > 1:
                     part_data.sort(key=lambda item: (item["hh_count"], item["area"]), reverse=True)
                     min_hh_threshold = self.min_hh_spin.value() if hasattr(self, "min_hh_spin") else 99
-                    if bldg_spatial_index:
-                        under_threshold = [p for p in part_data if p["hh_count"] < min_hh_threshold]
-                        if under_threshold:
-                            min_hh_found = min(p["hh_count"] for p in part_data)
-                            self._log(
-                                f"Notice: EA '{parent_code_6}' split into {len(part_data)} sub-EAs using 'eadel_update' "
-                                f"(HH counts: {[p['hh_count'] for p in part_data]}). "
-                                f"Sub-EA has {min_hh_found} households (below reference threshold of {min_hh_threshold} HH).",
-                                "WARNING",
-                            )
+                    max_hh_threshold = self.max_hh_spin.value() if hasattr(self, "max_hh_spin") else 300
+
+                    assessment_details = []
+                    under_parts = []
+                    over_parts = []
+                    qualified_parts = []
+
+                    for p_idx, p in enumerate(part_data):
+                        # Determine provisional or actual EA name for logging
+                        if orig_prefix == "000" or parent_code_6 in ("000000", "000", "0"):
+                            part_label = f"Sub-EA {p_idx + 1:03d}000"
+                        elif p_idx == 0:
+                            part_label = f"Sub-EA {orig_prefix}000"
                         else:
-                            self._log(
-                                f"Success: EA '{parent_code_6}' successfully split into {len(part_data)} sub-EAs using 'eadel_update' "
-                                f"(HH counts: {[p['hh_count'] for p in part_data]}).",
-                                "SUCCESS",
-                            )
+                            part_label = f"Sub-EA {p_idx + 1} of {parent_code_6}"
+
+                        p_hh = p["hh_count"]
+                        total_split_sub_eas += 1
+
+                        if p_hh < min_hh_threshold:
+                            under_parts.append(p)
+                            total_under_min_sub_eas += 1
+                            p["threshold_status"] = "UNDER_MIN"
+                            assessment_details.append(f"{part_label}: {p_hh} HH [UNDER MIN < {min_hh_threshold}]")
+                        elif p_hh > max_hh_threshold:
+                            over_parts.append(p)
+                            total_over_max_sub_eas += 1
+                            p["threshold_status"] = "EXCEEDS_MAX"
+                            assessment_details.append(f"{part_label}: {p_hh} HH [EXCEEDS MAX > {max_hh_threshold}]")
+                        else:
+                            qualified_parts.append(p)
+                            total_qualified_sub_eas += 1
+                            p["threshold_status"] = "QUALIFIED"
+                            assessment_details.append(f"{part_label}: {p_hh} HH [QUALIFIED]")
+
+                    self._log(
+                        f"Threshold Assessment for EA '{parent_code_6}' (Reference: {min_hh_threshold}-{max_hh_threshold} HH): "
+                        + ", ".join(assessment_details),
+                        "INFO",
+                    )
+
+                    if not under_parts and not over_parts:
+                        self._log(
+                            f"Success: All {len(part_data)} resulting sub-EAs from EA '{parent_code_6}' qualify within [{min_hh_threshold}-{max_hh_threshold} HH].",
+                            "SUCCESS",
+                        )
+                    else:
+                        issues = []
+                        if under_parts:
+                            issues.append(f"{len(under_parts)} sub-EA(s) below minimum ({min_hh_threshold} HH)")
+                        if over_parts:
+                            issues.append(f"{len(over_parts)} sub-EA(s) exceed maximum ({max_hh_threshold} HH)")
+                        self._log(
+                            f"Notice: Split for EA '{parent_code_6}' completed with threshold alerts: {'; '.join(issues)}.",
+                            "WARNING",
+                        )
 
                 for idx, p_item in enumerate(part_data):
                     inside_hh_count = p_item["hh_count"]
@@ -2037,13 +2096,28 @@ class SplitEADialog(QDialog):
             self._log(f"Successfully updated '{poly_layer.name()}' with {out_poly_count} features.", "SUCCESS")
             self.progress_bar.setValue(100)
 
-            # Update status banner
+            # Update status banner with qualification summary
             if is_truly_split:
                 count_info = f" | Total HH: {total_hh_sum:,}" if bldg_spatial_index else ""
-                self.status_banner.setText(
-                    f"PASS: Updated '{poly_layer.name()}' — {out_poly_count} features (+{delta_count}){count_info}"
-                )
-                self.status_banner.setStyleSheet("color: #27ae60; font-weight: bold;")
+                min_ref = self.min_hh_spin.value() if hasattr(self, "min_hh_spin") else 99
+                max_ref = self.max_hh_spin.value() if hasattr(self, "max_hh_spin") else 300
+
+                if total_under_min_sub_eas == 0 and total_over_max_sub_eas == 0:
+                    self.status_banner.setText(
+                        f"PASS: Updated '{poly_layer.name()}' — {out_poly_count} features (+{delta_count}){count_info} | All {total_qualified_sub_eas} Sub-EAs Qualified [{min_ref}-{max_ref} HH]"
+                    )
+                    self.status_banner.setStyleSheet("color: #27ae60; font-weight: bold;")
+                else:
+                    alerts = []
+                    if total_under_min_sub_eas > 0:
+                        alerts.append(f"{total_under_min_sub_eas} below min")
+                    if total_over_max_sub_eas > 0:
+                        alerts.append(f"{total_over_max_sub_eas} exceed max")
+                    alert_str = ", ".join(alerts)
+                    self.status_banner.setText(
+                        f"ALERT: Updated '{poly_layer.name()}' — {out_poly_count} features (+{delta_count}){count_info} | Threshold Alert: {alert_str} (Ref: {min_ref}-{max_ref} HH)"
+                    )
+                    self.status_banner.setStyleSheet("color: #d35400; font-weight: bold;")
             else:
                 self.status_banner.setText(
                     f"Completed — '{poly_layer.name()}' has {out_poly_count} features"

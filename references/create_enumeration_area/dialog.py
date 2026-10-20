@@ -7540,6 +7540,13 @@ class EALauncherDialog(QDialog):
             except Exception:
                 min_hh = 99
 
+        max_hh = 300
+        if hasattr(self, "max_hh_spin") and self.max_hh_spin:
+            try:
+                max_hh = self.max_hh_spin.value()
+            except Exception:
+                max_hh = 300
+
         # Automatically resolve delineated_ea polygon, eadel_update cut lines, and building point layers
         delineated_poly = None
         eadel_line = None
@@ -7607,6 +7614,7 @@ class EALauncherDialog(QDialog):
             default_geocode=geo5,
             default_bldg_layer=bldg_layer,
             default_min_hh=min_hh,
+            default_max_hh=max_hh,
             default_poly_layer=delineated_poly,
             default_line_layer=eadel_line,
         )
