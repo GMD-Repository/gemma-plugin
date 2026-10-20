@@ -201,7 +201,7 @@ Replacement polygons take precedence over the previous EA layer: any overlapping
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | **Previous EA Layer** | Vector (Polygon) | Previous EA polygon layer (e.g. `<geocode>_ea`, `<geocode>_ea2024`, `<geocode>_ea2026_preprocessed`). Attributes and fields are preserved. Required. |
-| **Replacement Polygon Layers — Multi Input** | Vector (Polygon, Multi) | One or more vector polygon layers selected from the project. Every layer name must contain **exactly 8 numeric digits** (e.g. `01001000`). Required. |
+| **Replacement Polygon Layers — Multi Input** | Vector (Polygon, Multi) | One or more vector polygon layers selected from the project. Every layer name must contain **exactly 8 numeric digits** (e.g. `01001000`). Optional. If omitted, the workflow consolidates the Previous EA Layer directly into the 19-column output format and generates the preliminary EARF Excel table. |
 
 ### Tab 3 Validation Checklist
 
