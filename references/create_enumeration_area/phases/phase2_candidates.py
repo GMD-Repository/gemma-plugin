@@ -988,7 +988,12 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     feedback.pushInfo("Building temporal previous EA index (candidates and adjacent EAs only)...")
     temp_ea_index = QgsSpatialIndex()
     temp_ea_by_id = {}
-    candidate_target_ids = set(delineation_candidate_ids) | set(merge_candidate_ids) | set(adjacent_ea_ids)
+    if exec_mode == "delineation":
+        candidate_target_ids = set(delineation_candidate_ids)
+    elif exec_mode == "merging":
+        candidate_target_ids = set(merge_candidate_ids) | set(adjacent_ea_ids)
+    else:
+        candidate_target_ids = set(delineation_candidate_ids) | set(merge_candidate_ids) | set(adjacent_ea_ids)
     for feat in all_ea_features:
         if feat.id() in candidate_target_ids:
             temp_ea_index.addFeature(feat)
@@ -1184,6 +1189,19 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             parent_ean_idx = bldg_out_fields.indexOf("parent_ean")
 
             for b in deduped_bldgs:
+                if exec_mode == "delineation":
+                    pt_g = QgsGeometry.fromPointXY(b['point'])
+                    inside = False
+                    for cid in delineation_candidate_ids:
+                        cf = ea_by_id.get(cid)
+                        if cf and cf.hasGeometry():
+                            cg = cf.geometry()
+                            if cg.contains(pt_g) or cg.intersects(pt_g):
+                                inside = True
+                                break
+                    if not inside:
+                        continue
+
                 b_feat = QgsFeature(bldg_out_fields)
                 b_geom = QgsGeometry.fromPointXY(b['point'])
                 if barangay_to_target:

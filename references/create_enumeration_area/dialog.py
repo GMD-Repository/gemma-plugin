@@ -6383,6 +6383,149 @@ class EALauncherDialog(QDialog):
                         self.merge_log_console.append(msg)
 
                 if isinstance(results, dict):
+                    # ── In Delineation Mode: Extract building points using native:extractbylocation with delineation candidates as reference ──
+                    if mode == "delineation" and bldg_layer:
+                        try:
+                            delin_cand_lyr = None
+                            if 'DELINEATION_CANDIDATE_OUTPUT' in results:
+                                cand_ref = results['DELINEATION_CANDIDATE_OUTPUT']
+                                if isinstance(cand_ref, str):
+                                    delin_cand_lyr = get_safe_project_layer(cand_ref) or context.getMapLayer(cand_ref)
+                                elif hasattr(cand_ref, 'id') or isinstance(cand_ref, QgsMapLayer):
+                                    if is_layer_alive(cand_ref):
+                                        delin_cand_lyr = cand_ref
+                            if not delin_cand_lyr:
+                                proj = QgsProject.instance()
+                                if hasattr(proj, 'mapLayersByName'):
+                                    cand_layers = proj.mapLayersByName(f"{geo5}_delineation_candidates")
+                                    if isinstance(cand_layers, list) and cand_layers:
+                                        delin_cand_lyr = cand_layers[0]
+
+                            has_features = False
+                            if delin_cand_lyr and is_layer_alive(delin_cand_lyr) and hasattr(delin_cand_lyr, 'featureCount'):
+                                try:
+                                    cnt = delin_cand_lyr.featureCount()
+                                    if isinstance(cnt, int) and cnt > 0:
+                                        has_features = True
+                                except Exception:
+                                    has_features = False
+
+                            if has_features:
+                                _log_msg(
+                                    "<span style='color:#0969da; font-weight:bold;'>[INFO]</span> "
+                                    "Running Extract by Location on building points using delineation candidates as reference..."
+                                )
+                                loc_res = processing.run(
+                                    "native:extractbylocation",
+                                    {
+                                        'INPUT': bldg_layer,
+                                        'PREDICATE': [0],  # 0: intersect
+                                        'INTERSECT': delin_cand_lyr,
+                                        'OUTPUT': 'memory:',
+                                    },
+                                    context=context,
+                                    feedback=self.feedback
+                                )
+                                extracted_lyr = loc_res.get('OUTPUT')
+                                if extracted_lyr and extracted_lyr.isValid():
+                                    # Discard any prior EXTRACTED_BUILDINGS_OUTPUT produced by the algorithm
+                                    if 'EXTRACTED_BUILDINGS_OUTPUT' in results:
+                                        old_bldg_ref = results['EXTRACTED_BUILDINGS_OUTPUT']
+                                        old_bldg_lyr = None
+                                        if isinstance(old_bldg_ref, str):
+                                            old_bldg_lyr = get_safe_project_layer(old_bldg_ref)
+                                        elif hasattr(old_bldg_ref, 'id') or isinstance(old_bldg_ref, QgsMapLayer):
+                                            if is_layer_alive(old_bldg_ref):
+                                                old_bldg_lyr = old_bldg_ref
+                                        if old_bldg_lyr:
+                                            try:
+                                                QgsProject.instance().removeMapLayer(old_bldg_lyr.id())
+                                            except Exception:
+                                                pass
+
+                                    # Enrich with necessary metadata attributes
+                                    pr = extracted_lyr.dataProvider()
+                                    new_flds = []
+                                    for fn, ft in [
+                                        ("parent_ean", QVariant.String),
+                                        ("candidate_ean", QVariant.String),
+                                        ("merge_role", QVariant.String),
+                                        ("pop", QVariant.Double),
+                                        ("bldgpoints_value", QVariant.Double),
+                                    ]:
+                                        if extracted_lyr.fields().indexOf(fn) == -1:
+                                            new_flds.append(create_qgs_field(fn, ft))
+                                    if new_flds:
+                                        pr.addAttributes(new_flds)
+                                        extracted_lyr.updateFields()
+
+                                    role_idx = extracted_lyr.fields().indexOf("merge_role")
+                                    parent_ean_idx = extracted_lyr.fields().indexOf("parent_ean")
+                                    cand_ean_idx = extracted_lyr.fields().indexOf("candidate_ean")
+                                    pop_idx = extracted_lyr.fields().indexOf("pop")
+
+                                    bldg_hh_idx = -1
+                                    for hh_cand in ["pop", "hh_count", "hhcount", "household"]:
+                                        idx = extracted_lyr.fields().indexOf(hh_cand)
+                                        if idx != -1:
+                                            bldg_hh_idx = idx
+                                            break
+
+                                    cand_spatial_idx = QgsSpatialIndex()
+                                    cand_feat_map = {}
+                                    for cf in delin_cand_lyr.getFeatures():
+                                        cand_spatial_idx.addFeature(cf)
+                                        cand_feat_map[cf.id()] = cf
+
+                                    cand_ean_field = "ean"
+                                    for ean_cand in ["ean", "code", "ea_code", "ean_code"]:
+                                        if delin_cand_lyr.fields().indexOf(ean_cand) != -1:
+                                            cand_ean_field = ean_cand
+                                            break
+
+                                    extracted_lyr.startEditing()
+                                    for bf in extracted_lyr.getFeatures():
+                                        b_fid = bf.id()
+                                        if role_idx != -1:
+                                            extracted_lyr.changeAttributeValue(b_fid, role_idx, "Delineation Candidate")
+                                        bg = bf.geometry()
+                                        matched_ean = ""
+                                        if bg and not bg.isEmpty():
+                                            cand_matches = cand_spatial_idx.intersects(bg.boundingBox())
+                                            for cid in cand_matches:
+                                                cf = cand_feat_map.get(cid)
+                                                if cf and (cf.geometry().contains(bg) or cf.geometry().intersects(bg)):
+                                                    val = cf.attribute(cand_ean_field)
+                                                    if val is not None:
+                                                        val_str = str(val).strip()
+                                                        if val_str.endswith(".0"):
+                                                            val_str = val_str[:-2]
+                                                        matched_ean = val_str
+                                                        break
+                                        if parent_ean_idx != -1 and matched_ean:
+                                            extracted_lyr.changeAttributeValue(b_fid, parent_ean_idx, matched_ean)
+                                        if cand_ean_idx != -1 and matched_ean:
+                                            extracted_lyr.changeAttributeValue(b_fid, cand_ean_idx, matched_ean)
+                                        if pop_idx != -1:
+                                            p_val = 1.0
+                                            if bldg_hh_idx != -1:
+                                                try:
+                                                    p_val = float(bf.attribute(bldg_hh_idx) or 1.0)
+                                                except (ValueError, TypeError):
+                                                    p_val = 1.0
+                                            extracted_lyr.changeAttributeValue(b_fid, pop_idx, p_val)
+
+                                    extracted_lyr.commitChanges()
+
+                                    QgsProject.instance().addMapLayer(extracted_lyr, False)
+                                    results['EXTRACTED_BUILDINGS_OUTPUT'] = extracted_lyr
+                                    _log_msg(
+                                        f"<span style='color:#1a7f37; font-weight:bold;'>[SUCCESS]</span> "
+                                        f"Extract by location completed: {extracted_lyr.featureCount()} building point(s) within delineation candidates."
+                                    )
+                        except Exception as e:
+                            _log_msg(f"<span style='color:#cf222e;'>[ERROR] Extract by location error: {str(e)}</span>")
+
                     for out_key, target_name, target_group, qml_filename, is_perm, f_path, allowed_modes in output_mapping_all:
                         if mode not in allowed_modes:
                             # Discard unwanted temporary layer if produced by processing
@@ -6454,7 +6597,7 @@ class EALauncherDialog(QDialog):
                                         role_idx = layer.fields().indexOf("merge_role")
                                         if role_idx != -1 and hasattr(layer, 'setSubsetString'):
                                             if mode == "delineation":
-                                                layer.setSubsetString('"merge_role" NOT IN (\'Candidate\', \'Merge Partner\')')
+                                                layer.setSubsetString('"merge_role" IN (\'Delineation Candidate\', \'Delineated\')')
                                             elif mode == "merging":
                                                 layer.setSubsetString('"merge_role" IN (\'Candidate\', \'Merge Partner\', \'Merged\')')
                                     apply_qml_to_layer(layer, qml_filename)
@@ -6464,6 +6607,8 @@ class EALauncherDialog(QDialog):
                                             clone = lnode.clone()
                                             target_group.addChildNode(clone)
                                             lnode.parent().removeChildNode(lnode)
+                                    else:
+                                        target_group.addLayer(layer)
                         else:
                             # Not in results dictionary (0 features produced)
                             skip_msg = f"<span style='color:#7F8C8D;'>[INFO] Output layer '{target_name}' has 0 features; skipping layer generation.</span>"
