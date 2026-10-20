@@ -349,17 +349,24 @@ class UnmergeEADialog(QDialog):
         """Find the index and name of the household count field in building point layer."""
         fields = bldg_layer.fields()
         candidate_names = [
+            "pop",
+            "bldgpoints_value",
             "est_hhcount",
             "est_hh_count",
             "est_hh",
             "hh_count",
             "hhcount",
             "household",
+            "population",
         ]
         for cname in candidate_names:
             for idx in range(fields.count()):
-                if fields.at(idx).name().lower() == cname:
+                if fields.at(idx).name().lower().strip() == cname:
                     return idx, fields.at(idx).name()
+        for idx in range(fields.count()):
+            fname = fields.at(idx).name().lower().strip()
+            if "hh" in fname or "household" in fname or fname == "pop":
+                return idx, fields.at(idx).name()
         return -1, ""
 
     def run_unmerge(self):
@@ -614,7 +621,10 @@ class UnmergeEADialog(QDialog):
                                     raw_val = bfeat.attribute(bldg_hh_idx)
                                     if raw_val is not None and raw_val != NULL:
                                         try:
-                                            inside_hh_float += float(raw_val)
+                                            pt_hh = float(raw_val)
+                                            if pt_hh <= 0.0:
+                                                pt_hh = 1.0
+                                            inside_hh_float += pt_hh
                                         except (ValueError, TypeError):
                                             inside_hh_float += 1.0
                                     else:

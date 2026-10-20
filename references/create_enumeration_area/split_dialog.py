@@ -369,8 +369,8 @@ class SplitEADialog(QDialog):
             elif any(f.name().lower() in ("est_hhcount", "est_hh", "hh_count", "hhcount") for f in lyr.fields()):
                 score = 50
 
-            # Bonus for layers with est_hhcount field
-            if any(f.name().lower() in ("est_hhcount", "est_hh_count", "est_hh", "esthhcount") for f in lyr.fields()):
+            # Bonus for layers with household or population fields
+            if any(f.name().lower() in ("est_hhcount", "est_hh_count", "est_hh", "esthhcount", "pop", "bldgpoints_value", "hh_count", "hhcount") for f in lyr.fields()):
                 score += 20
 
             # Heavily prioritize layers that actually contain features over empty placeholder layers
@@ -836,6 +836,8 @@ class SplitEADialog(QDialog):
         """Find the index and name of the household count field in building point layer."""
         fields = bldg_layer.fields()
         candidate_names = [
+            "pop",
+            "bldgpoints_value",
             "est_hhcount",
             "est_hh_count",
             "est_hh",
@@ -850,7 +852,6 @@ class SplitEADialog(QDialog):
             "bldg_hh",
             "num_hh",
             "no_hh",
-            "pop",
             "population",
         ]
         for cname in candidate_names:
@@ -860,7 +861,7 @@ class SplitEADialog(QDialog):
         # Fallback substring check
         for idx in range(fields.count()):
             fname = fields.at(idx).name().lower().strip()
-            if "hh" in fname or "household" in fname:
+            if "hh" in fname or "household" in fname or fname == "pop":
                 return idx, fields.at(idx).name()
         return -1, ""
 
@@ -1229,10 +1230,14 @@ class SplitEADialog(QDialog):
                 p_crs = poly_layer.crs()
                 if b_crs.isValid() and p_crs.isValid() and b_crs.authid() != p_crs.authid():
                     try:
-                        bldg_to_poly_xform = QgsCoordinateTransform(b_crs, p_crs, QgsProject.instance())
-                    except Exception as e:
-                        self._log(f"Notice: Failed to initialize coordinate transform from '{b_crs.authid()}' to '{p_crs.authid()}': {e}", "WARNING")
-                        bldg_to_poly_xform = None
+                        xform_ctx = QgsProject.instance().transformContext()
+                        bldg_to_poly_xform = QgsCoordinateTransform(b_crs, p_crs, xform_ctx)
+                    except Exception:
+                        try:
+                            bldg_to_poly_xform = QgsCoordinateTransform(b_crs, p_crs, QgsProject.instance())
+                        except Exception as e:
+                            self._log(f"Notice: Failed to initialize coordinate transform from '{b_crs.authid()}' to '{p_crs.authid()}': {e}", "WARNING")
+                            bldg_to_poly_xform = None
 
             bldg_spatial_index = None
             bldg_lookup = {}
@@ -1295,12 +1300,14 @@ class SplitEADialog(QDialog):
                         if not bgeom or bgeom.isEmpty():
                             continue
                         if chk_geom.contains(bgeom) or chk_geom.intersects(bgeom):
-                            # Resolve household float for point from est_hhcount
+                            # Resolve household float for point from est_hhcount / pop / hh_count
                             if bldg_hh_idx != -1:
                                 raw_val = bfeat.attribute(bldg_hh_idx)
                                 if raw_val is not None and raw_val != NULL:
                                     try:
                                         pt_hh = float(raw_val)
+                                        if pt_hh <= 0.0:
+                                            pt_hh = 1.0
                                     except (ValueError, TypeError):
                                         pt_hh = 1.0
                                 else:
@@ -1309,7 +1316,7 @@ class SplitEADialog(QDialog):
                                 pt_hh = 1.0
 
                             inside_bldg_count += 1
-                            inside_hh_float += max(0.0, pt_hh)
+                            inside_hh_float += pt_hh
 
                 return inside_bldg_count, int(math.ceil(inside_hh_float))
 
@@ -1659,28 +1666,35 @@ class SplitEADialog(QDialog):
                     raw_ea_geo = parent_feat.attribute(ea_geo_idx)
                     parent_8digit = self._extract_8digit_code(raw_ea_geo)
 
+                # Extract parent feature's existing household and building counts as baseline fallbacks
+                orig_hh = _safe_parent_attr(parent_feat, "hh_count", None)
+                if orig_hh is None:
+                    orig_hh = _safe_parent_attr(parent_feat, "hhcount", None)
+                if orig_hh is None:
+                    orig_hh = _safe_parent_attr(parent_feat, "new_hhcount", 0)
+                try:
+                    parent_hh_val = int(round(float(orig_hh))) if orig_hh else 0
+                except Exception:
+                    parent_hh_val = 0
+
+                orig_bldg = _safe_parent_attr(parent_feat, "bldg_count", None)
+                if orig_bldg is None:
+                    orig_bldg = _safe_parent_attr(parent_feat, "bldgcount", None)
+                if orig_bldg is None:
+                    orig_bldg = _safe_parent_attr(parent_feat, "new_bldgcount", 0)
+                try:
+                    parent_bldg_val = int(round(float(orig_bldg))) if orig_bldg else 0
+                except Exception:
+                    parent_bldg_val = 0
+
                 for p_geom in parts:
                     inside_bldg_count, inside_hh_count = _calculate_geom_counts(p_geom, target_8digit_code=parent_8digit)
                     # When an EA is untouched (len(parts) == 1) and spatial points are not present (inside_hh_count == 0),
                     # strictly preserve the parent feature's existing hh_count and bldg_count.
-                    if len(parts) == 1 and inside_hh_count == 0:
-                        orig_hh = _safe_parent_attr(parent_feat, "hh_count", None)
-                        if orig_hh is None:
-                            orig_hh = _safe_parent_attr(parent_feat, "hhcount", 0)
-                        if orig_hh:
-                            try:
-                                inside_hh_count = int(float(orig_hh))
-                            except Exception:
-                                pass
-                    if len(parts) == 1 and inside_bldg_count == 0:
-                        orig_bldg = _safe_parent_attr(parent_feat, "bldg_count", None)
-                        if orig_bldg is None:
-                            orig_bldg = _safe_parent_attr(parent_feat, "bldgcount", 0)
-                        if orig_bldg:
-                            try:
-                                inside_bldg_count = int(float(orig_bldg))
-                            except Exception:
-                                pass
+                    if len(parts) == 1 and inside_hh_count == 0 and parent_hh_val > 0:
+                        inside_hh_count = parent_hh_val
+                    if len(parts) == 1 and inside_bldg_count == 0 and parent_bldg_val > 0:
+                        inside_bldg_count = parent_bldg_val
 
                     area_val = p_geom.area() if p_geom else 0.0
                     part_data.append({
@@ -1689,6 +1703,53 @@ class SplitEADialog(QDialog):
                         "bldg_count": inside_bldg_count,
                         "area": area_val,
                     })
+
+                # If the polygon was actually split (len(part_data) > 1), but spatial points yielded 0 households,
+                # fall back to proportioning the parent EA's existing hh_count (and bldg_count) across the sub-EAs!
+                if len(part_data) > 1:
+                    total_calc_hh = sum(p["hh_count"] for p in part_data)
+                    total_calc_bldg = sum(p["bldg_count"] for p in part_data)
+                    total_area = sum(p["area"] for p in part_data)
+
+                    # Household count fallback
+                    if total_calc_hh == 0 and parent_hh_val > 0:
+                        self._log(
+                            f"Notice: Building points yielded 0 HH for split EA '{parent_code_6}'. "
+                            f"Proportioning parent household count ({parent_hh_val}) across {len(part_data)} sub-EAs.",
+                            "INFO",
+                        )
+                        assigned_hh_sum = 0
+                        for i, p in enumerate(part_data):
+                            if total_calc_bldg > 0:
+                                ratio = p["bldg_count"] / total_calc_bldg
+                            elif total_area > 0:
+                                ratio = p["area"] / total_area
+                            else:
+                                ratio = 1.0 / len(part_data)
+                            part_hh = max(1, int(round(parent_hh_val * ratio)))
+                            p["hh_count"] = part_hh
+                            assigned_hh_sum += part_hh
+
+                        # Balance difference so sum equals parent_hh_val
+                        diff = parent_hh_val - assigned_hh_sum
+                        if diff != 0 and len(part_data) > 0:
+                            largest_idx = max(range(len(part_data)), key=lambda idx: part_data[idx]["area"])
+                            if part_data[largest_idx]["hh_count"] + diff >= 1:
+                                part_data[largest_idx]["hh_count"] += diff
+
+                    # Building count fallback
+                    if total_calc_bldg == 0 and parent_bldg_val > 0:
+                        assigned_bldg_sum = 0
+                        for i, p in enumerate(part_data):
+                            ratio = p["area"] / total_area if total_area > 0 else 1.0 / len(part_data)
+                            part_bldg = max(1, int(round(parent_bldg_val * ratio)))
+                            p["bldg_count"] = part_bldg
+                            assigned_bldg_sum += part_bldg
+                        diff_b = parent_bldg_val - assigned_bldg_sum
+                        if diff_b != 0 and len(part_data) > 0:
+                            largest_idx = max(range(len(part_data)), key=lambda idx: part_data[idx]["area"])
+                            if part_data[largest_idx]["bldg_count"] + diff_b >= 1:
+                                part_data[largest_idx]["bldg_count"] += diff_b
 
                 # ── Dissolve 0-HH sub-polygon slices (e.g. road/boundary slivers) into adjacent populated siblings ──
                 if bldg_spatial_index:
@@ -1816,9 +1877,9 @@ class SplitEADialog(QDialog):
 
                         # Only hh_count and bldg_count / bldg_points are updated based on building points
                         # Baseline fields (hhcount, bldgcount, bldgpoint, code, etc.) are strictly preserved
-                        if is_hh_field and bldg_spatial_index:
+                        if is_hh_field:
                             new_feat.setAttribute(fname, inside_hh_count)
-                        elif is_bldg_field and bldg_spatial_index:
+                        elif is_bldg_field:
                             new_feat.setAttribute(fname, inside_bldg_count)
                         elif fname_lower == "new_ean":
                             new_feat.setAttribute(fname, assigned_new_ean)
@@ -1871,25 +1932,36 @@ class SplitEADialog(QDialog):
                     f_geom = feat.geometry()
                     if f_geom and not f_geom.isEmpty():
                         b_cnt, hh_cnt = _calculate_geom_counts(f_geom)
-                        is_delineated = str(feat.attribute("ea_type") or "").upper() == "DELINEATED"
-                        if b_cnt > 0 or hh_cnt > 0 or is_delineated:
-                            for fld in poly_fields:
-                                fn_lower = fld.name().lower()
-                                if fn_lower in ("hh_count", "hh_cnt"):
-                                    feat.setAttribute(fld.name(), hh_cnt)
-                                elif fn_lower in ("bldg_count", "bldg_points", "bldg_point", "bldg_cnt", "bldgpts_cnt"):
-                                    feat.setAttribute(fld.name(), b_cnt)
-                        # Accumulate total sums
-                        f_hh = feat.attribute("hh_count")
-                        f_bldg = feat.attribute("bldg_count") or feat.attribute("bldg_points")
+                        existing_hh = feat.attribute("hh_count")
+                        existing_hh_val = 0
                         try:
-                            total_hh_sum += int(float(f_hh)) if f_hh is not None and f_hh != NULL else hh_cnt
+                            if existing_hh is not None and existing_hh != NULL:
+                                existing_hh_val = int(float(existing_hh))
                         except Exception:
-                            total_hh_sum += hh_cnt
+                            existing_hh_val = 0
+
+                        existing_bldg = feat.attribute("bldg_count") or feat.attribute("bldg_points")
+                        existing_bldg_val = 0
                         try:
-                            total_bldg_sum += int(float(f_bldg)) if f_bldg is not None and f_bldg != NULL else b_cnt
+                            if existing_bldg is not None and existing_bldg != NULL:
+                                existing_bldg_val = int(float(existing_bldg))
                         except Exception:
-                            total_bldg_sum += b_cnt
+                            existing_bldg_val = 0
+
+                        # Only overwrite with fresh count if points actually yielded positive values,
+                        # or if no existing value was set. Never zero out a valid fallback count!
+                        final_hh = hh_cnt if hh_cnt > 0 else existing_hh_val
+                        final_bldg = b_cnt if b_cnt > 0 else existing_bldg_val
+
+                        for fld in poly_fields:
+                            fn_lower = fld.name().lower()
+                            if fn_lower in ("hh_count", "hh_cnt"):
+                                feat.setAttribute(fld.name(), final_hh)
+                            elif fn_lower in ("bldg_count", "bldg_points", "bldg_point", "bldg_cnt", "bldgpts_cnt"):
+                                feat.setAttribute(fld.name(), final_bldg)
+
+                        total_hh_sum += final_hh
+                        total_bldg_sum += final_bldg
 
             out_poly_count = len(new_features)
             delta_count = out_poly_count - in_poly_count
