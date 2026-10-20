@@ -20,6 +20,8 @@ try:
         Polygon as ShapelyPolygon,
         MultiPolygon as ShapelyMultiPolygon,
         Point as ShapelyPoint,
+        LineString as ShapelyLineString,
+        MultiLineString as ShapelyMultiLineString,
         box as shapely_box,
     )
     HAS_SHAPELY = True
@@ -298,6 +300,10 @@ class QgsGeometry:
             # predicate (contains, intersects, distance) answered nonsense.
             if getattr(self, '_point', None) is not None:
                 return ShapelyPoint(self._point.x(), self._point.y())
+            if getattr(self, '_polyline', None) is not None and self._polyline:
+                return ShapelyLineString([(p.x() if hasattr(p, 'x') else p[0], p.y() if hasattr(p, 'y') else p[1]) for p in self._polyline])
+            if getattr(self, '_polylines', None) is not None and self._polylines:
+                return ShapelyMultiLineString([[(p.x() if hasattr(p, 'x') else p[0], p.y() if hasattr(p, 'y') else p[1]) for p in line] for line in self._polylines])
             if hasattr(self, 'polygons') and self.polygons:
                 spolys = []
                 for poly_rings in self.polygons:
@@ -337,15 +343,36 @@ class QgsGeometry:
                 holes = [[QgsPointXY(x, y) for x, y in ring.coords] for ring in p.interiors]
                 mpolys.append([shell] + holes if holes else [shell])
             return QgsGeometry("MultiPolygon", mpolys)
-        elif stype in ("LineString", "MultiLineString"):
-            return QgsGeometry("LineString")
+        elif stype == "LineString":
+            pts = [QgsPointXY(x, y) for x, y in sg.coords]
+            return QgsGeometry.fromPolylineXY(pts)
+        elif stype == "MultiLineString":
+            polylines = [[QgsPointXY(x, y) for x, y in line.coords] for line in sg.geoms]
+            g = QgsGeometry("MultiLineString")
+            g._polylines = polylines
+            if polylines:
+                g._polyline = polylines[0]
+            return g
         elif stype == "Point":
             return QgsGeometry.fromPointXY(QgsPointXY(sg.x, sg.y))
         elif stype == "GeometryCollection":
             for geom in sg.geoms:
                 if geom.geom_type in ("Polygon", "MultiPolygon"):
                     return QgsGeometry._from_shapely(geom)
+            for geom in sg.geoms:
+                if geom.geom_type in ("LineString", "MultiLineString"):
+                    return QgsGeometry._from_shapely(geom)
         return QgsGeometry("Polygon", [])
+
+    def asPolyline(self):
+        return list(getattr(self, '_polyline', []) or [])
+
+    def asMultiPolyline(self):
+        if getattr(self, '_polylines', None) is not None:
+            return [list(pl) for pl in self._polylines]
+        if getattr(self, '_polyline', None) is not None:
+            return [list(self._polyline)]
+        return []
 
     @staticmethod
     def fromMultiPolygonXY(multipoly):
@@ -524,6 +551,36 @@ class QgsGeometry:
         return 40.0
 
     def splitGeometry(self, split_line, preserve_input=False):
+        if HAS_SHAPELY:
+            try:
+                import shapely.ops
+                import shapely.geometry
+                s_geom = self._to_shapely()
+                if s_geom and not s_geom.is_empty:
+                    if isinstance(split_line, list):
+                        coords = [(p.x(), p.y()) for p in split_line]
+                        s_line = shapely.geometry.LineString(coords)
+                    elif hasattr(split_line, '_to_shapely'):
+                        s_line = split_line._to_shapely()
+                    else:
+                        s_line = None
+                    if s_line and not s_line.is_empty:
+                        split_res = shapely.ops.split(s_geom, s_line)
+                        polys = [
+                            p for p in split_res.geoms
+                            if isinstance(p, (shapely.geometry.Polygon, shapely.geometry.MultiPolygon)) and not p.is_empty and p.area > 1e-7
+                        ]
+                        if len(polys) >= 2:
+                            first_poly = polys[0]
+                            if hasattr(first_poly, 'exterior'):
+                                self.polygons = [[QgsPointXY(c[0], c[1]) for c in first_poly.exterior.coords]]
+                            else:
+                                self.polygons = [[QgsPointXY(c[0], c[1]) for c in first_poly.geoms[0].exterior.coords]]
+                            new_geoms = [QgsGeometry._from_shapely(p) for p in polys[1:]]
+                            return 0, new_geoms, []
+            except Exception:
+                pass
+
         bbox = self.boundingBox()
         mid_x = (bbox.xMinimum() + bbox.xMaximum()) / 2.0
         self.polygons = [[
@@ -541,6 +598,26 @@ class QgsGeometry:
             QgsPointXY(mid_x, bbox.yMinimum()),
         ]])
         return 0, [p2], []
+
+    @staticmethod
+    def polygonize(geometries):
+        if HAS_SHAPELY:
+            try:
+                import shapely.ops
+                import shapely.geometry
+                s_lines = []
+                for g in geometries:
+                    s = g._to_shapely() if hasattr(g, '_to_shapely') else None
+                    if s:
+                        s_lines.append(s)
+                if s_lines:
+                    polys = list(shapely.ops.polygonize(s_lines))
+                    if polys:
+                        mp = shapely.geometry.MultiPolygon(polys)
+                        return QgsGeometry._from_shapely(mp)
+            except Exception:
+                pass
+        return QgsGeometry("MultiPolygon", [])
 
     def voronoiDiagram(self, extent=None):
         return QgsGeometry("MultiPolygon")
@@ -710,16 +787,21 @@ class QgsFields:
 
 
 class QgsFeature:
-    def __init__(self, fields=None):
+    def __init__(self, fields=None, id=None):
         if isinstance(fields, QgsFeature):
             self._attributes = list(fields._attributes)
             self._geometry = fields._geometry
             self._id = fields._id
             self._fields = fields._fields
+        elif isinstance(fields, int):
+            self._attributes = []
+            self._geometry = None
+            self._id = fields
+            self._fields = None
         else:
             self._attributes = []
             self._geometry = None
-            self._id = 0
+            self._id = id if id is not None else 0
             self._fields = fields
 
     def isValid(self):
@@ -849,6 +931,10 @@ class QgsCoordinateReferenceSystem:
 
     def isValid(self):
         return bool(self._authid)
+
+    def isGeographic(self):
+        aid = str(self._authid).upper()
+        return "4326" in aid or "CRS84" in aid or "GEOG" in aid
 
     def __repr__(self):
         return f"<QgsCoordinateReferenceSystem: {self._authid}>"
