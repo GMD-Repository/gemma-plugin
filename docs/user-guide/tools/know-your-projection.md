@@ -16,6 +16,7 @@ Use this tool when:
 - Vector shapefiles or GeoPackages have missing `.prj` definition files, invalid CRS tags, or unassigned projections.
 - Boundary layers digitized in local CAD units (~0 to ~100,000) or legacy millimeter coordinates need to be georeferenced to standard Philippine CRS grids.
 - Layer boundaries fail to overlay correctly onto satellite basemaps due to datum offsets between WGS 84, PRS92, and Luzon 1911.
+- Building point layers, household centroids, or landmark tables have mixed coordinates (e.g. features with UTM meters inside an EPSG:4326 layer) that cause coordinate transform errors in analysis tools like MBI Checker.
 - You need to audit coordinate bounding boxes and classify CRS regimes across municipal vector datasets prior to boundary harmonization.
 
 ## Parameters
@@ -60,6 +61,11 @@ Use this tool when:
 
 5. **Direct Layer Reprojection & Export**:
    - Allows users to reassign the confirmed CRS to the active layer or export georeferenced features into a standardized new GeoPackage in the target CRS (e.g. WGS 84 / UTM Zone 51N).
+
+6. **Point Geometry Repair (Building Points & Centroids)**:
+   - Scans point vector layers for coordinate anomalies where metric values (such as UTM Zone 51N coordinates $X \approx 600,000$, $Y \approx 1,500,000$) were stored inside layers declared as geographic (`EPSG:4326`).
+   - Audits coordinate bounds ($|X| > 180^\circ$ or $|Y| > 90^\circ$) and detects missing or empty geometries in a read-only audit.
+   - Reconstructs accurate point geometries directly from `longitude` and `latitude` attribute columns inside an undoable QGIS edit session with full rollback protection.
 
 ## Supported Coordinate Systems Matrix
 
