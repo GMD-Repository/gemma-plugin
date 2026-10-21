@@ -298,15 +298,106 @@ def _unique_values(layer: QgsVectorLayer, field_idx: int) -> list:
     return result
 
 
-def _repair_geometry(geom: QgsGeometry) -> QgsGeometry:
-    """Return a repaired copy of the geometry if invalid; else return as-is."""
+def _clean_polygon_geometry(geom: QgsGeometry) -> QgsGeometry:
+    """Ensure geom contains only valid Polygon / MultiPolygon parts.
+
+    Filters out any LineString or Point collapse artifacts resulting from
+    GEOS makeValid() on self-intersecting polygons or slivers.
+    """
     if geom is None or geom.isNull() or geom.isEmpty():
         return geom
-    if not geom.isGeosValid():
-        fixed = geom.makeValid()
-        if fixed and not fixed.isNull():
-            return fixed
-    return geom
+
+    g = QgsGeometry(geom)
+    try:
+        if hasattr(QgsWkbTypes, 'geometryType') and callable(getattr(QgsWkbTypes, 'geometryType')):
+            if QgsWkbTypes.geometryType(g.wkbType()) == QgsWkbTypes.PolygonGeometry:
+                return g
+    except Exception:
+        pass
+
+    # Try QGIS native convertGeometryCollectionToSubclass
+    try:
+        if hasattr(g, 'convertGeometryCollectionToSubclass') and hasattr(QgsWkbTypes, 'PolygonGeometry'):
+            tmp = QgsGeometry(g)
+            if tmp.convertGeometryCollectionToSubclass(QgsWkbTypes.PolygonGeometry):
+                if not tmp.isNull() and not tmp.isEmpty():
+                    return tmp
+    except Exception:
+        pass
+
+    # Fallback: extract polygon parts manually from geometry collection
+    try:
+        parts = []
+        if hasattr(g, 'asGeometryCollection'):
+            for p in g.asGeometryCollection():
+                if p and not p.isNull() and not p.isEmpty():
+                    is_poly = False
+                    if hasattr(QgsWkbTypes, 'geometryType'):
+                        is_poly = (QgsWkbTypes.geometryType(p.wkbType()) == QgsWkbTypes.PolygonGeometry)
+                    elif hasattr(p, 'type'):
+                        is_poly = (p.type() == 2)
+                    if is_poly:
+                        parts.append(p)
+        elif hasattr(g, 'constParts'):
+            for p in g.constParts():
+                if p and not p.isNull() and not p.isEmpty():
+                    parts.append(p)
+
+        if parts:
+            if len(parts) == 1:
+                return parts[0]
+            if hasattr(QgsGeometry, 'unaryUnion'):
+                union_g = QgsGeometry.unaryUnion(parts)
+                if union_g and not union_g.isNull() and not union_g.isEmpty():
+                    return union_g
+            combined = QgsGeometry(parts[0])
+            for p in parts[1:]:
+                combined = combined.combine(p)
+            return combined
+    except Exception:
+        pass
+
+    return g
+
+
+def _repair_geometry(geom: QgsGeometry) -> QgsGeometry:
+    """Return a repaired copy of the geometry if invalid; else return as-is.
+
+    Guarantees that the returned geometry contains only valid Polygon or
+    MultiPolygon parts, discarding any collapsed line or point fragments.
+    """
+    if geom is None or geom.isNull() or geom.isEmpty():
+        return geom
+
+    g = QgsGeometry(geom)
+    try:
+        if hasattr(g, 'isGeosValid') and not g.isGeosValid():
+            fixed = g.makeValid() if hasattr(g, 'makeValid') else None
+            if fixed and not fixed.isNull() and not fixed.isEmpty():
+                g = fixed
+            else:
+                # Buffer(0) repair fallback
+                if hasattr(g, 'buffer'):
+                    buffered = g.buffer(0.0, 5)
+                    if buffered and not buffered.isNull() and not buffered.isEmpty():
+                        g = buffered
+    except Exception:
+        pass
+
+    # Filter out non-polygonal elements (e.g. LineStrings from collapsed self-intersections)
+    g = _clean_polygon_geometry(g)
+
+    # Secondary validity check on cleaned geometry
+    try:
+        if hasattr(g, 'isGeosValid') and not g.isGeosValid():
+            if hasattr(g, 'buffer'):
+                bg = g.buffer(0.0, 5)
+                if bg and not bg.isNull() and not bg.isEmpty():
+                    g = _clean_polygon_geometry(bg)
+    except Exception:
+        pass
+
+    return g
 
 
 # ---------------------------------------------------------------------------
@@ -1360,16 +1451,9 @@ class EAMergeProcessor:
         if out_fields is None:
             out_fields = self._build_output_fields()
         crs_auth = self.ea_layer.crs().authid()
-        is_multi = False
-        try:
-            if hasattr(QgsWkbTypes, 'isMultiType') and callable(getattr(QgsWkbTypes, 'isMultiType')):
-                is_multi = QgsWkbTypes.isMultiType(self.ea_layer.wkbType())
-            else:
-                is_multi = "multi" in str(self.ea_layer.wkbType()).lower()
-        except Exception:
-            is_multi = False
-
-        wkb_type = "MultiPolygon" if is_multi else "Polygon"
+        # Always use MultiPolygon for the output EA layer to seamlessly accommodate
+        # both multi-part geometries (replacement layers, split EAs) and single-part EAs.
+        wkb_type = "MultiPolygon"
         uri = f"{wkb_type}?crs={crs_auth}"
         layer = QgsVectorLayer(uri, self._output_layer_name, "memory")
         if not layer.isValid():
@@ -1383,7 +1467,7 @@ class EAMergeProcessor:
         provider.addAttributes(fields_list)
         layer.updateFields()
 
-        # Ensure all output features have unique sequential FIDs
+        # Ensure all output features have unique sequential FIDs and valid MultiPolygon geometries
         fid_idx = layer.fields().indexOf("fid")
         for idx, feat in enumerate(features, start=1):
             if feat.fields() is None or feat.fields().count() != layer.fields().count():
@@ -1396,8 +1480,47 @@ class EAMergeProcessor:
                 feat.setAttribute(fid_idx, idx)
             feat.setId(idx)
 
+            geom = feat.geometry()
+            if geom is not None and not geom.isNull() and not geom.isEmpty():
+                geom = _repair_geometry(geom)
+                if geom and not geom.isNull() and not geom.isEmpty():
+                    try:
+                        if hasattr(geom, 'isMultipart') and not geom.isMultipart():
+                            if hasattr(geom, 'convertToMultiType'):
+                                geom.convertToMultiType()
+                    except Exception:
+                        pass
+                feat.setGeometry(geom)
+
         # Add features in bulk
-        provider.addFeatures(features)
+        res = provider.addFeatures(features)
+        bulk_success = res if isinstance(res, bool) else (res[0] if isinstance(res, (list, tuple)) else True)
+        expected_feature_count = sum(
+            1 for f in features
+            if f.geometry() is not None and not f.geometry().isNull() and not f.geometry().isEmpty()
+        )
+
+        if not bulk_success or layer.featureCount() < expected_feature_count:
+            self._log(
+                f"[WARNING] Bulk feature insertion added {layer.featureCount()} / {expected_feature_count} features. "
+                "Retrying with resilient per-feature insertion..."
+            )
+            # Remove any partially added features before retrying
+            existing_fids = [f.id() for f in layer.getFeatures()]
+            if existing_fids and hasattr(provider, 'deleteFeatures'):
+                provider.deleteFeatures(existing_fids)
+
+            for feat in features:
+                geom = feat.geometry()
+                if geom is None or geom.isNull() or geom.isEmpty():
+                    continue
+                single_res = provider.addFeatures([feat])
+                s_ok = single_res if isinstance(single_res, bool) else (single_res[0] if isinstance(single_res, (list, tuple)) else True)
+                if not s_ok:
+                    self._log(
+                        f"[WARNING] Could not insert feature FID {feat.id()} into output layer."
+                    )
+
         layer.updateExtents()
 
         return layer

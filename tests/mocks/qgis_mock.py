@@ -501,7 +501,16 @@ class QgsGeometry:
     def mergeLines(self): return QgsGeometry("LineString")
     def simplify(self, tol): return self
     def convertToType(self, dest_type, destructively=False): return QgsGeometry("LineString")
-    def convertToMultiType(self): return True
+    def convertToMultiType(self):
+        if not self.geom_type.startswith("Multi"):
+            self.geom_type = f"Multi{self.geom_type}"
+        return True
+    def convertGeometryCollectionToSubclass(self, subclass_type=None):
+        if self.geom_type == "GeometryCollection":
+            if getattr(self, 'polygons', None):
+                self.geom_type = "MultiPolygon" if len(self.polygons) > 1 else "Polygon"
+                return True
+        return False
     def constParts(self):
         if self.polygons:
             return [QgsGeometry("Polygon", [p]) for p in self.polygons]
