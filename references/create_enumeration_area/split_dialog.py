@@ -10,6 +10,7 @@ and recalculates 'hh_count' (from est_hhcount of building points) and 'bldg_coun
 import os
 import sys
 import math
+import re
 from typing import Optional, Dict, Any, List, Tuple
 
 from qgis.PyQt.QtCore import Qt, QObject, pyqtSignal, QVariant
@@ -36,17 +37,22 @@ from qgis.core import (
     QgsFeature,
     QgsGeometry,
     QgsPointXY,
+    QgsRectangle,
     QgsWkbTypes,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsProcessingFeedback,
     QgsField,
+    QgsFields,
+    QgsFeatureRequest,
+    QgsVectorFileWriter,
     QgsMapLayerProxyModel,
     QgsSpatialIndex,
     NULL,
 )
 
 from .helpers.constants import create_qgs_field
+from .helpers.style import apply_qml_to_layer
 from qgis.gui import QgsMapLayerComboBox
 
 try:
@@ -65,6 +71,7 @@ class SplitEADialog(QDialog):
         default_geocode: str = "",
         default_bldg_layer: Optional[QgsVectorLayer] = None,
         default_min_hh: int = 99,
+        default_max_hh: int = 300,
         default_poly_layer: Optional[QgsVectorLayer] = None,
         default_line_layer: Optional[QgsVectorLayer] = None,
     ):
@@ -84,6 +91,7 @@ class SplitEADialog(QDialog):
         self.default_geocode = default_geocode or ""
         self.default_bldg_layer = default_bldg_layer
         self.default_min_hh = int(default_min_hh or 99)
+        self.default_max_hh = int(default_max_hh or 300)
         self.default_poly_layer = default_poly_layer
         self.default_line_layer = default_line_layer
 
@@ -91,6 +99,8 @@ class SplitEADialog(QDialog):
         self._prev_line_layer = None
         self._poly_user_toggled = False
         self._line_user_toggled = False
+        self._bldg_user_selected = False
+        self._is_syncing_layers = False
 
         self._init_ui()
         self._auto_detect_layers()
@@ -162,11 +172,11 @@ class SplitEADialog(QDialog):
         inputs_layout.addSpacing(4)
 
         # Building Points Layer
-        inputs_layout.addWidget(QLabel("Building Point Layer (bldgpts)*:"))
+        inputs_layout.addWidget(QLabel("Building Point Layer (Point)*:"))
         self.bldg_combo = QgsMapLayerComboBox(self)
         self.bldg_combo.setMinimumHeight(28)
         self.bldg_combo.setFilters(QgsMapLayerProxyModel.PointLayer)
-        self.bldg_combo.layerChanged.connect(self._on_layer_selection_changed)
+        self.bldg_combo.layerChanged.connect(self._on_bldg_layer_changed)
         inputs_layout.addWidget(self.bldg_combo)
 
         self.bldg_status_lbl = QLabel("No building point layer selected.")
@@ -181,19 +191,31 @@ class SplitEADialog(QDialog):
         settings_layout.setContentsMargins(10, 10, 10, 10)
         settings_layout.setSpacing(6)
 
-        # Minimum Household Threshold
-        min_hh_layout = QHBoxLayout()
-        min_hh_layout.addWidget(QLabel("Minimum Household Threshold per EA:"))
+        # Household Thresholds (Min and Max)
+        thresh_layout = QHBoxLayout()
+        thresh_layout.addWidget(QLabel("Min Household:"))
         self.min_hh_spin = QSpinBox()
         self.min_hh_spin.setMinimumHeight(26)
         self.min_hh_spin.setRange(1, 99999)
         self.min_hh_spin.setValue(self.default_min_hh)
         self.min_hh_spin.setToolTip(
-            "Minimum household count required per EA. If any resulting split part falls below this threshold, the split for that EA is prevented to avoid creating under-threshold EAs."
+            "Minimum household reference threshold per EA (default: 99). Sub-EAs falling below this will be assessed as Under-Threshold."
         )
-        min_hh_layout.addWidget(self.min_hh_spin)
-        min_hh_layout.addStretch()
-        settings_layout.addLayout(min_hh_layout)
+        thresh_layout.addWidget(self.min_hh_spin)
+
+        thresh_layout.addSpacing(15)
+
+        thresh_layout.addWidget(QLabel("Max Household:"))
+        self.max_hh_spin = QSpinBox()
+        self.max_hh_spin.setMinimumHeight(26)
+        self.max_hh_spin.setRange(1, 99999)
+        self.max_hh_spin.setValue(self.default_max_hh)
+        self.max_hh_spin.setToolTip(
+            "Maximum household reference threshold per EA (default: 300). Sub-EAs exceeding this will be assessed as Exceeds Maximum."
+        )
+        thresh_layout.addWidget(self.max_hh_spin)
+        thresh_layout.addStretch()
+        settings_layout.addLayout(thresh_layout)
 
         # Line extension tolerance
         tol_layout = QHBoxLayout()
@@ -298,21 +320,42 @@ class SplitEADialog(QDialog):
 
         return best_layer if best_score > 0 else None
 
-    def _find_best_bldg_layer(self) -> Optional[QgsVectorLayer]:
+    def _extract_geocode_from_layer(self, layer: Optional[QgsVectorLayer]) -> str:
+        """Extract numeric geocode prefix or token from layer name."""
+        if not layer or not layer.isValid():
+            return ""
+        name = layer.name().lower()
+        parts = name.split("_")
+        for part in parts:
+            digits = "".join(c for c in part if c.isdigit())
+            if len(digits) in (5, 9, 10):
+                return digits
+        digits_all = "".join(c for c in name if c.isdigit())
+        if len(digits_all) >= 5:
+            return digits_all[:5]
+        return ""
+
+    def _bldg_layer_matches_poly(self, bldg_layer: Optional[QgsVectorLayer], poly_layer: Optional[QgsVectorLayer]) -> bool:
+        """Check if building point layer matches the target polygon layer geocode."""
+        if not bldg_layer or not bldg_layer.isValid() or not poly_layer or not poly_layer.isValid():
+            return False
+        poly_geo = self._extract_geocode_from_layer(poly_layer)
+        if not poly_geo:
+            return True
+        bldg_name = bldg_layer.name().lower()
+        return poly_geo in bldg_name
+
+    def _find_best_bldg_layer(self, ref_poly_layer: Optional[QgsVectorLayer] = None) -> Optional[QgsVectorLayer]:
         """Find the best matching building points vector layer in QgsProject."""
         project = QgsProject.instance()
         all_layers = list(project.mapLayers().values())
         best_layer = None
         best_score = -1
-        geo = (self.default_geocode or "").strip().lower()
 
-        # If default_geocode not explicitly supplied, extract from polygon layer name if possible
-        if not geo:
-            curr_poly = self.default_poly_layer or (self.poly_combo.currentLayer() if hasattr(self, "poly_combo") else None)
-            if curr_poly and curr_poly.isValid():
-                digits = "".join([c for c in curr_poly.name().split("_")[0] if c.isdigit()])
-                if digits:
-                    geo = digits.lower()
+        target_poly = ref_poly_layer or (self.poly_combo.currentLayer() if hasattr(self, "poly_combo") else self.default_poly_layer)
+        geo = (self.default_geocode or "").strip().lower()
+        if not geo and target_poly and target_poly.isValid():
+            geo = self._extract_geocode_from_layer(target_poly)
 
         for lyr in all_layers:
             if not isinstance(lyr, QgsVectorLayer) or not lyr.isValid():
@@ -323,11 +366,15 @@ class SplitEADialog(QDialog):
             name = lyr.name().lower()
             feat_count = lyr.featureCount()
             score = 0
-            if geo and geo in name and ("bldgpts" in name or "extracted_bldgpts" in name or "bldg_point" in name):
+            if geo and geo in name and ("extracted_bldgpts" in name or "extracted_bldg" in name):
+                score = 120
+            elif geo and geo in name and ("bldgpts" in name or "bldg_point" in name or "bldgpoint" in name or "bldg_points" in name or "building_point" in name or "building_points" in name):
                 score = 110
-            elif "bldgpts" in name or "extracted_bldgpts" in name:
+            elif "extracted_bldgpts" in name or "extracted_bldg" in name:
+                score = 95
+            elif "bldgpts" in name:
                 score = 90
-            elif geo and geo in name and ("bldg_point" in name or "bldgpoint" in name or "geotagged" in name or "bldg_points" in name):
+            elif geo and geo in name and ("geotagged" in name or "structure" in name):
                 score = 85
             elif "bldg_point" in name or "bldgpoint" in name or "bldg_points" in name or "building_point" in name or "building_points" in name or "geotagged" in name:
                 score = 75
@@ -336,8 +383,8 @@ class SplitEADialog(QDialog):
             elif any(f.name().lower() in ("est_hhcount", "est_hh", "hh_count", "hhcount") for f in lyr.fields()):
                 score = 50
 
-            # Bonus for layers with est_hhcount field
-            if any(f.name().lower() in ("est_hhcount", "est_hh_count", "est_hh", "esthhcount") for f in lyr.fields()):
+            # Bonus for layers with household or population fields
+            if any(f.name().lower() in ("est_hhcount", "est_hh_count", "est_hh", "esthhcount", "pop", "bldgpoints_value", "hh_count", "hhcount") for f in lyr.fields()):
                 score += 20
 
             # Heavily prioritize layers that actually contain features over empty placeholder layers
@@ -387,16 +434,22 @@ class SplitEADialog(QDialog):
                         line_candidate = lyr
                         break
 
-        # Detect building points
-        if not bldg_candidate or bldg_candidate.featureCount() == 0:
-            bldg_candidate = self._find_best_bldg_layer()
-
+        # Set polygon and line candidates first so UI and comboboxes are initialized
         if poly_candidate:
             self.poly_combo.setLayer(poly_candidate)
         if line_candidate:
             self.line_combo.setLayer(line_candidate)
+
+        # Detect building points using poly_candidate to determine matching input
+        if not bldg_candidate or bldg_candidate.featureCount() == 0:
+            bldg_candidate = self._find_best_bldg_layer(ref_poly_layer=poly_candidate)
+
         if bldg_candidate:
-            self.bldg_combo.setLayer(bldg_candidate)
+            self._is_syncing_layers = True
+            try:
+                self.bldg_combo.setLayer(bldg_candidate)
+            finally:
+                self._is_syncing_layers = False
 
         self._on_layer_selection_changed()
 
@@ -468,6 +521,12 @@ class SplitEADialog(QDialog):
             self.line_selected_chk.setEnabled(False)
             self._line_user_toggled = False
 
+    def _on_bldg_layer_changed(self):
+        """Handle building layer combobox change."""
+        if not getattr(self, "_is_syncing_layers", False):
+            self._bldg_user_selected = True
+        self._on_layer_selection_changed()
+
     def _on_layer_selection_changed(self):
         """Update layer info labels and dynamic selection listeners when layers change."""
         poly_layer = self.poly_combo.currentLayer()
@@ -484,6 +543,16 @@ class SplitEADialog(QDialog):
                     poly_layer.selectionChanged.connect(self._update_poly_selection_ui)
                 except Exception:
                     pass
+
+            # If the user has not manually selected a building layer, auto-sync building layer to match this polygon
+            if poly_layer and poly_layer.isValid() and not getattr(self, "_bldg_user_selected", False):
+                best_bldg = self._find_best_bldg_layer(ref_poly_layer=poly_layer)
+                if best_bldg and best_bldg != self.bldg_combo.currentLayer():
+                    self._is_syncing_layers = True
+                    try:
+                        self.bldg_combo.setLayer(best_bldg)
+                    finally:
+                        self._is_syncing_layers = False
 
         line_layer = self.line_combo.currentLayer()
         if self._prev_line_layer != line_layer:
@@ -781,6 +850,8 @@ class SplitEADialog(QDialog):
         """Find the index and name of the household count field in building point layer."""
         fields = bldg_layer.fields()
         candidate_names = [
+            "pop",
+            "bldgpoints_value",
             "est_hhcount",
             "est_hh_count",
             "est_hh",
@@ -795,7 +866,6 @@ class SplitEADialog(QDialog):
             "bldg_hh",
             "num_hh",
             "no_hh",
-            "pop",
             "population",
         ]
         for cname in candidate_names:
@@ -805,7 +875,7 @@ class SplitEADialog(QDialog):
         # Fallback substring check
         for idx in range(fields.count()):
             fname = fields.at(idx).name().lower().strip()
-            if "hh" in fname or "household" in fname:
+            if "hh" in fname or "household" in fname or fname == "pop":
                 return idx, fields.at(idx).name()
         return -1, ""
 
@@ -1010,21 +1080,37 @@ class SplitEADialog(QDialog):
             delineated_poly = self._find_best_layer(QgsWkbTypes.PolygonGeometry, "delineated_ea")
             if delineated_poly and delineated_poly.isValid():
                 poly_layer = delineated_poly
-                self.poly_combo.setLayer(poly_layer)
+                self._is_syncing_layers = True
+                try:
+                    self.poly_combo.setLayer(poly_layer)
+                finally:
+                    self._is_syncing_layers = False
 
         # Ensure cut lines layer is eadel_update if available in project
         if not line_layer or not line_layer.isValid() or "eadel_update" not in line_layer.name().lower():
             eadel_line = self._find_best_layer(QgsWkbTypes.LineGeometry, "eadel_update")
             if eadel_line and eadel_line.isValid():
                 line_layer = eadel_line
-                self.line_combo.setLayer(line_layer)
+                self._is_syncing_layers = True
+                try:
+                    self.line_combo.setLayer(line_layer)
+                finally:
+                    self._is_syncing_layers = False
 
-        # Ensure building point layer is auto-resolved if not set or empty
-        if not bldg_layer or not bldg_layer.isValid() or bldg_layer.featureCount() == 0:
-            auto_bldg = self._find_best_bldg_layer()
+        # Ensure building point layer: whatever the user chose in the dropdown is strictly used.
+        # Fallback to auto-detection only if no valid building layer is selected at all.
+        if not bldg_layer or not bldg_layer.isValid():
+            auto_bldg = self._find_best_bldg_layer(ref_poly_layer=poly_layer)
             if auto_bldg and auto_bldg.isValid():
                 bldg_layer = auto_bldg
-                self.bldg_combo.setLayer(bldg_layer)
+                self._is_syncing_layers = True
+                try:
+                    self.bldg_combo.setLayer(bldg_layer)
+                finally:
+                    self._is_syncing_layers = False
+        else:
+            # Re-read from combo in case anything changed
+            bldg_layer = self.bldg_combo.currentLayer()
 
         if not poly_layer or not poly_layer.isValid():
             self._warn_user("Invalid Input", "Please select a valid EA polygon layer (delineated_ea).")
@@ -1099,6 +1185,7 @@ class SplitEADialog(QDialog):
                 except Exception:
                     pass
             new_lf = QgsFeature(lf)
+            new_lf.setId(lf.id())
             new_lf.setGeometry(geom)
             selected_line_feats.append(new_lf)
 
@@ -1157,17 +1244,21 @@ class SplitEADialog(QDialog):
                 p_crs = poly_layer.crs()
                 if b_crs.isValid() and p_crs.isValid() and b_crs.authid() != p_crs.authid():
                     try:
-                        bldg_to_poly_xform = QgsCoordinateTransform(b_crs, p_crs, QgsProject.instance())
-                    except Exception as e:
-                        self._log(f"Notice: Failed to initialize coordinate transform from '{b_crs.authid()}' to '{p_crs.authid()}': {e}", "WARNING")
-                        bldg_to_poly_xform = None
+                        xform_ctx = QgsProject.instance().transformContext()
+                        bldg_to_poly_xform = QgsCoordinateTransform(b_crs, p_crs, xform_ctx)
+                    except Exception:
+                        try:
+                            bldg_to_poly_xform = QgsCoordinateTransform(b_crs, p_crs, QgsProject.instance())
+                        except Exception as e:
+                            self._log(f"Notice: Failed to initialize coordinate transform from '{b_crs.authid()}' to '{p_crs.authid()}': {e}", "WARNING")
+                            bldg_to_poly_xform = None
 
             bldg_spatial_index = None
             bldg_lookup = {}
             bldg_hh_idx, bldg_hh_name = -1, ""
             bldg_ea_geo_idx, bldg_ea_geo_name = -1, ""
 
-            if bldg_layer and bldg_layer.isValid() and bldg_layer.featureCount() > 0:
+            if bldg_layer and bldg_layer.isValid():
                 bldg_hh_idx, bldg_hh_name = self._resolve_bldg_hh_field(bldg_layer)
                 bldg_ea_geo_idx, bldg_ea_geo_name = self._resolve_bldg_ea_geocode_field(bldg_layer)
                 crs_info = f" [reprojecting from {bldg_layer.crs().authid()} to {poly_layer.crs().authid()}]" if bldg_to_poly_xform else ""
@@ -1176,10 +1267,11 @@ class SplitEADialog(QDialog):
                     f"(household field: '{bldg_hh_name or 'none [fallback 1/point]'}'{crs_info})..."
                 )
                 bldg_spatial_index = QgsSpatialIndex()
+                indexed_count = 0
                 for bf in bldg_layer.getFeatures():
                     if bf and bf.hasGeometry() and not bf.geometry().isEmpty():
                         bg = QgsGeometry(bf.geometry())
-                        if bldg_to_poly_xform and bldg_to_poly_xform.isValid():
+                        if bldg_to_poly_xform:
                             try:
                                 bg.transform(bldg_to_poly_xform)
                             except Exception:
@@ -1189,6 +1281,11 @@ class SplitEADialog(QDialog):
                         bldg_spatial_index.addFeature(feat_clone)
                         bldg_lookup[feat_clone.id()] = feat_clone
                         bldg_lookup[bf.id()] = feat_clone
+                        indexed_count += 1
+                if indexed_count == 0:
+                    bldg_spatial_index = None
+                else:
+                    self._log(f"Indexed {indexed_count} building points from '{bldg_layer.name()}'.")
 
             # Resolve EA layer geocode field strictly
             ea_geo_idx, ea_geo_name = self._resolve_ea_geocode_field(poly_layer)
@@ -1217,12 +1314,14 @@ class SplitEADialog(QDialog):
                         if not bgeom or bgeom.isEmpty():
                             continue
                         if chk_geom.contains(bgeom) or chk_geom.intersects(bgeom):
-                            # Resolve household float for point from est_hhcount
+                            # Resolve household float for point from est_hhcount / pop / hh_count
                             if bldg_hh_idx != -1:
                                 raw_val = bfeat.attribute(bldg_hh_idx)
                                 if raw_val is not None and raw_val != NULL:
                                     try:
                                         pt_hh = float(raw_val)
+                                        if pt_hh <= 0.0:
+                                            pt_hh = 1.0
                                     except (ValueError, TypeError):
                                         pt_hh = 1.0
                                 else:
@@ -1231,7 +1330,7 @@ class SplitEADialog(QDialog):
                                 pt_hh = 1.0
 
                             inside_bldg_count += 1
-                            inside_hh_float += max(0.0, pt_hh)
+                            inside_hh_float += pt_hh
 
                 return inside_bldg_count, int(math.ceil(inside_hh_float))
 
@@ -1267,18 +1366,33 @@ class SplitEADialog(QDialog):
                             "INFO",
                         )
 
+                # Safe endpoint extension distance:
+                # Ensure cut line endpoints cleanly cross the polygon boundary from exterior to exterior
+                # so GEOS topological splitting algorithms (splitwithlines, planar polygonization, splitGeometry)
+                # reliably bifurcate polygons without failing on boundary endpoint vertices.
+                default_min_extend = 0.00005 if is_geographic else 1.0
+                safe_extend_dist = max(extend_dist_map_units, default_min_extend)
+
                 # Find cut lines that intersect this specific polygon
                 if use_selected_lines:
                     candidate_lines = selected_line_feats
                 else:
-                    cand_line_ids = line_spatial_index.intersects(poly_geom.boundingBox())
+                    bbox = poly_geom.boundingBox()
+                    search_rect = QgsRectangle(
+                        bbox.xMinimum() - safe_extend_dist,
+                        bbox.yMinimum() - safe_extend_dist,
+                        bbox.xMaximum() + safe_extend_dist,
+                        bbox.yMaximum() + safe_extend_dist,
+                    )
+                    cand_line_ids = line_spatial_index.intersects(search_rect)
                     candidate_lines = [line_lookup[lid] for lid in cand_line_ids if lid in line_lookup]
 
                 matching_lines = []
                 for lfeat in candidate_lines:
                     if lfeat and lfeat.geometry() and not lfeat.geometry().isEmpty():
                         lg = lfeat.geometry()
-                        if poly_geom.intersects(lg):
+                        ext_lg = self._extend_line_endpoints(lg, safe_extend_dist)
+                        if poly_geom.intersects(lg) or poly_geom.intersects(ext_lg):
                             matching_lines.append(lfeat)
 
                 if not matching_lines:
@@ -1292,13 +1406,20 @@ class SplitEADialog(QDialog):
                     parent_split_groups.append({"parent": poly_feat, "parts": [poly_geom]})
                     continue
 
+                # Ensure polygon geometry is valid and converted to MultiPolygon for processing
+                clean_poly_geom = poly_geom.makeValid() if hasattr(poly_geom, "makeValid") else poly_geom
+                if not clean_poly_geom or clean_poly_geom.isEmpty():
+                    clean_poly_geom = poly_geom
+                if not clean_poly_geom.isMultipart():
+                    clean_poly_geom.convertToMultiType()
+
                 # Create single polygon layer for isolated split (MultiPolygon supports both Polygon and MultiPolygon)
                 single_poly_layer = QgsVectorLayer(f"MultiPolygon?crs={crs_auth}", "single_poly", "memory")
                 dp_poly = single_poly_layer.dataProvider()
                 dp_poly.addAttributes(poly_layer.fields())
                 single_poly_layer.updateFields()
                 pf_copy = QgsFeature(poly_layer.fields())
-                pf_copy.setGeometry(poly_geom)
+                pf_copy.setGeometry(clean_poly_geom)
                 for fld in poly_layer.fields():
                     val = poly_feat.attribute(fld.name())
                     if val is not None and val != NULL:
@@ -1315,10 +1436,11 @@ class SplitEADialog(QDialog):
                 prepared_line_feats = []
                 for lf in matching_lines:
                     lg = lf.geometry()
-                    if extend_tol > 0.0:
-                        lg = self._extend_line_endpoints(lg, extend_dist_map_units)
+                    lg_ext = self._extend_line_endpoints(lg, safe_extend_dist)
+                    if not lg_ext.isMultipart():
+                        lg_ext.convertToMultiType()
                     new_lf = QgsFeature(line_layer.fields())
-                    new_lf.setGeometry(lg)
+                    new_lf.setGeometry(lg_ext)
                     prepared_line_feats.append(new_lf)
                 dp_lines.addFeatures(prepared_line_feats)
                 single_lines_layer.updateExtents()
@@ -1356,6 +1478,7 @@ class SplitEADialog(QDialog):
 
                 # Attempt 2: Planar Polygonization fallback (combines polygon boundary + cut lines)
                 if len(child_geoms) <= 1 and processing:
+                    child_geoms = []
                     try:
                         boundary_res = processing.run(
                             "native:boundary",
@@ -1387,7 +1510,7 @@ class SplitEADialog(QDialog):
                                 pg = p_feat.geometry()
                                 if pg and not pg.isEmpty():
                                     pt_surface = pg.pointOnSurface()
-                                    if poly_geom.contains(pt_surface) or poly_geom.intersects(pt_surface):
+                                    if poly_geom.contains(pt_surface) or (poly_geom.intersects(pg) and pg.intersection(poly_geom).area() > 0.5 * pg.area()):
                                         cand_parts.append(pg)
                             if len(cand_parts) > 1:
                                 child_geoms = cand_parts
@@ -1396,6 +1519,7 @@ class SplitEADialog(QDialog):
 
                 # Attempt 3: Iterative QgsGeometry.splitGeometry across all matching lines
                 if len(child_geoms) <= 1:
+                    child_geoms = []
                     # Deconstruct polygon into constituent parts to handle both single and multi-polygons
                     if poly_geom.isMultipart():
                         raw_parts = [QgsGeometry.fromPolygonXY(p) for p in poly_geom.asMultiPolygon()]
@@ -1522,6 +1646,11 @@ class SplitEADialog(QDialog):
                 except ValueError:
                     pass
 
+            total_split_sub_eas = 0
+            total_qualified_sub_eas = 0
+            total_under_min_sub_eas = 0
+            total_over_max_sub_eas = 0
+
             for group in parent_split_groups:
                 parent_feat = group["parent"]
                 parts = group["parts"]
@@ -1556,28 +1685,35 @@ class SplitEADialog(QDialog):
                     raw_ea_geo = parent_feat.attribute(ea_geo_idx)
                     parent_8digit = self._extract_8digit_code(raw_ea_geo)
 
+                # Extract parent feature's existing household and building counts as baseline fallbacks
+                orig_hh = _safe_parent_attr(parent_feat, "hh_count", None)
+                if orig_hh is None:
+                    orig_hh = _safe_parent_attr(parent_feat, "hhcount", None)
+                if orig_hh is None:
+                    orig_hh = _safe_parent_attr(parent_feat, "new_hhcount", 0)
+                try:
+                    parent_hh_val = int(round(float(orig_hh))) if orig_hh else 0
+                except Exception:
+                    parent_hh_val = 0
+
+                orig_bldg = _safe_parent_attr(parent_feat, "bldg_count", None)
+                if orig_bldg is None:
+                    orig_bldg = _safe_parent_attr(parent_feat, "bldgcount", None)
+                if orig_bldg is None:
+                    orig_bldg = _safe_parent_attr(parent_feat, "new_bldgcount", 0)
+                try:
+                    parent_bldg_val = int(round(float(orig_bldg))) if orig_bldg else 0
+                except Exception:
+                    parent_bldg_val = 0
+
                 for p_geom in parts:
                     inside_bldg_count, inside_hh_count = _calculate_geom_counts(p_geom, target_8digit_code=parent_8digit)
                     # When an EA is untouched (len(parts) == 1) and spatial points are not present (inside_hh_count == 0),
                     # strictly preserve the parent feature's existing hh_count and bldg_count.
-                    if len(parts) == 1 and inside_hh_count == 0:
-                        orig_hh = _safe_parent_attr(parent_feat, "hh_count", None)
-                        if orig_hh is None:
-                            orig_hh = _safe_parent_attr(parent_feat, "hhcount", 0)
-                        if orig_hh:
-                            try:
-                                inside_hh_count = int(float(orig_hh))
-                            except Exception:
-                                pass
-                    if len(parts) == 1 and inside_bldg_count == 0:
-                        orig_bldg = _safe_parent_attr(parent_feat, "bldg_count", None)
-                        if orig_bldg is None:
-                            orig_bldg = _safe_parent_attr(parent_feat, "bldgcount", 0)
-                        if orig_bldg:
-                            try:
-                                inside_bldg_count = int(float(orig_bldg))
-                            except Exception:
-                                pass
+                    if len(parts) == 1 and inside_hh_count == 0 and parent_hh_val > 0:
+                        inside_hh_count = parent_hh_val
+                    if len(parts) == 1 and inside_bldg_count == 0 and parent_bldg_val > 0:
+                        inside_bldg_count = parent_bldg_val
 
                     area_val = p_geom.area() if p_geom else 0.0
                     part_data.append({
@@ -1586,6 +1722,53 @@ class SplitEADialog(QDialog):
                         "bldg_count": inside_bldg_count,
                         "area": area_val,
                     })
+
+                # If the polygon was actually split (len(part_data) > 1), but spatial points yielded 0 households,
+                # fall back to proportioning the parent EA's existing hh_count (and bldg_count) across the sub-EAs!
+                if len(part_data) > 1:
+                    total_calc_hh = sum(p["hh_count"] for p in part_data)
+                    total_calc_bldg = sum(p["bldg_count"] for p in part_data)
+                    total_area = sum(p["area"] for p in part_data)
+
+                    # Household count fallback
+                    if total_calc_hh == 0 and parent_hh_val > 0:
+                        self._log(
+                            f"Notice: Building points yielded 0 HH for split EA '{parent_code_6}'. "
+                            f"Proportioning parent household count ({parent_hh_val}) across {len(part_data)} sub-EAs.",
+                            "INFO",
+                        )
+                        assigned_hh_sum = 0
+                        for i, p in enumerate(part_data):
+                            if total_calc_bldg > 0:
+                                ratio = p["bldg_count"] / total_calc_bldg
+                            elif total_area > 0:
+                                ratio = p["area"] / total_area
+                            else:
+                                ratio = 1.0 / len(part_data)
+                            part_hh = max(1, int(round(parent_hh_val * ratio)))
+                            p["hh_count"] = part_hh
+                            assigned_hh_sum += part_hh
+
+                        # Balance difference so sum equals parent_hh_val
+                        diff = parent_hh_val - assigned_hh_sum
+                        if diff != 0 and len(part_data) > 0:
+                            largest_idx = max(range(len(part_data)), key=lambda idx: part_data[idx]["area"])
+                            if part_data[largest_idx]["hh_count"] + diff >= 1:
+                                part_data[largest_idx]["hh_count"] += diff
+
+                    # Building count fallback
+                    if total_calc_bldg == 0 and parent_bldg_val > 0:
+                        assigned_bldg_sum = 0
+                        for i, p in enumerate(part_data):
+                            ratio = p["area"] / total_area if total_area > 0 else 1.0 / len(part_data)
+                            part_bldg = max(1, int(round(parent_bldg_val * ratio)))
+                            p["bldg_count"] = part_bldg
+                            assigned_bldg_sum += part_bldg
+                        diff_b = parent_bldg_val - assigned_bldg_sum
+                        if diff_b != 0 and len(part_data) > 0:
+                            largest_idx = max(range(len(part_data)), key=lambda idx: part_data[idx]["area"])
+                            if part_data[largest_idx]["bldg_count"] + diff_b >= 1:
+                                part_data[largest_idx]["bldg_count"] += diff_b
 
                 # ── Dissolve 0-HH sub-polygon slices (e.g. road/boundary slivers) into adjacent populated siblings ──
                 if bldg_spatial_index:
@@ -1645,26 +1828,66 @@ class SplitEADialog(QDialog):
                             "INFO",
                         )
 
-                # ── Process sub-EAs and log threshold notice without rejecting split ──
+                # ── Process sub-EAs and assess qualification against Min and Max Thresholds ──
                 if len(part_data) > 1:
                     part_data.sort(key=lambda item: (item["hh_count"], item["area"]), reverse=True)
                     min_hh_threshold = self.min_hh_spin.value() if hasattr(self, "min_hh_spin") else 99
-                    if bldg_spatial_index:
-                        under_threshold = [p for p in part_data if p["hh_count"] < min_hh_threshold]
-                        if under_threshold:
-                            min_hh_found = min(p["hh_count"] for p in part_data)
-                            self._log(
-                                f"Notice: EA '{parent_code_6}' split into {len(part_data)} sub-EAs using 'eadel_update' "
-                                f"(HH counts: {[p['hh_count'] for p in part_data]}). "
-                                f"Sub-EA has {min_hh_found} households (below reference threshold of {min_hh_threshold} HH).",
-                                "WARNING",
-                            )
+                    max_hh_threshold = self.max_hh_spin.value() if hasattr(self, "max_hh_spin") else 300
+
+                    assessment_details = []
+                    under_parts = []
+                    over_parts = []
+                    qualified_parts = []
+
+                    for p_idx, p in enumerate(part_data):
+                        # Determine provisional or actual EA name for logging
+                        if orig_prefix == "000" or parent_code_6 in ("000000", "000", "0"):
+                            part_label = f"Sub-EA {p_idx + 1:03d}000"
+                        elif p_idx == 0:
+                            part_label = f"Sub-EA {orig_prefix}000"
                         else:
-                            self._log(
-                                f"Success: EA '{parent_code_6}' successfully split into {len(part_data)} sub-EAs using 'eadel_update' "
-                                f"(HH counts: {[p['hh_count'] for p in part_data]}).",
-                                "SUCCESS",
-                            )
+                            part_label = f"Sub-EA {p_idx + 1} of {parent_code_6}"
+
+                        p_hh = p["hh_count"]
+                        total_split_sub_eas += 1
+
+                        if p_hh < min_hh_threshold:
+                            under_parts.append(p)
+                            total_under_min_sub_eas += 1
+                            p["threshold_status"] = "UNDER_MIN"
+                            assessment_details.append(f"{part_label}: {p_hh} HH [UNDER MIN < {min_hh_threshold}]")
+                        elif p_hh > max_hh_threshold:
+                            over_parts.append(p)
+                            total_over_max_sub_eas += 1
+                            p["threshold_status"] = "EXCEEDS_MAX"
+                            assessment_details.append(f"{part_label}: {p_hh} HH [EXCEEDS MAX > {max_hh_threshold}]")
+                        else:
+                            qualified_parts.append(p)
+                            total_qualified_sub_eas += 1
+                            p["threshold_status"] = "QUALIFIED"
+                            assessment_details.append(f"{part_label}: {p_hh} HH [QUALIFIED]")
+
+                    self._log(
+                        f"Threshold Assessment for EA '{parent_code_6}' (Reference: {min_hh_threshold}-{max_hh_threshold} HH): "
+                        + ", ".join(assessment_details),
+                        "INFO",
+                    )
+
+                    if not under_parts and not over_parts:
+                        self._log(
+                            f"Success: All {len(part_data)} resulting sub-EAs from EA '{parent_code_6}' qualify within [{min_hh_threshold}-{max_hh_threshold} HH].",
+                            "SUCCESS",
+                        )
+                    else:
+                        issues = []
+                        if under_parts:
+                            issues.append(f"{len(under_parts)} sub-EA(s) below minimum ({min_hh_threshold} HH)")
+                        if over_parts:
+                            issues.append(f"{len(over_parts)} sub-EA(s) exceed maximum ({max_hh_threshold} HH)")
+                        self._log(
+                            f"Notice: Split for EA '{parent_code_6}' completed with threshold alerts: {'; '.join(issues)}.",
+                            "WARNING",
+                        )
 
                 for idx, p_item in enumerate(part_data):
                     inside_hh_count = p_item["hh_count"]
@@ -1713,9 +1936,9 @@ class SplitEADialog(QDialog):
 
                         # Only hh_count and bldg_count / bldg_points are updated based on building points
                         # Baseline fields (hhcount, bldgcount, bldgpoint, code, etc.) are strictly preserved
-                        if is_hh_field and bldg_spatial_index:
+                        if is_hh_field:
                             new_feat.setAttribute(fname, inside_hh_count)
-                        elif is_bldg_field and bldg_spatial_index:
+                        elif is_bldg_field:
                             new_feat.setAttribute(fname, inside_bldg_count)
                         elif fname_lower == "new_ean":
                             new_feat.setAttribute(fname, assigned_new_ean)
@@ -1768,25 +1991,36 @@ class SplitEADialog(QDialog):
                     f_geom = feat.geometry()
                     if f_geom and not f_geom.isEmpty():
                         b_cnt, hh_cnt = _calculate_geom_counts(f_geom)
-                        is_delineated = str(feat.attribute("ea_type") or "").upper() == "DELINEATED"
-                        if b_cnt > 0 or hh_cnt > 0 or is_delineated:
-                            for fld in poly_fields:
-                                fn_lower = fld.name().lower()
-                                if fn_lower in ("hh_count", "hh_cnt"):
-                                    feat.setAttribute(fld.name(), hh_cnt)
-                                elif fn_lower in ("bldg_count", "bldg_points", "bldg_point", "bldg_cnt", "bldgpts_cnt"):
-                                    feat.setAttribute(fld.name(), b_cnt)
-                        # Accumulate total sums
-                        f_hh = feat.attribute("hh_count")
-                        f_bldg = feat.attribute("bldg_count") or feat.attribute("bldg_points")
+                        existing_hh = feat.attribute("hh_count")
+                        existing_hh_val = 0
                         try:
-                            total_hh_sum += int(float(f_hh)) if f_hh is not None and f_hh != NULL else hh_cnt
+                            if existing_hh is not None and existing_hh != NULL:
+                                existing_hh_val = int(float(existing_hh))
                         except Exception:
-                            total_hh_sum += hh_cnt
+                            existing_hh_val = 0
+
+                        existing_bldg = feat.attribute("bldg_count") or feat.attribute("bldg_points")
+                        existing_bldg_val = 0
                         try:
-                            total_bldg_sum += int(float(f_bldg)) if f_bldg is not None and f_bldg != NULL else b_cnt
+                            if existing_bldg is not None and existing_bldg != NULL:
+                                existing_bldg_val = int(float(existing_bldg))
                         except Exception:
-                            total_bldg_sum += b_cnt
+                            existing_bldg_val = 0
+
+                        # Only overwrite with fresh count if points actually yielded positive values,
+                        # or if no existing value was set. Never zero out a valid fallback count!
+                        final_hh = hh_cnt if hh_cnt > 0 else existing_hh_val
+                        final_bldg = b_cnt if b_cnt > 0 else existing_bldg_val
+
+                        for fld in poly_fields:
+                            fn_lower = fld.name().lower()
+                            if fn_lower in ("hh_count", "hh_cnt"):
+                                feat.setAttribute(fld.name(), final_hh)
+                            elif fn_lower in ("bldg_count", "bldg_points", "bldg_point", "bldg_cnt", "bldgpts_cnt"):
+                                feat.setAttribute(fld.name(), final_bldg)
+
+                        total_hh_sum += final_hh
+                        total_bldg_sum += final_bldg
 
             out_poly_count = len(new_features)
             delta_count = out_poly_count - in_poly_count
@@ -1847,16 +2081,43 @@ class SplitEADialog(QDialog):
                     "SUCCESS",
                 )
 
+            # 8. Extract and synchronize building points layer (<geo5>_extracted_bldgpts)
+            if bldg_spatial_index and bldg_layer and bldg_layer.isValid():
+                self._extract_and_sync_building_points(
+                    poly_layer=poly_layer,
+                    bldg_layer=bldg_layer,
+                    new_features=new_features,
+                    bldg_spatial_index=bldg_spatial_index,
+                    bldg_lookup=bldg_lookup,
+                    bldg_hh_idx=bldg_hh_idx,
+                    bldg_to_poly_xform=bldg_to_poly_xform,
+                )
+
             self._log(f"Successfully updated '{poly_layer.name()}' with {out_poly_count} features.", "SUCCESS")
             self.progress_bar.setValue(100)
 
-            # Update status banner
+            # Update status banner with qualification summary
             if is_truly_split:
                 count_info = f" | Total HH: {total_hh_sum:,}" if bldg_spatial_index else ""
-                self.status_banner.setText(
-                    f"PASS: Updated '{poly_layer.name()}' — {out_poly_count} features (+{delta_count}){count_info}"
-                )
-                self.status_banner.setStyleSheet("color: #27ae60; font-weight: bold;")
+                min_ref = self.min_hh_spin.value() if hasattr(self, "min_hh_spin") else 99
+                max_ref = self.max_hh_spin.value() if hasattr(self, "max_hh_spin") else 300
+
+                if total_under_min_sub_eas == 0 and total_over_max_sub_eas == 0:
+                    self.status_banner.setText(
+                        f"PASS: Updated '{poly_layer.name()}' — {out_poly_count} features (+{delta_count}){count_info} | All {total_qualified_sub_eas} Sub-EAs Qualified [{min_ref}-{max_ref} HH]"
+                    )
+                    self.status_banner.setStyleSheet("color: #27ae60; font-weight: bold;")
+                else:
+                    alerts = []
+                    if total_under_min_sub_eas > 0:
+                        alerts.append(f"{total_under_min_sub_eas} below min")
+                    if total_over_max_sub_eas > 0:
+                        alerts.append(f"{total_over_max_sub_eas} exceed max")
+                    alert_str = ", ".join(alerts)
+                    self.status_banner.setText(
+                        f"ALERT: Updated '{poly_layer.name()}' — {out_poly_count} features (+{delta_count}){count_info} | Threshold Alert: {alert_str} (Ref: {min_ref}-{max_ref} HH)"
+                    )
+                    self.status_banner.setStyleSheet("color: #d35400; font-weight: bold;")
             else:
                 self.status_banner.setText(
                     f"Completed — '{poly_layer.name()}' has {out_poly_count} features"
@@ -1878,3 +2139,258 @@ class SplitEADialog(QDialog):
         finally:
             self.run_btn.setEnabled(True)
             self.close_btn.setEnabled(True)
+
+    def _extract_and_sync_building_points(
+        self,
+        poly_layer: QgsVectorLayer,
+        bldg_layer: QgsVectorLayer,
+        new_features: List[QgsFeature],
+        bldg_spatial_index: QgsSpatialIndex,
+        bldg_lookup: Dict[Any, QgsFeature],
+        bldg_hh_idx: int,
+        bldg_to_poly_xform: Any = None,
+    ):
+        """Extract building points inside delineated EA polygons and sync or create the extracted_bldgpts layer."""
+        if not bldg_spatial_index or not poly_layer or not poly_layer.isValid() or not bldg_layer or not bldg_layer.isValid():
+            return
+
+        geo5 = (self.default_geocode or "").strip()
+        if not geo5:
+            geo5 = self._extract_geocode_from_layer(poly_layer)
+        if not geo5 and poly_layer.name():
+            m = re.match(r"^(\d+)", poly_layer.name())
+            if m:
+                geo5 = m.group(1)
+
+        extracted_layer_name = f"{geo5}_extracted_bldgpts" if geo5 else "extracted_bldgpts"
+        project = QgsProject.instance()
+
+        # Check if an extracted buildings layer already exists in the project
+        existing_extracted_layer = None
+        for lyr in project.mapLayers().values():
+            if isinstance(lyr, QgsVectorLayer) and lyr.isValid() and lyr.geometryType() == QgsWkbTypes.PointGeometry:
+                lname = lyr.name().lower()
+                if lname == extracted_layer_name.lower() or "extracted_bldg" in lname or (geo5 and f"{geo5.lower()}_extracted_bldg" in lname):
+                    existing_extracted_layer = lyr
+                    break
+
+        if existing_extracted_layer and existing_extracted_layer.isValid():
+            try:
+                ext_fields = existing_extracted_layer.fields()
+                flds_to_add = []
+                if ext_fields.indexOf("parent_ean") == -1:
+                    flds_to_add.append(create_qgs_field("parent_ean", QVariant.String))
+                if ext_fields.indexOf("candidate_ean") == -1:
+                    flds_to_add.append(create_qgs_field("candidate_ean", QVariant.String))
+                if ext_fields.indexOf("bldgpoints_value") == -1:
+                    flds_to_add.append(create_qgs_field("bldgpoints_value", QVariant.Double))
+                if ext_fields.indexOf("pop") == -1:
+                    flds_to_add.append(create_qgs_field("pop", QVariant.Double))
+                if ext_fields.indexOf("merge_role") == -1:
+                    flds_to_add.append(create_qgs_field("merge_role", QVariant.String))
+                if flds_to_add:
+                    existing_extracted_layer.dataProvider().addAttributes(flds_to_add)
+                    existing_extracted_layer.updateFields()
+                    ext_fields = existing_extracted_layer.fields()
+
+                p_ean_idx = ext_fields.indexOf("parent_ean")
+                cand_ean_idx = ext_fields.indexOf("candidate_ean")
+                m_role_idx = ext_fields.indexOf("merge_role")
+                pop_idx = ext_fields.indexOf("pop")
+
+                existing_extracted_layer.startEditing()
+                xform_p_to_eb = None
+                if poly_layer.crs().isValid() and existing_extracted_layer.crs().isValid() and poly_layer.crs() != existing_extracted_layer.crs():
+                    try:
+                        xform_p_to_eb = QgsCoordinateTransform(poly_layer.crs(), existing_extracted_layer.crs(), project)
+                    except Exception:
+                        xform_p_to_eb = None
+
+                updated_eb_count = 0
+                for feat in new_features:
+                    f_geom = feat.geometry()
+                    if not f_geom or f_geom.isEmpty():
+                        continue
+                    tg_geom = QgsGeometry(f_geom)
+                    if xform_p_to_eb:
+                        try:
+                            tg_geom.transform(xform_p_to_eb)
+                        except Exception:
+                            pass
+
+                    f_ean = str(feat.attribute("new_ean") or feat.attribute("ean") or "").strip()
+                    if not f_ean or f_ean in ("None", "NULL"):
+                        code_6, _ = self._extract_parent_code_and_prefix(feat, poly_layer.fields())
+                        f_ean = code_6
+
+                    is_delin = str(feat.attribute("ea_type") or "").upper() == "DELINEATED"
+                    role_val = "Delineated" if is_delin else "Retained"
+
+                    req = QgsFeatureRequest().setFilterRect(tg_geom.boundingBox())
+                    for eb_f in existing_extracted_layer.getFeatures(req):
+                        eb_g = eb_f.geometry()
+                        if eb_g and not eb_g.isEmpty() and (tg_geom.contains(eb_g) or tg_geom.intersects(eb_g)):
+                            if p_ean_idx != -1:
+                                existing_extracted_layer.changeAttributeValue(eb_f.id(), p_ean_idx, f_ean)
+                            if cand_ean_idx != -1:
+                                existing_extracted_layer.changeAttributeValue(eb_f.id(), cand_ean_idx, f_ean)
+                            if m_role_idx != -1:
+                                existing_extracted_layer.changeAttributeValue(eb_f.id(), m_role_idx, role_val)
+                            updated_eb_count += 1
+
+                existing_extracted_layer.commitChanges()
+                existing_extracted_layer.updateExtents()
+                existing_extracted_layer.triggerRepaint()
+                apply_qml_to_layer(existing_extracted_layer, "extracted_bldgpts.qml")
+                self._log(
+                    f"Synchronized {updated_eb_count:,} building points in existing '{existing_extracted_layer.name()}'.",
+                    "SUCCESS",
+                )
+            except Exception as e:
+                if existing_extracted_layer.isEditable():
+                    existing_extracted_layer.rollBack()
+                self._log(f"Notice: Failed to synchronize existing extracted building points: {e}", "WARNING")
+        else:
+            # Create a new extracted building points layer from bldg_layer points inside the EAs
+            try:
+                out_fields = QgsFields()
+                for fld in bldg_layer.fields():
+                    out_fields.append(fld)
+
+                if out_fields.indexOf("parent_ean") == -1:
+                    out_fields.append(create_qgs_field("parent_ean", QVariant.String))
+                if out_fields.indexOf("candidate_ean") == -1:
+                    out_fields.append(create_qgs_field("candidate_ean", QVariant.String))
+                if out_fields.indexOf("bldgpoints_value") == -1:
+                    out_fields.append(create_qgs_field("bldgpoints_value", QVariant.Double))
+                if out_fields.indexOf("pop") == -1:
+                    out_fields.append(create_qgs_field("pop", QVariant.Double))
+                if out_fields.indexOf("merge_role") == -1:
+                    out_fields.append(create_qgs_field("merge_role", QVariant.String))
+
+                extracted_lyr = QgsVectorLayer(
+                    f"Point?crs={poly_layer.crs().authid()}",
+                    extracted_layer_name,
+                    "memory"
+                )
+                dp_ext = extracted_lyr.dataProvider()
+                dp_ext.addAttributes(list(out_fields))
+                extracted_lyr.updateFields()
+
+                pts_to_add = []
+                seen_ids = set()
+
+                p_ean_idx = extracted_lyr.fields().indexOf("parent_ean")
+                cand_ean_idx = extracted_lyr.fields().indexOf("candidate_ean")
+                bval_idx = extracted_lyr.fields().indexOf("bldgpoints_value")
+                pop_idx = extracted_lyr.fields().indexOf("pop")
+                m_role_idx = extracted_lyr.fields().indexOf("merge_role")
+
+                for feat in new_features:
+                    f_geom = feat.geometry()
+                    if not f_geom or f_geom.isEmpty():
+                        continue
+                    chk_geom = f_geom
+                    if hasattr(f_geom, "isGeosValid"):
+                        try:
+                            if not f_geom.isGeosValid() and hasattr(f_geom, "makeValid"):
+                                chk_geom = f_geom.makeValid()
+                        except Exception:
+                            chk_geom = f_geom
+
+                    f_ean = str(feat.attribute("new_ean") or feat.attribute("ean") or "").strip()
+                    if not f_ean or f_ean in ("None", "NULL"):
+                        code_6, _ = self._extract_parent_code_and_prefix(feat, poly_layer.fields())
+                        f_ean = code_6
+
+                    is_delin = str(feat.attribute("ea_type") or "").upper() == "DELINEATED"
+                    role_val = "Delineated" if is_delin else "Retained"
+
+                    cand_ids = bldg_spatial_index.intersects(chk_geom.boundingBox())
+                    for bid in cand_ids:
+                        if bid in seen_ids:
+                            continue
+                        bfeat = bldg_lookup.get(bid)
+                        if not bfeat:
+                            continue
+                        bg = bfeat.geometry()
+                        if not bg or bg.isEmpty():
+                            continue
+                        if chk_geom.contains(bg) or chk_geom.intersects(bg):
+                            seen_ids.add(bid)
+                            pt_hh = 1.0
+                            if bldg_hh_idx != -1:
+                                raw_val = bfeat.attribute(bldg_hh_idx)
+                                if raw_val is not None and raw_val != NULL:
+                                    try:
+                                        pt_hh = float(raw_val)
+                                    except (ValueError, TypeError):
+                                        pt_hh = 1.0
+
+                            if bg.isMultipart():
+                                pts = bg.asMultiPoint()
+                                p = pts[0] if pts else bg.centroid().asPoint()
+                            elif bg.type() == QgsWkbTypes.PolygonGeometry:
+                                p = bg.centroid().asPoint()
+                            else:
+                                p = bg.asPoint()
+
+                            new_bf = QgsFeature(extracted_lyr.fields())
+                            new_bf.setGeometry(QgsGeometry.fromPointXY(p))
+
+                            # Copy original matching attributes
+                            for fld in bldg_layer.fields():
+                                idx_orig = bldg_layer.fields().indexOf(fld.name())
+                                idx_new = extracted_lyr.fields().indexOf(fld.name())
+                                if idx_orig != -1 and idx_new != -1:
+                                    new_bf.setAttribute(idx_new, bfeat.attribute(idx_orig))
+
+                            if p_ean_idx != -1:
+                                new_bf.setAttribute(p_ean_idx, f_ean)
+                            if cand_ean_idx != -1:
+                                new_bf.setAttribute(cand_ean_idx, f_ean)
+                            if bval_idx != -1:
+                                new_bf.setAttribute(bval_idx, pt_hh)
+                            if pop_idx != -1:
+                                new_bf.setAttribute(pop_idx, pt_hh)
+                            if m_role_idx != -1:
+                                new_bf.setAttribute(m_role_idx, role_val)
+
+                            pts_to_add.append(new_bf)
+
+                if pts_to_add:
+                    dp_ext.addFeatures(pts_to_add)
+                    extracted_lyr.updateExtents()
+
+                    apply_qml_to_layer(extracted_lyr, "extracted_bldgpts.qml")
+
+                    # Add to QGIS Project under Reference Layers
+                    root = project.layerTreeRoot()
+                    ref_group = None
+                    if root:
+                        for grp_name in ["Reference Layers", "Reference", "Base Layers"]:
+                            ref_group = root.findGroup(grp_name)
+                            if ref_group:
+                                break
+                    project.addMapLayer(extracted_lyr, False)
+                    if ref_group:
+                        ref_group.addLayer(extracted_lyr)
+                    elif root:
+                        root.addLayer(extracted_lyr)
+
+                    if self.default_output_dir and os.path.isdir(self.default_output_dir):
+                        gpkg_path = os.path.join(self.default_output_dir, f"{extracted_layer_name}.gpkg")
+                        try:
+                            opts = QgsVectorFileWriter.SaveVectorOptions()
+                            opts.driverName = "GPKG"
+                            opts.layerName = extracted_layer_name
+                            QgsVectorFileWriter.writeAsVectorFormatV3(extracted_lyr, gpkg_path, project.transformContext(), opts)
+                        except Exception:
+                            pass
+
+                    self._log(
+                        f"Successfully extracted {len(pts_to_add):,} building points into '{extracted_layer_name}'.",
+                        "SUCCESS",
+                    )
+            except Exception as e:
+                self._log(f"Notice: Could not generate extracted building points layer: {e}", "WARNING")

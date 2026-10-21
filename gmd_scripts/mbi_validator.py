@@ -827,6 +827,8 @@ class MbiValidatorAlgorithm(QgsProcessingAlgorithm):
         return default_all if default_all is not None else []
 
     def processAlgorithm(self, parameters, context, feedback):
+        # Invalid geometries are expected input here; never filter them out
+        context.setInvalidGeometryCheck(QgsFeatureRequest.GeometryNoCheck)
         ref_layer = self.parameterAsVectorLayer(parameters, self.REF_LAYER, context)
         chk_g = self.parameterAsVectorLayer(parameters, self.CHK_GAP, context)
         chk_o = self.parameterAsVectorLayer(parameters, self.CHK_OVERLAP, context)

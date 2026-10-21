@@ -253,7 +253,7 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             alg.EXTRACTED_BUILDINGS_OUTPUT,
             context,
             bldg_out_fields,
-            building_source.wkbType(),
+            QgsWkbTypes.Point,
             target_crs,
         )
 
@@ -988,14 +988,24 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
     feedback.pushInfo("Building temporal previous EA index (candidates and adjacent EAs only)...")
     temp_ea_index = QgsSpatialIndex()
     temp_ea_by_id = {}
+    if exec_mode == "delineation":
+        candidate_target_ids = set(delineation_candidate_ids)
+    elif exec_mode == "merging":
+        candidate_target_ids = set(merge_candidate_ids) | set(adjacent_ea_ids)
+    else:
+        candidate_target_ids = set(delineation_candidate_ids) | set(merge_candidate_ids) | set(adjacent_ea_ids)
     for feat in all_ea_features:
-        _ean = feat.attribute(ea_id_field)
-        _ean_str = str(_ean).strip() if _ean is not None else ""
-        if _ean_str.endswith(".0"):
-            _ean_str = _ean_str[:-2]
-        if feat.id() in delineation_candidate_ids or feat.id() in merge_candidate_ids or feat.id() in adjacent_ea_ids:
+        if feat.id() in candidate_target_ids:
             temp_ea_index.addFeature(feat)
             temp_ea_by_id[feat.id()] = feat
+
+    # Ensure any candidate flagged from previous_ea_source is never omitted from spatial index
+    missing_cands = candidate_target_ids - set(temp_ea_by_id.keys())
+    if missing_cands:
+        for feat in previous_ea_source.getFeatures():
+            if feat.id() in missing_cands:
+                temp_ea_index.addFeature(feat)
+                temp_ea_by_id[feat.id()] = feat
 
     ea_index = temp_ea_index
     ea_by_id = temp_ea_by_id
@@ -1018,7 +1028,15 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
 
     request = QgsFeatureRequest()
     if not combined_bbox.isEmpty():
-        request.setFilterRect(combined_bbox)
+        buf_x = max(combined_bbox.width() * 0.05, 0.001 if previous_ea_source.sourceCrs().isGeographic() else 20.0)
+        buf_y = max(combined_bbox.height() * 0.05, 0.001 if previous_ea_source.sourceCrs().isGeographic() else 20.0)
+        buffered_bbox = QgsRectangle(
+            combined_bbox.xMinimum() - buf_x,
+            combined_bbox.yMinimum() - buf_y,
+            combined_bbox.xMaximum() + buf_x,
+            combined_bbox.yMaximum() + buf_y
+        )
+        request.setFilterRect(buffered_bbox)
 
     bldg_processed_count = 0
     bldg_matched_count = 0
@@ -1037,9 +1055,17 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             if transform:
                 geom_clone = QgsGeometry(geom)
                 geom_clone.transform(transform)
-                p = geom_clone.asPoint()
+                curr_geom = geom_clone
             else:
-                p = geom.asPoint()
+                curr_geom = geom
+
+            if curr_geom.isMultipart():
+                pts = curr_geom.asMultiPoint()
+                p = pts[0] if pts else curr_geom.centroid().asPoint()
+            elif curr_geom.type() == QgsWkbTypes.PolygonGeometry:
+                p = curr_geom.centroid().asPoint()
+            else:
+                p = curr_geom.asPoint()
 
             pt_geom = QgsGeometry.fromPointXY(p)
 
@@ -1163,6 +1189,19 @@ def run_phase_2(alg, parameters, context, feedback, multi_feedback, p1):
             parent_ean_idx = bldg_out_fields.indexOf("parent_ean")
 
             for b in deduped_bldgs:
+                if exec_mode == "delineation":
+                    pt_g = QgsGeometry.fromPointXY(b['point'])
+                    inside = False
+                    for cid in delineation_candidate_ids:
+                        cf = ea_by_id.get(cid)
+                        if cf and cf.hasGeometry():
+                            cg = cf.geometry()
+                            if cg.contains(pt_g) or cg.intersects(pt_g):
+                                inside = True
+                                break
+                    if not inside:
+                        continue
+
                 b_feat = QgsFeature(bldg_out_fields)
                 b_geom = QgsGeometry.fromPointXY(b['point'])
                 if barangay_to_target:

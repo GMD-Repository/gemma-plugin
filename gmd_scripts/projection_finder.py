@@ -11,7 +11,7 @@ from qgis.PyQt.QtWidgets import (
 )
 from qgis.core import (
     QgsProject, QgsVectorLayer, QgsRasterLayer, QgsCoordinateReferenceSystem,
-    QgsCoordinateTransform, QgsWkbTypes, QgsFeature, QgsGeometry, QgsPoint,
+    QgsCoordinateTransform, QgsWkbTypes, QgsFeature, QgsGeometry, QgsPoint, QgsPointXY,
     QgsRectangle, QgsProcessingAlgorithm, QgsProcessing,
     QgsProcessingParameterFeatureSource, QgsProcessingOutputString,
     QgsProcessingFeedback, QgsProcessingContext, QgsApplication
@@ -299,10 +299,175 @@ def scan_candidates(ext):
 
 
 # =============================================================================
+# POINT GEOMETRY AUDIT & REPAIR HELPERS
+# =============================================================================
+def audit_point_coordinates(layer, lon_field=None, lat_field=None, max_x=180.0, max_y=90.0):
+    """Scan a point vector layer for out-of-bounds, metric, or missing geometries.
+
+    Returns a dictionary:
+      - total: total feature count
+      - normal_count: count of points inside bounds [-max_x, max_x] and [-max_y, max_y]
+      - outlier_count: count of points outside geographic bounds (e.g. UTM meters in geographic CRS)
+      - null_count: count of NULL or empty geometries
+      - repairable_count: outlier/null features that have valid numeric longitude/latitude attributes
+      - sample_outliers: list of up to 15 tuples (fid, cur_x, cur_y, attr_lon, attr_lat)
+      - lon_field: resolved longitude field name
+      - lat_field: resolved latitude field name
+    """
+    if layer is None or not layer.isValid():
+        return {
+            'total': 0, 'normal_count': 0, 'outlier_count': 0, 'null_count': 0,
+            'repairable_count': 0, 'sample_outliers': [], 'lon_field': None, 'lat_field': None
+        }
+
+    if not lon_field or not lat_field:
+        _, _, auto_lon, auto_lat = detect_control_fields(layer)
+        lon_field = lon_field or auto_lon
+        lat_field = lat_field or auto_lat
+
+    total = 0
+    normal_count = 0
+    outlier_count = 0
+    null_count = 0
+    repairable_count = 0
+    sample_outliers = []
+
+    for feat in layer.getFeatures():
+        total += 1
+        geom = feat.geometry()
+        is_bad = False
+        cur_x, cur_y = None, None
+
+        if geom is None or geom.isNull() or geom.isEmpty():
+            null_count += 1
+            is_bad = True
+        else:
+            pt = geom.asPoint() if not geom.isMultipart() else (geom.asMultiPoint()[0] if geom.asMultiPoint() else None)
+            if pt is not None:
+                cur_x, cur_y = pt.x(), pt.y()
+                if abs(cur_x) > max_x or abs(cur_y) > max_y:
+                    outlier_count += 1
+                    is_bad = True
+                else:
+                    normal_count += 1
+            else:
+                null_count += 1
+                is_bad = True
+
+        if is_bad:
+            attr_lon, attr_lat = None, None
+            can_repair = False
+            if lon_field and lat_field:
+                try:
+                    v_lon = feat[lon_field]
+                    v_lat = feat[lat_field]
+                    if v_lon is not None and v_lat is not None:
+                        f_lon, f_lat = float(v_lon), float(v_lat)
+                        if abs(f_lon) <= max_x and abs(f_lat) <= max_y and (f_lon != 0.0 or f_lat != 0.0):
+                            can_repair = True
+                            attr_lon, attr_lat = f_lon, f_lat
+                except (ValueError, TypeError, KeyError):
+                    pass
+            if can_repair:
+                repairable_count += 1
+            if len(sample_outliers) < 15:
+                sample_outliers.append((feat.id(), cur_x, cur_y, attr_lon, attr_lat))
+
+    return {
+        'total': total,
+        'normal_count': normal_count,
+        'outlier_count': outlier_count,
+        'null_count': null_count,
+        'repairable_count': repairable_count,
+        'sample_outliers': sample_outliers,
+        'lon_field': lon_field,
+        'lat_field': lat_field
+    }
+
+
+def repair_point_outliers(layer, lon_field=None, lat_field=None, max_x=180.0, max_y=90.0, fix_nulls=True):
+    """Repair outlier/null point geometries in-place using attribute longitude/latitude columns.
+
+    Performs edits inside an active edit session. Returns (repaired_count, skipped_count).
+    """
+    if layer is None or not layer.isValid():
+        return 0, 0
+
+    if not lon_field or not lat_field:
+        _, _, auto_lon, auto_lat = detect_control_fields(layer)
+        lon_field = lon_field or auto_lon
+        lat_field = lat_field or auto_lat
+
+    if not lon_field or not lat_field:
+        raise ValueError("Cannot repair points: longitude and latitude fields could not be resolved.")
+
+    if not layer.isEditable():
+        if not layer.startEditing():
+            raise RuntimeError(f"Layer '{layer.name()}' could not be put into edit mode.")
+
+    has_cmd = hasattr(layer, "beginEditCommand")
+    if has_cmd:
+        layer.beginEditCommand("Repair Point Outliers")
+    repaired_count = 0
+    skipped_count = 0
+
+    try:
+        for feat in list(layer.getFeatures()):
+            geom = feat.geometry()
+            needs_repair = False
+
+            if geom is None or geom.isNull() or geom.isEmpty():
+                if fix_nulls:
+                    needs_repair = True
+            else:
+                pt = geom.asPoint() if not geom.isMultipart() else (geom.asMultiPoint()[0] if geom.asMultiPoint() else None)
+                if pt is not None:
+                    if abs(pt.x()) > max_x or abs(pt.y()) > max_y:
+                        needs_repair = True
+                else:
+                    if fix_nulls:
+                        needs_repair = True
+
+            if needs_repair:
+                try:
+                    v_lon = feat[lon_field]
+                    v_lat = feat[lat_field]
+                    if v_lon is None or v_lat is None:
+                        skipped_count += 1
+                        continue
+                    f_lon = float(v_lon)
+                    f_lat = float(v_lat)
+                    if abs(f_lon) > max_x or abs(f_lat) > max_y or (f_lon == 0.0 and f_lat == 0.0):
+                        skipped_count += 1
+                        continue
+                    new_geom = QgsGeometry.fromPointXY(QgsPointXY(f_lon, f_lat))
+                    layer.changeGeometry(feat.id(), new_geom)
+                    repaired_count += 1
+                except (ValueError, TypeError, KeyError):
+                    skipped_count += 1
+    finally:
+        if has_cmd and hasattr(layer, "endEditCommand"):
+            layer.endEditCommand()
+
+    if hasattr(layer, "triggerRepaint"):
+        layer.triggerRepaint()
+    return repaired_count, skipped_count
+
+
+# =============================================================================
 # MAIN WORKING TAB
 # =============================================================================
 class ProjectionFinderTab(QWidget):
     """Layer selector, CRS candidate testing, affine georeferencing and report."""
+
+    INITIAL_LOG = (
+        "Ready.\n\n"
+        "1. Select a vector layer in Step 1.\n"
+        "2. Click 'Check Coordinates' to inspect layer extent and coordinate type.\n\n"
+        "Options:\n"
+        "  - Option A: Identify and preview known Philippine CRS candidates.\n"
+        "  - Option B: Georeference local grids using attribute table control points."
+    )
 
     def __init__(self):
         super().__init__()
@@ -314,6 +479,15 @@ class ProjectionFinderTab(QWidget):
         prj = QgsProject.instance()
         prj.layersAdded.connect(self._refresh_layers_keep_selection)
         prj.layersRemoved.connect(self._refresh_layers_keep_selection)
+
+    def disconnect_project_signals(self):
+        """Stop listening to project layer changes (call when the dialog closes)."""
+        prj = QgsProject.instance()
+        for sig in (prj.layersAdded, prj.layersRemoved):
+            try:
+                sig.disconnect(self._refresh_layers_keep_selection)
+            except (TypeError, RuntimeError):
+                pass
 
     # ---------------- construction ----------------
     def _build(self):
@@ -529,13 +703,7 @@ class ProjectionFinderTab(QWidget):
         self.report = QPlainTextEdit()
         self.report.setReadOnly(True)
         self.report.setStyleSheet(LOG_STYLE)
-        self.report.setPlainText(
-            "Ready.\n\n"
-            "1. Select a vector layer in Step 1.\n"
-            "2. Click 'Check Coordinates' to inspect layer extent and coordinate type.\n\n"
-            "Options:\n"
-            "  - Option A: Identify and preview known Philippine CRS candidates.\n"
-            "  - Option B: Georeference local grids using attribute table control points.")
+        self.report.setPlainText(self.INITIAL_LOG)
         pl.addWidget(self.report)
         rl.addWidget(grp_rep, stretch=1)
 
@@ -589,7 +757,7 @@ class ProjectionFinderTab(QWidget):
             self.summary.setText(summary)
 
     def clear_report(self):
-        self.report.clear()
+        self.report.setPlainText(self.INITIAL_LOG)
         self.summary.setText("No layer diagnosed yet.")
 
     def _ensure_basemap(self):
@@ -1084,6 +1252,366 @@ class ProjectionFinderTab(QWidget):
 
 
 # =============================================================================
+# POINT GEOMETRY REPAIR TAB
+# =============================================================================
+class PointRepairTab(QWidget):
+    """Diagnose and repair building points with out-of-bounds, metric, or missing geometries."""
+
+    INITIAL_LOG = (
+        "Point Geometry Repair Ready.\n\n"
+        "Use this tab to repair building points or landmark points where features were\n"
+        "stored in projected metric coordinates (e.g. UTM Zone 51N) inside a layer\n"
+        "declared as EPSG:4326, which causes transform errors in MBI Checker.\n\n"
+        "Workflow:\n"
+        "  1. Select your point vector layer in Step 1.\n"
+        "  2. Verify Longitude and Latitude attribute fields in Step 2.\n"
+        "  3. Click 'Scan Point Outliers' to audit anomalies.\n"
+        "  4. Click 'Repair Outlier Points' to reconstruct geometries non-destructively."
+    )
+
+    def __init__(self):
+        super().__init__()
+        self._build()
+        prj = QgsProject.instance()
+        prj.layersAdded.connect(self._refresh_layers_keep_selection)
+        prj.layersRemoved.connect(self._refresh_layers_keep_selection)
+
+    def disconnect_project_signals(self):
+        """Stop listening to project layer changes (call when the dialog closes)."""
+        prj = QgsProject.instance()
+        for sig in (prj.layersAdded, prj.layersRemoved):
+            try:
+                sig.disconnect(self._refresh_layers_keep_selection)
+            except (TypeError, RuntimeError):
+                pass
+
+    def _build(self):
+        root = QHBoxLayout(self)
+        root.setContentsMargins(6, 6, 6, 6)
+        root.setSpacing(14)
+
+        # -- LEFT: CONTROLS ------------------------------------------------
+        left = QWidget()
+        ll = QVBoxLayout(left)
+        ll.setContentsMargins(0, 0, 8, 0)
+        ll.setSpacing(6)
+
+        # Step 1: Input Point Layer
+        grp_layer = QGroupBox("Step 1 - Select Point Layer")
+        grp_layer.setStyleSheet(GRP_STYLE)
+        gl = QVBoxLayout(grp_layer)
+        self.layer_combo = QComboBox()
+        self.layer_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.layer_combo.setMinimumContentsLength(12)
+        self.layer_combo.currentIndexChanged.connect(self._on_layer_changed)
+        gl.addWidget(self.layer_combo)
+        ll.addWidget(grp_layer)
+
+        # Step 2: Coordinate Fields
+        grp_fields = QGroupBox("Step 2 - Longitude / Latitude Fields")
+        grp_fields.setStyleSheet(GRP_STYLE)
+        gfl = QVBoxLayout(grp_fields)
+        hint_fields = QLabel("Attribute fields containing true GPS geographic coordinates:")
+        hint_fields.setStyleSheet("color:#455a64; font-size:11px;")
+        gfl.addWidget(hint_fields)
+
+        row_lon = QHBoxLayout()
+        row_lon.addWidget(QLabel("Longitude:"))
+        self.lon_combo = QComboBox()
+        row_lon.addWidget(self.lon_combo, 1)
+        gfl.addLayout(row_lon)
+
+        row_lat = QHBoxLayout()
+        row_lat.addWidget(QLabel("Latitude:"))
+        self.lat_combo = QComboBox()
+        row_lat.addWidget(self.lat_combo, 1)
+        gfl.addLayout(row_lat)
+        ll.addWidget(grp_fields)
+
+        # Step 3: Outlier Detection Options
+        grp_opts = QGroupBox("Step 3 - Outlier Thresholds")
+        grp_opts.setStyleSheet(GRP_STYLE)
+        gol = QVBoxLayout(grp_opts)
+        hint_opt = QLabel(
+            "Degrees only range from -180° to 180° (X) and -90° to 90° (Y). "
+            "Points beyond that are not valid degrees (usually metres) and are flagged as outliers.\n\n"
+            "Example: X = 121.05, Y = 14.60 is valid degrees. X = 505,300, Y = 1,614,200 is flagged: "
+            "these are metres (UTM), but the layer reads them as degrees, and no degree "
+            "can exceed 180 (X) or 90 (Y)."
+        )
+        hint_opt.setStyleSheet("color:#455a64; font-size:11px;")
+        hint_opt.setWordWrap(True)
+        gol.addWidget(hint_opt)
+
+        self.fix_nulls_check = QCheckBox("Also repair NULL or empty geometries")
+        self.fix_nulls_check.setChecked(True)
+        gol.addWidget(self.fix_nulls_check)
+
+        self.scan_btn = QPushButton("Scan Point Outliers")
+        self.scan_btn.setFixedHeight(32)
+        self.scan_btn.setStyleSheet(BTN_RUN)
+        self.scan_btn.setToolTip("Read-only audit: detects points with metric/outlier coordinates or missing geometries.")
+        self.scan_btn.clicked.connect(self.scan_outliers)
+        gol.addWidget(self.scan_btn)
+        ll.addWidget(grp_opts)
+
+        # Step 4: Actions
+        grp_act = QGroupBox("Step 4 - Geometry Reconstruction")
+        grp_act.setStyleSheet(GRP_STYLE)
+        gal = QVBoxLayout(grp_act)
+        hint_act = QLabel("Edits are made inside an active QGIS edit session. Nothing reaches disk until you Save Edits via Toggle Editing.")
+        hint_act.setStyleSheet("color:#455a64; font-size:11px;")
+        hint_act.setWordWrap(True)
+        gal.addWidget(hint_act)
+
+        self.repair_btn = QPushButton("Repair Outlier Points")
+        self.repair_btn.setFixedHeight(32)
+        self.repair_btn.setStyleSheet(BTN_EXPORT)
+        self.repair_btn.setToolTip("Reconstruct geometries for outlier/null features using their Longitude and Latitude columns.")
+        self.repair_btn.clicked.connect(self.repair_outliers)
+        gal.addWidget(self.repair_btn)
+
+        self.discard_btn = QPushButton("Discard / Revert Edits")
+        self.discard_btn.setFixedHeight(32)
+        self.discard_btn.setStyleSheet(BTN_CANCEL)
+        self.discard_btn.setToolTip("Roll back all buffered geometry edits made during this session.")
+        self.discard_btn.clicked.connect(self.discard_edits)
+        gal.addWidget(self.discard_btn)
+
+        ll.addWidget(grp_act, stretch=1)
+
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        scrollbar_w = self.style().pixelMetric(QStyle.PM_ScrollBarExtent)
+        left_scroll.setFixedWidth(376 + scrollbar_w)
+        root.addWidget(left_scroll)
+
+        vline = QFrame()
+        vline.setFrameShape(QFrame.VLine)
+        vline.setStyleSheet("color:#cfd8dc;")
+        root.addWidget(vline)
+
+        # -- RIGHT: REPORT -------------------------------------------------
+        right = QWidget()
+        right.setMinimumWidth(280)
+        rl = QVBoxLayout(right)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.setSpacing(6)
+
+        self.summary = QLabel("No layer scanned yet.")
+        self.summary.setStyleSheet("font-size:13px; font-weight:600; color:#37474f;")
+        rl.addWidget(self.summary)
+
+        grp_rep = QGroupBox("Logs")
+        grp_rep.setStyleSheet(GRP_STYLE)
+        pl = QVBoxLayout(grp_rep)
+        self.report = QPlainTextEdit()
+        self.report.setReadOnly(True)
+        self.report.setStyleSheet(LOG_STYLE)
+        self.report.setPlainText(self.INITIAL_LOG)
+        pl.addWidget(self.report)
+        rl.addWidget(grp_rep, stretch=1)
+
+        brow = QHBoxLayout()
+        brow.addStretch(1)
+        self.clear_btn = QPushButton("Clear Logs")
+        self.clear_btn.setFixedHeight(28)
+        self.clear_btn.setStyleSheet(BTN_CLEAR)
+        self.clear_btn.clicked.connect(self.clear_report)
+        brow.addWidget(self.clear_btn)
+        rl.addLayout(brow)
+
+        root.addWidget(right, stretch=1)
+
+        self._populate_layers()
+
+    def _populate_layers(self):
+        # Rebuilding the combo must not fire currentIndexChanged per item;
+        # this also runs on every layersAdded (e.g. MBI Checker outputs).
+        self.layer_combo.blockSignals(True)
+        try:
+            self.layer_combo.clear()
+            vector_layers = [
+                l for l in QgsProject.instance().mapLayers().values()
+                if isinstance(l, QgsVectorLayer)
+            ]
+            point_layers = [
+                l for l in vector_layers
+                if l.geometryType() == QgsWkbTypes.PointGeometry
+            ]
+            if not point_layers:
+                self.layer_combo.addItem("No point layers loaded", None)
+            else:
+                for lyr in sorted(point_layers, key=lambda l: l.name().lower()):
+                    self.layer_combo.addItem(lyr.name(), lyr.id())
+        finally:
+            self.layer_combo.blockSignals(False)
+        self._on_layer_changed()
+
+    def _refresh_layers_keep_selection(self, *args):
+        current = self.layer_combo.currentData()
+        self._populate_layers()
+        if current is not None:
+            idx = self.layer_combo.findData(current)
+            if idx >= 0:
+                self.layer_combo.setCurrentIndex(idx)
+
+    def _get_selected_layer(self, silent=False):
+        lyr_id = self.layer_combo.currentData()
+        lyr = QgsProject.instance().mapLayer(lyr_id) if lyr_id else None
+        if lyr is None:
+            if not silent:
+                QMessageBox.warning(self, "No Layer", "Pick a point layer in Step 1 first.")
+            return None
+        return lyr
+
+    def _on_layer_changed(self, *args):
+        # Automatic (signal-driven) path: never pop up a warning here.
+        layer = self._get_selected_layer(silent=True)
+        self.lon_combo.clear()
+        self.lat_combo.clear()
+        if layer is None:
+            return
+        fields = [f.name() for f in layer.fields()]
+        for f in fields:
+            self.lon_combo.addItem(f)
+            self.lat_combo.addItem(f)
+        _, _, auto_lon, auto_lat = detect_control_fields(layer)
+        if auto_lon and auto_lon in fields:
+            self.lon_combo.setCurrentText(auto_lon)
+        if auto_lat and auto_lat in fields:
+            self.lat_combo.setCurrentText(auto_lat)
+
+    def _log(self, text, summary=None):
+        self.report.setPlainText(text)
+        if summary is not None:
+            self.summary.setText(summary)
+
+    def clear_report(self):
+        self.report.setPlainText(self.INITIAL_LOG)
+        self.summary.setText("No layer scanned yet.")
+
+    def scan_outliers(self):
+        layer = self._get_selected_layer()
+        if layer is None:
+            return
+        lon_f = self.lon_combo.currentText()
+        lat_f = self.lat_combo.currentText()
+        res = audit_point_coordinates(layer, lon_field=lon_f, lat_field=lat_f)
+
+        total = res['total']
+        norm = res['normal_count']
+        outl = res['outlier_count']
+        nulls = res['null_count']
+        rep = res['repairable_count']
+
+        out = (
+            "POINT COORDINATE AUDIT REPORT:\n"
+            f"  Layer              : {layer.name()}\n"
+            f"  Declared CRS       : {layer.crs().authid() if layer.crs().isValid() else 'None'}\n"
+            f"  Total Features     : {total:,}\n"
+            f"  Normal Geographic  : {norm:,} ({norm/total*100:.1f}%)\n"
+            f"  Outliers / Metric  : {outl:,} ({outl/total*100:.1f}%)\n"
+            f"  NULL / Empty Geoms : {nulls:,}\n"
+            f"  Repairable Points  : {rep:,}\n"
+            f"  Resolved Fields    : Longitude='{res['lon_field']}', Latitude='{res['lat_field']}'\n\n"
+            "-------------------------------------------------------------\n\n"
+        ) if total > 0 else "Layer contains no features.\n"
+
+        if outl > 0 or nulls > 0:
+            out += (
+                f"ANOMALY DETECTED:\n"
+                f"  Found {outl} feature(s) whose coordinates exceed standard geographic limits\n"
+                f"  (|X| > 180° or |Y| > 90°), and {nulls} feature(s) with missing geometries.\n\n"
+                f"REPAIRABILITY:\n"
+                f"  A flagged point is repairable only if its Step 2 fields\n"
+                f"  ('{res['lon_field']}', '{res['lat_field']}') hold valid degrees:\n"
+                f"  not NULL, numeric, |Lon| <= 180, |Lat| <= 90, and not (0, 0).\n"
+                f"  Repairable: {rep:,} of {outl + nulls:,}"
+                + (f"  ({outl + nulls - rep:,} skipped - invalid or missing Lon/Lat).\n\n"
+                   if outl + nulls - rep > 0 else ".\n\n")
+                + f"Sample Outliers (FID, Current X, Current Y -> Attribute Lon, Lat):\n"
+            )
+            for fid, cx, cy, alon, alat in res['sample_outliers'][:10]:
+                cx_s = f"{cx:.2f}" if cx is not None else "NULL"
+                cy_s = f"{cy:.2f}" if cy is not None else "NULL"
+                alon_s = f"{alon:.6f}" if alon is not None else "N/A"
+                alat_s = f"{alat:.6f}" if alat is not None else "N/A"
+                out += f"  FID {fid:6d}: ({cx_s}, {cy_s}) -> ({alon_s}, {alat_s})\n"
+
+            out += (
+                f"\nNEXT STEP:\n"
+                f"  Click 'Repair Outlier Points' to update geometries in-place from '{res['lon_field']}' and '{res['lat_field']}'.\n"
+            )
+            summary = f"{layer.name()}  -  {outl} outliers, {nulls} nulls ({rep} repairable)"
+        else:
+            out += "STATUS: All point geometries are within normal geographic bounds. No repair needed.\n"
+            summary = f"{layer.name()}  -  clean (no outliers)"
+
+        self._log(out, summary)
+
+    def repair_outliers(self):
+        layer = self._get_selected_layer()
+        if layer is None:
+            return
+        lon_f = self.lon_combo.currentText()
+        lat_f = self.lat_combo.currentText()
+        if not lon_f or not lat_f:
+            QMessageBox.warning(self, "Missing Fields", "Select valid Longitude and Latitude fields.")
+            return
+
+        try:
+            repaired, skipped = repair_point_outliers(
+                layer, lon_field=lon_f, lat_field=lat_f,
+                fix_nulls=self.fix_nulls_check.isChecked()
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Repair Failed", str(exc))
+            return
+
+        out = (
+            "POINT GEOMETRY REPAIR APPLIED (in edit session):\n"
+            f"  Layer            : {layer.name()}\n"
+            f"  Features Repaired: {repaired}\n"
+            f"  Features Skipped : {skipped}\n\n"
+            "STATUS:\n"
+            "  The layer is now in edit mode with repaired point geometries.\n"
+            "  Inspect the points on the map canvas against the reference basemap.\n\n"
+            "NEXT ACTIONS:\n"
+            "  - To KEEP changes   : Use QGIS Toggle Editing -> 'Save Layer Edits'.\n"
+            "  - To REVERT changes : Click 'Discard / Revert Edits' below or Toggle Editing -> 'Discard Edits'.\n"
+        )
+        self._log(out, f"{layer.name()}  -  {repaired} points repaired (edits buffered)")
+        QMessageBox.information(
+            self, "Points Repaired",
+            f"Successfully updated geometry for {repaired} feature(s).\n\n"
+            f"The layer is currently in an edit session. Review the points on the canvas and use "
+            f"Toggle Editing's Save Edits to commit to disk."
+        )
+
+    def discard_edits(self):
+        layer = self._get_selected_layer()
+        if layer is None:
+            return
+        if not layer.isEditable():
+            QMessageBox.information(self, "No Edits", "Layer has no active uncommitted edits.")
+            return
+        layer.rollBack()
+        layer.triggerRepaint()
+        self._log(
+            f"EDITS DISCARDED:\n"
+            f"  Layer : {layer.name()}\n"
+            f"  Status: Active edit buffer was rolled back. Original geometries restored.\n",
+            f"{layer.name()}  -  edits discarded"
+        )
+        QMessageBox.information(self, "Edits Discarded", f"Rolled back all in-memory changes on '{layer.name()}'.")
+
+
+# =============================================================================
 # HELP AND INFORMATION TAB
 # =============================================================================
 class HelpInfoTab(QWidget):
@@ -1360,6 +1888,41 @@ class HelpInfoTab(QWidget):
             </tr>
           </table>
 
+          <!-- Section: Point Geometry Repair -->
+          <h3 style="color: #111827; font-size: 14px; font-weight: bold; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
+            Point Geometry Repair
+          </h3>
+          <div style="color: #374151; font-size: 11px; margin-bottom: 8px;">
+            Repairs building or landmark point layers whose geometry was saved in projected metres (e.g. UTM Zone 51N) while the layer is declared as degrees (e.g. EPSG:4326). These points plot far outside the Philippines and cause transform errors in MBI Checker. The tab rebuilds each bad point from its own Longitude/Latitude attribute values.
+          </div>
+          <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 10px; border: 1px solid #e5e7eb; font-size: 11px;">
+            <tr style="background-color: #ffffff;">
+              <td width="75" style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 1</td>
+              <td style="border-bottom: 1px solid #f3f4f6;"><b>Select Point Layer:</b> Choose the point vector layer to check.</td>
+            </tr>
+            <tr style="background-color: #f9fafb;">
+              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 2</td>
+              <td style="border-bottom: 1px solid #f3f4f6;"><b>Longitude / Latitude Fields:</b> Confirm the attribute fields holding the true GPS coordinates in decimal degrees. These are the values used to rebuild the points.</td>
+            </tr>
+            <tr style="background-color: #ffffff;">
+              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 3</td>
+              <td style="border-bottom: 1px solid #f3f4f6;"><b>Outlier Thresholds:</b> Degrees can only range from &plusmn;180&deg; (longitude, X) and &plusmn;90&deg; (latitude, Y). Any point with |X| &gt; 180 or |Y| &gt; 90 cannot be in degrees and is flagged - typically metres such as easting ~500,000 / northing ~1,600,000. Optionally include NULL or empty geometries, then click <i>Scan Point Outliers</i> (read-only) to see how many features are affected.</td>
+            </tr>
+            <tr style="background-color: #f9fafb;">
+              <td style="font-weight: bold; vertical-align: top; color: #111827;">Step 4</td>
+              <td><b>Geometry Reconstruction:</b> <i>Repair Outlier Points</i> replaces flagged geometries with points built from the Longitude/Latitude fields, inside a QGIS edit session. Use Toggle Editing's <b>Save Edits</b> to keep the result, or <i>Discard / Revert Edits</i> to roll back.</td>
+            </tr>
+          </table>
+
+          <div style="background-color: #f9fafb; border: 1px solid #e5e7eb; border-left: 4px solid #4b5563; padding: 10px 14px; margin-bottom: 16px; font-size: 11px; color: #374151;">
+            <b style="color: #111827;">Why doesn't Reproject Layer fix these points?</b><br>
+            Reproject Layer trusts the layer's declared CRS and only converts coordinates; it never checks them. In a faulty layer declared as EPSG:4326 (degrees), some points hold metres (e.g. UTM 51N X = 500,000, Y = 1,600,000). Reproject reads these as longitude 500,000&deg; / latitude 1,600,000&deg; - positions that cannot exist - so the transform fails, produces infinite/NaN coordinates, drops the features, or sends them far off the map.<br><br>
+            Assigning the whole layer to UTM 51N doesn't work either: the valid points (e.g. 121&deg;, 14&deg;) would then be read as 121 m / 14 m from the UTM origin. The layer mixes degrees and metres, so no single source CRS is correct for every point.<br><br>
+            The bad geometry must be <b>rebuilt, not converted</b>. Point Geometry Repair does this by rebuilding each flagged point from its own Longitude/Latitude attributes. Once every point really is in degrees, Reproject Layer works normally.<br><br>
+            <i>Manual alternative:</i> select only the outlier points, export them as a separate layer, <b>assign</b> (not reproject) UTM 51N, then reproject that layer to EPSG:4326 and merge it back. This only works if those points really are UTM 51N.<br><br>
+            <i>Note:</i> UTM 51N is used here as an example only - it covers most of the Philippines (120&deg;E&ndash;126&deg;E). The metre values may instead be UTM 50N (west of 120&deg;E, e.g. Palawan), a PRS92 PTM zone, or a Luzon 1911 grid. Check one outlier against its Longitude/Latitude attributes (or use <i>Detect Known CRS</i>) to find the actual zone. Point Geometry Repair does not depend on the zone, since it rebuilds points from the attributes.
+          </div>
+
           <div style="color: #6b7280; font-size: 10px; border-top: 1px solid #e5e7eb; padding-top: 8px; margin-top: 6px;">
             Know Your Projection v4.0.0 &nbsp;&middot;&nbsp; 2026-09-08
           </div>
@@ -1391,6 +1954,7 @@ class ProjectionToolkit(QDialog):
         self.setWindowFlags(self.windowFlags()
                              | Qt.WindowMinimizeButtonHint
                              | Qt.WindowMaximizeButtonHint)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setMinimumSize(820, 520)
         self.resize(1100, 720)
         self._build()
@@ -1412,12 +1976,28 @@ class ProjectionToolkit(QDialog):
         tabs = QTabWidget()
 
         self.finder_tab = ProjectionFinderTab()
+        self.point_repair_tab = PointRepairTab()
         self.help_tab = HelpInfoTab()
 
         tabs.addTab(self.finder_tab, "Know Your Projection")
+        tabs.addTab(self.point_repair_tab, "Point Geometry Repair")
         tabs.addTab(self.help_tab, "Help and Information")
 
         root.addWidget(tabs, stretch=1)
+
+    def _teardown(self):
+        # Closing destroys the dialog (WA_DeleteOnClose); detach from the
+        # project first so nothing keeps reacting to layers added later.
+        self.finder_tab.disconnect_project_signals()
+        self.point_repair_tab.disconnect_project_signals()
+
+    def done(self, result):
+        self._teardown()
+        super().done(result)
+
+    def closeEvent(self, event):
+        self._teardown()
+        super().closeEvent(event)
 
 
 # =============================================================================
