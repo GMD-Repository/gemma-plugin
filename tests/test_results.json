@@ -1,9 +1,9 @@
 {
-  "tests_run": 402,
-  "passed": 372,
-  "errors": 6,
-  "failures": 13,
-  "skipped": 11,
-  "elapsed_seconds": 78.065,
+  "tests_run": 417,
+  "passed": 393,
+  "errors": 3,
+  "failures": 8,
+  "skipped": 13,
+  "elapsed_seconds": 35.564,
   "success": false
 }

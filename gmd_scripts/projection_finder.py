@@ -1305,13 +1305,6 @@ class PointRepairTab(QWidget):
         self.layer_combo.setMinimumContentsLength(12)
         self.layer_combo.currentIndexChanged.connect(self._on_layer_changed)
         gl.addWidget(self.layer_combo)
-
-        self.scan_btn = QPushButton("Scan Point Outliers")
-        self.scan_btn.setFixedHeight(32)
-        self.scan_btn.setStyleSheet(BTN_RUN)
-        self.scan_btn.setToolTip("Read-only audit: detects points with metric/outlier coordinates or missing geometries.")
-        self.scan_btn.clicked.connect(self.scan_outliers)
-        gl.addWidget(self.scan_btn)
         ll.addWidget(grp_layer)
 
         # Step 2: Coordinate Fields
@@ -1339,7 +1332,13 @@ class PointRepairTab(QWidget):
         grp_opts = QGroupBox("Step 3 - Outlier Thresholds")
         grp_opts.setStyleSheet(GRP_STYLE)
         gol = QVBoxLayout(grp_opts)
-        hint_opt = QLabel("Points with |X| > 180° or |Y| > 90° (e.g. UTM meters in geographic layer) are flagged as outliers.")
+        hint_opt = QLabel(
+            "Degrees only range from -180° to 180° (X) and -90° to 90° (Y). "
+            "Points beyond that are not valid degrees (usually metres) and are flagged as outliers.\n\n"
+            "Example: X = 121.05, Y = 14.60 is valid degrees. X = 505,300, Y = 1,614,200 is flagged: "
+            "these are metres (UTM), but the layer reads them as degrees, and no degree "
+            "can exceed 180 (X) or 90 (Y)."
+        )
         hint_opt.setStyleSheet("color:#455a64; font-size:11px;")
         hint_opt.setWordWrap(True)
         gol.addWidget(hint_opt)
@@ -1347,6 +1346,13 @@ class PointRepairTab(QWidget):
         self.fix_nulls_check = QCheckBox("Also repair NULL or empty geometries")
         self.fix_nulls_check.setChecked(True)
         gol.addWidget(self.fix_nulls_check)
+
+        self.scan_btn = QPushButton("Scan Point Outliers")
+        self.scan_btn.setFixedHeight(32)
+        self.scan_btn.setStyleSheet(BTN_RUN)
+        self.scan_btn.setToolTip("Read-only audit: detects points with metric/outlier coordinates or missing geometries.")
+        self.scan_btn.clicked.connect(self.scan_outliers)
+        gol.addWidget(self.scan_btn)
         ll.addWidget(grp_opts)
 
         # Step 4: Actions
@@ -1521,7 +1527,14 @@ class PointRepairTab(QWidget):
                 f"ANOMALY DETECTED:\n"
                 f"  Found {outl} feature(s) whose coordinates exceed standard geographic limits\n"
                 f"  (|X| > 180° or |Y| > 90°), and {nulls} feature(s) with missing geometries.\n\n"
-                f"Sample Outliers (FID, Current X, Current Y -> Attribute Lon, Lat):\n"
+                f"REPAIRABILITY:\n"
+                f"  A flagged point is repairable only if its Step 2 fields\n"
+                f"  ('{res['lon_field']}', '{res['lat_field']}') hold valid degrees:\n"
+                f"  not NULL, numeric, |Lon| <= 180, |Lat| <= 90, and not (0, 0).\n"
+                f"  Repairable: {rep:,} of {outl + nulls:,}"
+                + (f"  ({outl + nulls - rep:,} skipped - invalid or missing Lon/Lat).\n\n"
+                   if outl + nulls - rep > 0 else ".\n\n")
+                + f"Sample Outliers (FID, Current X, Current Y -> Attribute Lon, Lat):\n"
             )
             for fid, cx, cy, alon, alat in res['sample_outliers'][:10]:
                 cx_s = f"{cx:.2f}" if cx is not None else "NULL"
@@ -1874,6 +1887,41 @@ class HelpInfoTab(QWidget):
               <td>Pre-computed area or length columns carried in the table were calculated in the source's own units and are not recomputed here. After georeferencing, derive areas afresh from the new geometry rather than trusting the stored values.</td>
             </tr>
           </table>
+
+          <!-- Section: Point Geometry Repair -->
+          <h3 style="color: #111827; font-size: 14px; font-weight: bold; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
+            Point Geometry Repair
+          </h3>
+          <div style="color: #374151; font-size: 11px; margin-bottom: 8px;">
+            Repairs building or landmark point layers whose geometry was saved in projected metres (e.g. UTM Zone 51N) while the layer is declared as degrees (e.g. EPSG:4326). These points plot far outside the Philippines and cause transform errors in MBI Checker. The tab rebuilds each bad point from its own Longitude/Latitude attribute values.
+          </div>
+          <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse: collapse; margin-bottom: 10px; border: 1px solid #e5e7eb; font-size: 11px;">
+            <tr style="background-color: #ffffff;">
+              <td width="75" style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 1</td>
+              <td style="border-bottom: 1px solid #f3f4f6;"><b>Select Point Layer:</b> Choose the point vector layer to check.</td>
+            </tr>
+            <tr style="background-color: #f9fafb;">
+              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 2</td>
+              <td style="border-bottom: 1px solid #f3f4f6;"><b>Longitude / Latitude Fields:</b> Confirm the attribute fields holding the true GPS coordinates in decimal degrees. These are the values used to rebuild the points.</td>
+            </tr>
+            <tr style="background-color: #ffffff;">
+              <td style="font-weight: bold; vertical-align: top; border-bottom: 1px solid #f3f4f6; color: #111827;">Step 3</td>
+              <td style="border-bottom: 1px solid #f3f4f6;"><b>Outlier Thresholds:</b> Degrees can only range from &plusmn;180&deg; (longitude, X) and &plusmn;90&deg; (latitude, Y). Any point with |X| &gt; 180 or |Y| &gt; 90 cannot be in degrees and is flagged - typically metres such as easting ~500,000 / northing ~1,600,000. Optionally include NULL or empty geometries, then click <i>Scan Point Outliers</i> (read-only) to see how many features are affected.</td>
+            </tr>
+            <tr style="background-color: #f9fafb;">
+              <td style="font-weight: bold; vertical-align: top; color: #111827;">Step 4</td>
+              <td><b>Geometry Reconstruction:</b> <i>Repair Outlier Points</i> replaces flagged geometries with points built from the Longitude/Latitude fields, inside a QGIS edit session. Use Toggle Editing's <b>Save Edits</b> to keep the result, or <i>Discard / Revert Edits</i> to roll back.</td>
+            </tr>
+          </table>
+
+          <div style="background-color: #f9fafb; border: 1px solid #e5e7eb; border-left: 4px solid #4b5563; padding: 10px 14px; margin-bottom: 16px; font-size: 11px; color: #374151;">
+            <b style="color: #111827;">Why doesn't Reproject Layer fix these points?</b><br>
+            Reproject Layer trusts the layer's declared CRS and only converts coordinates; it never checks them. In a faulty layer declared as EPSG:4326 (degrees), some points hold metres (e.g. UTM 51N X = 500,000, Y = 1,600,000). Reproject reads these as longitude 500,000&deg; / latitude 1,600,000&deg; - positions that cannot exist - so the transform fails, produces infinite/NaN coordinates, drops the features, or sends them far off the map.<br><br>
+            Assigning the whole layer to UTM 51N doesn't work either: the valid points (e.g. 121&deg;, 14&deg;) would then be read as 121 m / 14 m from the UTM origin. The layer mixes degrees and metres, so no single source CRS is correct for every point.<br><br>
+            The bad geometry must be <b>rebuilt, not converted</b>. Point Geometry Repair does this by rebuilding each flagged point from its own Longitude/Latitude attributes. Once every point really is in degrees, Reproject Layer works normally.<br><br>
+            <i>Manual alternative:</i> select only the outlier points, export them as a separate layer, <b>assign</b> (not reproject) UTM 51N, then reproject that layer to EPSG:4326 and merge it back. This only works if those points really are UTM 51N.<br><br>
+            <i>Note:</i> UTM 51N is used here as an example only - it covers most of the Philippines (120&deg;E&ndash;126&deg;E). The metre values may instead be UTM 50N (west of 120&deg;E, e.g. Palawan), a PRS92 PTM zone, or a Luzon 1911 grid. Check one outlier against its Longitude/Latitude attributes (or use <i>Detect Known CRS</i>) to find the actual zone. Point Geometry Repair does not depend on the zone, since it rebuilds points from the attributes.
+          </div>
 
           <div style="color: #6b7280; font-size: 10px; border-top: 1px solid #e5e7eb; padding-top: 8px; margin-top: 6px;">
             Know Your Projection v4.0.0 &nbsp;&middot;&nbsp; 2026-09-08
