@@ -202,6 +202,8 @@ class GapsOverlaps(QgsProcessingAlgorithm):
         )
 
     def processAlgorithm(self, parameters, context, feedback: QgsProcessingFeedback):
+        # Invalid geometries are expected input here; never filter them out
+        context.setInvalidGeometryCheck(QgsFeatureRequest.GeometryNoCheck)
         self._keep_alive = []
 
         def keep_layer(layer):
