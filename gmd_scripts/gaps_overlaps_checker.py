@@ -128,7 +128,7 @@ class GapsOverlaps(QgsProcessingAlgorithm):
     def shortHelpString(self):
         return (
             "<p>Detects boundary findings (gaps, overlaps, and disputed boundaries) "
-            "of LGU polygon layers.</p>"
+            "of polygon layers.</p>"
             "<h3>Output Layers</h3>"
             "<ul>"
             "<li><b>Gaps</b> — Empty slivers between polygons. Disputed polygons are "
@@ -954,5 +954,5 @@ class GapsOverlaps(QgsProcessingAlgorithm):
 
             feedback.setProgress(100)
 
-        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v13.")
+        feedback.pushInfo("Finished MBI Checker.")
         return results
