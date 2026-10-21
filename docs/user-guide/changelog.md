@@ -2,6 +2,36 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.13
+<time>Oct 21, 2026</time>
+
+### ✨ New Features
+- add barangay attributes joining script, projection finder, tests, and documentation ([@psacjperez](https://github.com/psacjperez))
+- add package dialog implementation and KomuniAksyon QML style ([@kentemman-gmd](https://github.com/kentemman-gmd))
+- add phase implementation modules and unit tests for enumeration area creation plugin ([@pacoleslaw](https://github.com/pacoleslaw))
+- add QGIS processing scripts for MBI boundary analysis and validation ([@psacjperez](https://github.com/psacjperez))
+- add gaps and overlaps checker QGIS processing algorithm plugin ([@psacjperez](https://github.com/psacjperez))
+
+### ⚡ Improvements & Fixes
+- extract buildings within candidate areas using native extract by location ([@pacoleslaw](https://github.com/pacoleslaw)) ([#378](https://github.com/GMD-Repository/gemma-plugin/pull/378))
+- dynamically determine building input from parent and target polygon layer ([@pacoleslaw](https://github.com/pacoleslaw))
+- respect user-selected building layer for processing ([@pacoleslaw](https://github.com/pacoleslaw))
+- extract and synchronize building points into extracted_bldgpts layer ([@pacoleslaw](https://github.com/pacoleslaw))
+- extract building points for all delineation candidate EAs ([@pacoleslaw](https://github.com/pacoleslaw))
+- reliably split delineated EA polygons using eadel_update cut lines ([@pacoleslaw](https://github.com/pacoleslaw))
+- partition proposed eadel using building points and enforce minimum household threshold ([@pacoleslaw](https://github.com/pacoleslaw))
+- assess resulting sub-EAs against minimum and maximum thresholds on split ([@pacoleslaw](https://github.com/pacoleslaw))
+- update test_results.json metrics after running test suite ([@psacjperez](https://github.com/psacjperez))
+
+### 🐛 Bug Fixes
+- Add new feature in Know Your Projection for Point Layers, and fixed minor bug for join barangay attributes ([@psacjperez](https://github.com/psacjperez)) ([#367](https://github.com/GMD-Repository/gemma-plugin/pull/367))
+- correct spelling of KomuniAksyon in presets and QML style ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#377](https://github.com/GMD-Repository/gemma-plugin/pull/377))
+- Minor changes for Point Coordinates Repair of Know Your Projection and adjusted filtering for MBI Checker, Validator and Run Analysis ([@psacjperez](https://github.com/psacjperez)) ([#380](https://github.com/GMD-Repository/gemma-plugin/pull/380))
+- resolve QgsRectangle.grow argument error in phase2 candidates ([@pacoleslaw](https://github.com/pacoleslaw))
+- resolve building points household count for raw and extracted layers ([@pacoleslaw](https://github.com/pacoleslaw))
+
+<Contributors :contributors="['psacjperez', 'kentemman-gmd', 'pacoleslaw']" />
+
 ## 1.0.12
 <time>Oct 19, 2026</time>
 
