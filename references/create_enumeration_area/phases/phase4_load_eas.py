@@ -168,6 +168,7 @@ def run_phase_4(alg, parameters, context, feedback, multi_feedback, p1, p2, prev
         if feat.id() in ea_to_special_ea_hh and feat.id() not in special_ea_ids:
             _orig_hhcount = max(0.0, _orig_hhcount - ea_to_special_ea_hh[feat.id()])
 
+        exec_mode = p1.get("execution_mode", "all")
         is_delineation = feat.id() in delineation_candidate_ids
         is_merge = feat.id() in merge_candidate_ids or _orig_hhcount == 0.0
         is_special = feat.id() in special_ea_ids
@@ -177,13 +178,13 @@ def run_phase_4(alg, parameters, context, feedback, multi_feedback, p1, p2, prev
             bar_geo = _resolve_bar(feat)
             if bar_geo:
                 active_barangays.add(bar_geo)
-        elif is_delineation:
+        elif is_delineation and exec_mode != "merging":
             needed_ea_ids.add(feat.id())
             bar_geo = _resolve_bar(feat)
             if bar_geo:
                 active_barangays.add(bar_geo)
                 delin_candidate_barangays.add(bar_geo)
-        elif is_merge:
+        elif is_merge and exec_mode != "delineation":
             needed_ea_ids.add(feat.id())
             bar_geo = _resolve_bar(feat)
             if bar_geo:

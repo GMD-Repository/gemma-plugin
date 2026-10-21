@@ -27,6 +27,9 @@ from references.create_enumeration_area.helpers.constants import create_qgs_fiel
 class TestSplitEADialog(unittest.TestCase):
     """Test suite for SplitEADialog."""
 
+    def tearDown(self):
+        QgsProject.instance().removeAllMapLayers()
+
     def test_split_ea_btn_exists_in_dialog(self):
         """Verify that split_ea_btn and _open_split_ea_dialog exist on EALauncherDialog."""
         from references.create_enumeration_area.dialog import EALauncherDialog
@@ -41,6 +44,10 @@ class TestSplitEADialog(unittest.TestCase):
         self.assertIsNotNone(dlg.poly_combo)
         self.assertIsNotNone(dlg.line_combo)
         self.assertIsNotNone(dlg.bldg_combo)
+        self.assertIsNotNone(dlg.min_hh_spin)
+        self.assertIsNotNone(dlg.max_hh_spin)
+        self.assertEqual(dlg.min_hh_spin.value(), 99)
+        self.assertEqual(dlg.max_hh_spin.value(), 300)
         self.assertIsNotNone(dlg.tolerance_spin)
         self.assertIsNotNone(dlg.progress_bar)
         self.assertIsNotNone(dlg.log_console)
@@ -48,6 +55,11 @@ class TestSplitEADialog(unittest.TestCase):
         self.assertIsNotNone(dlg.close_btn)
         self.assertEqual(dlg.default_geocode, "01728")
         self.assertEqual(dlg.default_output_dir, "C:/test_out")
+
+        # Custom min and max
+        dlg_custom = SplitEADialog(default_min_hh=120, default_max_hh=400)
+        self.assertEqual(dlg_custom.min_hh_spin.value(), 120)
+        self.assertEqual(dlg_custom.max_hh_spin.value(), 400)
 
     def test_extend_line_endpoints(self):
         """Verify line extension math extends coordinates outwards."""
@@ -82,7 +94,7 @@ class TestSplitEADialog(unittest.TestCase):
         QgsProject.instance().addMapLayer(bldg_lyr)
 
         try:
-            dlg = SplitEADialog()
+            dlg = SplitEADialog(default_geocode="01728")
             curr_poly = dlg.poly_combo.currentLayer()
             if hasattr(curr_poly, "name") and not isinstance(curr_poly, MockGenericClass):
                 self.assertEqual(curr_poly.name(), "01728_delineated_ea2026")
@@ -2185,6 +2197,850 @@ class TestSplitEADialog(unittest.TestCase):
         pairs = [(f.attribute("bldg_points"), f.attribute("hh_count")) for f in features]
         self.assertIn((1, 15), pairs)
         self.assertIn((1, 25), pairs)
+
+    def test_bldg_input_determined_from_parent_input(self):
+        """Verify that when default_bldg_layer is supplied from parent inputs, it is prioritized and set in bldg_combo."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+        bldg_input = QgsVectorLayer("Point?crs=epsg:4326", "02122_bldg_point", "memory")
+        dp = bldg_input.dataProvider()
+        dp.addAttributes([create_qgs_field("est_hhcount", QVariant.Double)])
+        bldg_input.updateFields()
+        f = QgsFeature(bldg_input.fields())
+        f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(1, 1)))
+        f.setAttributes([5.0])
+        dp.addFeatures([f])
+
+        other_bldg = QgsVectorLayer("Point?crs=epsg:4326", "02122_extracted_bldgpts", "memory")
+        QgsProject.instance().addMapLayers([bldg_input, other_bldg])
+        try:
+            dlg = SplitEADialog(default_bldg_layer=bldg_input)
+            self.assertEqual(dlg.bldg_combo.currentLayer(), bldg_input)
+        finally:
+            QgsProject.instance().removeAllMapLayers()
+
+    def test_bldg_input_dynamically_updates_on_poly_layer_change(self):
+        """Verify that switching target EA polygon layer dynamically switches building points to matching geocode."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+        poly_02122 = QgsVectorLayer("Polygon?crs=epsg:4326", "02122_delineated_ea", "memory")
+        poly_01728 = QgsVectorLayer("Polygon?crs=epsg:4326", "01728_delineated_ea", "memory")
+
+        bldg_02122 = QgsVectorLayer("Point?crs=epsg:4326", "02122_bldg_point", "memory")
+        dp_b1 = bldg_02122.dataProvider()
+        dp_b1.addAttributes([create_qgs_field("est_hhcount", QVariant.Double)])
+        bldg_02122.updateFields()
+        f1 = QgsFeature(bldg_02122.fields())
+        f1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(1, 1)))
+        f1.setAttributes([10.0])
+        dp_b1.addFeatures([f1])
+
+        bldg_01728 = QgsVectorLayer("Point?crs=epsg:4326", "01728_bldg_point", "memory")
+        dp_b2 = bldg_01728.dataProvider()
+        dp_b2.addAttributes([create_qgs_field("est_hhcount", QVariant.Double)])
+        bldg_01728.updateFields()
+        f2 = QgsFeature(bldg_01728.fields())
+        f2.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(2, 2)))
+        f2.setAttributes([20.0])
+        dp_b2.addFeatures([f2])
+
+        QgsProject.instance().addMapLayers([poly_02122, poly_01728, bldg_02122, bldg_01728])
+        try:
+            dlg = SplitEADialog(default_poly_layer=poly_02122)
+            # Initially, 02122 polygon should pair with 02122 bldg point
+            self.assertEqual(dlg.bldg_combo.currentLayer(), bldg_02122)
+
+            # When poly_combo is switched to 01728, building combo dynamically follows
+            dlg.poly_combo.setLayer(poly_01728)
+            dlg._on_layer_selection_changed()
+            self.assertEqual(dlg.bldg_combo.currentLayer(), bldg_01728)
+        finally:
+            QgsProject.instance().removeAllMapLayers()
+
+    def test_bldg_user_manual_selection_preserved_when_matching(self):
+        """Verify that user explicit selection of building layer is preserved when matching."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+        poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "02122_delineated_ea", "memory")
+        bldg_1 = QgsVectorLayer("Point?crs=epsg:4326", "02122_bldg_point", "memory")
+        bldg_2 = QgsVectorLayer("Point?crs=epsg:4326", "02122_bldgpts", "memory")
+        dp = bldg_2.dataProvider()
+        dp.addAttributes([create_qgs_field("est_hhcount", QVariant.Double)])
+        bldg_2.updateFields()
+        f = QgsFeature(bldg_2.fields())
+        f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(1, 1)))
+        f.setAttributes([3.0])
+        dp.addFeatures([f])
+
+        QgsProject.instance().addMapLayers([poly_lyr, bldg_1, bldg_2])
+        try:
+            dlg = SplitEADialog(default_poly_layer=poly_lyr)
+            # User manually selects bldg_2
+            dlg.bldg_combo.setLayer(bldg_2)
+            dlg._on_bldg_layer_changed()
+            self.assertTrue(dlg._bldg_user_selected)
+
+            # Re-running layer selection changed shouldn't overwrite user selection since it matches geocode
+            dlg._on_layer_selection_changed()
+            self.assertEqual(dlg.bldg_combo.currentLayer(), bldg_2)
+        finally:
+            QgsProject.instance().removeAllMapLayers()
+
+    @patch("references.create_enumeration_area.split_dialog.processing.run")
+    def test_user_chosen_building_layer_strictly_used_in_split_process(self, mock_proc_run):
+        """Verify that whatever building point layer is chosen in bldg_combo is strictly used in run_split."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+
+        poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "02122_delineated_ea", "memory")
+        dp_poly = poly_lyr.dataProvider()
+        dp_poly.addAttributes([
+            create_qgs_field("ean", QVariant.String),
+            create_qgs_field("hh_count", QVariant.Int),
+            create_qgs_field("bldg_count", QVariant.Int),
+        ])
+        poly_lyr.updateFields()
+
+        poly_feat = QgsFeature(poly_lyr.fields())
+        poly_feat.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        poly_feat.setAttribute("ean", "001000")
+        poly_feat.setAttribute("hh_count", 0)
+        poly_feat.setAttribute("bldg_count", 0)
+        dp_poly.addFeatures([poly_feat])
+        poly_lyr.updateExtents()
+
+        line_lyr = QgsVectorLayer("LineString?crs=epsg:4326", "02122_eadel_update", "memory")
+        dp_line = line_lyr.dataProvider()
+        line_feat = QgsFeature()
+        line_feat.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(5, -1), QgsPointXY(5, 11)]))
+        dp_line.addFeatures([line_feat])
+        line_lyr.updateExtents()
+
+        # Alternate / auto building layer with 5 HH (should NOT be used)
+        auto_bldg = QgsVectorLayer("Point?crs=epsg:4326", "02122_extracted_bldgpts", "memory")
+        dp_auto = auto_bldg.dataProvider()
+        dp_auto.addAttributes([create_qgs_field("est_hhcount", QVariant.Double)])
+        auto_bldg.updateFields()
+        f_auto = QgsFeature(auto_bldg.fields())
+        f_auto.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(2, 2)))
+        f_auto.setAttribute("est_hhcount", 5.0)
+        dp_auto.addFeatures([f_auto])
+        auto_bldg.updateExtents()
+
+        # User-selected building layer with 2 points: 15 HH + 25 HH = 40 HH (MUST be used)
+        user_bldg = QgsVectorLayer("Point?crs=epsg:4326", "02122_bldg_point", "memory")
+        dp_user = user_bldg.dataProvider()
+        dp_user.addAttributes([create_qgs_field("est_hhcount", QVariant.Double)])
+        user_bldg.updateFields()
+        u1 = QgsFeature(user_bldg.fields())
+        u1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(2, 2)))
+        u1.setAttribute("est_hhcount", 15.0)
+        u2 = QgsFeature(user_bldg.fields())
+        u2.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(7, 7)))
+        u2.setAttribute("est_hhcount", 25.0)
+        dp_user.addFeatures([u1, u2])
+        user_bldg.updateExtents()
+
+        # Split output with 2 parts
+        split_res = QgsVectorLayer("Polygon?crs=epsg:4326", "split_res", "memory")
+        dp_s = split_res.dataProvider()
+        dp_s.addAttributes([create_qgs_field("hh_count", QVariant.Int), create_qgs_field("bldg_count", QVariant.Int)])
+        split_res.updateFields()
+        s1 = QgsFeature(split_res.fields())
+        s1.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(5, 0), QgsPointXY(5, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        s2 = QgsFeature(split_res.fields())
+        s2.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(5, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(5, 10), QgsPointXY(5, 0)
+        ]]))
+        dp_s.addFeatures([s1, s2])
+        split_res.updateExtents()
+
+        mock_proc_run.return_value = {"OUTPUT": split_res}
+
+        QgsProject.instance().addMapLayers([poly_lyr, line_lyr, auto_bldg, user_bldg])
+        try:
+            dlg = SplitEADialog()
+            dlg.poly_combo.setLayer(poly_lyr)
+            dlg.line_combo.setLayer(line_lyr)
+
+            # User explicitly chooses 02122_bldg_point in dropdown
+            dlg.bldg_combo.setLayer(user_bldg)
+            dlg._on_bldg_layer_changed()
+            self.assertEqual(dlg.bldg_combo.currentLayer(), user_bldg)
+
+            dlg.run_split()
+
+            # Process must strictly use user_bldg: 2 points total (u1: 15 HH in part 1, u2: 25 HH in part 2)
+            updated = list(poly_lyr.getFeatures())
+            self.assertEqual(len(updated), 2)
+            hh_vals = sorted([f.attribute("hh_count") for f in updated])
+            bldg_vals = sorted([f.attribute("bldg_count") for f in updated])
+            self.assertEqual(hh_vals, [15, 25])
+            self.assertEqual(bldg_vals, [1, 1])
+        finally:
+            QgsProject.instance().removeAllMapLayers()
+
+    @patch("references.create_enumeration_area.split_dialog.processing.run")
+    def test_extracted_bldgpts_are_extracted_during_split_process(self, mock_proc_run):
+        """Verify that running split delineation extracts building points into <geo5>_extracted_bldgpts layer."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+
+        poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "02122_delineated_ea", "memory")
+        dp_poly = poly_lyr.dataProvider()
+        dp_poly.addAttributes([
+            create_qgs_field("ean", QVariant.String),
+            create_qgs_field("hh_count", QVariant.Int),
+            create_qgs_field("bldg_count", QVariant.Int),
+        ])
+        poly_lyr.updateFields()
+
+        poly_feat = QgsFeature(poly_lyr.fields())
+        poly_feat.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        poly_feat.setAttribute("ean", "001000")
+        poly_feat.setAttribute("hh_count", 0)
+        poly_feat.setAttribute("bldg_count", 0)
+        dp_poly.addFeatures([poly_feat])
+        poly_lyr.updateExtents()
+
+        line_lyr = QgsVectorLayer("LineString?crs=epsg:4326", "02122_eadel_update", "memory")
+        dp_line = line_lyr.dataProvider()
+        line_feat = QgsFeature()
+        line_feat.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(5, -1), QgsPointXY(5, 11)]))
+        dp_line.addFeatures([line_feat])
+        line_lyr.updateExtents()
+
+        bldg_lyr = QgsVectorLayer("Point?crs=epsg:4326", "02122_bldg_point", "memory")
+        dp_bldg = bldg_lyr.dataProvider()
+        dp_bldg.addAttributes([create_qgs_field("est_hhcount", QVariant.Double)])
+        bldg_lyr.updateFields()
+
+        # Part 1 (x: 0..5): Point 1 (x=2, y=2) with 10.0 HH
+        b1 = QgsFeature(bldg_lyr.fields())
+        b1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(2, 2)))
+        b1.setAttribute("est_hhcount", 10.0)
+
+        # Part 2 (x: 5..10): Point 2 (x=7, y=7) with 20.0 HH
+        b2 = QgsFeature(bldg_lyr.fields())
+        b2.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(7, 7)))
+        b2.setAttribute("est_hhcount", 20.0)
+
+        # Outside polygon: Point 3 (x=15, y=15) - should NOT be extracted
+        b3 = QgsFeature(bldg_lyr.fields())
+        b3.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(15, 15)))
+        b3.setAttribute("est_hhcount", 5.0)
+
+        dp_bldg.addFeatures([b1, b2, b3])
+        bldg_lyr.updateExtents()
+
+        split_res = QgsVectorLayer("Polygon?crs=epsg:4326", "split_res", "memory")
+        dp_s = split_res.dataProvider()
+        dp_s.addAttributes([create_qgs_field("hh_count", QVariant.Int), create_qgs_field("bldg_count", QVariant.Int)])
+        split_res.updateFields()
+        s1 = QgsFeature(split_res.fields())
+        s1.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(5, 0), QgsPointXY(5, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        s2 = QgsFeature(split_res.fields())
+        s2.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(5, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(5, 10), QgsPointXY(5, 0)
+        ]]))
+        dp_s.addFeatures([s1, s2])
+        split_res.updateExtents()
+
+        mock_proc_run.return_value = {"OUTPUT": split_res}
+
+        QgsProject.instance().addMapLayers([poly_lyr, line_lyr, bldg_lyr])
+        try:
+            dlg = SplitEADialog()
+            dlg.poly_combo.setLayer(poly_lyr)
+            dlg.line_combo.setLayer(line_lyr)
+            dlg.bldg_combo.setLayer(bldg_lyr)
+            dlg._on_bldg_layer_changed()
+
+            dlg.run_split()
+
+            # Verify that extracted building points layer was created and added to QgsProject
+            ext_layer = None
+            for lyr in QgsProject.instance().mapLayers().values():
+                if lyr.name() == "02122_extracted_bldgpts":
+                    ext_layer = lyr
+                    break
+
+            self.assertIsNotNone(ext_layer, "Layer 02122_extracted_bldgpts should be added to QgsProject")
+            self.assertEqual(ext_layer.featureCount(), 2, "Only the 2 building points inside the split EAs should be extracted")
+
+            feats = list(ext_layer.getFeatures())
+            parent_eans = sorted([str(f.attribute("parent_ean")) for f in feats])
+            roles = [str(f.attribute("merge_role")) for f in feats]
+            pops = sorted([float(f.attribute("pop")) for f in feats])
+
+            self.assertEqual(parent_eans, ["001000", "002001"])
+            self.assertTrue(all(r == "Delineated" for r in roles))
+            self.assertEqual(pops, [10.0, 20.0])
+        finally:
+            QgsProject.instance().removeAllMapLayers()
+
+    @patch("references.create_enumeration_area.split_dialog.processing.run")
+    def test_split_delineated_ea_using_eadel_update_cut_lines(self, mock_proc_run):
+        """Verify that eadel_update cut lines reliably split delineated_ea polygons with zero tolerance."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+
+        poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "02122_delineated_ea2026", "memory")
+        dp_poly = poly_lyr.dataProvider()
+        dp_poly.addAttributes([
+            create_qgs_field("geocode", QVariant.String),
+            create_qgs_field("ean", QVariant.String),
+            create_qgs_field("hhcount", QVariant.Int),
+            create_qgs_field("bldgcount", QVariant.Int),
+            create_qgs_field("hh_count", QVariant.Int),
+            create_qgs_field("bldg_count", QVariant.Int),
+            create_qgs_field("remarks", QVariant.String),
+        ])
+        poly_lyr.updateFields()
+
+        poly_feat = QgsFeature(poly_lyr.fields())
+        poly_feat.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        poly_feat.setAttribute("geocode", "02122001001000")
+        poly_feat.setAttribute("ean", "001000")
+        poly_feat.setAttribute("hhcount", 350)
+        poly_feat.setAttribute("bldgcount", 60)
+        dp_poly.addFeatures([poly_feat])
+        poly_lyr.updateExtents()
+
+        line_lyr = QgsVectorLayer("LineString?crs=epsg:4326", "02122_eadel_update", "memory")
+        dp_line = line_lyr.dataProvider()
+        dp_line.addAttributes([
+            create_qgs_field("geocode", QVariant.String),
+            create_qgs_field("ean", QVariant.String),
+            create_qgs_field("indicator", QVariant.String),
+            create_qgs_field("remarks", QVariant.String),
+        ])
+        line_lyr.updateFields()
+        l_feat = QgsFeature(line_lyr.fields())
+        l_feat.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(5, 0), QgsPointXY(5, 10)]))
+        l_feat.setAttribute("geocode", "02122001001000")
+        l_feat.setAttribute("ean", "001000")
+        dp_line.addFeatures([l_feat])
+        line_lyr.updateExtents()
+
+        bldg_lyr = QgsVectorLayer("Point?crs=epsg:4326", "02122_extracted_bldgpts", "memory")
+        dp_bldg = bldg_lyr.dataProvider()
+        dp_bldg.addAttributes([
+            create_qgs_field("est_hhcount", QVariant.Double),
+            create_qgs_field("ea_geocode", QVariant.String),
+        ])
+        bldg_lyr.updateFields()
+
+        b1 = QgsFeature(bldg_lyr.fields())
+        b1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(2.5, 5.0)))
+        b1.setAttribute("est_hhcount", 180.0)
+        b1.setAttribute("ea_geocode", "02122001001000")
+
+        b2 = QgsFeature(bldg_lyr.fields())
+        b2.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(7.5, 5.0)))
+        b2.setAttribute("est_hhcount", 170.0)
+        b2.setAttribute("ea_geocode", "02122001001000")
+
+        dp_bldg.addFeatures([b1, b2])
+        bldg_lyr.updateExtents()
+
+        # Simulated split output from native:splitwithlines
+        split_res = QgsVectorLayer("Polygon?crs=epsg:4326", "split_res", "memory")
+        dp_split = split_res.dataProvider()
+        dp_split.addAttributes([create_qgs_field("hh_count", QVariant.Int), create_qgs_field("bldg_count", QVariant.Int)])
+        split_res.updateFields()
+        s1 = QgsFeature(split_res.fields())
+        s1.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(5, 0), QgsPointXY(5, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        s2 = QgsFeature(split_res.fields())
+        s2.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(5, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(5, 10), QgsPointXY(5, 0)
+        ]]))
+        dp_split.addFeatures([s1, s2])
+        split_res.updateExtents()
+
+        mock_proc_run.return_value = {"OUTPUT": split_res}
+
+        QgsProject.instance().addMapLayers([poly_lyr, line_lyr, bldg_lyr])
+        try:
+            dlg = SplitEADialog(default_geocode="02122")
+            dlg.status_banner = MagicMock()
+            dlg.progress_bar = MagicMock()
+            dlg.log_console = MagicMock()
+
+            # Verify auto-detection defaults to delineated_ea and eadel_update
+            self.assertEqual(dlg.poly_combo.currentLayer(), poly_lyr)
+            self.assertEqual(dlg.line_combo.currentLayer(), line_lyr)
+            self.assertEqual(dlg.bldg_combo.currentLayer(), bldg_lyr)
+
+            # Tolerance is default 0.0
+            self.assertEqual(dlg.tolerance_spin.value(), 0.0)
+
+            dlg.run_split()
+
+            # Verify that delineated_ea was successfully split into 2 features
+            updated_features = list(poly_lyr.getFeatures())
+            self.assertEqual(len(updated_features), 2, "delineated_ea should be split into 2 sub-EAs")
+
+            # Check new_ean, geocode, ea_type, and counts
+            part_eans = sorted([str(f.attribute("new_ean")) for f in updated_features])
+            self.assertEqual(part_eans, ["001000", "002001"])
+
+            for f in updated_features:
+                self.assertEqual(str(f.attribute("ea_type")), "DELINEATED")
+                self.assertTrue(str(f.attribute("remarks")).startswith("Delineated from EA 001000"))
+                geo_str = str(f.attribute("geocode"))
+                self.assertTrue(geo_str.startswith("02122001"))
+                self.assertIn(int(f.attribute("hh_count")), [170, 180])
+                self.assertEqual(int(f.attribute("bldg_count")), 1)
+        finally:
+            QgsProject.instance().removeAllMapLayers()
+
+
+    @patch("references.create_enumeration_area.split_dialog.processing.run")
+    def test_split_with_bldg_point_having_zero_hh_field(self, mock_proc_run):
+        """Verify that building points with 0 or missing household attribute safely default to 1.0 HH."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+
+        poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "02122_delineated_ea2026", "memory")
+        dp_poly = poly_lyr.dataProvider()
+        dp_poly.addAttributes([
+            create_qgs_field("geocode", QVariant.String),
+            create_qgs_field("ean", QVariant.String),
+            create_qgs_field("hh_count", QVariant.Int),
+            create_qgs_field("bldg_count", QVariant.Int),
+        ])
+        poly_lyr.updateFields()
+        poly_feat = QgsFeature(poly_lyr.fields())
+        poly_feat.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        poly_feat.setAttribute("geocode", "02122001001000")
+        poly_feat.setAttribute("ean", "001000")
+        poly_feat.setAttribute("hh_count", 0)
+        poly_feat.setAttribute("bldg_count", 0)
+        dp_poly.addFeatures([poly_feat])
+        poly_lyr.updateExtents()
+
+        line_lyr = QgsVectorLayer("LineString?crs=epsg:4326", "02122_eadel_update", "memory")
+        dp_line = line_lyr.dataProvider()
+        dp_line.addAttributes([create_qgs_field("geocode", QVariant.String), create_qgs_field("ean", QVariant.String)])
+        line_lyr.updateFields()
+        l_feat = QgsFeature(line_lyr.fields())
+        l_feat.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(5, 0), QgsPointXY(5, 10)]))
+        l_feat.setAttribute("geocode", "02122001001000")
+        l_feat.setAttribute("ean", "001000")
+        dp_line.addFeatures([l_feat])
+        line_lyr.updateExtents()
+
+        # bldg_point layer with est_hhcount = 0.0 (raw points)
+        bldg_lyr = QgsVectorLayer("Point?crs=epsg:4326", "02122_bldg_point", "memory")
+        dp_bldg = bldg_lyr.dataProvider()
+        dp_bldg.addAttributes([
+            create_qgs_field("est_hhcount", QVariant.Double),
+            create_qgs_field("ea_geocode", QVariant.String),
+        ])
+        bldg_lyr.updateFields()
+
+        # 2 points in part 1 (x < 5), 3 points in part 2 (x > 5)
+        b_pts = []
+        for x, y in [(2.0, 3.0), (3.0, 7.0), (6.0, 2.0), (7.0, 5.0), (8.0, 8.0)]:
+            bf = QgsFeature(bldg_lyr.fields())
+            bf.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(x, y)))
+            bf.setAttribute("est_hhcount", 0.0)  # explicitly 0 to test fallback to 1.0
+            bf.setAttribute("ea_geocode", "02122001001000")
+            b_pts.append(bf)
+        dp_bldg.addFeatures(b_pts)
+        bldg_lyr.updateExtents()
+
+        split_res = QgsVectorLayer("Polygon?crs=epsg:4326", "split_res", "memory")
+        dp_split = split_res.dataProvider()
+        dp_split.addAttributes([create_qgs_field("hh_count", QVariant.Int), create_qgs_field("bldg_count", QVariant.Int)])
+        split_res.updateFields()
+        s1 = QgsFeature(split_res.fields())
+        s1.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(5, 0), QgsPointXY(5, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        s2 = QgsFeature(split_res.fields())
+        s2.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(5, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(5, 10), QgsPointXY(5, 0)
+        ]]))
+        dp_split.addFeatures([s1, s2])
+        split_res.updateExtents()
+
+        mock_proc_run.return_value = {"OUTPUT": split_res}
+
+        QgsProject.instance().addMapLayers([poly_lyr, line_lyr, bldg_lyr])
+        try:
+            dlg = SplitEADialog(default_geocode="02122")
+            dlg.status_banner = MagicMock()
+            dlg.progress_bar = MagicMock()
+            dlg.log_console = MagicMock()
+            dlg.run_split()
+
+            updated_features = list(poly_lyr.getFeatures())
+            self.assertEqual(len(updated_features), 2)
+            hh_counts = sorted([int(f.attribute("hh_count")) for f in updated_features])
+            bldg_counts = sorted([int(f.attribute("bldg_count")) for f in updated_features])
+            # Each point with 0 HH counts as 1.0 HH
+            self.assertEqual(hh_counts, [2, 3])
+            self.assertEqual(bldg_counts, [2, 3])
+        finally:
+            QgsProject.instance().removeAllMapLayers()
+
+    @patch("references.create_enumeration_area.split_dialog.processing.run")
+    def test_split_with_extracted_bldg_points_pop_field(self, mock_proc_run):
+        """Verify that extracted_bldgpts with 'pop' attribute calculates accurate hh_count."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+
+        poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "02122_delineated_ea2026", "memory")
+        dp_poly = poly_lyr.dataProvider()
+        dp_poly.addAttributes([
+            create_qgs_field("geocode", QVariant.String),
+            create_qgs_field("ean", QVariant.String),
+            create_qgs_field("hh_count", QVariant.Int),
+            create_qgs_field("bldg_count", QVariant.Int),
+        ])
+        poly_lyr.updateFields()
+        poly_feat = QgsFeature(poly_lyr.fields())
+        poly_feat.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        poly_feat.setAttribute("geocode", "02122001001000")
+        poly_feat.setAttribute("ean", "001000")
+        dp_poly.addFeatures([poly_feat])
+        poly_lyr.updateExtents()
+
+        line_lyr = QgsVectorLayer("LineString?crs=epsg:4326", "02122_eadel_update", "memory")
+        dp_line = line_lyr.dataProvider()
+        dp_line.addAttributes([create_qgs_field("geocode", QVariant.String), create_qgs_field("ean", QVariant.String)])
+        line_lyr.updateFields()
+        l_feat = QgsFeature(line_lyr.fields())
+        l_feat.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(5, 0), QgsPointXY(5, 10)]))
+        l_feat.setAttribute("geocode", "02122001001000")
+        l_feat.setAttribute("ean", "001000")
+        dp_line.addFeatures([l_feat])
+        line_lyr.updateExtents()
+
+        # extracted_bldgpts with pop field
+        bldg_lyr = QgsVectorLayer("Point?crs=epsg:4326", "02122_extracted_bldgpts", "memory")
+        dp_bldg = bldg_lyr.dataProvider()
+        dp_bldg.addAttributes([
+            create_qgs_field("pop", QVariant.Double),
+            create_qgs_field("ea_geocode", QVariant.String),
+        ])
+        bldg_lyr.updateFields()
+
+        bf1 = QgsFeature(bldg_lyr.fields())
+        bf1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(2.5, 5.0)))
+        bf1.setAttribute("pop", 42.0)
+        bf1.setAttribute("ea_geocode", "02122001001000")
+
+        bf2 = QgsFeature(bldg_lyr.fields())
+        bf2.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(7.5, 5.0)))
+        bf2.setAttribute("pop", 58.0)
+        bf2.setAttribute("ea_geocode", "02122001001000")
+
+        dp_bldg.addFeatures([bf1, bf2])
+        bldg_lyr.updateExtents()
+
+        split_res = QgsVectorLayer("Polygon?crs=epsg:4326", "split_res", "memory")
+        dp_split = split_res.dataProvider()
+        dp_split.addAttributes([create_qgs_field("hh_count", QVariant.Int), create_qgs_field("bldg_count", QVariant.Int)])
+        split_res.updateFields()
+        s1 = QgsFeature(split_res.fields())
+        s1.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(5, 0), QgsPointXY(5, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        s2 = QgsFeature(split_res.fields())
+        s2.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(5, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(5, 10), QgsPointXY(5, 0)
+        ]]))
+        dp_split.addFeatures([s1, s2])
+        split_res.updateExtents()
+
+        mock_proc_run.return_value = {"OUTPUT": split_res}
+
+        QgsProject.instance().addMapLayers([poly_lyr, line_lyr, bldg_lyr])
+        try:
+            dlg = SplitEADialog(default_geocode="02122")
+            dlg.status_banner = MagicMock()
+            dlg.progress_bar = MagicMock()
+            dlg.log_console = MagicMock()
+            dlg.run_split()
+
+            updated_features = list(poly_lyr.getFeatures())
+            self.assertEqual(len(updated_features), 2)
+            hh_counts = sorted([int(f.attribute("hh_count")) for f in updated_features])
+            self.assertEqual(hh_counts, [42, 58])
+        finally:
+            QgsProject.instance().removeAllMapLayers()
+
+    @patch("references.create_enumeration_area.split_dialog.processing.run")
+    def test_split_parent_hh_fallback_when_points_not_found(self, mock_proc_run):
+        """Verify that when no building points intersect sub-EAs, parent hh_count is proportioned by area."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+
+        poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "02122_delineated_ea2026", "memory")
+        dp_poly = poly_lyr.dataProvider()
+        dp_poly.addAttributes([
+            create_qgs_field("geocode", QVariant.String),
+            create_qgs_field("ean", QVariant.String),
+            create_qgs_field("hh_count", QVariant.Int),
+            create_qgs_field("bldg_count", QVariant.Int),
+        ])
+        poly_lyr.updateFields()
+        poly_feat = QgsFeature(poly_lyr.fields())
+        poly_feat.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        poly_feat.setAttribute("geocode", "02122001001000")
+        poly_feat.setAttribute("ean", "001000")
+        poly_feat.setAttribute("hh_count", 250)
+        poly_feat.setAttribute("bldg_count", 100)
+        dp_poly.addFeatures([poly_feat])
+        poly_lyr.updateExtents()
+
+        line_lyr = QgsVectorLayer("LineString?crs=epsg:4326", "02122_eadel_update", "memory")
+        dp_line = line_lyr.dataProvider()
+        dp_line.addAttributes([create_qgs_field("geocode", QVariant.String), create_qgs_field("ean", QVariant.String)])
+        line_lyr.updateFields()
+        l_feat = QgsFeature(line_lyr.fields())
+        l_feat.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(5, 0), QgsPointXY(5, 10)]))
+        l_feat.setAttribute("geocode", "02122001001000")
+        l_feat.setAttribute("ean", "001000")
+        dp_line.addFeatures([l_feat])
+        line_lyr.updateExtents()
+
+        # Building layer with 0 intersecting points (points located far outside)
+        bldg_lyr = QgsVectorLayer("Point?crs=epsg:4326", "02122_bldg_point", "memory")
+        dp_bldg = bldg_lyr.dataProvider()
+        dp_bldg.addAttributes([
+            create_qgs_field("est_hhcount", QVariant.Double),
+            create_qgs_field("ea_geocode", QVariant.String),
+        ])
+        bldg_lyr.updateFields()
+        bf_outside = QgsFeature(bldg_lyr.fields())
+        bf_outside.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(500.0, 500.0)))
+        bf_outside.setAttribute("est_hhcount", 10.0)
+        dp_bldg.addFeatures([bf_outside])
+        bldg_lyr.updateExtents()
+
+        split_res = QgsVectorLayer("Polygon?crs=epsg:4326", "split_res", "memory")
+        dp_split = split_res.dataProvider()
+        dp_split.addAttributes([create_qgs_field("hh_count", QVariant.Int), create_qgs_field("bldg_count", QVariant.Int)])
+        split_res.updateFields()
+        s1 = QgsFeature(split_res.fields())
+        s1.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(5, 0), QgsPointXY(5, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        s2 = QgsFeature(split_res.fields())
+        s2.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(5, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(5, 10), QgsPointXY(5, 0)
+        ]]))
+        dp_split.addFeatures([s1, s2])
+        split_res.updateExtents()
+
+        mock_proc_run.return_value = {"OUTPUT": split_res}
+
+        QgsProject.instance().addMapLayers([poly_lyr, line_lyr, bldg_lyr])
+        try:
+            dlg = SplitEADialog(default_geocode="02122")
+            dlg.status_banner = MagicMock()
+            dlg.progress_bar = MagicMock()
+            dlg.log_console = MagicMock()
+            dlg.run_split()
+
+            updated_features = list(poly_lyr.getFeatures())
+            self.assertEqual(len(updated_features), 2)
+            hh_counts = sorted([int(f.attribute("hh_count")) for f in updated_features])
+            bldg_counts = sorted([int(f.attribute("bldg_count")) for f in updated_features])
+            # 250 HH partitioned 50/50 -> 125 each, 100 bldg partitioned 50/50 -> 50 each
+            self.assertEqual(sum(hh_counts), 250)
+            self.assertEqual(hh_counts, [125, 125])
+            self.assertEqual(sum(bldg_counts), 100)
+            self.assertEqual(bldg_counts, [50, 50])
+            self.assertTrue(all(h > 0 for h in hh_counts))
+        finally:
+            QgsProject.instance().removeAllMapLayers()
+
+    @patch("references.create_enumeration_area.split_dialog.processing.run")
+    def test_split_assesses_sub_ea_threshold_qualification_pass(self, mock_proc_run):
+        """Verify that split assesses and logs that all sub-EAs qualify within [min, max] thresholds."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+
+        poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "02122_delineated_ea2026", "memory")
+        dp_poly = poly_lyr.dataProvider()
+        dp_poly.addAttributes([
+            create_qgs_field("geocode", QVariant.String),
+            create_qgs_field("ean", QVariant.String),
+            create_qgs_field("hh_count", QVariant.Int),
+            create_qgs_field("bldg_count", QVariant.Int),
+        ])
+        poly_lyr.updateFields()
+        poly_feat = QgsFeature(poly_lyr.fields())
+        poly_feat.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        poly_feat.setAttribute("geocode", "02122001001000")
+        poly_feat.setAttribute("ean", "001000")
+        dp_poly.addFeatures([poly_feat])
+        poly_lyr.updateExtents()
+
+        line_lyr = QgsVectorLayer("LineString?crs=epsg:4326", "02122_eadel_update", "memory")
+        dp_line = line_lyr.dataProvider()
+        dp_line.addAttributes([create_qgs_field("geocode", QVariant.String), create_qgs_field("ean", QVariant.String)])
+        line_lyr.updateFields()
+        l_feat = QgsFeature(line_lyr.fields())
+        l_feat.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(5, 0), QgsPointXY(5, 10)]))
+        l_feat.setAttribute("geocode", "02122001001000")
+        l_feat.setAttribute("ean", "001000")
+        dp_line.addFeatures([l_feat])
+        line_lyr.updateExtents()
+
+        bldg_lyr = QgsVectorLayer("Point?crs=epsg:4326", "02122_bldgpts", "memory")
+        dp_bldg = bldg_lyr.dataProvider()
+        dp_bldg.addAttributes([create_qgs_field("est_hhcount", QVariant.Double)])
+        bldg_lyr.updateFields()
+
+        bf1 = QgsFeature(bldg_lyr.fields())
+        bf1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(2.5, 5.0)))
+        bf1.setAttribute("est_hhcount", 150.0)  # in [99, 300] -> Qualified
+
+        bf2 = QgsFeature(bldg_lyr.fields())
+        bf2.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(7.5, 5.0)))
+        bf2.setAttribute("est_hhcount", 120.0)  # in [99, 300] -> Qualified
+
+        dp_bldg.addFeatures([bf1, bf2])
+        bldg_lyr.updateExtents()
+
+        split_res = QgsVectorLayer("Polygon?crs=epsg:4326", "split_res", "memory")
+        dp_split = split_res.dataProvider()
+        dp_split.addAttributes([create_qgs_field("hh_count", QVariant.Int), create_qgs_field("bldg_count", QVariant.Int)])
+        split_res.updateFields()
+        s1 = QgsFeature(split_res.fields())
+        s1.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(5, 0), QgsPointXY(5, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        s2 = QgsFeature(split_res.fields())
+        s2.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(5, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(5, 10), QgsPointXY(5, 0)
+        ]]))
+        dp_split.addFeatures([s1, s2])
+        split_res.updateExtents()
+
+        mock_proc_run.return_value = {"OUTPUT": split_res}
+
+        QgsProject.instance().addMapLayers([poly_lyr, line_lyr, bldg_lyr])
+        try:
+            dlg = SplitEADialog(default_geocode="02122", default_min_hh=99, default_max_hh=300)
+            logged_messages = []
+            dlg._log = lambda msg, lvl="INFO": logged_messages.append((lvl, msg))
+            dlg.status_banner = MagicMock()
+            dlg.progress_bar = MagicMock()
+
+            dlg.run_split()
+
+            # Confirm all qualify log message was issued
+            self.assertTrue(any("qualify within [99-300 HH]" in msg for _, msg in logged_messages))
+            # Confirm status banner call shows PASS and Qualified
+            banner_text = dlg.status_banner.setText.call_args[0][0]
+            self.assertIn("All 2 Sub-EAs Qualified [99-300 HH]", banner_text)
+        finally:
+            QgsProject.instance().removeAllMapLayers()
+
+    @patch("references.create_enumeration_area.split_dialog.processing.run")
+    def test_split_assesses_sub_ea_threshold_qualification_alert(self, mock_proc_run):
+        """Verify that split assesses sub-EAs outside [min, max] threshold and flags alerts."""
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+
+        poly_lyr = QgsVectorLayer("Polygon?crs=epsg:4326", "02122_delineated_ea2026", "memory")
+        dp_poly = poly_lyr.dataProvider()
+        dp_poly.addAttributes([
+            create_qgs_field("geocode", QVariant.String),
+            create_qgs_field("ean", QVariant.String),
+            create_qgs_field("hh_count", QVariant.Int),
+            create_qgs_field("bldg_count", QVariant.Int),
+        ])
+        poly_lyr.updateFields()
+        poly_feat = QgsFeature(poly_lyr.fields())
+        poly_feat.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        poly_feat.setAttribute("geocode", "02122001001000")
+        poly_feat.setAttribute("ean", "001000")
+        dp_poly.addFeatures([poly_feat])
+        poly_lyr.updateExtents()
+
+        line_lyr = QgsVectorLayer("LineString?crs=epsg:4326", "02122_eadel_update", "memory")
+        dp_line = line_lyr.dataProvider()
+        dp_line.addAttributes([create_qgs_field("geocode", QVariant.String), create_qgs_field("ean", QVariant.String)])
+        line_lyr.updateFields()
+        l_feat = QgsFeature(line_lyr.fields())
+        l_feat.setGeometry(QgsGeometry.fromPolylineXY([QgsPointXY(5, 0), QgsPointXY(5, 10)]))
+        l_feat.setAttribute("geocode", "02122001001000")
+        l_feat.setAttribute("ean", "001000")
+        dp_line.addFeatures([l_feat])
+        line_lyr.updateExtents()
+
+        bldg_lyr = QgsVectorLayer("Point?crs=epsg:4326", "02122_bldgpts", "memory")
+        dp_bldg = bldg_lyr.dataProvider()
+        dp_bldg.addAttributes([create_qgs_field("est_hhcount", QVariant.Double)])
+        bldg_lyr.updateFields()
+
+        bf1 = QgsFeature(bldg_lyr.fields())
+        bf1.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(2.5, 5.0)))
+        bf1.setAttribute("est_hhcount", 350.0)  # > 300 -> Exceeds Max
+
+        bf2 = QgsFeature(bldg_lyr.fields())
+        bf2.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(7.5, 5.0)))
+        bf2.setAttribute("est_hhcount", 75.0)   # < 99 -> Below Min
+
+        dp_bldg.addFeatures([bf1, bf2])
+        bldg_lyr.updateExtents()
+
+        split_res = QgsVectorLayer("Polygon?crs=epsg:4326", "split_res", "memory")
+        dp_split = split_res.dataProvider()
+        dp_split.addAttributes([create_qgs_field("hh_count", QVariant.Int), create_qgs_field("bldg_count", QVariant.Int)])
+        split_res.updateFields()
+        s1 = QgsFeature(split_res.fields())
+        s1.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(5, 0), QgsPointXY(5, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]]))
+        s2 = QgsFeature(split_res.fields())
+        s2.setGeometry(QgsGeometry.fromPolygonXY([[
+            QgsPointXY(5, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(5, 10), QgsPointXY(5, 0)
+        ]]))
+        dp_split.addFeatures([s1, s2])
+        split_res.updateExtents()
+
+        mock_proc_run.return_value = {"OUTPUT": split_res}
+
+        QgsProject.instance().addMapLayers([poly_lyr, line_lyr, bldg_lyr])
+        try:
+            dlg = SplitEADialog(default_geocode="02122", default_min_hh=99, default_max_hh=300)
+            logged_messages = []
+            dlg._log = lambda msg, lvl="INFO": logged_messages.append((lvl, msg))
+            dlg.status_banner = MagicMock()
+            dlg.progress_bar = MagicMock()
+
+            dlg.run_split()
+
+            # Confirm both alerts logged
+            self.assertTrue(any("EXCEEDS MAX > 300" in msg for _, msg in logged_messages))
+            self.assertTrue(any("UNDER MIN < 99" in msg for _, msg in logged_messages))
+            # Confirm status banner call shows ALERT with breakdown
+            banner_text = dlg.status_banner.setText.call_args[0][0]
+            self.assertIn("ALERT:", banner_text)
+            self.assertIn("1 below min", banner_text)
+            self.assertIn("1 exceed max", banner_text)
+        finally:
+            QgsProject.instance().removeAllMapLayers()
 
 
 if __name__ == "__main__":
