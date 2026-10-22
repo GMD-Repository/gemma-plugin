@@ -491,7 +491,9 @@ def run_phase_8(
     def get_text_attr(feat: QgsFeature, candidate_names: list, prefer_text: bool = True):
         if not feat or not feat.isValid():
             return None
-        fields = feat.fields()
+        fields = feat.fields() if hasattr(feat, 'fields') else None
+        if fields is None or not hasattr(fields, 'indexOf'):
+            return None
         best_val = None
         for name in candidate_names:
             idx = fields.indexOf(name)
@@ -1841,6 +1843,8 @@ def run_phase_8(
             rem_ean = get_text_attr(rem_feat, ["ean", "code", "ea_code", ea_id_field], prefer_text=False) or ""
             rem_role = "Delineation Candidate" if rem_id in delineation_candidate_ids else "Candidate"
 
+            rem_bldgs = list(p2.get('ea_id_to_buildings', {}).get(rem_id, []))
+
             if exec_mode == "delineation":
                 rem_bldgs = [
                     b for b in rem_bldgs
@@ -1964,6 +1968,8 @@ def run_phase_8(
                     extracted_bldg_feat_count += 1
                 else:
                     feedback.reportWarning("Failed to add building point to extracted buildings sink.")
+
+            written_extracted_ea_ids.add(rem_id)
 
     # ── Write internally detected Barangay gaps & overlaps to SPECIAL_EA_OUTPUT ──
     # These include gaps inside Barangay boundaries and EA-to-EA overlaps that

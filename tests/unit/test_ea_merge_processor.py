@@ -939,6 +939,95 @@ class TestEAMergeProcessor(unittest.TestCase):
             del ea_layer, writer, wb
             gc.collect()
 
+    def test_repair_geometry_cleans_geometry_collection_artifacts(self):
+        """Test that _repair_geometry extracts valid polygon parts from GeometryCollection."""
+        from references.create_enumeration_area.ea_merge_processor import _repair_geometry, _clean_polygon_geometry
+        # Create a bowtie / self-intersecting polygon: (0,0)->(10,10)->(0,10)->(10,0)->(0,0)
+        bowtie = QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0),
+            QgsPointXY(10, 10),
+            QgsPointXY(0, 10),
+            QgsPointXY(10, 0),
+            QgsPointXY(0, 0),
+        ]])
+        repaired = _repair_geometry(bowtie)
+        self.assertIsNotNone(repaired)
+        self.assertFalse(repaired.isNull())
+        self.assertFalse(repaired.isEmpty())
+        self.assertTrue(repaired.isGeosValid())
+
+    def test_create_output_layer_multi_polygon_schema(self):
+        """Test that _create_output_layer initializes MultiPolygon schema and coerces features."""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            processor = EAMergeProcessor(
+                ea_layer=self.ea_layer,
+                replacement_layers=[self.repl_layer1],
+                output_dir=tmpdir,
+            )
+            out_fields = processor._build_output_fields()
+            f1 = QgsFeature(out_fields)
+            f1.setGeometry(make_square(0, 0, 50))
+            f1.setAttribute("ean", "001000")
+
+            f2 = QgsFeature(out_fields)
+            # Create multipart
+            f2.setGeometry(QgsGeometry.fromMultiPolygonXY([
+                [[QgsPointXY(60, 0), QgsPointXY(80, 0), QgsPointXY(80, 20), QgsPointXY(60, 20), QgsPointXY(60, 0)]],
+                [[QgsPointXY(85, 0), QgsPointXY(95, 0), QgsPointXY(95, 10), QgsPointXY(85, 10), QgsPointXY(85, 0)]],
+            ]))
+            f2.setAttribute("ean", "002000")
+
+            out_layer = processor._create_output_layer([f1, f2], out_fields)
+            self.assertIsNotNone(out_layer)
+            self.assertEqual(out_layer.featureCount(), 2)
+            self.assertIn("multipolygon", str(out_layer.source()).lower())
+
+    def test_processor_handles_invalid_input_polygons_without_truncation(self):
+        """Test that EAMergeProcessor does not abort or drop features when input EA layer has self-intersecting polygons."""
+        ea_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "08201_ea_test", "memory")
+        pr = ea_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("GEOCODE", QVariant.String),
+            QgsField("EA_NO", QVariant.String),
+            QgsField("CITYMUN", QVariant.String),
+            QgsField("hhcount", QVariant.Double),
+            QgsField("bldgcount", QVariant.Int),
+        ])
+        ea_layer.updateFields()
+
+        # Add 5 features: 1 normal, 1 self-intersecting bowtie, 3 more normal features
+        feats = []
+        for i in range(5):
+            f = QgsFeature(ea_layer.fields())
+            if i == 1:
+                # Bowtie self-intersecting polygon
+                f.setGeometry(QgsGeometry.fromPolygonXY([[
+                    QgsPointXY(i * 100, 0),
+                    QgsPointXY(i * 100 + 50, 50),
+                    QgsPointXY(i * 100, 50),
+                    QgsPointXY(i * 100 + 50, 0),
+                    QgsPointXY(i * 100, 0),
+                ]]))
+            else:
+                f.setGeometry(make_square(i * 100, 0, 50))
+            f.setAttributes(["08201001", f"00{i+1}000", "Compostela", 100.0 + i, 20 + i])
+            feats.append(f)
+        pr.addFeatures(feats)
+        ea_layer.updateExtents()
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            processor = EAMergeProcessor(
+                ea_layer=ea_layer,
+                replacement_layers=[],  # direct consolidation
+                output_dir=tmpdir,
+            )
+            result = processor.run()
+            self.assertTrue(result.success, f"Processor failed: {result.error_message}")
+            self.assertIsNotNone(result.output_layer)
+            # All 5 features must be retained in the output layer!
+            self.assertEqual(result.output_layer.featureCount(), 5)
+            self.assertEqual(result.summary.final_ea_feature_count, 5)
+
 
 if __name__ == "__main__":
     unittest.main()
