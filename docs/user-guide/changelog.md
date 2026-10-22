@@ -2,6 +2,18 @@
 
 Changelogs of all GEMMA Plugin stable releases, which are also available [on GitHub](https://github.com/GMD-Repository/gemma-plugin/releases).
 
+## 1.0.14
+<time>Oct 22, 2026</time>
+
+### ✨ New Features
+- add enumeration area merge processor and associated tests ([@pacoleslaw](https://github.com/pacoleslaw))
+- implement phase 8 output feature generation and spatial sorting module ([@pacoleslaw](https://github.com/pacoleslaw))
+
+### 🐛 Bug Fixes
+- ensure MultiPolygon output schema, repair geometry artifacts, and stabilize phase 8 output extraction ([@pacoleslaw](https://github.com/pacoleslaw)) ([#381](https://github.com/GMD-Repository/gemma-plugin/pull/381))
+
+<Contributors :contributors="['pacoleslaw']" />
+
 ## 1.0.13
 <time>Oct 21, 2026</time>
 

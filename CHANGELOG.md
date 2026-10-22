@@ -5,6 +5,15 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.14] - 2026-10-22
+
+### Added
+- add enumeration area merge processor and associated tests ([@pacoleslaw](https://github.com/pacoleslaw))
+- implement phase 8 output feature generation and spatial sorting module ([@pacoleslaw](https://github.com/pacoleslaw))
+
+### Fixed
+- ensure MultiPolygon output schema, repair geometry artifacts, and stabilize phase 8 output extraction ([@pacoleslaw](https://github.com/pacoleslaw)) ([#381](https://github.com/GMD-Repository/gemma-plugin/pull/381))
+
 ## [1.0.13] - 2026-10-21
 
 ### Added
