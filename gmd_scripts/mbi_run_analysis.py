@@ -1,7 +1,7 @@
 # ----------------------------------------------------------------------
 # MBI Gaps / Overlaps / Disputed Areas Checker
-# Last updated: 2026-09-23
-# Version: v19
+# Last updated: 2026-10-26
+# Version: v21
 #
 # Changelog:
 #   v1 - Initial Gaps/Overlaps detection between LGU and PSA polygons.
@@ -139,6 +139,27 @@
 #         are never merged with anything else — including other Contested
 #         features that happen to share a geocode. Each Contested submission
 #         now survives 2026_province_boundary exactly as digitized.
+#   v20 - Added 'Generate 2026_province_boundary layer' checkbox (default
+#         on). When unchecked, the boundary is still resolved and used for
+#         detection, but is not loaded into the project as a layer.
+#   v21 - Bug fix: some Gaps/Overlaps were written to ref_mbi_cases but
+#         never drawn on the map canvas. Causes: (1) the layer was declared
+#         'Polygon', while repaired/reprojected findings can come back as
+#         MultiPolygon or GeometryCollection; (2) when makeValid() returned
+#         a collection, the ORIGINAL invalid geometry was kept, which QGIS
+#         may not render; (3) the QML enables 1px render simplification,
+#         which drops thin slivers when zoomed out; (4) the main cause — the
+#         ref_mbi_cases.qml symbols had outline_style = 'no', so a sliver
+#         narrower than a pixel drew nothing (MBI Checker applies no QML, so
+#         QGIS' default outlined symbol made the same slivers visible).
+#         ref_mbi_cases is now MultiPolygon, every finding is repaired and
+#         reduced to its polygon parts where possible (otherwise written
+#         as-is, so the set of findings matches MBI Checker exactly), and
+#         render simplification is off. The QML keeps its fill-only look,
+#         but each category's outline is now data-defined: it switches on
+#         only for a feature narrower than 1 mm on screen at the current
+#         map scale (2 * area / perimeter in EPSG:3857 metres, compared with
+#         @map_scale / 1000), so slivers stay visible.
 # ----------------------------------------------------------------------
 
 __author__ = 'Geospatial Management Division'
@@ -150,6 +171,7 @@ import uuid as _uuid
 from qgis.PyQt.QtCore import QVariant
 from qgis.PyQt.QtGui import QIcon
 from qgis.core import (
+    QgsVectorSimplifyMethod,
     QgsProcessing,
     QgsProcessingAlgorithm,
     QgsProcessingException,
@@ -157,6 +179,7 @@ from qgis.core import (
     QgsProcessingContext,
     QgsProcessingLayerPostProcessorInterface,
     QgsProcessingParameterMultipleLayers,
+    QgsProcessingParameterBoolean,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsProject,
@@ -269,7 +292,14 @@ class FieldWidgetPostProcessor(QgsProcessingLayerPostProcessorInterface):
         if hasattr(layer, 'setReadOnly'):
             layer.setReadOnly(False)
 
-        # 5. Refresh layer symbology and redraw canvas
+        # 5. Disable render simplification — thin gap/overlap slivers are
+        #    otherwise dropped from the canvas when zoomed out.
+        if hasattr(layer, 'setSimplifyMethod'):
+            simplify = QgsVectorSimplifyMethod()
+            simplify.setSimplifyHints(QgsVectorSimplifyMethod.NoSimplification)
+            layer.setSimplifyMethod(simplify)
+
+        # 6. Refresh layer symbology and redraw canvas
         if hasattr(layer, 'emitStyleChanged'):
             layer.emitStyleChanged()
         if hasattr(layer, 'triggerRepaint'):
@@ -336,6 +366,7 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
     INPUT1   = 'INPUT1'
     INPUT2   = 'INPUT2'
     RUN_MODE = 'RUN_MODE'
+    GENERATE_BOUNDARY = 'GENERATE_BOUNDARY'
 
     def __init__(self):
         super().__init__()
@@ -446,6 +477,13 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
                 QgsProcessing.TypeVectorPoint
             )
         )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                self.GENERATE_BOUNDARY,
+                'Generate 2026_province_boundary layer',
+                defaultValue=True
+            )
+        )
 
     def processAlgorithm(self, parameters, context, feedback: QgsProcessingFeedback):
         # Invalid geometries are expected input here; never filter them out
@@ -466,6 +504,7 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
 
         polygon_layers = self.parameterAsLayerList(parameters, self.INPUT1, context)
         building_layers = self.parameterAsLayerList(parameters, self.INPUT2, context)
+        generate_boundary = self.parameterAsBoolean(parameters, self.GENERATE_BOUNDARY, context)
 
         if not polygon_layers:
             raise QgsProcessingException("PSA and LGU polygon layer(s) must be selected.")
@@ -802,7 +841,8 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             # Any further layer-specific extra fields appended at the end.
             for f in (extra_fields or []):
                 fields.append(f)
-            layer = QgsVectorLayer('Polygon?crs=EPSG:4326', name, 'memory')
+            # MultiPolygon: repaired findings can come back multipart.
+            layer = QgsVectorLayer('MultiPolygon?crs=EPSG:4326', name, 'memory')
             layer.dataProvider().addAttributes(fields)
             layer.updateFields()
             return keep_layer(layer)
@@ -856,13 +896,17 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
         feedback.pushInfo("Repairing boundary geometries...")
         boundary_layer = fix_geoms(boundary_layer)
 
-        boundary_display = keep_layer(processing.run(
-            'native:reprojectlayer',
-            {'INPUT': boundary_layer, 'TARGET_CRS': output_crs,
-             'CONVERT_CURVED_GEOMETRIES': False, 'OUTPUT': 'memory:'},
-            context=context, feedback=child_fb
-        )['OUTPUT'])
-        results['OUTPUT_BOUNDARY'] = load_plain_layer(boundary_display, '2026_province_boundary')
+        if generate_boundary:
+            boundary_display = keep_layer(processing.run(
+                'native:reprojectlayer',
+                {'INPUT': boundary_layer, 'TARGET_CRS': output_crs,
+                 'CONVERT_CURVED_GEOMETRIES': False, 'OUTPUT': 'memory:'},
+                context=context, feedback=child_fb
+            )['OUTPUT'])
+            results['OUTPUT_BOUNDARY'] = load_plain_layer(boundary_display, '2026_province_boundary')
+        else:
+            feedback.pushInfo("Skipping 2026_province_boundary output (checkbox unchecked).")
+            results['OUTPUT_BOUNDARY'] = None
 
         # Detection needs one geometry per polygon, so the exploded copy is
         # derived from the resolved boundary and used ONLY from here down —
@@ -1025,6 +1069,24 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
 
         repaired_count = 0
 
+        def polygon_only(geom):
+            """Reduce geom to a MultiPolygon of its polygon parts, or None."""
+            if geom is None or geom.isEmpty():
+                return None
+            if QgsWkbTypes.geometryType(geom.wkbType()) == QgsWkbTypes.PolygonGeometry:
+                out = QgsGeometry(geom)
+            else:
+                polys = [
+                    p for p in geom.asGeometryCollection()
+                    if QgsWkbTypes.geometryType(p.wkbType()) == QgsWkbTypes.PolygonGeometry
+                    and not p.isEmpty()
+                ]
+                if not polys:
+                    return None
+                out = QgsGeometry.collectGeometry(polys)
+            out.convertToMultiType()
+            return out if not out.isEmpty() else None
+
         def build_feature(geom_3857, involved, kind, out_fields,
                           reference_info=None, map_uuid=None,
                           lgu_bgy_name=None, extra_attrs=None):
@@ -1051,18 +1113,24 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             # Findings come straight out of raw intersection/difference
             # results, which can be self-intersecting or otherwise invalid.
             # Repair here so nothing invalid ever reaches ref_mbi_cases.
-            # A repair that returns anything non-polygonal (GEOS can hand
-            # back a collection) is discarded rather than written.
+            # GEOS can hand back a collection; keep only its polygon parts.
+            # A finding is never dropped here: if the repair yields nothing
+            # polygonal it is written as detected, so Run Analysis reports
+            # exactly the same findings as MBI Checker.
+            fixed = None
             if not geom_out.isGeosValid():
                 try:
-                    fixed = geom_out.makeValid()
-                    if (fixed is not None and not fixed.isEmpty()
-                            and QgsWkbTypes.geometryType(fixed.wkbType())
-                            == QgsWkbTypes.PolygonGeometry):
-                        geom_out = fixed
-                        repaired_count += 1
+                    fixed = polygon_only(geom_out.makeValid())
                 except Exception:
-                    pass
+                    fixed = None
+                if fixed is not None:
+                    repaired_count += 1
+            else:
+                fixed = polygon_only(geom_out)
+            if fixed is None:
+                fixed = QgsGeometry(geom_out)
+                fixed.convertToMultiType()
+            geom_out = fixed
 
             ref = (reference_info if reference_info is not None
                    else max(involved, key=lambda x: x['covered_area'])['info'])
@@ -1392,7 +1460,7 @@ class RunAnalysisAlgorithm(QgsProcessingAlgorithm):
             results['OUTPUT'] = None
 
         feedback.setProgress(100)
-        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v19.")
+        feedback.pushInfo("Finished LGU vs PSA Boundary Gap and Overlap Checker v21.")
         return results
 
 

@@ -39,13 +39,18 @@ Architecture:
     - PolygonFixerWorker: Background worker executing polygon fixes with detailed
       per-feature diagnostic reporting.
     - NullFixerWorker: Background worker recovering missing geometries from neighbors.
+    - MergePartsTab: Picks a multipart polygon and merges its parts by bridging only
+      the gaps between them (merge_polygon_parts), removing seam spikes and sliver
+      holes, with a live canvas preview and undoable in-place edits.
     - HelpInfoTab: Embedded rich-text documentation viewer presenting reference
       tables, repair workflows, and operational limitations.
 """
 
+import math
+
 from qgis.PyQt.QtCore import QVariant, QThread, QObject, pyqtSignal, Qt, QRect, QEvent
 from qgis.PyQt.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QPushButton,
     QMessageBox, QTextEdit, QTextBrowser, QTableWidget, QTableWidgetItem,
     QHeaderView, QProgressBar, QGroupBox, QCheckBox, QListWidget,
     QListWidgetItem, QAbstractItemView, QWidget, QFrame,
@@ -54,15 +59,19 @@ from qgis.PyQt.QtWidgets import (
     QStyleOptionViewItem, QApplication
 )
 from qgis.PyQt.QtGui import QColor
-from qgis.gui import QgsRubberBand, QgsVertexMarker
+from qgis.gui import (
+    QgsRubberBand, QgsVertexMarker, QgsMapLayerComboBox, QgsDoubleSpinBox,
+    QgsMapToolIdentifyFeature
+)
 from qgis.core import (
-    QgsProject, QgsVectorLayer, QgsWkbTypes,
+    Qgis, QgsProject, QgsVectorLayer, QgsWkbTypes,
     QgsFeatureRequest, QgsFeature, QgsFields, QgsField,
     QgsFeatureSink, QgsMemoryProviderUtils, QgsGeometry,
     QgsProcessingContext, QgsProcessingFeedback,
     QgsProcessingFeatureSourceDefinition, QgsSpatialIndex,
     QgsProcessingUtils, QgsRectangle, QgsPointXY,
-    QgsCoordinateTransform
+    QgsCoordinateTransform, QgsCoordinateReferenceSystem, QgsMapLayerProxyModel,
+    QgsExpression, QgsExpressionContext, QgsExpressionContextUtils
 )
 from qgis.utils import iface
 import processing
@@ -816,6 +825,7 @@ class CheckerTab(QWidget):
         _purge_stale_geometry_toolkit_markers()
         self.issues = []
         self.worker = None
+        self._stopped_workers = []  # cancelled by reset(), kept alive until their thread exits
         self.fix_queue = []
         self.fix_total_jobs = 0
         self.fix_done_jobs = 0
@@ -1564,6 +1574,29 @@ class CheckerTab(QWidget):
         self.progress.setValue(0); self.summary.setText("Results cleared.")
         self.fix_btn.setEnabled(False); self.repair_group.setEnabled(False)
         self._clear_error_highlight()
+
+    def reset(self):
+        """Return the tab to its first-opened state (used when the dialog is
+        closed): stop any running scan/repair, clear results, log and canvas
+        highlights, and uncheck all input layers. Edits already applied to a
+        layer stay in its edit buffer for Save/Cancel Edits."""
+        if self.worker is not None and self.worker.isRunning():
+            # Detach first so a late finish can't write into the reset tab or
+            # start the next queued repair job.
+            try:
+                self.worker.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            self.worker.cancel()
+            self._stopped_workers.append(self.worker)
+        self._stopped_workers = [w for w in self._stopped_workers if w.isRunning()]
+        self.worker = None
+        self.fix_queue = []
+        self._clear()
+        self.summary.setText("No scanned layers. Select input layers on the left and click Scan Layers.")
+        self.run_btn.setEnabled(True); self.cancel_btn.setEnabled(False)
+        self._fill_layers()
+        self._update_layer_count_label()
 
 
 # =============================================================================
@@ -2738,6 +2771,1082 @@ class GeometryFixerTab(QWidget):
         self.summary.setText(f"Done - Recovered: {recovered}   Manual review: {manual}   Copied: {copied}")
 
 
+# =============================================================================
+# TAB — MERGE POLYGON PARTS
+# =============================================================================
+# Merges the separate parts of one polygon feature by filling only the gap
+# between them (closing: buffer +gap/2 then -gap/2, keeping just the pieces
+# that connect two parts), then removes spike vertices (tails/slits) along the
+# seam and sliver holes (leftover seam lines inside the feature). All other
+# edges and vertices are left as they are.
+
+try:
+    _MP_CAP, _MP_JOIN = Qgis.EndCapStyle.Round, Qgis.JoinStyle.Miter
+except AttributeError:  # QGIS < 3.30
+    _MP_CAP, _MP_JOIN = QgsGeometry.CapRound, QgsGeometry.JoinStyleMiter
+try:
+    _MP_ICON_X = QgsRubberBand.IconType.ICON_X
+except AttributeError:
+    _MP_ICON_X = QgsRubberBand.ICON_X
+try:
+    _MP_POLY_FILTER = Qgis.LayerFilter.PolygonLayer
+except AttributeError:
+    _MP_POLY_FILTER = QgsMapLayerProxyModel.PolygonLayer
+
+_MP_POLY  = QgsWkbTypes.PolygonGeometry
+_MP_POINT = QgsWkbTypes.PointGeometry
+UTM51_CRS = QgsCoordinateReferenceSystem('EPSG:32651')  # metric fallback for degree CRSs
+SLIVER_COMPACTNESS = 0.1   # 4*pi*A/P^2: circle = 1, hairline = 0
+
+
+def _part_count(g):
+    if g is None or g.isEmpty():
+        return 0
+    return g.constGet().numGeometries() if g.isMultipart() else 1
+
+
+def _polygons_only(g):
+    """makeValid can return a collection with stray lines/points; keep polygons."""
+    if g.type() == _MP_POLY:
+        return g
+    parts = [p for p in g.asGeometryCollection() if p.type() == _MP_POLY]
+    return QgsGeometry.unaryUnion(parts) if parts else QgsGeometry()
+
+
+def _repaired_parts(g):
+    """Each part of g on its own, made valid (empty parts dropped)."""
+    fixed = []
+    for p in g.asGeometryCollection():
+        p = QgsGeometry(p)
+        if not p.isGeosValid():
+            p = _polygons_only(p.makeValid())
+        if not p.isEmpty():
+            fixed.append(p)
+    return fixed
+
+
+def _dissolve_parts(g):
+    """Repair each part on its own, then union them, so overlapping/crossing
+    parts merge (makeValid on the whole multipart would cut the overlap out)."""
+    fixed = _repaired_parts(g)
+    return _polygons_only(QgsGeometry.unaryUnion(fixed)) if fixed else QgsGeometry()
+
+
+def _single_if_one_part(g):
+    if _part_count(g) == 1 and g.isMultipart():
+        return QgsGeometry(g.constGet().geometryN(0).clone())
+    return g
+
+
+def _vertex_angle(a, b, c):
+    """Angle in degrees at b between b->a and b->c (0 = folds straight back)."""
+    v1x, v1y = a.x() - b.x(), a.y() - b.y()
+    v2x, v2y = c.x() - b.x(), c.y() - b.y()
+    l1, l2 = math.hypot(v1x, v1y), math.hypot(v2x, v2y)
+    if l1 == 0 or l2 == 0:
+        return 0.0
+    cos = max(-1.0, min(1.0, (v1x * v2x + v1y * v2y) / (l1 * l2)))
+    return math.degrees(math.acos(cos))
+
+
+SPIKE_MAX_AREA_SHARE = 0.02   # a stray-vertex tail cuts off at most 2% of its ring
+
+
+def _ring_area(pts):
+    """Area of an open ring (no closing point), shoelace formula."""
+    return abs(sum(pts[i - 1].x() * pts[i].y() - pts[i].x() * pts[i - 1].y()
+                   for i in range(len(pts)))) / 2.0
+
+
+def _is_stray_tip(a, b, c, ring_area, protect, tol):
+    """True when the sharp vertex b is a thin tail/slit from a stray vertex,
+    not real boundary: the triangle it cuts off must be a small share of the
+    ring, and b must not be a node shared with a neighbouring feature
+    (deleting a shared node would cut the boundary and open a gap)."""
+    if _ring_area([a, b, c]) > ring_area * SPIKE_MAX_AREA_SHARE:
+        return False
+    for n in protect or ():
+        if n.closestVertex(b)[-1] < tol * tol:
+            return False
+    return True
+
+
+def _despike_ring(pts, max_deg, zone, tol, removed, protect=None):
+    """pts: open ring (no closing point). Deletes duplicate vertices and spike
+    tips (outward tails or inward slits) sharper than max_deg, repeatedly."""
+    ring_area = _ring_area(pts)
+    i = 0
+    while i < len(pts) and len(pts) > 3:
+        a, b, c = pts[i - 1], pts[i], pts[(i + 1) % len(pts)]
+        if b.distance(a) < tol:
+            del pts[i]
+            i = max(i - 1, 0)
+        elif _vertex_angle(a, b, c) < max_deg and \
+                (zone is None or zone.contains(QgsGeometry.fromPointXY(b))) and \
+                _is_stray_tip(a, b, c, ring_area, protect, tol):
+            removed.append(QgsPointXY(b))
+            del pts[i]
+            i = max(i - 1, 0)   # re-check the neighbour, it may now be a spike
+        else:
+            i += 1
+    return pts
+
+
+def _despike(g, max_deg, zone=None, tol=0.01, protect=None):
+    """Return (geometry, removed points). zone=None means anywhere.
+    protect: neighbouring feature geometries whose vertices must be kept."""
+    removed = []
+    polys = g.asMultiPolygon() if g.isMultipart() else [g.asPolygon()]
+    out = []
+    for poly in polys:
+        rings = []
+        for k, ring in enumerate(poly):
+            r = _despike_ring(list(ring[:-1]), max_deg, zone, tol, removed, protect)
+            if len(r) >= 3:
+                rings.append(r + [r[0]])
+            elif k == 0:          # exterior collapsed: drop this polygon
+                rings = []
+                break
+        if rings:
+            out.append(rings)
+    if not removed:
+        return g, removed
+    res = QgsGeometry.fromMultiPolygonXY(out)
+    if not res.isGeosValid():
+        res = _polygons_only(res.makeValid())
+    return _single_if_one_part(res), removed
+
+
+def _remove_sliver_holes(g, max_area):
+    """Drop interior rings that are tiny (< max_area m2) or hairline-thin.
+    Returns (geometry, list of removed hole polygons)."""
+    removed = []
+    polys = g.asMultiPolygon() if g.isMultipart() else [g.asPolygon()]
+    out = []
+    for poly in polys:
+        if not poly:
+            continue
+        rings = [poly[0]]
+        for hole in poly[1:]:
+            hg = QgsGeometry.fromPolygonXY([hole])
+            area, per = abs(hg.area()), hg.length()
+            compact = (4 * math.pi * area / per ** 2) if per > 0 else 0.0
+            if area < max_area or compact < SLIVER_COMPACTNESS:
+                removed.append(hg)
+            else:
+                rings.append(hole)
+        out.append(rings)
+    if not removed:
+        return g, removed
+    res = QgsGeometry.fromMultiPolygonXY(out)
+    if not res.isGeosValid():
+        res = _polygons_only(res.makeValid())
+    return _single_if_one_part(res), removed
+
+
+def _join_zone(parts, gap):
+    """Where two original parts came within `gap` of each other (the seam)."""
+    bufs = [p.buffer(gap, 4) for p in parts]
+    pieces = []
+    for i in range(len(bufs)):
+        for j in range(i + 1, len(bufs)):
+            x = bufs[i].intersection(bufs[j])
+            if not x.isEmpty():
+                pieces.append(x)
+    return QgsGeometry.unaryUnion(pieces) if pieces else QgsGeometry()
+
+
+def merge_polygon_parts(geom, crs, gap, fill_notches=False, spike_deg=0.0, hole_area=0.0,
+                        neighbours=None):
+    """Return (geometry in layer CRS, area change in m2, removed spike points,
+    removed sliver holes) - all in layer CRS.
+    hole_area > 0 enables sliver-hole removal (anywhere in the feature).
+    neighbours: geometries (layer CRS) of the surrounding features; spike tips
+    that are one of their vertices are shared nodes and never removed.
+
+    - Multipart: parts are repaired + dissolved, then only the gap pieces that
+      connect two parts are added. Spikes are removed only along the seam.
+    - Single part: only spike / sliver-hole removal runs (anywhere).
+    """
+    single = _part_count(geom) < 2
+    if single and not fill_notches and spike_deg <= 0 and hole_area <= 0:
+        return QgsGeometry(geom), 0.0, [], []
+
+    work = UTM51_CRS if crs.isGeographic() else crs
+    ctx = QgsProject.instance().transformContext()
+    fwd = QgsCoordinateTransform(crs, work, ctx)
+    back = QgsCoordinateTransform(work, crs, ctx)
+
+    g = QgsGeometry(geom)
+    g.transform(fwd)
+    orig_area = g.area()
+
+    # 1) repair each part, remember the seam, then dissolve
+    zone = None if single else _join_zone(_repaired_parts(g), gap)
+    g = _dissolve_parts(g)
+    parts = [QgsGeometry(p) for p in g.asGeometryCollection()]
+
+    # 2) bridge the remaining gaps
+    if len(parts) >= 2 or fill_notches:
+        d = gap / 2.0
+        closed = g.buffer(d, 8, _MP_CAP, _MP_JOIN, 2.0).buffer(-d, 8, _MP_CAP, _MP_JOIN, 2.0)
+        extra = _polygons_only(closed.difference(g).makeValid())
+        if not fill_notches and not extra.isEmpty():
+            tol = max(gap * 0.01, 0.01)
+            bridges = []
+            for piece in extra.asGeometryCollection():
+                if piece.type() != _MP_POLY or piece.isEmpty():
+                    continue
+                probe = piece.buffer(tol, 4)
+                if sum(1 for p in parts if probe.intersects(p)) >= 2:
+                    bridges.append(piece)
+            extra = QgsGeometry.unaryUnion(bridges) if bridges else QgsGeometry()
+        if not extra.isEmpty():
+            g = _polygons_only(g.combine(extra).makeValid())
+
+    # 3) remove spikes / tails left by stray vertices
+    removed = []
+    if spike_deg > 0:
+        protect = []
+        for n in neighbours or ():
+            n = QgsGeometry(n)
+            n.transform(fwd)
+            protect.append(n)
+        g, removed = _despike(g, spike_deg, zone, protect=protect)
+
+    # 4) remove sliver holes (leftover seams inside the feature)
+    holes = []
+    if hole_area > 0:
+        g, holes = _remove_sliver_holes(g, hole_area)
+
+    added = g.area() - orig_area
+    res = QgsGeometry(g)
+    res.transform(back)
+    removed = [back.transform(pt) for pt in removed]
+    for h in holes:
+        h.transform(back)
+    return res, added, removed, holes
+
+
+def _nearest_part_gap(geom, crs):
+    """Smallest distance (m) between any two parts after repair/dissolve, or None."""
+    work = UTM51_CRS if crs.isGeographic() else crs
+    g = QgsGeometry(geom)
+    g.transform(QgsCoordinateTransform(crs, work, QgsProject.instance().transformContext()))
+    parts = _dissolve_parts(g).asGeometryCollection()
+    if len(parts) < 2:
+        return None
+    return min(parts[i].distance(parts[j])
+               for i in range(len(parts)) for j in range(i + 1, len(parts)))
+
+
+AUTO_GAP_MAX = 100.0   # m; Auto leaves parts farther apart than this separate (islands / exclaves)
+
+
+def _part_links(geom, crs):
+    """Lengths (m) of the shortest links that connect all parts of geom after
+    repair/dissolve (minimum spanning tree over part-to-part distances)."""
+    work = UTM51_CRS if crs.isGeographic() else crs
+    g = QgsGeometry(geom)
+    g.transform(QgsCoordinateTransform(crs, work, QgsProject.instance().transformContext()))
+    parts = _dissolve_parts(g).asGeometryCollection()
+    if len(parts) < 2:
+        return []
+    best = {k: parts[0].distance(parts[k]) for k in range(1, len(parts))}
+    links = []
+    while best:
+        j = min(best, key=best.get)
+        links.append(best.pop(j))
+        for k in best:
+            best[k] = min(best[k], parts[j].distance(parts[k]))
+    return links
+
+
+def auto_gap_width(geom, crs, max_gap=AUTO_GAP_MAX):
+    """Scan the parts of geom for the gap width that joins every part lying
+    within max_gap of another, confirmed by a trial merge.
+    Returns (gap width in m or None if nothing to bridge, part links)."""
+    links = _part_links(geom, crs)
+    need = [d for d in links if d <= max_gap]
+    if not need:
+        return None, links
+    far = [d for d in links if d > max_gap]
+    ceiling = min(far) * 0.95 if far else float("inf")   # never reach the separate parts
+    target = 1 + len(far)
+    gap = min(max(need) * 1.2 + 1, ceiling)
+    best_gap, best_parts = gap, _part_count(merge_polygon_parts(geom, crs, gap)[0])
+    # Widen only while it joins more parts: parts that meet corner-to-corner
+    # never close (the shrink step pinches the bridge off again).
+    for _ in range(4):
+        if best_parts <= target or gap >= ceiling:
+            break
+        gap = min(gap * 1.25, ceiling)
+        n = _part_count(merge_polygon_parts(geom, crs, gap)[0])
+        if n < best_parts:
+            best_gap, best_parts = gap, n
+    return math.ceil(best_gap * 10) / 10, links
+
+
+def _fit_to_layer(g, layer):
+    """Match the layer's single/multi type and Z/M. Returns (geom, error)."""
+    g = QgsGeometry(g)
+    wkb = layer.wkbType()
+    if QgsWkbTypes.isMultiType(wkb):
+        g.convertToMultiType()
+    elif g.isMultipart():
+        if _part_count(g) != 1:
+            return None, f'still {_part_count(g)} parts but layer is single-part'
+        g = QgsGeometry(g.constGet().geometryN(0).clone())
+    if QgsWkbTypes.hasZ(wkb) and not QgsWkbTypes.hasZ(g.wkbType()):
+        g.get().addZValue(0)
+    if QgsWkbTypes.hasM(wkb) and not QgsWkbTypes.hasM(g.wkbType()):
+        g.get().addMValue(0)
+    return g, None
+
+
+def _fmt_area(m2):
+    return f'{m2 / 10000:,.3f} ha' if abs(m2) >= 10000 else f'{m2:,.1f} m²'
+
+
+class MergePartsPickTool(QgsMapToolIdentifyFeature):
+    def __init__(self, canvas, layer, callback):
+        super().__init__(canvas, layer)
+        self.featureIdentified[QgsFeature].connect(callback)
+
+
+class MergePartsTab(QWidget):
+    """Interactive tab that merges a multipart polygon feature into one part by
+    bridging only the gaps between its parts (see merge_polygon_parts), with a
+    live preview on the map canvas and undoable in-place edits."""
+
+    INITIAL_LOG = (
+        "Merge Polygon Parts Ready.\n\n"
+        "Use this tab to join the separate parts of one polygon (e.g. a barangay split\n"
+        "into pieces) into a single part. Only the gap between the parts is filled;\n"
+        "all other edges and vertices are left as they are.\n\n"
+        "Workflow:\n"
+        "  1. Select the polygon layer in Settings.\n"
+        "  2. Click 'Pick Feature on Map', then click the polygon to fix.\n"
+        "     The Gap width is scanned automatically from the distance between\n"
+        "     its parts (untick Auto to set it yourself).\n"
+        "  3. Review the preview: orange = area added, dashed red = result outline,\n"
+        "     red X = spike vertex removed, magenta = sliver hole filled.\n"
+        f"     Parts more than {AUTO_GAP_MAX:,.0f} m apart are left separate (islands /\n"
+        "     exclaves); untick Auto and raise the Gap width to join them.\n"
+        "  4. Click 'Apply Fix'.\n"
+        "     Many features? Click 'Scan All Features' instead, click each row in\n"
+        "     Scan Results to preview it, untick any you don't want fixed, then\n"
+        "     click 'Fix Checked' (each feature gets its own scanned Gap width).\n"
+        "  5. Click 'Save Edits' to keep the changes, or 'Undo' to revert them."
+    )
+
+    SCAN_COLUMNS = ["", "Feature ID", "Name", "Parts", "Gap Width", "Area Change",
+                    "Spikes", "Holes", "Note"]
+
+    def __init__(self):
+        super().__init__()
+        self.canvas = iface.mapCanvas()
+        self.feature = None
+        self.result = None
+        self.tool = None
+        self._sel_layer = None
+        self.scan_rows = []        # one dict per Scan Results row: fid, fixable
+        self._preview_summary = ""  # plain-text result of the last preview, logged on pick
+        self._scanning = False
+        self._scan_cancel = False
+
+        # rubber bands: filled = area that will be added, dashed = result outline
+        self.rb_added = QgsRubberBand(self.canvas, _MP_POLY)
+        self.rb_added.setFillColor(QColor(255, 120, 0, 110))
+        self.rb_added.setStrokeColor(QColor(255, 120, 0))
+        self.rb_added.setWidth(1)
+        self.rb_outline = QgsRubberBand(self.canvas, _MP_POLY)
+        self.rb_outline.setFillColor(QColor(0, 0, 0, 0))
+        self.rb_outline.setStrokeColor(QColor(220, 0, 0))
+        self.rb_outline.setWidth(2)
+        self.rb_outline.setLineStyle(Qt.DashLine)
+        self.rb_holes = QgsRubberBand(self.canvas, _MP_POLY)
+        self.rb_holes.setFillColor(QColor(255, 0, 255, 90))
+        self.rb_holes.setStrokeColor(QColor(255, 0, 255))
+        self.rb_holes.setWidth(3)
+        self.rb_spikes = QgsRubberBand(self.canvas, _MP_POINT)
+        self.rb_spikes.setIcon(_MP_ICON_X)
+        self.rb_spikes.setIconSize(14)
+        self.rb_spikes.setWidth(3)
+        self.rb_spikes.setColor(QColor(220, 0, 0))
+
+        self._build()
+        self._on_layer_changed(self.layer_cb.currentLayer())
+
+    # ---------- UI
+    def _build(self):
+        root = QHBoxLayout(self)
+        root.setContentsMargins(6,6,6,6); root.setSpacing(8)
+
+        # ── LEFT: SETTINGS AND ACTIONS ────────────────────────────────
+        left = QWidget(); left.setFixedWidth(360)
+        ll = QVBoxLayout(left); ll.setContentsMargins(0,0,0,0); ll.setSpacing(6)
+
+        grp_s = QGroupBox("Settings"); grp_s.setStyleSheet(GRP_STYLE)
+        self.grp_settings = grp_s   # locked while Scan All Features runs
+        form = QFormLayout(grp_s)
+        self.layer_cb = QgsMapLayerComboBox()
+        self.layer_cb.setFilters(_MP_POLY_FILTER)
+        active = iface.activeLayer()
+        if isinstance(active, QgsVectorLayer) and active.geometryType() == _MP_POLY:
+            self.layer_cb.setLayer(active)
+        form.addRow("Layer", self.layer_cb)
+
+        self.gap_sb = QgsDoubleSpinBox()
+        self.gap_sb.setRange(0.1, 100000)
+        self.gap_sb.setDecimals(1)
+        self.gap_sb.setSingleStep(5)
+        self.gap_sb.setValue(30)
+        self.gap_sb.setClearValue(30)
+        self.gap_sb.setSuffix(" m")
+        self.gap_sb.setToolTip("Widest gap between parts to bridge. Edges elsewhere are not changed.\n"
+                               "While Auto is ticked it is scanned from each feature's parts.")
+        self.gap_sb.setEnabled(False)
+        self.auto_gap_cb = QCheckBox("Auto")
+        self.auto_gap_cb.setChecked(True)
+        self.auto_gap_cb.setToolTip(f"Scan each feature for the gap width that joins its parts.\n"
+                                    f"Parts more than {AUTO_GAP_MAX:,.0f} m apart are left separate "
+                                    f"(islands / exclaves).")
+        gap_row = QHBoxLayout()
+        gap_row.addWidget(self.gap_sb, 1); gap_row.addWidget(self.auto_gap_cb)
+        form.addRow("Gap width", gap_row)
+
+        self.notch_cb = QCheckBox("Also fill edge notches (changes outline)")
+        form.addRow(self.notch_cb)
+
+        spike_row = QHBoxLayout()
+        self.spike_cb = QCheckBox("Remove spikes sharper than")
+        self.spike_cb.setChecked(True)
+        self.spike_sb = QgsDoubleSpinBox()
+        self.spike_sb.setRange(0.5, 45)
+        self.spike_sb.setDecimals(1)
+        self.spike_sb.setValue(10)
+        self.spike_sb.setClearValue(10)
+        self.spike_sb.setSuffix(" °")
+        self.spike_sb.setToolTip("Vertices where the outline folds back at less than this angle "
+                                 "(tails / slits from stray vertices) are deleted.\n"
+                                 "Multipart features: only along the seam. Single-part: anywhere.\n"
+                                 "Never removed: a tip that is a shared node with a neighbouring "
+                                 "feature, or one that would cut off more than "
+                                 f"{SPIKE_MAX_AREA_SHARE:.0%} of the feature.")
+        spike_row.addWidget(self.spike_cb); spike_row.addWidget(self.spike_sb)
+        form.addRow(spike_row)
+
+        hole_row = QHBoxLayout()
+        self.hole_cb = QCheckBox("Remove sliver holes smaller than")
+        self.hole_cb.setChecked(True)
+        self.hole_sb = QgsDoubleSpinBox()
+        self.hole_sb.setRange(0.01, 1000000)
+        self.hole_sb.setDecimals(2)
+        self.hole_sb.setValue(10)
+        self.hole_sb.setClearValue(10)
+        self.hole_sb.setSuffix(" m²")
+        self.hole_sb.setToolTip("Interior rings below this area, or hairline-thin ones of any size, "
+                                "are filled.\nReal enclave holes (other barangays) are kept "
+                                "unless they are thinner than a sliver – check the magenta preview.")
+        hole_row.addWidget(self.hole_cb); hole_row.addWidget(self.hole_sb)
+        form.addRow(hole_row)
+
+        self.preview_cb = QCheckBox("Live preview on map")
+        self.preview_cb.setChecked(True)
+        form.addRow(self.preview_cb)
+        ll.addWidget(grp_s)
+
+        grp_a = QGroupBox("Actions"); grp_a.setStyleSheet(GRP_STYLE)
+        al = QVBoxLayout(grp_a)
+        r1 = QHBoxLayout()
+        self.pick_btn = QPushButton("Pick Feature on Map"); self.pick_btn.setCheckable(True)
+        self.zoom_btn = QPushButton("Zoom")
+        r1.addWidget(self.pick_btn, 1); r1.addWidget(self.zoom_btn)
+        al.addLayout(r1)
+        self.apply_btn = QPushButton("Apply Fix"); self.apply_btn.setFixedHeight(32)
+        al.addWidget(self.apply_btn)
+        sep = QFrame(); sep.setFrameShape(QFrame.HLine); sep.setStyleSheet("color:#bdbdbd;")
+        al.addWidget(sep)
+        self.scan_btn = QPushButton("Scan All Features"); self.scan_btn.setFixedHeight(32)
+        self.scan_btn.setToolTip("Trial-run the fix on every feature of the layer (nothing is edited) "
+                                 "and list the ones that would change.")
+        self.fix_checked_btn = QPushButton("Fix Checked (0)"); self.fix_checked_btn.setFixedHeight(32)
+        self.fix_checked_btn.setToolTip("Fix every checked row in Scan Results as one edit "
+                                        "(one Undo reverts all).")
+        self.progress = make_progress()
+        al.addWidget(self.scan_btn); al.addWidget(self.fix_checked_btn); al.addWidget(self.progress)
+        r2 = QHBoxLayout()
+        self.undo_btn = QPushButton("Undo")
+        self.save_btn = QPushButton("Save Edits")
+        r2.addWidget(self.undo_btn); r2.addWidget(self.save_btn)
+        al.addLayout(r2)
+        ll.addWidget(grp_a)
+        ll.addStretch()
+
+        # ── RIGHT: PICKED FEATURE AND LOG ─────────────────────────────
+        right = QWidget(); rl = QVBoxLayout(right)
+        rl.setContentsMargins(0,0,0,0); rl.setSpacing(6)
+
+        grp_f = QGroupBox("Picked Feature"); grp_f.setStyleSheet(GRP_STYLE)
+        fl = QVBoxLayout(grp_f)
+        self.info = QLabel("No feature picked. Click Pick Feature on Map, then click a polygon.")
+        self.info.setWordWrap(True)
+        self.info.setTextFormat(Qt.RichText)
+        fl.addWidget(self.info)
+        legend = QLabel(
+            '<span style="color:#ff7800;">&#9632;</span> Area to be added &nbsp;&nbsp;'
+            '<span style="color:#dc0000;">- - -</span> Result outline &nbsp;&nbsp;'
+            '<span style="color:#dc0000;">&#10005;</span> Spike vertex removed &nbsp;&nbsp;'
+            '<span style="color:#ff00ff;">&#9632;</span> Sliver hole filled'
+        )
+        legend.setStyleSheet("font-size:11px; padding:2px 0;")
+        fl.addWidget(legend)
+        rl.addWidget(grp_f)
+
+        grp_r = QGroupBox("Scan Results"); grp_r.setStyleSheet(GRP_STYLE)
+        gr = QVBoxLayout(grp_r)
+        self.scan_summary = QLabel("Not scanned yet. Click Scan All Features to list features that need fixing.")
+        self.scan_summary.setWordWrap(True)
+        gr.addWidget(self.scan_summary)
+        self.table = QTableWidget(); self.table.setColumnCount(len(self.SCAN_COLUMNS))
+        self.table.setHorizontalHeaderLabels(self.SCAN_COLUMNS)
+        self._header_checkbox = CheckableHeaderView(Qt.Horizontal, self.table)
+        self.table.setHorizontalHeader(self._header_checkbox)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setColumnWidth(0, 28)
+        self.table.setItemDelegateForColumn(0, CenteredCheckBoxDelegate(self.table))
+        self.table.setAlternatingRowColors(True)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setToolTip("Click a row to preview that feature on the map.")
+        gr.addWidget(self.table)
+        rl.addWidget(grp_r, stretch=1)
+
+        rl.addWidget(QLabel("Log"))
+        self.log_box = QTextEdit(); self.log_box.setReadOnly(True)
+        self.log_box.setStyleSheet(LOG_STYLE)
+        self.log_box.setPlainText(self.INITIAL_LOG)
+        rl.addWidget(self.log_box, stretch=1)
+
+        root.addWidget(left); root.addWidget(right, stretch=1)
+
+        self.layer_cb.layerChanged.connect(self._on_layer_changed)
+        self.gap_sb.valueChanged.connect(self._update_preview)
+        self.auto_gap_cb.toggled.connect(self._on_auto_gap_toggled)
+        self.notch_cb.toggled.connect(self._update_preview)
+        self.spike_cb.toggled.connect(self._update_preview)
+        self.spike_cb.toggled.connect(self.spike_sb.setEnabled)
+        self.spike_sb.valueChanged.connect(self._update_preview)
+        self.hole_cb.toggled.connect(self._update_preview)
+        self.hole_cb.toggled.connect(self.hole_sb.setEnabled)
+        self.hole_sb.valueChanged.connect(self._update_preview)
+        self.preview_cb.toggled.connect(self._update_preview)
+        self.pick_btn.toggled.connect(self._toggle_pick)
+        self.zoom_btn.clicked.connect(self._zoom)
+        self.apply_btn.clicked.connect(self._apply_picked)
+        self.scan_btn.clicked.connect(self._scan_all)
+        self.fix_checked_btn.clicked.connect(self._fix_checked)
+        self.table.cellClicked.connect(self._on_scan_row_clicked)
+        self.table.itemChanged.connect(self._on_scan_item_changed)
+        self._header_checkbox.sectionClicked.connect(self._on_scan_header_clicked)
+        self.undo_btn.clicked.connect(self._undo)
+        self.save_btn.clicked.connect(self._save)
+        self._refresh_buttons()
+
+    # ---------- helpers
+    def layer(self):
+        return self.layer_cb.currentLayer()
+
+    def _log(self, msg):
+        # append() only follows new lines when already scrolled to the bottom,
+        # and the step-by-step intro starts the box scrolled to the top
+        self.log_box.append(msg)
+        sb = self.log_box.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def _clear_bands(self):
+        self.rb_added.reset(_MP_POLY)
+        self.rb_outline.reset(_MP_POLY)
+        self.rb_spikes.reset(_MP_POINT)
+        self.rb_holes.reset(_MP_POLY)
+
+    def _refresh_buttons(self, *args):
+        lyr = self.layer()
+        busy = self._scanning
+        n = len(self._checked_scan_rows())
+        self.fix_checked_btn.setText(f"Fix Checked ({n})")
+        self.fix_checked_btn.setEnabled(n > 0 and not busy)
+        self.scan_btn.setText("Cancel Scan" if busy else "Scan All Features")
+        self.scan_btn.setEnabled(lyr is not None)
+        self.apply_btn.setEnabled(self.feature is not None and not busy)
+        self.zoom_btn.setEnabled(self.feature is not None)
+        editable = bool(lyr and lyr.isEditable())
+        self.undo_btn.setEnabled(editable and not busy)
+        self.save_btn.setEnabled(editable and not busy)
+
+    def _ensure_editing(self, lyr):
+        if not lyr.isEditable() and not lyr.startEditing():
+            self._log(f'Cannot edit "{lyr.name()}" (read-only?).')
+            return False
+        return True
+
+    def _disconnect_layer(self):
+        if self._sel_layer is None:
+            return
+        try:
+            self._sel_layer.editingStarted.disconnect(self._refresh_buttons)
+            self._sel_layer.editingStopped.disconnect(self._refresh_buttons)
+        except (TypeError, RuntimeError):
+            pass
+        self._sel_layer = None
+
+    # ---------- layer / picking
+    def _on_layer_changed(self, lyr):
+        self._disconnect_layer()
+        self._sel_layer = lyr
+        if lyr is not None:
+            lyr.editingStarted.connect(self._refresh_buttons)
+            lyr.editingStopped.connect(self._refresh_buttons)
+        self.feature = None
+        self.result = None
+        self._clear_bands()
+        self._clear_scan()
+        self.info.setText("No feature picked. Click Pick Feature on Map, then click a polygon.")
+        if self.pick_btn.isChecked():
+            self._toggle_pick(True)
+        self._refresh_buttons()
+
+    def _toggle_pick(self, on):
+        if self.tool is not None and self.canvas.mapTool() is self.tool:
+            self.tool.deactivated.disconnect(self._tool_off)
+            self.canvas.unsetMapTool(self.tool)
+        self.tool = None
+        if on and self.layer():
+            self.tool = MergePartsPickTool(self.canvas, self.layer(), self._on_pick)
+            self.tool.deactivated.connect(self._tool_off)
+            self.canvas.setMapTool(self.tool)
+        elif on:
+            self.pick_btn.setChecked(False)
+
+    def _tool_off(self):
+        self.pick_btn.blockSignals(True)
+        self.pick_btn.setChecked(False)
+        self.pick_btn.blockSignals(False)
+
+    def _on_pick(self, f):
+        self.feature = f
+        self.canvas.flashFeatureIds(self.layer(), [f.id()])
+        self._show_feature()
+        self._refresh_buttons()
+
+    def _on_auto_gap_toggled(self, on):
+        self.gap_sb.setEnabled(not on)
+        if on and self.feature is not None:
+            self._show_feature()
+
+    def _show_feature(self):
+        """Fresh log for the picked feature: gap scan (Auto) + preview result."""
+        self.log_box.clear()
+        self._scan_gap()
+        self._update_preview()
+        if self._preview_summary:
+            self._log(self._preview_summary)
+
+    def _auto_gap_for(self, f, lyr):
+        """Auto mode: (gap width to use for f, part links); (None, []) when the
+        spin box value applies (Auto off, or f is already one part)."""
+        if not self.auto_gap_cb.isChecked() or not f.hasGeometry():
+            return None, []
+        gap, links = auto_gap_width(f.geometry(), lyr.crs())
+        if not links:
+            return None, []
+        # every gap is wider than the Auto limit: bridge nothing
+        return (gap if gap is not None else self.gap_sb.minimum()), links
+
+    def _scan_gap(self):
+        """Auto mode: set Gap width from the picked feature's part distances."""
+        lyr, f = self.layer(), self.feature
+        if lyr is None or f is None:
+            return
+        gap, links = self._auto_gap_for(f, lyr)
+        if not links:
+            return
+        self.gap_sb.blockSignals(True)
+        self.gap_sb.setValue(gap)
+        self.gap_sb.blockSignals(False)
+        near = [d for d in links if d <= AUTO_GAP_MAX]
+        far = len(links) - len(near)
+        if near:
+            self._log(f"Feature {f.id()}: scanned {len(links) + 1} parts – widest gap to bridge "
+                      f"{max(near):,.1f} m → Gap width set to {gap:,.1f} m.")
+        else:
+            self._log(f"Feature {f.id()}: scanned {len(links) + 1} parts – no gap within "
+                      f"{AUTO_GAP_MAX:,.0f} m to bridge.")
+        if far:
+            self._log(f"  {far} gap(s) wider than {AUTO_GAP_MAX:,.0f} m left as separate parts "
+                      f"(islands / exclaves?). Untick Auto and raise Gap width to join them.")
+
+    def _reload_feature(self):
+        if self.feature is not None and self.layer() is not None:
+            self.feature = self.layer().getFeature(self.feature.id())
+            if not self.feature.isValid():
+                self.feature = None
+
+    def _zoom(self):
+        if self.feature is not None:
+            self.canvas.zoomToFeatureIds(self.layer(), [self.feature.id()])
+            self.canvas.flashFeatureIds(self.layer(), [self.feature.id()])
+
+    # ---------- preview
+    def _update_preview(self, *args):
+        self._clear_bands()
+        self._preview_summary = ""
+        lyr, f = self.layer(), self.feature
+        if lyr is None or f is None or not f.hasGeometry():
+            self.result = None
+            return
+        orig = f.geometry()
+        res, added, removed, holes = self._run(f, lyr)
+        self.result = res
+        before, after = _part_count(orig), _part_count(res)
+        colour = "green" if after == 1 else "darkorange"
+        if before == 1 and not removed and not holes:
+            hint = "Already one part, no spikes or sliver holes – nothing to change."
+        elif after == 1:
+            hint = ""
+        else:
+            hint = self._remaining_note(res, lyr, self.gap_sb.value())
+        note = f"<br><i>{hint}</i>" if hint else ""
+        self._preview_summary = (
+            f"Feature {f.id()} picked – preview: {before} → {after} part(s), area {_fmt_area(added)}, "
+            f"{len(removed)} spike vertex(es), {len(holes)} sliver hole(s)."
+            + (f" {hint}" if hint else " Click Apply Fix to apply."))
+        self.info.setText(
+            f"<b>Feature {f.id()}</b><br>"
+            f'Parts: {before} → <span style="color:{colour}"><b>{after}</b></span><br>'
+            f"Area change: {_fmt_area(added)}<br>"
+            f"Spike vertices removed: <b>{len(removed)}</b><br>"
+            f"Sliver holes removed: <b>{len(holes)}</b>" + note)
+        if self.preview_cb.isChecked() and self.isVisible():
+            diff = res.difference(orig)
+            if not diff.isEmpty():
+                self.rb_added.setToGeometry(diff, lyr)
+            self.rb_outline.setToGeometry(res, lyr)
+            for pt in removed:
+                self.rb_spikes.addGeometry(QgsGeometry.fromPointXY(pt), lyr)
+            for h in holes:
+                self.rb_holes.addGeometry(h, lyr)
+
+    def _run(self, f, lyr, gap=None):
+        spike = self.spike_sb.value() if self.spike_cb.isChecked() else 0.0
+        holes = self.hole_sb.value() if self.hole_cb.isChecked() else 0.0
+        return merge_polygon_parts(f.geometry(), lyr.crs(),
+                                   gap if gap is not None else self.gap_sb.value(),
+                                   self.notch_cb.isChecked(), spike, holes,
+                                   self._neighbours(lyr, f) if spike > 0 else None)
+
+    @staticmethod
+    def _neighbours(lyr, f):
+        """Geometries of the features touching f's extent (shared spike tips are kept)."""
+        req = QgsFeatureRequest().setFilterRect(f.geometry().boundingBox()).setNoAttributes()
+        return [n.geometry() for n in lyr.getFeatures(req) if n.id() != f.id() and n.hasGeometry()]
+
+    def _remaining_note(self, res, lyr, gap_used):
+        """Why res (merged with gap_used) is still multipart, and what to do."""
+        gap = _nearest_part_gap(res, lyr.crs())
+        if gap is None:
+            return ""
+        auto = self.auto_gap_cb.isChecked()
+        if gap < gap_used:
+            # already inside the gap width, so a wider gap won't help
+            return (f"Still multipart – closest remaining parts are {gap:,.1f} m apart "
+                    f"but only face each other at a corner or point, which gap filling cannot "
+                    f"join. Join them manually with the Vertex Tool.")
+        why = (f" – wider than the {AUTO_GAP_MAX:,.0f} m Auto limit (island / exclave?)"
+               if auto and gap > AUTO_GAP_MAX else "")
+        todo = "Untick Auto and set Gap width" if auto else "Set Gap width"
+        return (f"Still multipart – closest remaining parts are "
+                f"{gap:,.1f} m apart{why}. {todo} above that "
+                f"(e.g. {gap * 1.2 + 1:,.0f} m) to join them.")
+
+    # ---------- edits
+    def _apply_one(self, lyr, f):
+        gap = self._auto_gap_for(f, lyr)[0]   # Auto: each feature gets its own scanned width
+        res, added, removed, holes = self._run(f, lyr, gap)
+        if _part_count(f.geometry()) == 1 and not removed and not holes and abs(added) < 1e-6:
+            return False, f"Feature {f.id()}: nothing to change."
+        geom, err = _fit_to_layer(res, lyr)
+        if err:
+            return False, f"Feature {f.id()}: skipped ({err})."
+        if not lyr.changeGeometry(f.id(), geom):
+            return False, f"Feature {f.id()}: geometry change rejected."
+        used = f", gap width {gap:,.1f} m (auto)" if gap is not None else ""
+        return True, (f"Feature {f.id()}: {_part_count(f.geometry())} → {_part_count(res)} part(s), "
+                      f"area {_fmt_area(added)}, {len(removed)} spike vertex(es), "
+                      f"{len(holes)} sliver hole(s) removed{used}")
+
+    def _after_edit(self, lyr):
+        lyr.triggerRepaint()
+        self._reload_feature()
+        self._update_preview()
+        self._refresh_buttons()
+
+    def _apply_picked(self):
+        lyr = self.layer()
+        if self.feature is None:
+            return
+        self.log_box.clear()
+        if not self._ensure_editing(lyr):
+            return
+        lyr.beginEditCommand(f"Merge polygon parts on feature {self.feature.id()}")
+        ok, text = self._apply_one(lyr, self.feature)
+        lyr.endEditCommand() if ok else lyr.destroyEditCommand()
+        self._log(text)
+        if ok:
+            self._mark_scan_rows_fixed({self.feature.id()})
+        self._after_edit(lyr)
+
+    def _undo(self):
+        lyr = self.layer()
+        if lyr and lyr.isEditable() and lyr.undoStack().canUndo():
+            self.log_box.clear()
+            self._log(f"Undo: {lyr.undoStack().undoText()}")
+            lyr.undoStack().undo()
+            if self.scan_rows:
+                # rows marked Fixed may be back to their old shape now
+                self._clear_scan()
+                self.scan_summary.setText("Scan results cleared after Undo – click Scan All Features again.")
+            self._after_edit(lyr)
+
+    # ---------- scan all features
+    def _clear_scan(self):
+        self._scan_cancel = True
+        self.scan_rows = []
+        self.table.blockSignals(True)
+        self.table.setRowCount(0)
+        self.table.blockSignals(False)
+        self._header_checkbox.setCheckState(Qt.Unchecked)
+        self.progress.setValue(0)
+        self.scan_summary.setText("Not scanned yet. Click Scan All Features to list features that need fixing.")
+        self._refresh_buttons()
+
+    def _feature_name(self, lyr, f):
+        expr = QgsExpression(lyr.displayExpression())
+        if not lyr.displayExpression() or expr.hasParserError():
+            return ""
+        ctx = QgsExpressionContext(QgsExpressionContextUtils.globalProjectLayerScopes(lyr))
+        ctx.setFeature(f)
+        val = expr.evaluate(ctx)
+        return "" if val is None else str(val)
+
+    def _scan_all(self):
+        if self._scanning:
+            self._scan_cancel = True
+            return
+        lyr = self.layer()
+        if lyr is None:
+            return
+        if self.pick_btn.isChecked():
+            self.pick_btn.setChecked(False)
+        self._clear_scan()
+        feats = [f for f in lyr.getFeatures() if f.hasGeometry()]
+        self._scanning, self._scan_cancel = True, False
+        self.grp_settings.setEnabled(False)
+        self._refresh_buttons()
+        self.log_box.clear()
+        self._log(f"Scanning {len(feats)} feature(s) in {lyr.name()} ...")
+        multipart_left = 0
+        try:
+            for i, f in enumerate(feats):
+                if self._scan_cancel or self.layer() is not lyr:
+                    break
+                row = self._scan_feature(lyr, f)
+                if row is not None:
+                    multipart_left += row["after"] > 1
+                    self._add_scan_row(lyr, f, row)
+                self.progress.setValue(int((i + 1) * 100 / len(feats)))
+                QApplication.processEvents()
+        finally:
+            cancelled = self._scan_cancel
+            self._scanning, self._scan_cancel = False, False
+            self.grp_settings.setEnabled(True)
+        if self.layer() is not lyr:
+            return
+        fixable = sum(1 for r in self.scan_rows if r["fixable"])
+        done = "Scan cancelled" if cancelled else "Scan complete"
+        self.scan_summary.setText(
+            f"{done} – {len(self.scan_rows)} feature(s) listed, {fixable} can be fixed"
+            + (f", {multipart_left} will stay multipart (see Note)" if multipart_left else "")
+            + ". Click a row to preview it.")
+        self._log(f"{done}: {fixable} fixable feature(s) found"
+                  + (f", {multipart_left} will stay multipart." if multipart_left else "."))
+        self._update_scan_header()
+        self._refresh_buttons()
+
+    def _scan_feature(self, lyr, f):
+        """Trial-run the fix on f (nothing is edited). None if nothing to report."""
+        geom = f.geometry()
+        before = _part_count(geom)
+        gap = self._auto_gap_for(f, lyr)[0]
+        gap_used = gap if gap is not None else self.gap_sb.value()
+        res, added, removed, holes = self._run(f, lyr, gap)
+        after = _part_count(res)
+        fixable = after < before or bool(removed) or bool(holes) or abs(added) > 1e-6
+        if not fixable and before < 2:
+            return None
+        note = self._remaining_note(res, lyr, gap_used) if after > 1 else ""
+        return {"before": before, "after": after, "gap": gap_used if before > 1 else None,
+                "added": added, "spikes": len(removed), "holes": len(holes),
+                "fixable": fixable, "note": note or ("" if fixable else "Nothing to change.")}
+
+    def _add_scan_row(self, lyr, f, r):
+        self.table.blockSignals(True)
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+        chk = QTableWidgetItem()
+        if r["fixable"]:
+            chk.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable)
+            chk.setCheckState(Qt.Checked)
+        else:
+            chk.setFlags(Qt.ItemIsSelectable)   # manual review only
+        self.table.setItem(row, 0, chk)
+        cells = [str(f.id()), self._feature_name(lyr, f), f"{r['before']} → {r['after']}",
+                 f"{r['gap']:,.1f} m" if r["gap"] is not None else "–", _fmt_area(r["added"]),
+                 str(r["spikes"]), str(r["holes"]), r["note"]]
+        for col, text in enumerate(cells, start=1):
+            item = QTableWidgetItem(text)
+            if col == 8 and text:
+                item.setToolTip(text)
+            if r["after"] > 1:
+                item.setForeground(QColor("#c05600"))
+            self.table.setItem(row, col, item)
+        self.table.blockSignals(False)
+        self.scan_rows.append({"fid": f.id(), "fixable": r["fixable"]})
+
+    def _checked_scan_rows(self):
+        return [i for i, r in enumerate(self.scan_rows)
+                if r["fixable"] and self.table.item(i, 0) is not None
+                and self.table.item(i, 0).checkState() == Qt.Checked]
+
+    def _update_scan_header(self):
+        fixable = sum(1 for r in self.scan_rows if r["fixable"])
+        n = len(self._checked_scan_rows())
+        self._header_checkbox.setCheckState(
+            Qt.Unchecked if n == 0 else Qt.Checked if n == fixable else Qt.PartiallyChecked)
+
+    def _on_scan_header_clicked(self, section):
+        if section != 0 or self._scanning:
+            return
+        fixable = [i for i, r in enumerate(self.scan_rows) if r["fixable"]]
+        state = Qt.Unchecked if len(self._checked_scan_rows()) == len(fixable) else Qt.Checked
+        self.table.blockSignals(True)
+        for i in fixable:
+            self.table.item(i, 0).setCheckState(state)
+        self.table.blockSignals(False)
+        self._update_scan_header()
+        self._refresh_buttons()
+
+    def _on_scan_item_changed(self, item):
+        if item.column() == 0:
+            self._update_scan_header()
+            self._refresh_buttons()
+
+    def _on_scan_row_clicked(self, row, col):
+        lyr = self.layer()
+        if col == 0 or lyr is None or self._scanning or row >= len(self.scan_rows):
+            return
+        f = lyr.getFeature(self.scan_rows[row]["fid"])
+        if f.isValid():
+            self._on_pick(f)
+            self._zoom()
+
+    def _mark_scan_rows_fixed(self, fids):
+        self.table.blockSignals(True)
+        for i, r in enumerate(self.scan_rows):
+            if r["fid"] in fids and r["fixable"]:
+                r["fixable"] = False
+                self.table.item(i, 0).setCheckState(Qt.Unchecked)
+                self.table.item(i, 0).setFlags(Qt.ItemIsSelectable)
+                self.table.item(i, 8).setText("Fixed.")
+        self.table.blockSignals(False)
+        self._update_scan_header()
+        self._refresh_buttons()
+
+    def _fix_checked(self):
+        lyr = self.layer()
+        rows = self._checked_scan_rows()
+        if not rows:
+            return
+        self.log_box.clear()
+        if not self._ensure_editing(lyr):
+            return
+        lyr.beginEditCommand(f"Merge polygon parts on {len(rows)} features")
+        fixed = set()
+        for i in rows:
+            f = lyr.getFeature(self.scan_rows[i]["fid"])
+            if not f.isValid():
+                continue
+            ok, text = self._apply_one(lyr, f)
+            if ok:
+                fixed.add(f.id())
+            self._log(text)
+        if fixed:
+            lyr.endEditCommand()
+        else:
+            lyr.destroyEditCommand()
+        self._log(f"— {len(fixed)}/{len(rows)} feature(s) fixed (one Undo reverts all).")
+        self._mark_scan_rows_fixed(fixed)
+        self._after_edit(lyr)
+
+    def _save(self):
+        lyr = self.layer()
+        if not lyr or not lyr.isEditable():
+            return
+        try:
+            ok = lyr.commitChanges(False)  # keep editing on (QGIS 3.18+)
+        except TypeError:
+            ok = lyr.commitChanges()
+        self.log_box.clear()
+        self._log("Edits saved." if ok else "Save failed:\n" + "\n".join(lyr.commitErrors()))
+        self._reload_feature()
+        self._refresh_buttons()
+
+    def reset(self):
+        """Return the tab to its first-opened state (used when the dialog is
+        closed): default settings, no picked feature, empty log, active layer.
+        Edits already applied stay in the layer's edit buffer."""
+        if self.pick_btn.isChecked():
+            self.pick_btn.setChecked(False)
+        self._clear_scan()
+        self.feature = None   # keeps the setting changes below from previewing
+        self.gap_sb.clear(); self.spike_sb.clear(); self.hole_sb.clear()   # -> clear values
+        self.auto_gap_cb.setChecked(True)
+        self.notch_cb.setChecked(False)
+        self.spike_cb.setChecked(True)
+        self.hole_cb.setChecked(True)
+        self.preview_cb.setChecked(True)
+        self.log_box.setPlainText(self.INITIAL_LOG)
+        active = iface.activeLayer()
+        if isinstance(active, QgsVectorLayer) and active.geometryType() == _MP_POLY:
+            self.layer_cb.setLayer(active)
+        self._on_layer_changed(self.layer())
+
+    # ---------- canvas cleanup
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._update_preview()
+
+    def hideEvent(self, event):
+        # Switching to another tab or closing the dialog: don't leave the
+        # preview bands or the pick tool behind on the map canvas.
+        self._clear_bands()
+        if self.pick_btn.isChecked():
+            self.pick_btn.setChecked(False)
+        super().hideEvent(event)
 
 
 # =============================================================================
@@ -3027,6 +4136,23 @@ class HelpInfoTab(QWidget):
             </tr>
           </table>
 
+          <!-- Section 6: Merge Polygon Parts -->
+          <h3 style="color: {h3_color}; font-size: 14px; font-weight: bold; border-bottom: 1px solid {border_color}; padding-bottom: 4px; margin-top: 16px; margin-bottom: 10px;">
+            Merge Polygon Parts
+          </h3>
+          <p style="margin: 0 0 8px 0; color: {body_color};">
+            Joins the separate parts of one multipart polygon into a single part by filling <b>only the gap between the parts</b>. All other edges and vertices are left as they are.
+          </p>
+          <ul style="margin: 0 0 14px 0; padding-left: 20px; color: {body_color};">
+            <li style="margin-bottom: 4px;"><b>Gap width (Auto):</b> when a feature is picked, the distances between its parts are scanned and the Gap width is set to the smallest width that joins them (confirmed by a trial merge). With <b>Scan All Features</b> / <b>Fix Checked</b>, each feature gets its own scanned width. Parts more than 100 m apart are left separate as possible islands or exclaves &mdash; the panel shows their distance; untick <b>Auto</b> and raise Gap width above it to join them.</li>
+            <li style="margin-bottom: 4px;"><b>Remove spikes:</b> deletes vertices where the outline folds back sharper than the set angle (tails / slits from stray vertices). On multipart features only along the seam; on single-part features anywhere. To avoid cutting the boundary, a sharp vertex is <b>kept</b> when it is a shared node with a neighbouring feature (e.g. several barangays meeting at one point) or when removing it would cut off more than 2% of the feature &mdash; correct those with the Vertex Tool on every feature that shares the point.</li>
+            <li style="margin-bottom: 4px;"><b>Remove sliver holes:</b> fills interior rings below the set area, or hairline-thin ones of any size. Real enclave holes are kept unless they are sliver-thin &mdash; always check the magenta preview.</li>
+            <li style="margin-bottom: 4px;"><b>Also fill edge notches:</b> also fills narrow inlets along the outer edge. This changes the outline, so leave it off unless needed.</li>
+            <li style="margin-bottom: 4px;"><b>Preview colours:</b> orange = area to be added, dashed red = result outline, red X = spike vertex removed, magenta = sliver hole filled.</li>
+            <li style="margin-bottom: 4px;"><b>Scan All Features</b> trial-runs the fix on every feature of the layer without editing anything, and lists those that would change in <b>Scan Results</b> (parts before &rarr; after, gap width, area change, spikes, holes). Features that will stay multipart are shown in orange with the reason in <b>Note</b>; features with nothing to fix cannot be checked.</li>
+            <li style="margin-bottom: 4px;">Click a row to preview that feature on the map. Untick rows you don't want, then click <b>Fix Checked</b> &mdash; all checked features are fixed as one edit, so a single <b>Undo</b> reverts all of them (and clears the scan list; scan again afterwards). Edits stay unsaved until you click <b>Save Edits</b>.</li>
+          </ul>
+
           <!-- Footer Section -->
           <div style="text-align: center; color: {footer_color}; font-size: 11px; padding: 14px 0 6px 0; border-top: 1px solid {border_color}; margin-top: 16px;">
             <b>Geometry Repair Toolkit</b> &bull; Version 1.5.1<br>
@@ -3050,23 +4176,24 @@ class GeometryToolkit(QDialog):
         self.resize(1100, 720)
         self._build()
 
+    def _reset_tabs(self):
+        # Closing returns every tool to its first-opened state, which also
+        # removes the red outline/X marker the checker tab can leave on the
+        # map canvas (from double-clicking an error row).
+        for tab in (self.checker_tab, self.merge_tab):
+            try:
+                tab.reset()
+            except Exception:
+                pass
+
     def closeEvent(self, event):
-        # The checker tab can leave a red outline/X marker on the map canvas
-        # (from double-clicking an error row) — make sure those are removed
-        # when the dialog closes, not just when Clear is pressed.
-        try:
-            self.checker_tab._clear_error_highlight()
-        except Exception:
-            pass
+        self._reset_tabs()
         super().closeEvent(event)
 
     def reject(self):
         # Covers the Esc-key path, which doesn't always go through
         # closeEvent().
-        try:
-            self.checker_tab._clear_error_highlight()
-        except Exception:
-            pass
+        self._reset_tabs()
         super().reject()
 
     def _build(self):
@@ -3083,9 +4210,11 @@ class GeometryToolkit(QDialog):
         tabs = QTabWidget()
 
         self.checker_tab = CheckerTab()
+        self.merge_tab = MergePartsTab()
         self.help_tab = HelpInfoTab()
 
         tabs.addTab(self.checker_tab, "Geometry Fixer")
+        tabs.addTab(self.merge_tab, "Merge Polygon Parts")
         tabs.addTab(self.help_tab, "Help and Information")
 
         root.addWidget(tabs, stretch=1)

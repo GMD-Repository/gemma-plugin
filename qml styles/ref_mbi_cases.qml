@@ -176,7 +176,13 @@
           <data_defined_properties>
             <Option type="Map">
               <Option type="QString" name="name" value=""/>
-              <Option name="properties"/>
+              <Option type="Map" name="properties">
+                <Option type="Map" name="outlineStyle">
+                  <Option type="bool" name="active" value="true"/>
+                  <Option type="QString" name="expression" value="with_variable(&apos;g&apos;, transform($geometry, @layer_crs, &apos;EPSG:3857&apos;), if(perimeter(@g) &gt; 0 AND 2 * area(@g) / perimeter(@g) &lt; @map_scale / 1000, &apos;solid&apos;, &apos;no&apos;))"/>
+                  <Option type="int" name="type" value="3"/>
+                </Option>
+              </Option>
               <Option type="QString" name="type" value="collection"/>
             </Option>
           </data_defined_properties>
@@ -207,7 +213,13 @@
           <data_defined_properties>
             <Option type="Map">
               <Option type="QString" name="name" value=""/>
-              <Option name="properties"/>
+              <Option type="Map" name="properties">
+                <Option type="Map" name="outlineStyle">
+                  <Option type="bool" name="active" value="true"/>
+                  <Option type="QString" name="expression" value="with_variable(&apos;g&apos;, transform($geometry, @layer_crs, &apos;EPSG:3857&apos;), if(perimeter(@g) &gt; 0 AND 2 * area(@g) / perimeter(@g) &lt; @map_scale / 1000, &apos;solid&apos;, &apos;no&apos;))"/>
+                  <Option type="int" name="type" value="3"/>
+                </Option>
+              </Option>
               <Option type="QString" name="type" value="collection"/>
             </Option>
           </data_defined_properties>
@@ -238,7 +250,13 @@
           <data_defined_properties>
             <Option type="Map">
               <Option type="QString" name="name" value=""/>
-              <Option name="properties"/>
+              <Option type="Map" name="properties">
+                <Option type="Map" name="outlineStyle">
+                  <Option type="bool" name="active" value="true"/>
+                  <Option type="QString" name="expression" value="with_variable(&apos;g&apos;, transform($geometry, @layer_crs, &apos;EPSG:3857&apos;), if(perimeter(@g) &gt; 0 AND 2 * area(@g) / perimeter(@g) &lt; @map_scale / 1000, &apos;solid&apos;, &apos;no&apos;))"/>
+                  <Option type="int" name="type" value="3"/>
+                </Option>
+              </Option>
               <Option type="QString" name="type" value="collection"/>
             </Option>
           </data_defined_properties>

@@ -292,6 +292,9 @@ class CheckAndUpdateDialog(QDialog):
         self.digitize_dock = None
         self._build_ui()
         self._apply_theme()
+        # The dialog is reused across opens, so reset the geometry tools on
+        # every close (Close button, title-bar X and Esc all end in finished).
+        self.finished.connect(self._reset_geometry_tab)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -1489,7 +1492,7 @@ class CheckAndUpdateDialog(QDialog):
 
     # ── Tab 2: Geometry Check & Repair UI ──────────────────────────────────────
     def _build_geometry_tab(self):
-        from .deprecated.geom_repair_toolkit import CheckerTab, HelpInfoTab
+        from .deprecated.geom_repair_toolkit import CheckerTab, HelpInfoTab, MergePartsTab
 
         layout = QVBoxLayout(self.tab2)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -1497,12 +1500,28 @@ class CheckAndUpdateDialog(QDialog):
 
         self.toolkit_tabs = QTabWidget()
         self.geom_toolkit_checker = CheckerTab()
+        self.geom_toolkit_merge = MergePartsTab()
         self.geom_toolkit_help = HelpInfoTab()
 
         self.toolkit_tabs.addTab(self.geom_toolkit_checker, "Geometry Fixer")
+        self.toolkit_tabs.addTab(self.geom_toolkit_merge, "Merge Polygon Parts")
         self.toolkit_tabs.addTab(self.geom_toolkit_help, "Help and Information")
 
         layout.addWidget(self.toolkit_tabs, stretch=1)
+
+    def _reset_geometry_tab(self, *args):
+        """Return Geometry Fixer and Merge Polygon Parts to their first-opened
+        state. Unsaved layer edits are left in the layers' edit buffers."""
+        for tab in (getattr(self, "geom_toolkit_checker", None),
+                    getattr(self, "geom_toolkit_merge", None)):
+            if tab is None:
+                continue
+            try:
+                tab.reset()
+            except Exception:
+                pass
+        if hasattr(self, "toolkit_tabs"):
+            self.toolkit_tabs.setCurrentIndex(0)
 
     def _apply_theme(self):
         """Apply adaptive styling for light or dark mode."""
@@ -1650,6 +1669,9 @@ class CheckAndUpdateDialog(QDialog):
 
         if hasattr(self, "geom_toolkit_checker") and hasattr(self, "geom_toolkit_help"):
             self._apply_geom_toolkit_theme(self.geom_toolkit_checker, self.geom_toolkit_help, getattr(self, "is_dark", False))
+        if hasattr(self, "geom_toolkit_merge"):
+            # Only its log_box matches the checker styling; no help tab to theme.
+            self._apply_geom_toolkit_theme(self.geom_toolkit_merge, None, getattr(self, "is_dark", False))
 
     def _apply_geom_toolkit_theme(self, checker, help_tab, is_dark: bool):
         """Apply adaptive styling to the embedded geometry repair toolkit widgets."""
