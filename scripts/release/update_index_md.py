@@ -37,10 +37,10 @@ def update_index_download_link(version: str, owner: str = "GMD-Repository", repo
     # Pattern to match the download link in YAML format
     # link: https://github.com/GMD-Repository/gemma-plugin/releases/download/vX.X.X/gemma-plugin-vX.X.X.zip
     # Match: link: https://github.com/{owner}/{repo}/releases/download/vX.X.X/gemma-plugin-vX.X.X.zip
-    pattern = r'(link: https://github\.com/[^/]+/[^/]+/releases/download/v)[\d\.]+(/gemma-plugin-v)[\d\.]+\.zip'
-    replacement = rf'\g<1>{version}\g<2>{version}.zip'
-    
-    updated_content = re.sub(pattern, replacement, content)
+    pattern = r'link: https://github\.com/[^/]+/[^/]+/releases/download/v[\d\.]+/gemma-plugin-v[\d\.]+\.zip'
+    replacement = f'link: https://github.com/{owner}/{repo}/releases/download/v{version}/gemma-plugin-v{version}.zip'
+
+    updated_content = re.sub(pattern, lambda _: replacement, content)
     
     if updated_content == original_content:
         raise ValueError(
