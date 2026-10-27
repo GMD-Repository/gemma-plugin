@@ -56,7 +56,7 @@ The **Gemma** menu is added to the top menu bar in QGIS, structured into logical
 | **Updating of Boundaries** | [Package Style Loader](/tools/package-style-loader) | — | Interactive dialog to organize layer hierarchies and apply QML symbology and labeling |
 | **EA Delineation** | [EA Delineation and Merging](/tools/ea-delineation-and-merging) | — | Launcher dialog for pre-processing, gap filling, delineation, and merging of enumeration areas |
 | **EA Delineation** | [Package for QField](/tools/package-qfield) | `Ctrl+Alt+Q` | Offline project packaging dialog for field data collection with QField |
-| **Others** | [Geometry Repair Toolkit](/tools/geometry-repair-toolkit) | — | Standalone dialog for scanning, canvas highlighting, and in-place polygon geometry repairs |
+| **Others** | [Geometry Repair Toolkit](/tools/geometry-repair-toolkit) | — | Standalone dialog for scanning, canvas highlighting, in-place geometry repairs, and multipart merging |
 | **Others** | [Package Layers by City/Mun](/tools/package-layers-by-citymun) | — | Split reference layers into municipal GeoPackages placed in individual city/mun folders |
 
 ### Gemma Toolbar
@@ -107,7 +107,7 @@ Tools for validating, diagnosing, and repairing vector polygon geometry defects:
 
 | Tool | Access | Description |
 |------|--------|-------------|
-| [Geometry Repair Toolkit](/tools/geometry-repair-toolkit) | Gemma → Others | Standalone interactive dialog to scan, highlight on map canvas, and repair invalid geometries in-place |
+| [Geometry Repair Toolkit](/tools/geometry-repair-toolkit) | Gemma → Others | Standalone interactive dialog to scan, highlight on map canvas, repair invalid geometries in-place, and merge multipart parts |
 | [Scan Geometry Errors](/tools/scan-geometry-errors) | Processing Toolbox | Scan vector polygon layers for specific geometry and topology defects and generate a Point Error Layer |
 | [Repair Polygon Geometries](/tools/repair-polygon-geometries) | Processing Toolbox | Reconstruct invalid polygon geometries and recover missing shapes into a clean vector output layer |
 | [Clip Project Layers by Extent](/tools/clip-project-layers) | Processing Toolbox | Batch clip multiple vector layers to a target administrative polygon boundary with optional buffer |
