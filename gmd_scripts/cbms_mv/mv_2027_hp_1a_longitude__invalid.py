@@ -52,8 +52,8 @@ class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
 
     def shortHelpString(self):
         return (
-            "List of datafiles and geotagged points with the same coordinates but different map_uuid.\n \n"
-            "Datafiles and geotagged points with the same coordinates should have the same map_uuid.\n"
+            "List of datafiles and geotagged points with the same coordinates but different map_uuid\n \n"
+            "Datafiles and geotagged points with the same coordinates should have the same map_uuid\n"
         )
 
     def initAlgorithm(self, config=None):

@@ -101,6 +101,13 @@ class MockGenericClass(metaclass=MockMetaClass):
     def __rand__(self, other): return self
     def __iter__(self): return iter([])
     def __contains__(self, item): return False
+    def setProperty(self, name, value):
+        if not hasattr(self, "_properties"):
+            self._properties = {}
+        self._properties[name] = value
+        return True
+    def property(self, name):
+        return getattr(self, "_properties", {}).get(name)
 
     def __getattr__(self, name):
         if name.startswith("__"):

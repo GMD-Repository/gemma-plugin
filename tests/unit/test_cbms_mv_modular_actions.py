@@ -344,7 +344,99 @@ class TestCbmsMvModularActions(unittest.TestCase):
         self.assertEqual(payload.get("longitude"), "121.054321")
         self.assertEqual(payload.get("latitude"), "14.123456")
 
+    def test_generate_point_geometry_bsn_geoid_computation(self):
+        """Verify _compute_bsn_geoid correctly concatenates province_code, city_mun_code, barangay__code, ean, and bsn_code (zero-padded)."""
+        mod = importlib.import_module("references.cbms_mv.cbms_mv_fix.generate_point_geometry_fix")
+        self.assertTrue(hasattr(mod, "_compute_bsn_geoid"))
+
+        # Test with double underscore barangay__code and numeric bsn_code (padded to 3, 2, 3, 6, 5)
+        attrs = {
+            "df_province_code": "01",
+            "df_city_mun_code": "02",
+            "barangay__code": "003",
+            "df_ean": "000100",
+            "bsn_code": "7",
+        }
+        bsn_geoid, ea_geo = mod._compute_bsn_geoid(attrs)
+        self.assertEqual(ea_geo, "00102003000100")
+        self.assertEqual(bsn_geoid, "0010200300010000007")
+
+        # Test with float decimals like .0 from CSV import (padded to 3, 2, 3, 6, 5)
+        attrs_float = {
+            "province_code": "1.0",
+            "city_mun_code": "2.0",
+            "barangay_code": "3.0",
+            "ean": "100.0",
+            "bsn": "12.0",
+        }
+        bsn_geoid2, _ = mod._compute_bsn_geoid(attrs_float)
+        self.assertEqual(bsn_geoid2, "0010200300010000012")
+
+    def test_generate_point_geometry_execution_without_initial_uuid(self):
+        """Verify generate_point_geometry creates point and auto-generates map_uuid when missing in CSV."""
+        pkg = importlib.import_module("references.cbms_mv.cbms_mv_fix")
+        from qgis.core import QgsVectorLayer, QgsField, QgsFeature, QgsGeometry
+        from PyQt5.QtCore import QVariant
+
+        main_layer = QgsVectorLayer("Point?crs=EPSG:4326", "building_pts", "memory")
+        pr = main_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("map_uuid", QVariant.String),
+            QgsField("bsn_geoid", QVariant.String),
+            QgsField("longitude", QVariant.String),
+            QgsField("latitude", QVariant.String),
+            QgsField("status", QVariant.String),
+        ])
+        main_layer.updateFields()
+
+        err_layer = QgsVectorLayer("None", "err_layer", "memory")
+        err_pr = err_layer.dataProvider()
+        err_pr.addAttributes([
+            QgsField("df_fid", QVariant.Int),
+            QgsField("df_x_current", QVariant.String),
+            QgsField("df_y_current", QVariant.String),
+            QgsField("df_province_code", QVariant.String),
+            QgsField("df_city_mun_code", QVariant.String),
+            QgsField("df_barangay_code", QVariant.String),
+            QgsField("df_ean", QVariant.String),
+            QgsField("df_bsn_code", QVariant.String),
+        ])
+        err_layer.updateFields()
+
+        err_f = QgsFeature(err_layer.fields())
+        err_f.setAttribute("df_fid", 1)
+        err_f.setAttribute("df_x_current", "120.9842")
+        err_f.setAttribute("df_y_current", "14.5995")
+        err_f.setAttribute("df_province_code", "03")
+        err_f.setAttribute("df_city_mun_code", "14")
+        err_f.setAttribute("df_barangay_code", "005")
+        err_f.setAttribute("df_ean", "000200")
+        err_f.setAttribute("df_bsn_code", "42")
+        err_pr.addFeatures([err_f])
+
+        handler = pkg.get_fix_handler("generate_point_geometry")
+        self.assertIsNotNone(handler)
+
+        res = handler(
+            main_layer,
+            target_fids=[err_f.id()],
+            error_layer=err_layer,
+            prompt_confirm=False,
+        )
+        self.assertTrue(res.get("success"))
+        self.assertEqual(res.get("fixed_count"), 1)
+
+        # Check that point was created in main_layer
+        features = list(main_layer.getFeatures())
+        self.assertEqual(len(features), 1)
+        pt_feat = features[0]
+        self.assertTrue(pt_feat.hasGeometry())
+        self.assertEqual(str(pt_feat["bsn_geoid"]), "0031400500020000042")
+        # Ensure UUID was generated
+        self.assertTrue(len(str(pt_feat["map_uuid"])) > 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

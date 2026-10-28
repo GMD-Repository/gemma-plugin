@@ -52,8 +52,8 @@ class mv_2027_hp_4a_pos_longit__invalid(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points whose locations are far from the enumerator's position. \n \n"
-            "The enumerator's position during tagging was far from the geotagged building's location.\n"
+            "List of geotagged points whose locations are far from the enumerator's position \n \n"
+            "The enumerator's position during tagging was far from the geotagged building's location\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):

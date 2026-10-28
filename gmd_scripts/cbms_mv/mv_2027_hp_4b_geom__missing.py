@@ -51,8 +51,8 @@ class mv_2027_hp_4b_geom__missing(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points with empty geometry. \n \n"
-            "Every geotagged point should have a geometry.\n"
+            "List of geotagged points with empty geometry \n \n"
+            "Every geotagged point should have a geometry\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):

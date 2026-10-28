@@ -49,8 +49,8 @@ class mv_2027_hp_4a_map_uuid__missing(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points without CBMS Form 2 datafile. \n \n"
-            "Every geotagged point (except for BSN 00000) should have a counterpart datafile with the same map_uuid.\n"
+            "List of geotagged points without CBMS Form 2 datafile \n \n"
+            "Every geotagged point (except for BSN 00000) should have a counterpart datafile with the same map_uuid\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):

@@ -50,8 +50,8 @@ class mv_2027_hp_4b_longitude__missing(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points with NULL coordinates. \n \n"
-            "Every geotagged point should not have NULL values in the Longitude and Latitude columns.\n"
+            "List of geotagged points with NULL coordinates \n \n"
+            "Every geotagged point should not have NULL values in the Longitude and Latitude columns\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):

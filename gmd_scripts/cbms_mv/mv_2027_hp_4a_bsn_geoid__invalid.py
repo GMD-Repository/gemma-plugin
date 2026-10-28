@@ -51,8 +51,8 @@ class mv_2027_hp_4a_bsn_geoid__invalid(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points with BSN do not match the reference layer, based on map_uuid. \n \n"
-            "BSN of the geotagged point should match the BSN in the reference layer.\n"
+            "List of geotagged points with BSN do not match the reference layer, based on map_uuid \n \n"
+            "BSN of the geotagged point should match the BSN in the reference layer\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):

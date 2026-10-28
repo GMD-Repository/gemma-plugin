@@ -35,6 +35,7 @@ from qgis.PyQt.QtWidgets import (
     QFrame,
     QMessageBox,
     QApplication,
+    QSizePolicy,
 )
 
 try:
@@ -118,6 +119,10 @@ class CbmsMvReviewDock(QDockWidget):
             | Qt.BottomDockWidgetArea
             | Qt.TopDockWidgetArea
         )
+        self.setFeatures(
+            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable
+        )
+        self.topLevelChanged.connect(self._on_top_level_changed)
 
         self._extract_error_features()
         self._init_ui()
@@ -137,7 +142,14 @@ class CbmsMvReviewDock(QDockWidget):
 
         field_names_lower = {f.name().lower(): f.name() for f in self.error_layer.fields()}
         fid_col = field_names_lower.get("sf_fid") or field_names_lower.get("fid") or field_names_lower.get("df_fid")
-        uuid_col = field_names_lower.get("sf_map_uuid") or field_names_lower.get("map_uuid") or field_names_lower.get("df_map_uuid")
+        uuid_col = (
+            field_names_lower.get("sf_map_uuid")
+            or field_names_lower.get("map_uuid")
+            or field_names_lower.get("mapid")
+            or field_names_lower.get("df_map_uuid")
+            or field_names_lower.get("df_mapid")
+            or field_names_lower.get("uuid")
+        )
 
         def _is_empty(v):
             if v is None or v == NULL:
@@ -537,6 +549,9 @@ class CbmsMvReviewDock(QDockWidget):
             if s and s.lower() not in ("null", "none"):
                 clean_fid = int(s) if s.isdigit() else fid
 
+        m_flds = {f.name().lower(): f.name() for f in self.main_layer.fields()}
+        u_col = m_flds.get("map_uuid") or m_flds.get("sf_map_uuid") or m_flds.get("mapid") or m_flds.get("uuid")
+
         # 1. Primary: Locate by native QGIS internal feature ID ($id)
         if clean_fid is not None:
             try:
@@ -546,9 +561,10 @@ class CbmsMvReviewDock(QDockWidget):
                     if not map_uuid:
                         return feat
                     clean_u = str(map_uuid).strip()
-                    m_flds = {f.name().lower(): f.name() for f in self.main_layer.fields()}
-                    u_col = m_flds.get("map_uuid") or m_flds.get("sf_map_uuid")
-                    if not u_col or str(feat[u_col] or "").strip() == clean_u:
+                    if not u_col:
+                        return feat
+                    feat_u = str(feat[u_col] or "").strip()
+                    if feat_u == clean_u or not clean_u:
                         return feat
             except Exception:
                 pass
@@ -557,7 +573,8 @@ class CbmsMvReviewDock(QDockWidget):
         if map_uuid:
             clean_uuid = str(map_uuid).strip().replace("'", "''")
             if clean_uuid and clean_uuid.lower() not in ("null", "none"):
-                req = QgsFeatureRequest().setFilterExpression(f'"map_uuid" = \'{clean_uuid}\'')
+                filter_col = u_col if u_col else "map_uuid"
+                req = QgsFeatureRequest().setFilterExpression(f'"{filter_col}" = \'{clean_uuid}\'')
                 for feat in self.main_layer.getFeatures(req):
                     return feat
 
@@ -654,9 +671,19 @@ class CbmsMvReviewDock(QDockWidget):
             # Open native QGIS Feature Form dialog (modal=True waits for user input)
             accepted = self.iface.openFeatureForm(target_layer, target_feat, False, True)
 
-            # Refresh canvas if edits were accepted
-            if accepted and self.iface.mapCanvas():
-                self.iface.mapCanvas().refresh()
+            # Refresh canvas and feature data if edits were accepted
+            if accepted:
+                try:
+                    f_refreshed = target_layer.getFeature(target_feat.id())
+                    if f_refreshed.isValid():
+                        m_flds = {f.name().lower(): f.name() for f in target_layer.fields()}
+                        u_col = m_flds.get("map_uuid") or m_flds.get("sf_map_uuid") or m_flds.get("uuid")
+                        if u_col and current_item:
+                            current_item["uuid"] = str(f_refreshed[u_col] or "").strip()
+                except Exception:
+                    pass
+                if self.iface.mapCanvas():
+                    self.iface.mapCanvas().refresh()
 
     def _on_save_layer_changes(self):
         """Commit layer editing changes to the physical GeoJSON file on disk."""
@@ -797,6 +824,24 @@ class CbmsMvReviewDock(QDockWidget):
             pass
 
         event.accept()
+
+    def _on_top_level_changed(self, floating: bool):
+        """Handle review dock undocking (floating) or re-docking."""
+        w = self.widget()
+        if w and is_valid_qobject(w):
+            w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding if floating else QSizePolicy.Preferred)
+            if w.layout():
+                w.layout().activate()
+                w.layout().update()
+
+    def resizeEvent(self, event):
+        """Ensure review dock and its internal frames dynamically recalibrate layout on window resize."""
+        super().resizeEvent(event)
+        w = self.widget()
+        if w and is_valid_qobject(w):
+            if w.layout():
+                w.layout().activate()
+                w.layout().update()
 
     # ---------------------------------------------------------    # -----------------------------------------------------------------------
     # Styling

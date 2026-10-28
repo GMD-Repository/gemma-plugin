@@ -19,6 +19,9 @@ _DIRECT_FIX_MAP = {
     "mv_2027_hp_4b_ea_geocode__missing": _run_ea_fix,
     "mv_2027_hp_4b_ea_geocode_missing": _run_ea_fix,
     "generate_point_geometry": _run_geom_fix,
+    "generate_point": _run_geom_fix,
+    "point_geometry": _run_geom_fix,
+    "create_point_geometry": _run_geom_fix,
     "mv_2027_hp_1a_map_uuid__missing": _run_geom_fix,
     "mv_2027_hp_1a_map_uuid_missing": _run_geom_fix,
     "deduplicate_features": _run_dup_fix,
@@ -61,7 +64,7 @@ def get_fix_handler(val_id: str) -> Optional[Callable]:
         return _run_del_fix
     if any(k in clean for k in ("deduplicate", "duplicate")):
         return _run_dup_fix
-    if any(k in clean for k in ("generate_point", "map_uuid")):
+    if any(k in clean for k in ("generate_point", "point_geometry", "create_point", "map_uuid")):
         return _run_geom_fix
     return _run_ea_fix
 

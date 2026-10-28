@@ -55,8 +55,8 @@ class mv_2027_hp_4a_longitude__invalid(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points with XY values outside the bounds of the Philippines. \n \n"
-            "XY values of the geotagged points must be within the upper and lower limits of the Philippines' coordinates.\n"
+            "List of geotagged points with XY values outside the bounds of the Philippines \n \n"
+            "XY values of the geotagged points must be within the upper and lower limits of the Philippines' coordinates\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):

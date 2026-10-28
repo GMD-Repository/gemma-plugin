@@ -222,12 +222,12 @@ class GMDPipeline(object):
             self.projection_finder_action.triggered.connect(self.show_projection_finder)
             self.updating_boundaries_menu.addAction(self.projection_finder_action)
 
-            package_style_loader_icon = QIcon(os.path.dirname(__file__) + "/icons/package_style_loader.svg")
-            self.package_style_loader_action = QAction(
-                package_style_loader_icon, "Package Style Loader", self.iface.mainWindow()
-            )
-            self.package_style_loader_action.triggered.connect(self.show_package_style_loader_dialog)
-            self.updating_boundaries_menu.addAction(self.package_style_loader_action)
+            # package_style_loader_icon = QIcon(os.path.dirname(__file__) + "/icons/package_style_loader.svg")
+            # self.package_style_loader_action = QAction(
+            #     package_style_loader_icon, "Package Style Loader", self.iface.mainWindow()
+            # )
+            # self.package_style_loader_action.triggered.connect(self.show_package_style_loader_dialog)
+            # self.updating_boundaries_menu.addAction(self.package_style_loader_action)
 
         # 2. EA Delineation Submenu
         #self.ea_delineation_menu = QMenu(u'EA Delineation')
@@ -265,14 +265,10 @@ class GMDPipeline(object):
         self.cbmsmv_action.setShortcut("Ctrl+Alt+D")
         self.cbmsmv_menu.addAction(self.cbmsmv_action)
 
-        # 5. Package Style Loader
+        # 5. Package Style Loader (retained exclusively under 2027 CBMS Map Validation)
         package_style_icon = QIcon(os.path.dirname(__file__) + "/icons/package_style_loader.svg")
         self.package_style_loader_action = QAction(package_style_icon, "Package Style Loader", self.iface.mainWindow())
         self.package_style_loader_action.triggered.connect(self.show_package_style_loader_dialog)
-        if self.gema_menu is not None:
-            self.gema_menu.addAction(self.package_style_loader_action)
-        else:
-            self.iface.addPluginToMenu("&Gemma", self.package_style_loader_action)
         self.cbmsmv_menu.addAction(self.package_style_loader_action)
         
         #self.package_qfield_action = QAction(packager_icon, "Package for QField", self.iface.mainWindow())

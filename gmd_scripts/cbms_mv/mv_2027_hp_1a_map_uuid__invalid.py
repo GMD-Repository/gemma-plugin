@@ -50,8 +50,8 @@ class mv_2027_hp_1a_map_uuid__invalid(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of datafiles and geotagged points with the same map_uuid but different coordinates. \n \n"
-            "Datafiles and geotagged points with the same map_uuid should have the same coordinates.\n"
+            "List of datafiles and geotagged points with the same map_uuid but different coordinates \n \n"
+            "Datafiles and geotagged points with the same map_uuid should have the same coordinates\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):
