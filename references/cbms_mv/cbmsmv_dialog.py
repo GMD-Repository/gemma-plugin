@@ -3988,9 +3988,16 @@ class CbmsmvDialog(QDialog):
                         val_id = r["id"]
                         break
 
-        # 5. Re-run validation check if a valid val_id is active
+        # 5. Re-run validation check if a valid val_id is active (skip when dialog is closing)
+        if getattr(self, "_is_closing", False):
+            return True
+
         if val_id:
-            self._rerun_validation_check(val_id, saved_msg=saved_msg)
+            self._rerun_validation_check(
+                val_id,
+                saved_msg=saved_msg,
+                trigger_full_rerun_on_clean=True,
+            )
         else:
             self.lbl_footer_status.setText(saved_msg)
             QMessageBox.information(
@@ -4141,9 +4148,16 @@ class CbmsmvDialog(QDialog):
         except Exception:
             pass
 
+        if getattr(self, "_is_closing", False):
+            return True
+
         discard_msg = "Changes discarded. The files are back to how they were."
         if val_id:
-            self._rerun_validation_check(val_id, saved_msg=discard_msg)
+            self._rerun_validation_check(
+                val_id,
+                saved_msg=discard_msg,
+                trigger_full_rerun_on_clean=False,
+            )
         else:
             self.lbl_footer_status.setText(discard_msg)
             QMessageBox.information(
@@ -4157,7 +4171,12 @@ class CbmsmvDialog(QDialog):
     # -----------------------------------------------------------------------
     # Process: Single-Check Validation Re-run & Live Refresh
     # -----------------------------------------------------------------------
-    def _rerun_validation_check(self, val_id: str, saved_msg: str = ""):
+    def _rerun_validation_check(
+        self,
+        val_id: str,
+        saved_msg: str = "",
+        trigger_full_rerun_on_clean: bool = False,
+    ):
         """
         Execute a single validation rule using fresh disk data and update its
         corresponding tab in the Results Workspace as well as the Summary Overview.
@@ -4241,6 +4260,37 @@ class CbmsmvDialog(QDialog):
             new_count = 0
             out_layer = QgsVectorLayer("none", val_id, "memory")
 
+        # If saving resolved all remaining issues for this rule, re-run full validation
+        # so the Summary Overview reflects updated counts across all enabled checks.
+        if new_count == 0 and trigger_full_rerun_on_clean:
+            if getattr(self, "_active_review_dock", None):
+                dock = self._active_review_dock
+                if getattr(dock, "val_id", None) in (None, val_id):
+                    self._active_review_dock = None
+                    try:
+                        try:
+                            dock.dock_closed.disconnect(self._on_review_dock_closed)
+                        except Exception:
+                            pass
+                        dock.parent_dialog = None
+                        dock.close()
+                    except Exception:
+                        pass
+
+            self._log_success(
+                f"'{val_id}' re-run complete: 0 flagged issues! Re-running full validation to refresh summary..."
+            )
+            self.lbl_footer_status.setText(
+                f"'{val_id}' has 0 remaining issues. Re-running full validation to update summary..."
+            )
+            QApplication.processEvents()
+            self.run_validation(
+                auto_rerun=True,
+                resolved_val_id=val_id,
+                saved_msg=saved_msg,
+            )
+            return
+
         # Update result layers dictionary
         self._result_layers[val_id] = {
             "layer": out_layer,
@@ -4309,6 +4359,7 @@ class CbmsmvDialog(QDialog):
                 f"Re-checked '{val_id}':\n"
                 f"No issues found. Everything for this check is now correct.",
             )
+        else:
             status_prefix = "Changes discarded" if (saved_msg and "discarded" in saved_msg.lower()) else "Changes saved"
             self.lbl_footer_status.setText(f"{status_prefix} • '{val_id}': {new_count:,} issue(s) left.")
             QMessageBox.information(
@@ -6455,7 +6506,13 @@ class CbmsmvDialog(QDialog):
     # -----------------------------------------------------------------------
     # Execution Logic: Iterating Selected Algorithms
     # -----------------------------------------------------------------------
-    def run_validation(self):
+    def run_validation(
+        self,
+        checked: bool = False,
+        auto_rerun: bool = False,
+        resolved_val_id: Optional[str] = None,
+        saved_msg: str = "",
+    ):
         """
         Execute the validation pipeline by iterating through the enabled
         algorithms in gmd_scripts/cbms_mv and passing the three standardized
@@ -6528,28 +6585,30 @@ class CbmsmvDialog(QDialog):
         # 3. Check Base Layer dependency
         rules_requiring_base = [r for r in selected_rules if r["has_base"]]
         if rules_requiring_base and (not base_path or not os.path.exists(base_path)):
-            rule_list = "\n".join(f"  • [{r['id']}] {r['name']}" for r in rules_requiring_base)
-            reply = QMessageBox.question(
-                self,
-                "Base Layers File Missing",
-                f"These {len(rules_requiring_base)} check(s) need the Base Layers file:\n\n"
-                f"{rule_list}\n\n"
-                f"Do you want to continue and skip these {len(rules_requiring_base)} check(s)?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if reply == QMessageBox.No:
-                self._switch_to_config(0)
-                return
+            if not auto_rerun:
+                rule_list = "\n".join(f"  • [{r['id']}] {r['name']}" for r in rules_requiring_base)
+                reply = QMessageBox.question(
+                    self,
+                    "Base Layers File Missing",
+                    f"These {len(rules_requiring_base)} check(s) need the Base Layers file:\n\n"
+                    f"{rule_list}\n\n"
+                    f"Do you want to continue and skip these {len(rules_requiring_base)} check(s)?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No,
+                )
+                if reply == QMessageBox.No:
+                    self._switch_to_config(0)
+                    return
 
             selected_rules = [r for r in selected_rules if not r["has_base"]]
             if not selected_rules:
-                QMessageBox.warning(
-                    self,
-                    "No Checks to Run",
-                    "All selected checks need the Base Layers file. Please choose the Base Layers file to continue.",
-                )
-                self._switch_to_config(0)
+                if not auto_rerun:
+                    QMessageBox.warning(
+                        self,
+                        "No Checks to Run",
+                        "All selected checks need the Base Layers file. Please choose the Base Layers file to continue.",
+                    )
+                    self._switch_to_config(0)
                 return
 
         # 4. Switch to Execution Logs tab and initialize session
@@ -6816,3 +6875,26 @@ class CbmsmvDialog(QDialog):
                 self._log_warning(f"Could not write audit report file: {r_exc}")
 
         self.lbl_footer_status.setText(f"Validation complete • {total_flagged_issues:,} issue(s) flagged")
+
+        if auto_rerun:
+            msg_lines = []
+            if saved_msg:
+                msg_lines.append(saved_msg)
+            if resolved_val_id:
+                msg_lines.append(
+                    f"All issues for '{resolved_val_id}' are now resolved (0 remaining)."
+                )
+            if total_flagged_issues == 0:
+                msg_lines.append(
+                    "Full validation was re-run: 0 issues remaining across all enabled checks."
+                )
+            else:
+                msg_lines.append(
+                    f"Full validation was re-run to update the summary:\n"
+                    f"{total_flagged_issues:,} total issue(s) remaining across {total_output_layers} check(s)."
+                )
+            QMessageBox.information(
+                self,
+                "All Issues Resolved — Summary Updated",
+                "\n\n".join(msg_lines),
+            )
