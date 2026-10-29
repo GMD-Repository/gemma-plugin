@@ -17,7 +17,11 @@ Each process is implemented in its own dedicated module:
      concatenate_bsn_geoid_fix.py
   6. Copy Geometry to Coordinates:
      copy_geometry_to_coordinates_fix.py
-  7. Shared Utilities:
+  7. Update Datafile's Coordinates:
+     update_datafile_coordinates_fix.py
+  8. Update Point Geometry using sf_longitude and sf_latitude:
+     update_point_geometry_fix.py
+  9. Shared Utilities:
      common.py
 """
 from typing import Any, Dict, List, Optional, Tuple
@@ -100,6 +104,13 @@ from .update_datafile_coordinates_fix import (
     _run_fix_update_datafile_coordinates,
     update_datafile_coordinates,
 )
+from .update_point_geometry_fix import (
+    FIX_DESCRIPTION as UPDATE_GEOM_FIX_DESCRIPTION,
+    FIX_ID as UPDATE_GEOM_FIX_ID,
+    FIX_NAME as UPDATE_GEOM_FIX_NAME,
+    _run_fix_update_point_geometry,
+    update_point_geometry,
+)
 
 # ---------------------------------------------------------------------------
 # Fix Metadata Registry & Constants
@@ -129,6 +140,10 @@ FIX_REGISTRY = {
         "name": UPDATE_COORD_FIX_NAME,
         "description": UPDATE_COORD_FIX_DESCRIPTION,
     },
+    UPDATE_GEOM_FIX_ID: {
+        "name": UPDATE_GEOM_FIX_NAME,
+        "description": UPDATE_GEOM_FIX_DESCRIPTION,
+    },
 }
 
 FIX_ID = EA_FIX_ID
@@ -150,6 +165,10 @@ FIX_DESCRIPTION_COPY_GEOM = COPY_GEOM_FIX_DESCRIPTION
 FIX_ID_UPDATE_COORD = UPDATE_COORD_FIX_ID
 FIX_NAME_UPDATE_COORD = UPDATE_COORD_FIX_NAME
 FIX_DESCRIPTION_UPDATE_COORD = UPDATE_COORD_FIX_DESCRIPTION
+
+FIX_ID_UPDATE_GEOM = UPDATE_GEOM_FIX_ID
+FIX_NAME_UPDATE_GEOM = UPDATE_GEOM_FIX_NAME
+FIX_DESCRIPTION_UPDATE_GEOM = UPDATE_GEOM_FIX_DESCRIPTION
 
 from .delete_selected_features_fix import (
     delete_selected_features,
@@ -178,6 +197,10 @@ _FIX_DISPATCH = {
     "update_datafiles_coordinates": _run_fix_update_datafile_coordinates,
     "update_datafile_coordinates": _run_fix_update_datafile_coordinates,
     "update_coordinates": _run_fix_update_datafile_coordinates,
+    "update_point_geometry": _run_fix_update_point_geometry,
+    "update_point_geometry_using_sf_longitude_and_sf_latitude": _run_fix_update_point_geometry,
+    "update_coordinates_using_sf_longitude_and_sf_latitude": _run_fix_update_point_geometry,
+    "update_geometry_using_sf_longitude_and_sf_latitude": _run_fix_update_point_geometry,
     # Validation IDs
     "mv_2027_hp_4b_ea_geocode__missing": _run_fix_ea_geocode,
     "mv_2027_hp_4b_ea_geocode_missing": _run_fix_ea_geocode,
@@ -218,6 +241,8 @@ def run_fix(
         handler = _FIX_DISPATCH[clean]
     elif "bsn_geoid" in clean:
         handler = _run_fix_bsn_geoid
+    elif any(k in clean for k in ("update_point_geom", "update_geometry", "sf_longitude", "sf_latitude")):
+        handler = _run_fix_update_point_geometry
     elif any(k in clean for k in ("update_datafile", "datafile_coord", "datafile_coordinate", "update_coord", "pos_longit", "pos_latitu")):
         handler = _run_fix_update_datafile_coordinates
     elif any(k in clean for k in ("copy_geometry", "copy_geom", "geometry_to_coord")):
@@ -266,6 +291,9 @@ __all__ = [
     "FIX_ID_UPDATE_COORD",
     "FIX_NAME_UPDATE_COORD",
     "FIX_DESCRIPTION_UPDATE_COORD",
+    "FIX_ID_UPDATE_GEOM",
+    "FIX_NAME_UPDATE_GEOM",
+    "FIX_DESCRIPTION_UPDATE_GEOM",
     "is_valid_qobject",
     "_normalize_cell_val",
     "_normalize_coordinate",
@@ -295,6 +323,8 @@ __all__ = [
     "copy_geometry_to_coordinates",
     "_run_fix_update_datafile_coordinates",
     "update_datafile_coordinates",
+    "_run_fix_update_point_geometry",
+    "update_point_geometry",
     "run_fix",
     "make_unique_feature_key",
     "extract_feature_unique_key",

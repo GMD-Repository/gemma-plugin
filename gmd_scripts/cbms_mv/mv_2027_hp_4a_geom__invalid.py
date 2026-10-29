@@ -202,7 +202,7 @@ class mv_2027_hp_4a_geom__invalid(QgsProcessingAlgorithm):
         # 6. Select & organize columns using select_mv
         final_output = gmdhelpers.select_mv(
             extracted_joined,
-            ["ref_map_uuid", "ref_bsn_geoid", "distance_m"],
+            ["sf_longitude", "sf_latitude", "ref_map_uuid", "ref_bsn_geoid", "distance_m"],
             context=context,
             feedback=feedback,
         )
