@@ -51,8 +51,8 @@ class mv_2027_hp_4a_bsn_geoid__invalid(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points with BSN do not match the reference layer, based on map_uuid \n \n"
-            "BSN of the geotagged point should match the BSN in the reference layer\n"
+            "List of geotagged points with bsn_geoid do not match the reference layer, based on map_uuid \n \n"
+            "bsn_geoid of the geotagged point should match the bsn_geoid in the reference layer\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):
@@ -121,10 +121,10 @@ class mv_2027_hp_4a_bsn_geoid__invalid(QgsProcessingAlgorithm):
         joined_layer = processing.run(
             "native:joinattributestable",
             {
-                "INPUT": regular_bldg,
-                "FIELD": "sf_bsn_geoid",
+                "INPUT": geojson_data,
+                "FIELD": "sf_map_uuid",
                 "INPUT_2": ref_bldg_point,
-                "FIELD_2": "ref_bsn_geoid",
+                "FIELD_2": "ref_map_uuid",
                 "FIELDS_TO_COPY": ["ref_map_uuid", "ref_bsn_geoid"],
                 "METHOD": 1,
                 "DISCARD_NONMATCHING": False,
@@ -139,7 +139,7 @@ class mv_2027_hp_4a_bsn_geoid__invalid(QgsProcessingAlgorithm):
             "native:extractbyexpression",
             {
                 "INPUT": joined_layer,
-                "EXPRESSION": '"sf_map_uuid" != "ref_map_uuid"',
+                "EXPRESSION": '("ref_map_uuid" IS NOT NULL) AND ("sf_bsn_geoid" != "ref_bsn_geoid")',
                 "OUTPUT": "memory:",
             },
             context=context,

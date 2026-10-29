@@ -1,3 +1,4 @@
+from multiprocessing import context
 import os
 import json
 import processing
@@ -109,7 +110,14 @@ class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
                 "FIELD_NAME": "coord_key",
                 "FIELD_TYPE": 2,  # String
                 "FIELD_LENGTH": 100,
-                "FORMULA": 'to_string(round($x, 7)) + \'_\' + to_string(round($y, 7))',
+                #"FORMULA": 'to_string(round($x, 7)) + \'_\' + to_string(round($y, 7))',
+                "FORMULA": r"""
+                    if(
+                        "sf_longitude" IS NULL OR "sf_longitude" = '' OR "sf_latitude" IS NULL OR "sf_latitude" = '',
+                        'sf is null',
+                        to_string(round(to_real("sf_longitude"), 7)) + '\\' + to_string(round(to_real("sf_latitude"), 7))
+                    )
+                """,
                 "OUTPUT": "memory:",
             },
             context=context,
@@ -124,7 +132,13 @@ class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
                 "FIELD_NAME": "coord_key",
                 "FIELD_TYPE": 2,  # String
                 "FIELD_LENGTH": 100,
-                "FORMULA": 'to_string(round(to_real("df_x_current"), 7)) + \'_\' + to_string(round(to_real("df_y_current"), 7))',
+                "FORMULA": r"""
+                    if(
+                        "df_x_current" IS NULL OR "df_x_current" = '' OR "df_y_current" IS NULL OR "df_y_current" = '',
+                        'df is null',
+                        to_string(round(to_real("df_x_current"), 7)) + '\\' + to_string(round(to_real("df_y_current"), 7))
+                    )
+                """,
                 "OUTPUT": "memory:",
             },
             context=context,

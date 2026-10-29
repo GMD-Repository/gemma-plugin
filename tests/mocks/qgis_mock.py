@@ -793,7 +793,8 @@ class QgsFeature:
         if self._fields and hasattr(self._fields, "names"):
             names = self._fields.names()
             if key in names:
-                return self._attributes[names.index(key)]
+                idx = names.index(key)
+                return self._attributes[idx] if 0 <= idx < len(self._attributes) else None
         return None
 
 
@@ -1529,6 +1530,7 @@ class MockQt(metaclass=MockMetaClass):
     WindowMinimizeButtonHint = 0x00004000
     WindowMaximizeButtonHint = 0x00008000
     WindowCloseButtonHint = 0x08000000
+    WindowContextHelpButtonHint = 0x00010000
 
 
 class MockQCoreApplication:
@@ -2113,6 +2115,12 @@ def setup_qgis_mock_if_needed():
                 self._data = {}
             return self._data.get(role, None)
 
+        def setCheckState(self, state):
+            self._checkState = state
+
+        def checkState(self):
+            return getattr(self, '_checkState', 0)
+
     class MockQTableWidget(MockQWidget):
         def __init__(self, rows=0, cols=0, parent=None):
             super().__init__(parent)
@@ -2187,6 +2195,28 @@ def setup_qgis_mock_if_needed():
         def columnWidth(self, col): return 100
         def setColumnWidth(self, col, w): pass
         def viewport(self): return MockGenericClass()
+
+        def selectionModel(self):
+            class MockSelectionModel:
+                def __init__(sm_self, table):
+                    sm_self._table = table
+                def selectedRows(sm_self):
+                    indices = []
+                    for r in getattr(sm_self._table, '_selected_rows', []):
+                        class MockIndex:
+                            def __init__(idx_self, row):
+                                idx_self._row = row
+                            def row(idx_self):
+                                return idx_self._row
+                        indices.append(MockIndex(r))
+                    return indices
+            return MockSelectionModel(self)
+
+        def selectRow(self, row):
+            if not hasattr(self, '_selected_rows'):
+                self._selected_rows = []
+            if row not in self._selected_rows:
+                self._selected_rows.append(row)
 
     qtcore_mod.QCoreApplication = MockQCoreApplication
     qtcore_mod.QThread = MockQThread

@@ -58,8 +58,8 @@ class mv_2027_hp_4b_bsn_geoid__invalid(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points with missing or NULL bsn_geoid \n \n"
-            "Every geotagged point should not have NULL values in the bsn_geoid column\n"
+            "List of geotagged points with invalid bsn_geoid or ea_geocode \n \n"
+            "sf_bsn_geoid should not be empty, NULL, or have values that do not match the ea_geocode \n \n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):

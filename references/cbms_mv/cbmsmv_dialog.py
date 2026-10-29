@@ -3011,7 +3011,38 @@ class CbmsmvDialog(QDialog):
                 target_uuids.append(str(best_uuid).strip() if (best_uuid and str(best_uuid).strip() not in ("", "NULL", "None")) else "")
 
         if not target_fids and not target_uuids and not target_rows:
-            QMessageBox.information(self, "Nothing Selected", "Please tick the box of at least one row first.")
+            # Fallback: if no checkboxes are ticked, check if rows are highlighted / selected via selectionModel
+            if hasattr(table, "selectionModel") and table.selectionModel():
+                sel_rows = sorted(set(idx.row() for idx in table.selectionModel().selectedRows()))
+                for r in sel_rows:
+                    item0 = table.item(r, 0)
+                    if item0:
+                        s_id = item0.data(Qt.UserRole)
+                        u = item0.data(Qt.UserRole + 1)
+                        e_id = item0.data(Qt.UserRole + 3)
+                        df_f = item0.data(Qt.UserRole + 4)
+                        df_u = item0.data(Qt.UserRole + 5)
+                        sf_f = item0.data(Qt.UserRole + 6)
+                        sf_u = item0.data(Qt.UserRole + 7)
+                        best_fid = sf_f if (sf_f is not None and str(sf_f).strip() not in ("", "NULL", "None")) else s_id
+                        if not best_fid or str(best_fid).strip() in ("", "NULL", "None"):
+                            best_fid = df_f or e_id
+
+                        best_uuid = sf_u or u or df_u
+                        if best_uuid and str(best_uuid).strip() in ("", "NULL", "None"):
+                            best_uuid = ""
+
+                        ukey = make_unique_feature_key(best_fid, best_uuid)
+                        if ukey:
+                            target_keys.add(ukey)
+                            target_keys.add(ukey.lower())
+
+                        target_rows.append(r)
+                        target_fids.append(best_fid if (best_fid is not None and str(best_fid).strip() not in ("", "NULL", "None")) else None)
+                        target_uuids.append(str(best_uuid).strip() if (best_uuid and str(best_uuid).strip() not in ("", "NULL", "None")) else "")
+
+        if not target_fids and not target_uuids and not target_rows:
+            QMessageBox.information(self, "Nothing Selected", "Please tick the checkbox or select at least one row first.")
             return
 
         self._execute_fix(
