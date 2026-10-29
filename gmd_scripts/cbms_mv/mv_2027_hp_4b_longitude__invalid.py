@@ -50,8 +50,8 @@ class mv_2027_hp_4b_longitude__invalid(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points whose Longitude and Latitude values are far from their geometry. \n \n"
-            "The geometry of each geotagged point must match its Longitude and Latitude column values.\n"
+            "List of geotagged points whose Longitude and Latitude values are far from their geometry \n \n"
+            "The geometry of each geotagged point must match its Longitude and Latitude column values\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):

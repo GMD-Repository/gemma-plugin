@@ -50,8 +50,8 @@ class mv_2027_hp_4b_geom__invalid(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points with mismatched values in the geometry and Longitude and Latitude columns. \n \n"
-            "Values in the geometry of the geotagged points should be identical to the values in the Longitude and Latitude columns.\n"
+            "List of geotagged points with mismatched values in the geometry and Longitude and Latitude columns \n \n"
+            "Values in the geometry of the geotagged points should be identical to the values in the Longitude and Latitude columns\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):

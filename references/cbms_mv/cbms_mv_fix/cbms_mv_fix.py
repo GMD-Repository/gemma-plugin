@@ -113,6 +113,10 @@ FIX_REGISTRY = {
         "name": HP_1A_FIX_NAME,
         "description": HP_1A_FIX_DESCRIPTION,
     },
+    "mv_2027_hp_1a_map_uuid__missing": {
+        "name": HP_1A_FIX_NAME,
+        "description": HP_1A_FIX_DESCRIPTION,
+    },
     HP_4A_DUP_FIX_ID: {
         "name": HP_4A_DUP_FIX_NAME,
         "description": HP_4A_DUP_FIX_DESCRIPTION,
@@ -131,7 +135,7 @@ FIX_ID = EA_FIX_ID
 FIX_NAME = EA_FIX_NAME
 FIX_DESCRIPTION = EA_FIX_DESCRIPTION
 
-FIX_ID_HP_1A = HP_1A_FIX_ID
+FIX_ID_HP_1A = "mv_2027_hp_1a_map_uuid__missing"
 FIX_NAME_HP_1A = HP_1A_FIX_NAME
 FIX_DESCRIPTION_HP_1A = HP_1A_FIX_DESCRIPTION
 

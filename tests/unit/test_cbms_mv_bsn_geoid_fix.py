@@ -202,6 +202,142 @@ class TestCbmsMvBsnGeoidFix(unittest.TestCase):
         self.assertIn("self._on_concatenate_bsn_geoid(", content)
         self.assertTrue(hasattr(self.fix_mod, "concatenate_bsn_geoid"))
 
+    def test_concatenate_bsn_geoid_single_selection_scoping_with_target_fids(self):
+        """Verify executing fix with 1 target FID strictly updates only that feature."""
+        layer = QgsVectorLayer("Point?crs=EPSG:4326", "test_pts", "memory")
+        fields = QgsFields()
+        fields.append(QgsField("map_uuid", QVariant.String))
+        fields.append(QgsField("sf_ea_geocode", QVariant.String))
+        fields.append(QgsField("sf_bsn", QVariant.String))
+        fields.append(QgsField("sf_bsn_geoid", QVariant.String))
+        layer.dataProvider().addAttributes(fields)
+        layer.updateFields()
+
+        f1 = QgsFeature(layer.fields())
+        f1.setAttribute("map_uuid", "uuid-1")
+        f1.setAttribute("sf_ea_geocode", "01280100100001")
+        f1.setAttribute("sf_bsn", "00001")
+        f1.setAttribute("sf_bsn_geoid", None)
+
+        f2 = QgsFeature(layer.fields())
+        f2.setAttribute("map_uuid", "uuid-2")
+        f2.setAttribute("sf_ea_geocode", "01280100100002")
+        f2.setAttribute("sf_bsn", "00002")
+        f2.setAttribute("sf_bsn_geoid", None)
+
+        f3 = QgsFeature(layer.fields())
+        f3.setAttribute("map_uuid", "uuid-3")
+        f3.setAttribute("sf_ea_geocode", "01280100100003")
+        f3.setAttribute("sf_bsn", "00003")
+        f3.setAttribute("sf_bsn_geoid", None)
+
+        layer.dataProvider().addFeatures([f1, f2, f3])
+        all_feats = list(layer.getFeatures())
+        f1_id, f2_id, f3_id = all_feats[0].id(), all_feats[1].id(), all_feats[2].id()
+
+        # Fix strictly for feature 2
+        res = self.fix_mod._run_fix_bsn_geoid(layer, target_fids=[f2_id])
+        self.assertTrue(res["success"])
+        self.assertEqual(res["fixed_count"], 1)
+
+        refreshed = {feat.id(): feat for feat in layer.getFeatures()}
+        # Only f2 should have updated sf_bsn_geoid
+        self.assertEqual(refreshed[f2_id]["sf_bsn_geoid"], "0128010010000200002")
+        # f1 and f3 must remain untouched (None or empty)
+        self.assertTrue(not refreshed[f1_id]["sf_bsn_geoid"])
+        self.assertTrue(not refreshed[f3_id]["sf_bsn_geoid"])
+
+    def test_concatenate_bsn_geoid_single_selection_scoping_with_table_checked(self):
+        """Verify executing fix with UI table strictly processes checked row only."""
+        from qgis.PyQt.QtWidgets import QTableWidget, QTableWidgetItem
+        from qgis.PyQt.QtCore import Qt
+
+        layer = QgsVectorLayer("Point?crs=EPSG:4326", "test_pts", "memory")
+        fields = QgsFields()
+        fields.append(QgsField("map_uuid", QVariant.String))
+        fields.append(QgsField("sf_ea_geocode", QVariant.String))
+        fields.append(QgsField("sf_bsn", QVariant.String))
+        fields.append(QgsField("sf_bsn_geoid", QVariant.String))
+        layer.dataProvider().addAttributes(fields)
+        layer.updateFields()
+
+        f1 = QgsFeature(layer.fields())
+        f1.setAttribute("map_uuid", "uuid-1")
+        f1.setAttribute("sf_ea_geocode", "01280100100001")
+        f1.setAttribute("sf_bsn", "00001")
+
+        f2 = QgsFeature(layer.fields())
+        f2.setAttribute("map_uuid", "uuid-2")
+        f2.setAttribute("sf_ea_geocode", "01280100100002")
+        f2.setAttribute("sf_bsn", "00002")
+
+        f3 = QgsFeature(layer.fields())
+        f3.setAttribute("map_uuid", "uuid-3")
+        f3.setAttribute("sf_ea_geocode", "01280100100003")
+        f3.setAttribute("sf_bsn", "00003")
+
+        layer.dataProvider().addFeatures([f1, f2, f3])
+        all_feats = list(layer.getFeatures())
+        f1_id, f2_id, f3_id = all_feats[0].id(), all_feats[1].id(), all_feats[2].id()
+
+        table = QTableWidget(3, 4)
+        for r, (fid, uuid_val, ean, bsn) in enumerate([
+            (f1_id, "uuid-1", "01280100100001", "00001"),
+            (f2_id, "uuid-2", "01280100100002", "00002"),
+            (f3_id, "uuid-3", "01280100100003", "00003"),
+        ]):
+            item0 = QTableWidgetItem(f"Row {r}")
+            item0.setData(Qt.UserRole, fid)
+            item0.setData(Qt.UserRole + 1, uuid_val)
+            item0.setData(Qt.UserRole + 6, fid)
+            item0.setData(Qt.UserRole + 7, uuid_val)
+            # Only row 1 is checked!
+            item0.setCheckState(Qt.Checked if r == 1 else Qt.Unchecked)
+            table.setItem(r, 0, item0)
+
+        # Run fix passing table and target_rows=[1]
+        res = self.fix_mod._run_fix_bsn_geoid(layer, table=table, target_rows=[1])
+        self.assertTrue(res["success"])
+        self.assertEqual(res["fixed_count"], 1)
+
+        refreshed = {feat.id(): feat for feat in layer.getFeatures()}
+        self.assertEqual(refreshed[f2_id]["sf_bsn_geoid"], "0128010010000200002")
+        self.assertTrue(not refreshed[f1_id]["sf_bsn_geoid"])
+        self.assertTrue(not refreshed[f3_id]["sf_bsn_geoid"])
+
+    def test_concatenate_bsn_geoid_empty_selection_warns_and_does_nothing(self):
+        """Verify executing fix with no checked rows or selection returns early and modifies nothing."""
+        from qgis.PyQt.QtWidgets import QTableWidget, QTableWidgetItem
+        from qgis.PyQt.QtCore import Qt
+
+        layer = QgsVectorLayer("Point?crs=EPSG:4326", "test_pts", "memory")
+        fields = QgsFields()
+        fields.append(QgsField("map_uuid", QVariant.String))
+        fields.append(QgsField("sf_ea_geocode", QVariant.String))
+        fields.append(QgsField("sf_bsn", QVariant.String))
+        fields.append(QgsField("sf_bsn_geoid", QVariant.String))
+        layer.dataProvider().addAttributes(fields)
+        layer.updateFields()
+
+        f1 = QgsFeature(layer.fields())
+        f1.setAttribute("map_uuid", "uuid-1")
+        f1.setAttribute("sf_ea_geocode", "01280100100001")
+        f1.setAttribute("sf_bsn", "00001")
+        layer.dataProvider().addFeatures([f1])
+
+        table = QTableWidget(1, 4)
+        item0 = QTableWidgetItem("Row 0")
+        item0.setCheckState(Qt.Unchecked)
+        table.setItem(0, 0, item0)
+
+        res = self.fix_mod._run_fix_bsn_geoid(layer, table=table, target_rows=[])
+        self.assertFalse(res["success"])
+        self.assertEqual(res["fixed_count"], 0)
+        self.assertIn("select at least one row", res.get("message", "").lower())
+
+        refreshed = list(layer.getFeatures())
+        self.assertTrue(not refreshed[0]["sf_bsn_geoid"])
+
 
 if __name__ == "__main__":
     unittest.main()

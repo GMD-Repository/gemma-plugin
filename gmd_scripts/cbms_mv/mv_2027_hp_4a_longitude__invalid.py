@@ -55,8 +55,8 @@ class mv_2027_hp_4a_longitude__invalid(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points with XY values outside the bounds of the Philippines. \n \n"
-            "XY values of the geotagged points must be within the upper and lower limits of the Philippines' coordinates.\n"
+            "List of geotagged points with XY values outside the bounds of the Philippines \n \n"
+            "XY values of the geotagged points must be within the upper and lower limits of the Philippines' coordinates\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):
@@ -125,9 +125,26 @@ class mv_2027_hp_4a_longitude__invalid(QgsProcessingAlgorithm):
             feedback=feedback,
         )["OUTPUT"]
 
+        joined_layer = processing.run(
+            "native:joinattributestable",
+            {
+                "INPUT": extracted_layer,
+                "FIELD": "sf_map_uuid",
+                "INPUT_2": json_data,
+                "FIELD_2": "df_map_uuid",
+                "FIELDS_TO_COPY": ["df_map_uuid", "df_x_current", "df_y_current"],
+                "METHOD": 1,
+                "DISCARD_NONMATCHING": False,
+                "PREFIX": "",
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+        
         final_output = gmdhelpers.select_mv(
-            extracted_layer,
-            ["sf_longitude", "sf_latitude"],
+            joined_layer,
+            ["sf_longitude", "sf_latitude", "df_x_current", "df_y_current"],
             context=context,
             feedback=feedback,
         )

@@ -51,7 +51,7 @@ class mv_2027_hp_4a_ea_geocode__invalid(QgsProcessingAlgorithm):
     def shortHelpString(self) -> str:
         return (
             "List of geotagged points whose locations are not in the EA of its ea_geocode \n \n "
-            "Value of the ea_geocode should be the same as the ean of its location.\n"
+            "Value of the ea_geocode should be the same as the ean of its location\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):

@@ -51,8 +51,8 @@ class mv_2027_hp_4a_map_uuid__invalid(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points with map_uuid not in the reference layer. \n \n"
-            "The map_uuid should be retained unless the geotagged point is a new building or has a special BSN.\n"
+            "List of geotagged points with map_uuid not in the reference layer \n \n"
+            "The map_uuid should be retained unless the geotagged point is a new building or has a special BSN\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):

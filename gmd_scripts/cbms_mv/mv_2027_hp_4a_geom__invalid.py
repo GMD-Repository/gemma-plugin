@@ -53,8 +53,8 @@ class mv_2027_hp_4a_geom__invalid(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points whose locations are far from the reference point. \n \n"
-            "For review of the geotagged points that is far (more than 100 meters) from the reference point.\n"
+            "List of geotagged points whose locations are far from the reference point \n \n"
+            "For review of the geotagged points that is far (more than 100 meters) from the reference point\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):

@@ -333,7 +333,8 @@ def mark_feature_deleted(
 
     # 4. Update QTableWidget is_deleted cells
     if target_row is not None:
-        table.setProperty("is_populating", True)
+        if hasattr(table, "setProperty"):
+            table.setProperty("is_populating", True)
         try:
             for c in del_col_indices:
                 cell_item = table.item(target_row, c)
@@ -346,7 +347,8 @@ def mark_feature_deleted(
                     if hasattr(dialog, "_style_table_cell"):
                         dialog._style_table_cell(cell_item, "deleted" if to_delete else "normal")
         finally:
-            table.setProperty("is_populating", False)
+            if hasattr(table, "setProperty"):
+                table.setProperty("is_populating", False)
 
     # 5. Update Result Memory Layer
     if layer and hasattr(layer, "isValid") and layer.isValid():

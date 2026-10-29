@@ -51,8 +51,8 @@ class mv_2027_hp_4a_longitude__duplicate(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points with duplicate coordinates. \n \n"
-            "The coordinates should be unique.\n"
+            "List of geotagged points with duplicate coordinates \n \n"
+            "The coordinates should be unique\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):

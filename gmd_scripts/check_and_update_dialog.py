@@ -34,6 +34,7 @@ class DigitizeDockWidget(QDockWidget):
         self.setObjectName("GemmaDigitizeNavigationDock")
         self.parent_dialog = parent_dialog
         self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea | Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea)
+        self.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
 
         palette = self.palette()
         bg_color = palette.color(palette.Window)
@@ -123,6 +124,18 @@ class DigitizeDockWidget(QDockWidget):
 
         layout.addLayout(btn_layout)
         self.setWidget(main_widget)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        try:
+            w = self.widget()
+            if w:
+                w.setGeometry(self.rect())
+                if w.layout():
+                    w.layout().activate()
+                w.update()
+        except Exception:
+            pass
 
     def showEvent(self, event):
         super().showEvent(event)

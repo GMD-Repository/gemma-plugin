@@ -344,7 +344,262 @@ class TestCbmsMvModularActions(unittest.TestCase):
         self.assertEqual(payload.get("longitude"), "121.054321")
         self.assertEqual(payload.get("latitude"), "14.123456")
 
+    def test_generate_point_geometry_bsn_geoid_computation(self):
+        """Verify _compute_bsn_geoid correctly concatenates province_code, city_mun_code, barangay__code, ean, and bsn_code (zero-padded)."""
+        mod = importlib.import_module("references.cbms_mv.cbms_mv_fix.generate_point_geometry_fix")
+        self.assertTrue(hasattr(mod, "_compute_bsn_geoid"))
+
+        # Test with double underscore barangay__code and numeric bsn_code (padded to 3, 2, 3, 6, 5)
+        attrs = {
+            "df_province_code": "01",
+            "df_city_mun_code": "02",
+            "barangay__code": "003",
+            "df_ean": "000100",
+            "bsn_code": "7",
+        }
+        bsn_geoid, ea_geo = mod._compute_bsn_geoid(attrs)
+        self.assertEqual(ea_geo, "00102003000100")
+        self.assertEqual(bsn_geoid, "0010200300010000007")
+
+        # Test with float decimals like .0 from CSV import (padded to 3, 2, 3, 6, 5)
+        attrs_float = {
+            "province_code": "1.0",
+            "city_mun_code": "2.0",
+            "barangay_code": "3.0",
+            "ean": "100.0",
+            "bsn": "12.0",
+        }
+        bsn_geoid2, _ = mod._compute_bsn_geoid(attrs_float)
+        self.assertEqual(bsn_geoid2, "0010200300010000012")
+
+    def test_generate_point_geometry_execution_without_initial_uuid(self):
+        """Verify generate_point_geometry creates point and auto-generates map_uuid when missing in CSV."""
+        pkg = importlib.import_module("references.cbms_mv.cbms_mv_fix")
+        from qgis.core import QgsVectorLayer, QgsField, QgsFeature, QgsGeometry
+        from PyQt5.QtCore import QVariant
+
+        main_layer = QgsVectorLayer("Point?crs=EPSG:4326", "building_pts", "memory")
+        pr = main_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("map_uuid", QVariant.String),
+            QgsField("bsn_geoid", QVariant.String),
+            QgsField("longitude", QVariant.String),
+            QgsField("latitude", QVariant.String),
+            QgsField("status", QVariant.String),
+        ])
+        main_layer.updateFields()
+
+        err_layer = QgsVectorLayer("None", "err_layer", "memory")
+        err_pr = err_layer.dataProvider()
+        err_pr.addAttributes([
+            QgsField("df_fid", QVariant.Int),
+            QgsField("df_x_current", QVariant.String),
+            QgsField("df_y_current", QVariant.String),
+            QgsField("df_province_code", QVariant.String),
+            QgsField("df_city_mun_code", QVariant.String),
+            QgsField("df_barangay_code", QVariant.String),
+            QgsField("df_ean", QVariant.String),
+            QgsField("df_bsn_code", QVariant.String),
+        ])
+        err_layer.updateFields()
+
+        err_f = QgsFeature(err_layer.fields())
+        err_f.setAttribute("df_fid", 1)
+        err_f.setAttribute("df_x_current", "120.9842")
+        err_f.setAttribute("df_y_current", "14.5995")
+        err_f.setAttribute("df_province_code", "03")
+        err_f.setAttribute("df_city_mun_code", "14")
+        err_f.setAttribute("df_barangay_code", "005")
+        err_f.setAttribute("df_ean", "000200")
+        err_f.setAttribute("df_bsn_code", "42")
+        err_pr.addFeatures([err_f])
+
+        handler = pkg.get_fix_handler("generate_point_geometry")
+        self.assertIsNotNone(handler)
+
+        res = handler(
+            main_layer,
+            target_fids=[err_f.id()],
+            error_layer=err_layer,
+            prompt_confirm=False,
+        )
+        self.assertTrue(res.get("success"))
+        self.assertEqual(res.get("fixed_count"), 1)
+
+        # Check that point was created in main_layer
+        features = list(main_layer.getFeatures())
+        self.assertEqual(len(features), 1)
+        pt_feat = features[0]
+        self.assertTrue(pt_feat.hasGeometry())
+        self.assertEqual(str(pt_feat["bsn_geoid"]), "0031400500020000042")
+        # Ensure UUID was generated
+        self.assertTrue(len(str(pt_feat["map_uuid"])) > 0)
+
+    def test_update_datafile_coordinates_single_selection_scoping_headless(self):
+        """Verify update_datafile_coordinates strictly updates only targeted feature in headless mode."""
+        from references.cbms_mv.cbms_mv_fix.update_datafile_coordinates_fix import _run_fix_update_datafile_coordinates
+        from qgis.core import QgsVectorLayer, QgsField, QgsFeature
+        from PyQt5.QtCore import QVariant
+
+        layer = QgsVectorLayer("Point?crs=EPSG:4326", "pts", "memory")
+        pr = layer.dataProvider()
+        pr.addAttributes([
+            QgsField("map_uuid", QVariant.String),
+            QgsField("sf_longitude", QVariant.String),
+            QgsField("sf_latitude", QVariant.String),
+            QgsField("df_x_current", QVariant.Double),
+            QgsField("df_y_current", QVariant.Double),
+        ])
+        layer.updateFields()
+
+        f1 = QgsFeature(layer.fields())
+        f1.setAttribute("map_uuid", "uuid-1")
+        f1.setAttribute("sf_longitude", "120.1")
+        f1.setAttribute("sf_latitude", "14.1")
+        f1.setAttribute("df_x_current", 0.0)
+        f1.setAttribute("df_y_current", 0.0)
+
+        f2 = QgsFeature(layer.fields())
+        f2.setAttribute("map_uuid", "uuid-2")
+        f2.setAttribute("sf_longitude", "120.2")
+        f2.setAttribute("sf_latitude", "14.2")
+        f2.setAttribute("df_x_current", 0.0)
+        f2.setAttribute("df_y_current", 0.0)
+
+        f3 = QgsFeature(layer.fields())
+        f3.setAttribute("map_uuid", "uuid-3")
+        f3.setAttribute("sf_longitude", "120.3")
+        f3.setAttribute("sf_latitude", "14.3")
+        f3.setAttribute("df_x_current", 0.0)
+        f3.setAttribute("df_y_current", 0.0)
+
+        pr.addFeatures([f1, f2, f3])
+        feats = list(layer.getFeatures())
+        f1_id, f2_id, f3_id = feats[0].id(), feats[1].id(), feats[2].id()
+
+        res = _run_fix_update_datafile_coordinates(layer, target_uuids=["uuid-2"])
+        self.assertTrue(res["success"])
+        self.assertEqual(res["fixed_count"], 1)
+
+        refreshed = {f.id(): f for f in layer.getFeatures()}
+        # Only f2 should be updated with coordinates
+        self.assertEqual(str(refreshed[f2_id]["df_x_current"]), "120.2")
+        self.assertEqual(str(refreshed[f2_id]["df_y_current"]), "14.2")
+        # f1 and f3 must remain untouched (0.0)
+        self.assertEqual(float(refreshed[f1_id]["df_x_current"]), 0.0)
+        self.assertEqual(float(refreshed[f3_id]["df_x_current"]), 0.0)
+
+    def test_update_datafile_coordinates_single_selection_scoping_with_table(self):
+        """Verify update_datafile_coordinates strictly updates only checked row when table is provided."""
+        from references.cbms_mv.cbms_mv_fix.update_datafile_coordinates_fix import _run_fix_update_datafile_coordinates
+        from qgis.core import QgsVectorLayer, QgsField, QgsFeature
+        from PyQt5.QtCore import QVariant, Qt
+        from PyQt5.QtWidgets import QTableWidget, QTableWidgetItem
+
+        layer = QgsVectorLayer("Point?crs=EPSG:4326", "pts", "memory")
+        pr = layer.dataProvider()
+        pr.addAttributes([
+            QgsField("map_uuid", QVariant.String),
+            QgsField("sf_longitude", QVariant.String),
+            QgsField("sf_latitude", QVariant.String),
+            QgsField("df_x_current", QVariant.Double),
+            QgsField("df_y_current", QVariant.Double),
+        ])
+        layer.updateFields()
+
+        f1 = QgsFeature(layer.fields())
+        f1.setAttribute("map_uuid", "uuid-1")
+        f1.setAttribute("sf_longitude", "120.1")
+        f1.setAttribute("sf_latitude", "14.1")
+        f1.setAttribute("df_x_current", 0.0)
+        f1.setAttribute("df_y_current", 0.0)
+
+        f2 = QgsFeature(layer.fields())
+        f2.setAttribute("map_uuid", "uuid-2")
+        f2.setAttribute("sf_longitude", "120.2")
+        f2.setAttribute("sf_latitude", "14.2")
+        f2.setAttribute("df_x_current", 0.0)
+        f2.setAttribute("df_y_current", 0.0)
+
+        f3 = QgsFeature(layer.fields())
+        f3.setAttribute("map_uuid", "uuid-3")
+        f3.setAttribute("sf_longitude", "120.3")
+        f3.setAttribute("sf_latitude", "14.3")
+        f3.setAttribute("df_x_current", 0.0)
+        f3.setAttribute("df_y_current", 0.0)
+
+        pr.addFeatures([f1, f2, f3])
+        feats = list(layer.getFeatures())
+        f1_id, f2_id, f3_id = feats[0].id(), feats[1].id(), feats[2].id()
+
+        table = QTableWidget(3, 3)
+        table.setHorizontalHeaderLabels(["Select", "sf_longitude", "sf_latitude"])
+        for r, (fid, u, lon, lat) in enumerate([
+            (f1_id, "uuid-1", "120.1", "14.1"),
+            (f2_id, "uuid-2", "120.2", "14.2"),
+            (f3_id, "uuid-3", "120.3", "14.3"),
+        ]):
+            item0 = QTableWidgetItem(f"Row {r}")
+            item0.setData(Qt.UserRole, fid)
+            item0.setData(Qt.UserRole + 1, u)
+            item0.setData(Qt.UserRole + 6, fid)
+            item0.setData(Qt.UserRole + 7, u)
+            item0.setCheckState(Qt.Checked if r == 1 else Qt.Unchecked)
+            table.setItem(r, 0, item0)
+            table.setItem(r, 1, QTableWidgetItem(lon))
+            table.setItem(r, 2, QTableWidgetItem(lat))
+
+        res = _run_fix_update_datafile_coordinates(layer, table=table, target_rows=[1])
+        self.assertTrue(res["success"])
+        self.assertEqual(res["fixed_count"], 1)
+
+        refreshed = {f.id(): f for f in layer.getFeatures()}
+        self.assertEqual(str(refreshed[f2_id]["df_x_current"]), "120.2")
+        self.assertEqual(str(refreshed[f2_id]["df_y_current"]), "14.2")
+        self.assertEqual(float(refreshed[f1_id]["df_x_current"]), 0.0)
+        self.assertEqual(float(refreshed[f3_id]["df_x_current"]), 0.0)
+
+    def test_update_datafile_coordinates_empty_selection_warns_and_does_nothing(self):
+        """Verify update_datafile_coordinates with no selection returns failure and leaves layer untouched."""
+        from references.cbms_mv.cbms_mv_fix.update_datafile_coordinates_fix import _run_fix_update_datafile_coordinates
+        from qgis.core import QgsVectorLayer, QgsField, QgsFeature
+        from PyQt5.QtCore import QVariant, Qt
+        from PyQt5.QtWidgets import QTableWidget, QTableWidgetItem
+
+        layer = QgsVectorLayer("Point?crs=EPSG:4326", "pts", "memory")
+        pr = layer.dataProvider()
+        pr.addAttributes([
+            QgsField("map_uuid", QVariant.String),
+            QgsField("sf_longitude", QVariant.String),
+            QgsField("sf_latitude", QVariant.String),
+            QgsField("df_x_current", QVariant.Double),
+            QgsField("df_y_current", QVariant.Double),
+        ])
+        layer.updateFields()
+
+        f1 = QgsFeature(layer.fields())
+        f1.setAttribute("map_uuid", "uuid-1")
+        f1.setAttribute("sf_longitude", "120.1")
+        f1.setAttribute("sf_latitude", "14.1")
+        f1.setAttribute("df_x_current", 0.0)
+        f1.setAttribute("df_y_current", 0.0)
+        pr.addFeatures([f1])
+
+        table = QTableWidget(1, 1)
+        item0 = QTableWidgetItem("Row 0")
+        item0.setCheckState(Qt.Unchecked)
+        table.setItem(0, 0, item0)
+
+        res = _run_fix_update_datafile_coordinates(layer, table=table, target_rows=[])
+        self.assertFalse(res["success"])
+        self.assertEqual(res["fixed_count"], 0)
+        self.assertIn("select at least one row", res.get("message", "").lower())
+
+        refreshed = list(layer.getFeatures())
+        self.assertEqual(float(refreshed[0]["df_x_current"]), 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

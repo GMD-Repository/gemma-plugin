@@ -52,8 +52,8 @@ class mv_2027_hp_4c_remarks__invalid(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points with deletion or review remarks. \n \n"
-            "Features with remarks value are flagged for review and/or deletion.\n"
+            "List of geotagged points with deletion or review remarks \n \n"
+            "Features with remarks value are flagged for review and/or deletion\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):

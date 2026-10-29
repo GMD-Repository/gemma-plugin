@@ -59,8 +59,8 @@ class mv_2027_hp_4a_map_uuid__duplicate(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points with duplicate map_uuid. \n \n"
-            "The map_uuid should be unique.\n"
+            "List of geotagged points with duplicate map_uuid \n \n"
+            "The map_uuid should be unique\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):
