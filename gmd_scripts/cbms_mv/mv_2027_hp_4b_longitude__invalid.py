@@ -27,7 +27,7 @@ from .. import gmdhelpers
 
 
 
-TARGET_FIELDS = ["sf_longitude", "sf_latitude"]
+TARGET_FIELDS = ["sf_longitude", "sf_latitude", "x_geometry", "y_geometry"]
 
 class mv_2027_hp_4b_longitude__invalid(QgsProcessingAlgorithm):
 
@@ -131,9 +131,50 @@ class mv_2027_hp_4b_longitude__invalid(QgsProcessingAlgorithm):
             feedback=feedback,
         )["OUTPUT"]
 
+        # 3. Compute x_geometry and y_geometry with placeholder for empty/null geometry
+        layer_with_x = processing.run(
+            "native:fieldcalculator",
+            {
+                "INPUT": filtered_layer,
+                "FIELD_NAME": "x_geometry",
+                "FIELD_TYPE": 2,  # String
+                "FIELD_LENGTH": 50,
+                "FIELD_PRECISION": 0,
+                "FORMULA": (
+                    "CASE "
+                    "WHEN is_empty_or_null($geometry) THEN 'No Geometry' "
+                    "ELSE coalesce(to_string($x), to_string(x(centroid($geometry))), 'No Geometry') "
+                    "END"
+                ),
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+
+        layer_with_xy = processing.run(
+            "native:fieldcalculator",
+            {
+                "INPUT": layer_with_x,
+                "FIELD_NAME": "y_geometry",
+                "FIELD_TYPE": 2,  # String
+                "FIELD_LENGTH": 50,
+                "FIELD_PRECISION": 0,
+                "FORMULA": (
+                    "CASE "
+                    "WHEN is_empty_or_null($geometry) THEN 'No Geometry' "
+                    "ELSE coalesce(to_string($y), to_string(y(centroid($geometry))), 'No Geometry') "
+                    "END"
+                ),
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+
         final_output = gmdhelpers.select_mv(
-            filtered_layer,
-            ["sf_longitude", "sf_latitude", "distance_m"],
+            layer_with_xy,
+            ["sf_longitude", "sf_latitude", "x_geometry", "y_geometry", "distance_m"],
             context=context,
             feedback=feedback,
         )

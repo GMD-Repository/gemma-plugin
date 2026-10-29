@@ -1861,6 +1861,14 @@ class CbmsmvDialog(QDialog):
         else:
             combo_actions.addItem("Update Datafile's Coordinates")
 
+        update_geom_ic = QgsApplication.getThemeIcon("mActionMoveFeaturePoint.svg")
+        if update_geom_ic.isNull():
+            update_geom_ic = QgsApplication.getThemeIcon("mActionCapturePoint.svg")
+        if not update_geom_ic.isNull():
+            combo_actions.addItem(update_geom_ic, "Update point geometry using sf_longitude and sf_latitude")
+        else:
+            combo_actions.addItem("Update point geometry using sf_longitude and sf_latitude")
+
         combo_actions.setCursor(Qt.PointingHandCursor)
         combo_actions.setToolTip("Select an action to execute for checked features")
 
@@ -1965,8 +1973,13 @@ class CbmsmvDialog(QDialog):
                 1 for r in range(table.rowCount())
                 if table.item(r, 0) and table.item(r, 0).checkState() == Qt.Checked
             )
+            sel_count = (
+                len(set(i.row() for i in table.selectionModel().selectedRows()))
+                if hasattr(table, "selectionModel") and table.selectionModel()
+                else 0
+            )
             idx = combo_actions.currentIndex()
-            if checked_count == 0:
+            if checked_count == 0 and sel_count == 0:
                 if idx == 4:
                     reply = QMessageBox.question(
                         self,
@@ -2014,8 +2027,12 @@ class CbmsmvDialog(QDialog):
                 self._on_copy_geometry_to_coordinates(
                     layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
-            elif idx == 7 or ("update" in combo_actions.itemText(idx).lower() and "coordinate" in combo_actions.itemText(idx).lower()):
+            elif idx == 7 or ("update" in combo_actions.itemText(idx).lower() and "datafile" in combo_actions.itemText(idx).lower()):
                 self._on_update_datafile_coordinates(
+                    layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
+                )
+            elif idx == 8 or ("update" in combo_actions.itemText(idx).lower() and ("geometry" in combo_actions.itemText(idx).lower() or "sf_longitude" in combo_actions.itemText(idx).lower())):
+                self._on_update_point_geometry(
                     layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
             else:
@@ -2056,8 +2073,14 @@ class CbmsmvDialog(QDialog):
                     1 for r in range(table.rowCount())
                     if not table.isRowHidden(r) and table.item(r, 0) and table.item(r, 0).checkState() == Qt.Checked
                 )
-                btn_update_selected.setText(f"Apply Fix Action ({checked_count})" if checked_count > 0 else "Apply Fix Action")
-                btn_update_selected.setEnabled(checked_count > 0)
+                sel_count = (
+                    len(set(i.row() for i in table.selectionModel().selectedRows() if not table.isRowHidden(i.row())))
+                    if hasattr(table, "selectionModel") and table.selectionModel()
+                    else 0
+                )
+                active_sel_count = checked_count if checked_count > 0 else sel_count
+                btn_update_selected.setText(f"Apply Fix Action ({active_sel_count})" if active_sel_count > 0 else "Apply Fix Action")
+                btn_update_selected.setEnabled(active_sel_count > 0)
 
         combo_actions.currentIndexChanged.connect(_on_combo_actions_changed)
         combo_actions.activated.connect(_on_combo_actions_changed)
@@ -2256,6 +2279,11 @@ class CbmsmvDialog(QDialog):
                         item.setToolTip("Reference dataset attribute (read-only)")
                         if fname in target_cols:
                             self._style_table_cell(item, "target")
+                    elif fn_lower in ("x_geometry", "y_geometry", "distance_m"):
+                        item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                        item.setToolTip("Derived geometry value (read-only)")
+                        if fname in target_cols:
+                            self._style_table_cell(item, "target")
                     else:
                         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
                         if fname in target_cols:
@@ -2384,7 +2412,7 @@ class CbmsmvDialog(QDialog):
             return
 
         fn_lower = str(field_name).strip().lower()
-        if fn_lower in ("fid", "sf_fid", "df_fid", "ref_fid", "action", "") or fn_lower.startswith("ref_"):
+        if fn_lower in ("fid", "sf_fid", "df_fid", "ref_fid", "x_geometry", "y_geometry", "distance_m", "action", "") or fn_lower.startswith("ref_"):
             return
 
         chk_item = table.item(row, 0)
@@ -2932,6 +2960,34 @@ class CbmsmvDialog(QDialog):
             btn_update_selected.setText("Apply Fix Action")
             btn_update_selected.setEnabled(False)
 
+    def _on_update_point_geometry(
+        self,
+        *args,
+        combo_actions: Optional[QComboBox] = None,
+        btn_actions: Optional[Any] = None,
+        btn_update_selected: Optional[QPushButton] = None,
+        **kwargs,
+    ):
+        """Directly update point geometry using sf_longitude and sf_latitude for selected/checked features."""
+        if not is_valid_qobject(self):
+            return
+        if len(args) >= 2 and hasattr(args[1], "rowCount"):
+            layer, table = args[0], args[1]
+        elif len(args) >= 3 and hasattr(args[2], "rowCount"):
+            layer, table = args[1], args[2]
+        else:
+            layer = kwargs.get("layer")
+            table = kwargs.get("table")
+
+        self._fix_selected_features("update_point_geometry", layer, table)
+        if combo_actions:
+            combo_actions.setItemText(0, "Actions")
+        elif btn_actions:
+            btn_actions.setText("Actions")
+        if btn_update_selected:
+            btn_update_selected.setText("Apply Fix Action")
+            btn_update_selected.setEnabled(False)
+
     def _on_deduplicate_features(
         self,
         *args,
@@ -3245,50 +3301,53 @@ class CbmsmvDialog(QDialog):
                     r_df_uuid_buf = str(item0.data(Qt.UserRole + 5) or r_uuid or "").strip()
                     rec_k_buf = f"fid_{r_df_fid_buf}" if r_df_fid_buf is not None else f"uuid_{r_df_uuid_buf}"
                     if r_df_fid_buf is not None or r_df_uuid_buf:
-                        if rec_k_buf not in self._pending_json_edits:
-                            self._pending_json_edits[rec_k_buf] = {
-                                "df_fid": r_df_fid_buf,
-                                "uuid": r_df_uuid_buf,
-                                "props": {},
-                            }
+                        buf_props: Dict[str, str] = {}
                         for col_k, col_v in col_updates.items():
                             col_kl = str(col_k).lower()
                             if col_kl in ("map_uuid", "mapid", "df_map_uuid", "df_mapid", "uuid"):
-                                self._pending_json_edits[rec_k_buf]["props"]["map_uuid"] = str(col_v)
-                                self._pending_json_edits[rec_k_buf]["props"]["mapid"] = str(col_v)
-                                self._pending_json_edits[rec_k_buf]["props"]["df_map_uuid"] = str(col_v)
-                                self._pending_json_edits[rec_k_buf]["props"]["df_mapid"] = str(col_v)
+                                buf_props["map_uuid"] = str(col_v)
+                                buf_props["mapid"] = str(col_v)
+                                buf_props["df_map_uuid"] = str(col_v)
+                                buf_props["df_mapid"] = str(col_v)
                             elif col_kl in ("bsn_geoid", "df_bsn_geoid"):
-                                self._pending_json_edits[rec_k_buf]["props"]["bsn_geoid"] = str(col_v)
-                                self._pending_json_edits[rec_k_buf]["props"]["df_bsn_geoid"] = str(col_v)
+                                buf_props["bsn_geoid"] = str(col_v)
+                                buf_props["df_bsn_geoid"] = str(col_v)
                             elif col_kl in ("ea_geocode", "df_ea_geocode"):
-                                self._pending_json_edits[rec_k_buf]["props"]["ea_geocode"] = str(col_v)
-                                self._pending_json_edits[rec_k_buf]["props"]["df_ea_geocode"] = str(col_v)
+                                buf_props["ea_geocode"] = str(col_v)
+                                buf_props["df_ea_geocode"] = str(col_v)
                             elif col_kl in ("bsn", "df_bsn", "bsn_code", "df_bsn_code"):
-                                self._pending_json_edits[rec_k_buf]["props"]["bsn"] = str(col_v)
-                                self._pending_json_edits[rec_k_buf]["props"]["df_bsn"] = str(col_v)
-                                self._pending_json_edits[rec_k_buf]["props"]["bsn_code"] = str(col_v)
-                                self._pending_json_edits[rec_k_buf]["props"]["df_bsn_code"] = str(col_v)
+                                buf_props["bsn"] = str(col_v)
+                                buf_props["df_bsn"] = str(col_v)
+                                buf_props["bsn_code"] = str(col_v)
+                                buf_props["df_bsn_code"] = str(col_v)
                             elif col_kl in ("region_code", "df_region_code", "reg_code", "df_reg_code"):
-                                self._pending_json_edits[rec_k_buf]["props"]["region_code"] = str(col_v)
-                                self._pending_json_edits[rec_k_buf]["props"]["df_region_code"] = str(col_v)
+                                buf_props["region_code"] = str(col_v)
+                                buf_props["df_region_code"] = str(col_v)
                             elif col_kl in ("province_code", "df_province_code"):
-                                self._pending_json_edits[rec_k_buf]["props"]["province_code"] = str(col_v)
-                                self._pending_json_edits[rec_k_buf]["props"]["df_province_code"] = str(col_v)
+                                buf_props["province_code"] = str(col_v)
+                                buf_props["df_province_code"] = str(col_v)
                             elif col_kl in ("city_mun_code", "df_city_mun_code"):
-                                self._pending_json_edits[rec_k_buf]["props"]["city_mun_code"] = str(col_v)
-                                self._pending_json_edits[rec_k_buf]["props"]["df_city_mun_code"] = str(col_v)
+                                buf_props["city_mun_code"] = str(col_v)
+                                buf_props["df_city_mun_code"] = str(col_v)
                             elif col_kl in ("barangay_code", "df_barangay_code", "barangay__code", "df_barangay__code"):
-                                self._pending_json_edits[rec_k_buf]["props"]["barangay_code"] = str(col_v)
-                                self._pending_json_edits[rec_k_buf]["props"]["df_barangay_code"] = str(col_v)
-                                self._pending_json_edits[rec_k_buf]["props"]["barangay__code"] = str(col_v)
-                                self._pending_json_edits[rec_k_buf]["props"]["df_barangay__code"] = str(col_v)
+                                buf_props["barangay_code"] = str(col_v)
+                                buf_props["df_barangay_code"] = str(col_v)
+                                buf_props["barangay__code"] = str(col_v)
+                                buf_props["df_barangay__code"] = str(col_v)
                             elif col_kl in ("ean", "df_ean"):
-                                self._pending_json_edits[rec_k_buf]["props"]["ean"] = str(col_v)
-                                self._pending_json_edits[rec_k_buf]["props"]["df_ean"] = str(col_v)
+                                buf_props["ean"] = str(col_v)
+                                buf_props["df_ean"] = str(col_v)
                             elif col_kl.startswith("df_"):
-                                self._pending_json_edits[rec_k_buf]["props"][col_k[3:]] = str(col_v)
-                                self._pending_json_edits[rec_k_buf]["props"][col_k] = str(col_v)
+                                buf_props[col_k[3:]] = str(col_v)
+                                buf_props[col_k] = str(col_v)
+                        if buf_props:
+                            if rec_k_buf not in self._pending_json_edits:
+                                self._pending_json_edits[rec_k_buf] = {
+                                    "df_fid": r_df_fid_buf,
+                                    "uuid": r_df_uuid_buf,
+                                    "props": {},
+                                }
+                            self._pending_json_edits[rec_k_buf]["props"].update(buf_props)
 
                     # Uncheck row after successful fix
                     item0.setCheckState(Qt.Unchecked)

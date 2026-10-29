@@ -21,6 +21,8 @@ from qgis.core import (
     QgsGeometry,
     QgsWkbTypes,
     QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
+    QgsSpatialIndex,
     QgsProviderRegistry,
 )
 from PyQt5.QtGui import QIcon
@@ -105,19 +107,45 @@ class mv_2027_hp_4a_ea_geocode__invalid(QgsProcessingAlgorithm):
         json_data = gmdhelpers.load_cbms_csv(self, parameters, self.INPUT_DATA, context, feedback)
         ref_ea = gmdhelpers.load_base_layer(self, parameters, self.BASE_LAYER, context, suffix="_ea")
 
-        # 1. Map ea_geocode to list of reference EA polygon geometries
-        ref_ea_map = {}
-        for feat in ref_ea.getFeatures():
+        src_crs = geojson_data.sourceCrs()
+        if not src_crs.isValid():
+            src_crs = QgsCoordinateReferenceSystem("EPSG:4326")
+
+        ref_crs = ref_ea.sourceCrs()
+        coord_transform = None
+        if ref_crs.isValid() and ref_crs != src_crs:
+            coord_transform = QgsCoordinateTransform(ref_crs, src_crs, context.transformContext())
+
+        ref_fields_lower = {fld.name().lower(): fld.name() for fld in ref_ea.fields()}
+        ref_ea_field = ref_fields_lower.get("ref_ea_geocode") or ref_fields_lower.get("ea_geocode")
+        if not ref_ea_field:
+            raise QgsProcessingException("Reference EA layer is missing 'ref_ea_geocode' / 'ea_geocode' field.")
+
+        sf_fields_lower = {fld.name().lower(): fld.name() for fld in geojson_data.fields()}
+        sf_ea_field = sf_fields_lower.get("sf_ea_geocode") or sf_fields_lower.get("ea_geocode")
+
+        # 1. Build spatial index of reference EA polygons (reprojected to point layer CRS if needed)
+        spatial_index = QgsSpatialIndex()
+        ref_polygons: Dict[int, tuple] = {}
+        for idx_id, feat in enumerate(ref_ea.getFeatures(), start=1):
             if feedback and feedback.isCanceled():
                 break
-            ea_code = feat.attribute("ref_ea_geocode")
-            if ea_code is not None and ea_code != NULL:
-                ea_str = str(ea_code)
-                geom = feat.geometry()
-                if ea_str not in ref_ea_map:
-                    ref_ea_map[ea_str] = []
-                if geom and not geom.isEmpty():
-                    ref_ea_map[ea_str].append(geom)
+            ea_code = feat.attribute(ref_ea_field)
+            if ea_code is None or ea_code == NULL:
+                continue
+            ea_str = str(ea_code).strip()
+            if not ea_str:
+                continue
+            geom = QgsGeometry(feat.geometry())
+            if not geom or geom.isEmpty():
+                continue
+            if coord_transform is not None:
+                geom.transform(coord_transform)
+
+            idx_feat = QgsFeature(idx_id)
+            idx_feat.setGeometry(geom)
+            spatial_index.addFeature(idx_feat)
+            ref_polygons[idx_id] = (ea_str, geom)
 
         # 2. Build output fields (source fields + ref_ea_geocode)
         source_fields = geojson_data.fields()
@@ -130,39 +158,53 @@ class mv_2027_hp_4a_ea_geocode__invalid(QgsProcessingAlgorithm):
 
         invalid_features = []
 
-        # 3. Find features matching ea_geocode whose geometry is NOT within the reference EA polygon
+        # 3. Find points located inside a reference EA polygon with a different ea_geocode
         for f in geojson_data.getFeatures():
             if feedback and feedback.isCanceled():
                 break
-            ea_val = f.attribute("sf_ea_geocode")
-            if ea_val is None or ea_val == NULL:
+            point_geom = f.geometry()
+            if not point_geom or point_geom.isEmpty():
                 continue
 
-            ea_str = str(ea_val)
-            if ea_str in ref_ea_map:
-                point_geom = f.geometry()
-                if point_geom and not point_geom.isEmpty():
-                    is_within = False
-                    for poly_geom in ref_ea_map[ea_str]:
-                        if poly_geom.contains(point_geom):
-                            is_within = True
-                            break
+            sf_ea_val = f.attribute(sf_ea_field) if sf_ea_field else None
+            sf_ea_str = "" if (sf_ea_val is None or sf_ea_val == NULL) else str(sf_ea_val).strip()
 
-                    if not is_within:
-                        out_feat = QgsFeature(out_fields)
-                        out_feat.setGeometry(point_geom)
-                        attrs = list(f.attributes())
-                        while len(attrs) < out_fields.count():
-                            attrs.append(NULL)
-                        attrs[ref_ea_geocode_idx] = ea_str
-                        out_feat.setAttributes(attrs)
-                        invalid_features.append(out_feat)
+            candidate_ids = spatial_index.intersects(point_geom.boundingBox())
+            if not candidate_ids:
+                continue
+
+            containing_codes: List[str] = []
+            intersecting_codes: List[str] = []
+            for cid in candidate_ids:
+                ref_code, poly_geom = ref_polygons[cid]
+                if poly_geom.contains(point_geom):
+                    if ref_code not in containing_codes:
+                        containing_codes.append(ref_code)
+                    if ref_code not in intersecting_codes:
+                        intersecting_codes.append(ref_code)
+                elif poly_geom.intersects(point_geom):
+                    if ref_code not in intersecting_codes:
+                        intersecting_codes.append(ref_code)
+
+            if not intersecting_codes:
+                continue
+
+            # Valid if point lies inside (or on the boundary of) the EA polygon matching its sf_ea_geocode
+            if sf_ea_str and sf_ea_str in intersecting_codes:
+                continue
+
+            matched_ref_ea = containing_codes[0] if containing_codes else intersecting_codes[0]
+
+            out_feat = QgsFeature(out_fields)
+            out_feat.setGeometry(point_geom)
+            attrs = list(f.attributes())
+            while len(attrs) < out_fields.count():
+                attrs.append(NULL)
+            attrs[ref_ea_geocode_idx] = matched_ref_ea
+            out_feat.setAttributes(attrs)
+            invalid_features.append(out_feat)
 
         # 4. Create temporary memory layer for invalid features
-        crs = geojson_data.sourceCrs()
-        if not crs.isValid():
-            crs = QgsCoordinateReferenceSystem("EPSG:4326")
-
         temp_layer = gmdhelpers.create_temporary_layer(
             invalid_features,
             fields=out_fields,
