@@ -834,7 +834,7 @@ class CbmsmvDialog(QDialog):
         bar_layout.addStretch()
 
         # Dock Toggle Button (Attribute Table style with native QGIS mDockify icon)
-        self.btn_dock = QPushButton("Dock at Bottom")
+        self.btn_dock = QPushButton("Switch to Dock Mode")
         self.btn_dock.setObjectName("btnDock")
         dock_icon = QgsApplication.getThemeIcon("mDockify.svg")
         if not dock_icon.isNull():
@@ -4850,7 +4850,7 @@ class CbmsmvDialog(QDialog):
 
             self._is_docked = True
             if hasattr(self, "btn_dock"):
-                self.btn_dock.setText("Undock Window")
+                self.btn_dock.setText("Switch to Window Mode")
                 self.btn_dock.setToolTip("Undock to a floating standalone window (Ctrl+D)")
             self.settings.setValue("cbms_mv/is_docked", True)
         finally:
@@ -4879,7 +4879,7 @@ class CbmsmvDialog(QDialog):
 
             self._is_docked = False
             if hasattr(self, "btn_dock"):
-                self.btn_dock.setText("Dock at Bottom")
+                self.btn_dock.setText("Switch to Dock Mode")
                 self.btn_dock.setToolTip("Dock this window at the bottom of the QGIS interface (like Attribute Table) (Ctrl+D)")
 
             self.showNormal()
@@ -4897,7 +4897,7 @@ class CbmsmvDialog(QDialog):
                 self._central_container.layout().activate()
             self.settings.setValue("cbms_mv/is_docked", False)
             if hasattr(self, "lbl_footer_status") and self.lbl_footer_status:
-                self.lbl_footer_status.setText("Undocked as floating window.")
+                self.lbl_footer_status.setText("")
         finally:
             self._is_switching_dock = False
 
@@ -4936,9 +4936,9 @@ class CbmsmvDialog(QDialog):
             pass
         if hasattr(self, "lbl_footer_status") and self.lbl_footer_status:
             if floating:
-                self.lbl_footer_status.setText("Floating dock window.")
+                self.lbl_footer_status.setText(" ")
             else:
-                self.lbl_footer_status.setText("Docked in QGIS workspace.")
+                self.lbl_footer_status.setText(" ")
 
     def resizeEvent(self, event):
         """Ensure child layout and stacked widgets recalibrate dimensions on dialog resize."""
