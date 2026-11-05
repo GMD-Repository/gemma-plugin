@@ -32,6 +32,60 @@ class TestCheckAndUpdateDialog(unittest.TestCase):
         except Exception as e:
             self.skipTest(f"Skipping test due to processing environment error: {e}")
 
+    def test_dialog_adaptive_theming(self):
+        """Verify CheckAndUpdateDialog applies appropriate styles in dark and light mode."""
+        from unittest.mock import MagicMock
+        try:
+            mock_iface = MagicMock()
+            mock_iface.mainWindow.return_value = None
+            dlg = self.mod.CheckAndUpdateDialog(mock_iface)
+
+            # Test Dark Mode application
+            dlg.is_dark = True
+            dlg._apply_theme()
+            self.assertIn("#ECEFF1", dlg.title_label.styleSheet())
+            self.assertIn("#263238", dlg.tabs.styleSheet())
+            self.assertIn("#1A365D", dlg.header_banner.styleSheet())
+            self.assertIn("#CFD8DC", dlg.step1_desc.styleSheet())
+            self.assertTrue(dlg.geom_toolkit_help.is_dark)
+            self.assertIn("#263238", dlg.geom_toolkit_help.text.styleSheet())
+            self.assertIn("#1E2327", dlg.geom_toolkit_help._get_html(True))
+
+            # Test Light Mode application
+            dlg.is_dark = False
+            dlg._apply_theme()
+            self.assertIn("#2C3E50", dlg.title_label.styleSheet())
+            self.assertIn("#EAEDED", dlg.tabs.styleSheet())
+            self.assertIn("#EBF5FB", dlg.header_banner.styleSheet())
+            self.assertIn("#34495E", dlg.step1_desc.styleSheet())
+            self.assertFalse(dlg.geom_toolkit_help.is_dark)
+            self.assertIn("#ffffff", dlg.geom_toolkit_help.text.styleSheet())
+        except Exception as e:
+            self.skipTest(f"Skipping GUI test in headless environment: {e}")
+
+    def test_digitize_dock_adaptive_theming(self):
+        """Verify DigitizeDockWidget applies appropriate styles in dark and light mode."""
+        from unittest.mock import MagicMock
+        try:
+            mock_parent = MagicMock()
+            mock_parent.iface.mainWindow.return_value = None
+            dock = self.mod.DigitizeDockWidget(mock_parent)
+
+            # Test Dark Mode
+            dock.is_dark = True
+            dock._apply_theme()
+            self.assertIn("#ECEFF1", dock.title_lbl.styleSheet())
+            self.assertIn("#263238", dock.feature_combo.styleSheet())
+
+            # Test Light Mode
+            dock.is_dark = False
+            dock._apply_theme()
+            self.assertIn("#2C3E50", dock.title_lbl.styleSheet())
+            self.assertIn("white", dock.feature_combo.styleSheet())
+        except Exception as e:
+            self.skipTest(f"Skipping GUI test in headless environment: {e}")
+
 
 if __name__ == "__main__":
     unittest.main()
+

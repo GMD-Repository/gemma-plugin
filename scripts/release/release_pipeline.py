@@ -386,7 +386,6 @@ def run_preview_pipeline(args: argparse.Namespace) -> None:
             repo=preview_repo,
             token=github_token,
             keep_count=args.max_previews,
-            tag_prefix="r",
         )
 
     # ── Step 4: Update gemma-beta.xml ─────────────────────────────────────

@@ -19,8 +19,8 @@
 """
 import os
 
-from libqfieldsync.layer import LayerSource, SyncAction
-from libqfieldsync.project import ProjectConfiguration, ProjectProperties
+from gemma_sync.layer import LayerSource, SyncAction
+from gemma_sync.project import ProjectConfiguration, ProjectProperties
 from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsMapLayerProxyModel,

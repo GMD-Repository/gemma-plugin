@@ -61,6 +61,8 @@ from qgis.core import (
 )
 from qgis.PyQt.QtCore import QVariant
 
+from .helpers.constants import create_qgs_field
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -296,15 +298,106 @@ def _unique_values(layer: QgsVectorLayer, field_idx: int) -> list:
     return result
 
 
-def _repair_geometry(geom: QgsGeometry) -> QgsGeometry:
-    """Return a repaired copy of the geometry if invalid; else return as-is."""
+def _clean_polygon_geometry(geom: QgsGeometry) -> QgsGeometry:
+    """Ensure geom contains only valid Polygon / MultiPolygon parts.
+
+    Filters out any LineString or Point collapse artifacts resulting from
+    GEOS makeValid() on self-intersecting polygons or slivers.
+    """
     if geom is None or geom.isNull() or geom.isEmpty():
         return geom
-    if not geom.isGeosValid():
-        fixed = geom.makeValid()
-        if fixed and not fixed.isNull():
-            return fixed
-    return geom
+
+    g = QgsGeometry(geom)
+    try:
+        if hasattr(QgsWkbTypes, 'geometryType') and callable(getattr(QgsWkbTypes, 'geometryType')):
+            if QgsWkbTypes.geometryType(g.wkbType()) == QgsWkbTypes.PolygonGeometry:
+                return g
+    except Exception:
+        pass
+
+    # Try QGIS native convertGeometryCollectionToSubclass
+    try:
+        if hasattr(g, 'convertGeometryCollectionToSubclass') and hasattr(QgsWkbTypes, 'PolygonGeometry'):
+            tmp = QgsGeometry(g)
+            if tmp.convertGeometryCollectionToSubclass(QgsWkbTypes.PolygonGeometry):
+                if not tmp.isNull() and not tmp.isEmpty():
+                    return tmp
+    except Exception:
+        pass
+
+    # Fallback: extract polygon parts manually from geometry collection
+    try:
+        parts = []
+        if hasattr(g, 'asGeometryCollection'):
+            for p in g.asGeometryCollection():
+                if p and not p.isNull() and not p.isEmpty():
+                    is_poly = False
+                    if hasattr(QgsWkbTypes, 'geometryType'):
+                        is_poly = (QgsWkbTypes.geometryType(p.wkbType()) == QgsWkbTypes.PolygonGeometry)
+                    elif hasattr(p, 'type'):
+                        is_poly = (p.type() == 2)
+                    if is_poly:
+                        parts.append(p)
+        elif hasattr(g, 'constParts'):
+            for p in g.constParts():
+                if p and not p.isNull() and not p.isEmpty():
+                    parts.append(p)
+
+        if parts:
+            if len(parts) == 1:
+                return parts[0]
+            if hasattr(QgsGeometry, 'unaryUnion'):
+                union_g = QgsGeometry.unaryUnion(parts)
+                if union_g and not union_g.isNull() and not union_g.isEmpty():
+                    return union_g
+            combined = QgsGeometry(parts[0])
+            for p in parts[1:]:
+                combined = combined.combine(p)
+            return combined
+    except Exception:
+        pass
+
+    return g
+
+
+def _repair_geometry(geom: QgsGeometry) -> QgsGeometry:
+    """Return a repaired copy of the geometry if invalid; else return as-is.
+
+    Guarantees that the returned geometry contains only valid Polygon or
+    MultiPolygon parts, discarding any collapsed line or point fragments.
+    """
+    if geom is None or geom.isNull() or geom.isEmpty():
+        return geom
+
+    g = QgsGeometry(geom)
+    try:
+        if hasattr(g, 'isGeosValid') and not g.isGeosValid():
+            fixed = g.makeValid() if hasattr(g, 'makeValid') else None
+            if fixed and not fixed.isNull() and not fixed.isEmpty():
+                g = fixed
+            else:
+                # Buffer(0) repair fallback
+                if hasattr(g, 'buffer'):
+                    buffered = g.buffer(0.0, 5)
+                    if buffered and not buffered.isNull() and not buffered.isEmpty():
+                        g = buffered
+    except Exception:
+        pass
+
+    # Filter out non-polygonal elements (e.g. LineStrings from collapsed self-intersections)
+    g = _clean_polygon_geometry(g)
+
+    # Secondary validity check on cleaned geometry
+    try:
+        if hasattr(g, 'isGeosValid') and not g.isGeosValid():
+            if hasattr(g, 'buffer'):
+                bg = g.buffer(0.0, 5)
+                if bg and not bg.isNull() and not bg.isEmpty():
+                    g = _clean_polygon_geometry(bg)
+    except Exception:
+        pass
+
+    return g
 
 
 # ---------------------------------------------------------------------------
@@ -327,11 +420,10 @@ class EAMergeProcessor:
             "table export (<code>&lt;5-digit geocode&gt;_earf_&lt;citymun&gt;.xlsx</code>).</p>"
 
             "<h4>Inputs</h4>"
-            "<b>Required</b>"
             "<ul>"
-            "<li><b>Previous EA Layer</b> (polygon) — Starting/existing EA layer. Attributes and fields are preserved. "
+            "<li><b>Previous EA Layer</b> (polygon, required) — Starting/existing EA layer. Attributes and fields are preserved. "
             "Auto-detected by <code>*_ea</code>, <code>*_ea2024</code>, <code>*_ea2026</code>, or <code>*_ea_preprocessed</code>.</li>"
-            "<li><b>Replacement Polygon Layers</b> (polygon, multi-input) — One or more replacement polygon layers from "
+            "<li><b>Replacement Polygon Layers</b> (polygon, multi-input, optional) — One or more replacement polygon layers from "
             "the project. Each layer name must follow the <b>8-digit numeric convention</b> (e.g. <code>01001000</code>).</li>"
             "</ul>"
 
@@ -428,12 +520,8 @@ class EAMergeProcessor:
 
             # ── Phase 5: Determine CityMun ─────────────────────────────────
             citymun = self._determine_citymun(self.ea_layer)
-            if citymun is None:
-                self._fail(
-                    "Unable to determine the City/Municipality name required "
-                    "for the Excel filename."
-                )
-                return self._result
+            if not citymun:
+                citymun = "Unknown"
             self._citymun = citymun
             self._log(f"[INFO] City/Municipality: {citymun}")
             self._progress(25)
@@ -444,7 +532,7 @@ class EAMergeProcessor:
             replacement_features, combined_geom, repl_feat_count = (
                 self._prepare_replacement_geometries(out_fields)
             )
-            if combined_geom is None or combined_geom.isNull():
+            if self.replacement_layers and (combined_geom is None or combined_geom.isNull()):
                 self._fail("Failed to combine replacement geometries.")
                 return self._result
             summary.replacement_feature_count = repl_feat_count
@@ -553,7 +641,7 @@ class EAMergeProcessor:
                         if not gpkg_layer.isValid():
                             gpkg_layer = QgsVectorLayer(output_file_path, final_layer_name, "ogr")
 
-                        if gpkg_layer.isValid():
+                        if gpkg_layer.isValid() and (gpkg_layer.featureCount() > 0 or output_layer.featureCount() == 0):
                             from .helpers.style import apply_qml_to_layer
                             apply_qml_to_layer(gpkg_layer, "ea_output.qml")
                             output_layer = gpkg_layer
@@ -562,7 +650,12 @@ class EAMergeProcessor:
                             summary.output_file_path = output_file_path
                             saved_to_gpkg = True
                         else:
-                            self._log(f"[ERROR] Could not load saved GeoPackage layer from: {output_file_path}")
+                            if not gpkg_layer.isValid():
+                                self._log(f"[WARNING] Could not load saved GeoPackage layer from: {output_file_path}")
+                            else:
+                                self._log(f"[INFO] Preserving memory output layer ({output_layer.featureCount()} features) over empty GeoPackage readback.")
+                            summary.output_layer_name = final_layer_name
+                            summary.output_file_path = output_file_path
                     else:
                         self._log(f"[ERROR] Failed to save GeoPackage (.gpkg) to {output_file_path}")
                 except Exception as save_err:
@@ -722,8 +815,11 @@ class EAMergeProcessor:
     def _validate_replacement_layers(self) -> bool:
         """Validate each replacement layer: polygon type, 8-digit name, non-empty."""
         if not self.replacement_layers:
-            self._fail("At least one Replacement Polygon Layer is required.")
-            return False
+            self._log(
+                "[INFO] No replacement polygon layers provided. "
+                "Proceeding with Previous EA Layer consolidation."
+            )
+            return True
 
         self._log("[INFO] Validating replacement layer names...")
 
@@ -846,9 +942,9 @@ class EAMergeProcessor:
         for fname, default_type in _OUTPUT_FIELD_SPECS:
             existing_field = ea_field_map.get(fname.lower())
             if existing_field is not None:
-                out_fields.append(QgsField(fname, existing_field.type()))
+                out_fields.append(create_qgs_field(fname, existing_field.type()))
             else:
-                out_fields.append(QgsField(fname, default_type))
+                out_fields.append(create_qgs_field(fname, default_type))
 
         return out_fields
 
@@ -987,7 +1083,17 @@ class EAMergeProcessor:
                             ):
                                 val = int(round(float(val)))
                             elif ea_field.type() == QVariant.String:
-                                val = str(val)
+                                if ea_field_name == "sy":
+                                    s_val = str(val).strip()
+                                    if s_val.endswith(".0"):
+                                        s_val = s_val[:-2]
+                                    try:
+                                        f_val = float(s_val)
+                                        val = str(int(round(f_val)))
+                                    except (ValueError, TypeError):
+                                        val = s_val
+                                else:
+                                    val = str(val)
                         except (ValueError, TypeError):
                             pass
                         out_feat.setAttribute(ea_i, val)
@@ -1028,9 +1134,12 @@ class EAMergeProcessor:
         if out_fields is None:
             out_fields = self._build_output_fields()
         # Build spatial index on EA layer for efficient candidate selection
-        ea_index = QgsSpatialIndex(self.ea_layer.getFeatures())
-        combined_bbox = combined_replacement.boundingBox()
-        candidate_id_set = set(ea_index.intersects(combined_bbox))
+        if combined_replacement is not None and not combined_replacement.isNull() and not combined_replacement.isEmpty():
+            ea_index = QgsSpatialIndex(self.ea_layer.getFeatures())
+            combined_bbox = combined_replacement.boundingBox()
+            candidate_id_set = set(ea_index.intersects(combined_bbox))
+        else:
+            candidate_id_set = set()
 
         ea_fields = self.ea_layer.fields()
         ea_name_to_idx = {
@@ -1125,6 +1234,8 @@ class EAMergeProcessor:
                         val = _extract_feature_attribute(feat, ea_name_to_idx, "bldg_count")
                     elif ea_field_name == "new_ean":
                         val = _extract_feature_attribute(feat, ea_name_to_idx, "ean")
+                    elif ea_field_name == "sy":
+                        val = "2024"
                     elif ea_field_name == "ea_type":
                         val = "RETAINED"
 
@@ -1138,7 +1249,17 @@ class EAMergeProcessor:
                         ):
                             val = int(round(float(val)))
                         elif ea_field.type() == QVariant.String:
-                            val = str(val)
+                            if ea_field_name == "sy":
+                                s_val = str(val).strip()
+                                if s_val.endswith(".0"):
+                                    s_val = s_val[:-2]
+                                try:
+                                    f_val = float(s_val)
+                                    val = str(int(round(f_val)))
+                                except (ValueError, TypeError):
+                                    val = s_val
+                            else:
+                                val = str(val)
                     except (ValueError, TypeError):
                         pass
                     out_feat.setAttribute(ea_i, val)
@@ -1330,16 +1451,9 @@ class EAMergeProcessor:
         if out_fields is None:
             out_fields = self._build_output_fields()
         crs_auth = self.ea_layer.crs().authid()
-        is_multi = False
-        try:
-            if hasattr(QgsWkbTypes, 'isMultiType') and callable(getattr(QgsWkbTypes, 'isMultiType')):
-                is_multi = QgsWkbTypes.isMultiType(self.ea_layer.wkbType())
-            else:
-                is_multi = "multi" in str(self.ea_layer.wkbType()).lower()
-        except Exception:
-            is_multi = False
-
-        wkb_type = "MultiPolygon" if is_multi else "Polygon"
+        # Always use MultiPolygon for the output EA layer to seamlessly accommodate
+        # both multi-part geometries (replacement layers, split EAs) and single-part EAs.
+        wkb_type = "MultiPolygon"
         uri = f"{wkb_type}?crs={crs_auth}"
         layer = QgsVectorLayer(uri, self._output_layer_name, "memory")
         if not layer.isValid():
@@ -1353,7 +1467,7 @@ class EAMergeProcessor:
         provider.addAttributes(fields_list)
         layer.updateFields()
 
-        # Ensure all output features have unique sequential FIDs
+        # Ensure all output features have unique sequential FIDs and valid MultiPolygon geometries
         fid_idx = layer.fields().indexOf("fid")
         for idx, feat in enumerate(features, start=1):
             if feat.fields() is None or feat.fields().count() != layer.fields().count():
@@ -1366,8 +1480,47 @@ class EAMergeProcessor:
                 feat.setAttribute(fid_idx, idx)
             feat.setId(idx)
 
+            geom = feat.geometry()
+            if geom is not None and not geom.isNull() and not geom.isEmpty():
+                geom = _repair_geometry(geom)
+                if geom and not geom.isNull() and not geom.isEmpty():
+                    try:
+                        if hasattr(geom, 'isMultipart') and not geom.isMultipart():
+                            if hasattr(geom, 'convertToMultiType'):
+                                geom.convertToMultiType()
+                    except Exception:
+                        pass
+                feat.setGeometry(geom)
+
         # Add features in bulk
-        provider.addFeatures(features)
+        res = provider.addFeatures(features)
+        bulk_success = res if isinstance(res, bool) else (res[0] if isinstance(res, (list, tuple)) else True)
+        expected_feature_count = sum(
+            1 for f in features
+            if f.geometry() is not None and not f.geometry().isNull() and not f.geometry().isEmpty()
+        )
+
+        if not bulk_success or layer.featureCount() < expected_feature_count:
+            self._log(
+                f"[WARNING] Bulk feature insertion added {layer.featureCount()} / {expected_feature_count} features. "
+                "Retrying with resilient per-feature insertion..."
+            )
+            # Remove any partially added features before retrying
+            existing_fids = [f.id() for f in layer.getFeatures()]
+            if existing_fids and hasattr(provider, 'deleteFeatures'):
+                provider.deleteFeatures(existing_fids)
+
+            for feat in features:
+                geom = feat.geometry()
+                if geom is None or geom.isNull() or geom.isEmpty():
+                    continue
+                single_res = provider.addFeatures([feat])
+                s_ok = single_res if isinstance(single_res, bool) else (single_res[0] if isinstance(single_res, (list, tuple)) else True)
+                if not s_ok:
+                    self._log(
+                        f"[WARNING] Could not insert feature FID {feat.id()} into output layer."
+                    )
+
         layer.updateExtents()
 
         return layer
@@ -1511,7 +1664,21 @@ class EAMergeProcessor:
                 row = []
                 for i in range(flds.count()):
                     val = feat.attribute(i)
-                    row.append(None if (val == NULL or val is None) else val)
+                    if val == NULL or val is None:
+                        row.append(None)
+                    else:
+                        fname = flds.at(i).name().lower()
+                        if fname == "sy":
+                            s_val = str(val).strip()
+                            if s_val.endswith(".0"):
+                                s_val = s_val[:-2]
+                            try:
+                                f_val = float(s_val)
+                                row.append(int(round(f_val)))
+                            except (ValueError, TypeError):
+                                row.append(s_val)
+                        else:
+                            row.append(val)
                 return row
 
             # Data rows — spatial features
@@ -1549,7 +1716,19 @@ class EAMergeProcessor:
                         row.append(None)
                     else:
                         val = ghost_feat.attribute(idx)
-                        row.append(None if (val == NULL or val is None) else val)
+                        if val == NULL or val is None:
+                            row.append(None)
+                        elif fname.lower() == "sy":
+                            s_val = str(val).strip()
+                            if s_val.endswith(".0"):
+                                s_val = s_val[:-2]
+                            try:
+                                f_val = float(s_val)
+                                row.append(int(round(f_val)))
+                            except (ValueError, TypeError):
+                                row.append(s_val)
+                        else:
+                            row.append(val)
                 ws.append(row)
 
             wb.save(path)

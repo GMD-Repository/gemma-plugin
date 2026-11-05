@@ -102,9 +102,12 @@ class TestUnmergeEADialog(unittest.TestCase):
         prev_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "01728_previous_ea", "memory")
         dp_prev = prev_layer.dataProvider()
         dp_prev.addAttributes([
+            QgsField("fid", QVariant.Int),
             QgsField("ean", QVariant.String),
             QgsField("code", QVariant.String),
             QgsField("barangay", QVariant.String),
+            QgsField("hhcount", QVariant.Double),
+            QgsField("bldgcount", QVariant.Double),
         ])
         prev_layer.updateFields()
 
@@ -114,9 +117,12 @@ class TestUnmergeEADialog(unittest.TestCase):
         ]])
         f1 = QgsFeature(prev_layer.fields())
         f1.setGeometry(p1_geom)
+        f1.setAttribute("fid", 101)
         f1.setAttribute("ean", "01728001")
         f1.setAttribute("code", "001")
         f1.setAttribute("barangay", "Sample Bar")
+        f1.setAttribute("hhcount", 45.0)
+        f1.setAttribute("bldgcount", 20.0)
 
         # Polygon 2: [5,0] to [10,10]
         p2_geom = QgsGeometry.fromPolygonXY([[
@@ -124,9 +130,12 @@ class TestUnmergeEADialog(unittest.TestCase):
         ]])
         f2 = QgsFeature(prev_layer.fields())
         f2.setGeometry(p2_geom)
+        f2.setAttribute("fid", 102)
         f2.setAttribute("ean", "01728002")
         f2.setAttribute("code", "002")
         f2.setAttribute("barangay", "Sample Bar")
+        f2.setAttribute("hhcount", 55.0)
+        f2.setAttribute("bldgcount", 25.0)
 
         dp_prev.addFeatures([f1, f2])
         prev_layer.updateExtents()
@@ -135,9 +144,12 @@ class TestUnmergeEADialog(unittest.TestCase):
         merged_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "01728_merged_ea2026", "memory")
         dp_merged = merged_layer.dataProvider()
         dp_merged.addAttributes([
+            QgsField("fid", QVariant.Int),
             QgsField("ean", QVariant.String),
             QgsField("code", QVariant.String),
             QgsField("barangay", QVariant.String),
+            QgsField("hhcount", QVariant.Double),
+            QgsField("bldgcount", QVariant.Double),
             QgsField("hh_count", QVariant.Int),
             QgsField("bldg_count", QVariant.Int),
         ])
@@ -148,9 +160,12 @@ class TestUnmergeEADialog(unittest.TestCase):
         ]])
         fm = QgsFeature(merged_layer.fields())
         fm.setGeometry(merged_geom)
+        fm.setAttribute("fid", 1)
         fm.setAttribute("ean", "01728001")
         fm.setAttribute("code", "001")
         fm.setAttribute("barangay", "Sample Bar")
+        fm.setAttribute("hhcount", 45.0)
+        fm.setAttribute("bldgcount", 20.0)
         fm.setAttribute("hh_count", 15)
         fm.setAttribute("bldg_count", 5)
 
@@ -217,10 +232,20 @@ class TestUnmergeEADialog(unittest.TestCase):
         # In EA 001: 2 building points, sum(est_hhcount) = 2.0 + 4.0 = 6
         self.assertEqual(feat_001.attribute("bldg_count"), 2)
         self.assertEqual(feat_001.attribute("hh_count"), 6)
+        # Baseline hhcount and bldgcount must remain unchanged after unmerge
+        self.assertEqual(feat_001.attribute("hhcount"), 45.0)
+        self.assertEqual(feat_001.attribute("bldgcount"), 20.0)
 
         # In EA 002: 3 building points, sum(est_hhcount) = 3.0 + 1.0 + 5.0 = 9
         self.assertEqual(feat_002.attribute("bldg_count"), 3)
         self.assertEqual(feat_002.attribute("hh_count"), 9)
+        # Baseline hhcount and bldgcount must remain unchanged after unmerge
+        self.assertEqual(feat_002.attribute("hhcount"), 55.0)
+        self.assertEqual(feat_002.attribute("bldgcount"), 25.0)
+
+        # Verify that original fids (101, 102) were not copied into restored features (preventing UNIQUE constraint collision in GPKG)
+        self.assertNotIn(feat_001.attribute("fid"), (101, 102))
+        self.assertNotIn(feat_002.attribute("fid"), (101, 102))
 
     def test_run_unmerge_selected_features_only(self, *mocks):
         """Verify run_unmerge respects 'Selected features only' checkbox."""
@@ -289,6 +314,78 @@ class TestUnmergeEADialog(unittest.TestCase):
         # Merged layer should now have: 2 restored features from FM1 + 1 untouched FM2 = 3 features
         features = list(merged_layer.getFeatures())
         self.assertEqual(len(features), 3)
+
+    def test_run_unmerge_emits_signal_and_refreshes_parent_preview(self, *mocks):
+        """Verify run_unmerge emits unmergeCompleted signal and triggers parent's refresh_merge_preview."""
+        from references.create_enumeration_area.unmerge_dialog import UnmergeEADialog
+        from qgis.PyQt.QtWidgets import QWidget
+
+        prev_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "01728_previous_ea", "memory")
+        dp_prev = prev_layer.dataProvider()
+        dp_prev.addAttributes([QgsField("ean", QVariant.String), QgsField("code", QVariant.String)])
+        prev_layer.updateFields()
+
+        p1_geom = QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(5, 0), QgsPointXY(5, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]])
+        f1 = QgsFeature(prev_layer.fields())
+        f1.setGeometry(p1_geom)
+        f1.setAttribute("ean", "01728001")
+        f1.setAttribute("code", "001")
+
+        p2_geom = QgsGeometry.fromPolygonXY([[
+            QgsPointXY(5, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(5, 10), QgsPointXY(5, 0)
+        ]])
+        f2 = QgsFeature(prev_layer.fields())
+        f2.setGeometry(p2_geom)
+        f2.setAttribute("ean", "01728002")
+        f2.setAttribute("code", "002")
+        dp_prev.addFeatures([f1, f2])
+
+        merged_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "01728_merged_ea2026", "memory")
+        dp_merged = merged_layer.dataProvider()
+        dp_merged.addAttributes([QgsField("ean", QVariant.String), QgsField("code", QVariant.String)])
+        merged_layer.updateFields()
+
+        merged_geom = QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0), QgsPointXY(10, 0), QgsPointXY(10, 10), QgsPointXY(0, 10), QgsPointXY(0, 0)
+        ]])
+        fm = QgsFeature(merged_layer.fields())
+        fm.setGeometry(merged_geom)
+        fm.setAttribute("ean", "01728001")
+        fm.setAttribute("code", "001")
+        dp_merged.addFeatures([fm])
+
+        # Mock parent dialog simulating EALauncherDialog
+        mock_parent = MagicMock()
+        dlg = UnmergeEADialog(parent=mock_parent)
+        dlg.merged_combo.setLayer(merged_layer)
+        dlg.prev_ea_combo.setLayer(prev_layer)
+        dlg.bldg_combo.setLayer(None)
+
+        signal_received = []
+        dlg.unmergeCompleted.connect(lambda: signal_received.append(True))
+
+        dlg.run_unmerge()
+
+        # Check that unmergeCompleted signal was fired
+        self.assertTrue(len(signal_received) > 0)
+        # Check that parent's refresh_merge_preview was invoked
+        mock_parent.refresh_merge_preview.assert_called_once()
+
+    def test_ea_launcher_refresh_merge_preview_method(self, *mocks):
+        """Verify refresh_merge_preview invokes generate_preview and selects tab 1."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+
+        launcher = MagicMock(spec=EALauncherDialog)
+        launcher.generate_preview = MagicMock()
+        launcher.merge_right_tabs = MagicMock()
+
+        # Call real unbound method on mock instance
+        EALauncherDialog.refresh_merge_preview(launcher)
+
+        launcher.generate_preview.assert_called_once()
+        launcher.merge_right_tabs.setCurrentIndex.assert_called_once_with(1)
 
 
 if __name__ == "__main__":

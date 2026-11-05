@@ -30,6 +30,7 @@ from .. import gmdhelpers
 
 
 TARGET_FIELDS = ["sf_pos_longit", "sf_pos_latitu", "sf_longitude", "sf_latitude"]
+SUGGESTED_FIX = ["copy_geometry_to_coordinates", "update_datafiles_coordinates"]
 
 class mv_2027_hp_4a_pos_longit__invalid(QgsProcessingAlgorithm):
 
@@ -115,7 +116,7 @@ class mv_2027_hp_4a_pos_longit__invalid(QgsProcessingAlgorithm):
                 "FIELD_TYPE": 0,  # Float / Double
                 "FIELD_LENGTH": 0,
                 "FIELD_PRECISION": 0,
-                "FORMULA":  'CASE \r\n WHEN "sf_longitude" IS NOT NULL AND "sf_latitude" IS NOT NULL \r\n AND "sf_pos_longit" IS NOT NULL AND "sf_pos_latitu" IS NOT NULL\r\n THEN distance(\r\n transform(make_point("sf_longitude", "sf_latitude"), \'EPSG:4326\', \'EPSG:3857\'),\r\n transform(make_point("sf_pos_longit", "sf_pos_latitu"), \'EPSG:4326\', \'EPSG:3857\')\r\n )\r\n ELSE NULL\r\nEND',
+                "FORMULA":  'CASE \r\n WHEN "sf_longitude" IS NOT NULL AND "sf_longitude" != \'\' \r\n AND "sf_latitude" IS NOT NULL AND "sf_latitude" != \'\' \r\n AND "sf_pos_longit" IS NOT NULL AND "sf_pos_longit" != \'\' \r\n AND "sf_pos_latitu" IS NOT NULL AND "sf_pos_latitu" != \'\'\r\n THEN distance(\r\n transform(make_point(to_real("sf_longitude"), to_real("sf_latitude")), \'EPSG:4326\', \'EPSG:3857\'),\r\n transform(make_point(to_real("sf_pos_longit"), to_real("sf_pos_latitu")), \'EPSG:4326\', \'EPSG:3857\')\r\n )\r\n ELSE NULL\r\nEND',
                 "OUTPUT": "memory:",
             },
             context=context,
@@ -127,7 +128,7 @@ class mv_2027_hp_4a_pos_longit__invalid(QgsProcessingAlgorithm):
             "native:extractbyexpression",
             {
                 "INPUT": layer_with_dist,
-                "EXPRESSION": '"distance_m" IS NULL OR "distance_m" > 50.0',
+                "EXPRESSION": '("distance_m" IS NULL OR "distance_m" > 50.0) AND ("sf_remarks" IS NULL OR "sf_remarks" != \'Justified\')',
                 "OUTPUT": "memory:",
             },
             context=context,

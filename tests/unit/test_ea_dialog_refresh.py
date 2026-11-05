@@ -804,7 +804,7 @@ class TestEADialogRefresh(unittest.TestCase):
         table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=True)
         self.assertEqual(table.columnCount(), 8)
         headers = [table.horizontalHeaderItem(i).text() for i in range(8)]
-        self.assertIn("Merge Partner (EAN)", headers[5])
+        self.assertIn("Merge Partner (Geocode)", headers[5])
         self.assertIn("Total HH Count", headers[6])
         self.assertIn("Action", headers[7])
 
@@ -826,14 +826,16 @@ class TestEADialogRefresh(unittest.TestCase):
         self.assertIsInstance(combo, QComboBox)
         self.assertEqual(combo.count(), 2)
 
-        # Initial combined count: 50 + 120 = 170
+        # Initial: shows combined total based on selected merge partner (50 + 120 = 170)
         col6_item = table.item(0, 6)
         self.assertIsNotNone(col6_item)
         self.assertEqual(col6_item.text(), "170")
+        self.assertIn("170", col6_item.toolTip())
 
-        # Change selection to second neighbor (200 HH): 50 + 200 = 250
+        # Change selection to second neighbor (200 HH): text updates to 250 (50 + 200)
         combo.setCurrentIndex(1)
         self.assertEqual(table.item(0, 6).text(), "250")
+        self.assertIn("250", table.item(0, 6).toolTip())
 
     def test_auto_detect_layers_separates_merged_ea_and_prev_ea(self):
         """Verify auto-detection maps *_merged_ea* to merge_ea and base EA layers to prev_ea."""
@@ -879,14 +881,14 @@ class TestEADialogRefresh(unittest.TestCase):
         reborn_table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=False)
         self.assertEqual(reborn_table.columnCount(), 5)
         headers_5 = [reborn_table.horizontalHeaderItem(i).text() for i in range(5)]
-        self.assertNotIn("Merge Partner (EAN)", headers_5)
+        self.assertNotIn("Merge Partner (Geocode)", headers_5)
         self.assertNotIn("Total HH Count", headers_5)
 
         # 2. New Merge Preview table: 8 columns
         merge_preview_table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=True)
         self.assertEqual(merge_preview_table.columnCount(), 8)
         headers_8 = [merge_preview_table.horizontalHeaderItem(i).text() for i in range(8)]
-        self.assertIn("Merge Partner (EAN)", headers_8[5])
+        self.assertIn("Merge Partner (Geocode)", headers_8[5])
         self.assertIn("Total HH Count", headers_8[6])
         self.assertIn("Action", headers_8[7])
 
@@ -907,7 +909,8 @@ class TestEADialogRefresh(unittest.TestCase):
         self.assertEqual(merge_preview_table.rowCount(), 1)
         combo = merge_preview_table.cellWidget(0, 5)
         self.assertIsNotNone(combo)
-        self.assertEqual(merge_preview_table.item(0, 6).text(), "145")  # 45 + 100
+        self.assertEqual(merge_preview_table.item(0, 6).text(), "145")  # combined total (45 + 100)
+        self.assertIn("145", merge_preview_table.item(0, 6).toolTip())
 
     def test_extract_merge_candidate_enabling_and_tooltips(self):
         """Verify that Extract Merge Candidate button (self.merge_run_btn) validates inputs and explains missing requirements."""
@@ -1057,22 +1060,180 @@ class TestEADialogRefresh(unittest.TestCase):
 
         EALauncherDialog.generate_preview(mock_dlg)
 
-        # Verify all_merged_ea_candidates has EA 001 and detected neighbor EA 002
+        # Verify all_merged_ea_candidates has EA 001 and detected neighbor EA 002 with geocode value
         self.assertEqual(len(mock_dlg.all_merged_ea_candidates), 1)
         cand = mock_dlg.all_merged_ea_candidates[0]
         self.assertEqual(cand[0], "001")
         self.assertEqual(len(cand[5]), 1)  # Neighbors list
-        self.assertEqual(cand[5][0][0], "002")
+        self.assertEqual(cand[5][0][0], "017280010002")
         self.assertEqual(cand[5][0][1], 120.0)
 
-        # Verify rendered table cell dropdown is enabled with partner EA 002
+        # Verify rendered table cell dropdown is enabled with partner EA 002's geocode
         table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=True)
         EALauncherDialog._populate_table_rows(mock_dlg, table, mock_dlg.all_merged_ea_candidates, is_delineation=False)
         combo = table.cellWidget(0, 5)
         self.assertIsNotNone(combo)
         self.assertTrue(combo.isEnabled())
-        self.assertEqual(combo.currentText(), "002")
-        self.assertEqual(table.item(0, 6).text(), "170")  # 50 + 120
+        self.assertEqual(combo.currentText(), "017280010002")
+        self.assertEqual(table.item(0, 6).text(), "170")  # combined total (50 + 120)
+        self.assertIn("170", table.item(0, 6).toolTip())
+
+    def test_dialog_window_flags_have_minimize_button(self):
+        """Verify that EALauncherDialog, SplitEADialog, UnmergeEADialog, and launcher helper have WindowMinimizeButtonHint enabled."""
+        from qgis.PyQt.QtCore import Qt
+        from references.create_enumeration_area.dialog import EALauncherDialog
+        from references.create_enumeration_area.split_dialog import SplitEADialog
+        from references.create_enumeration_area.unmerge_dialog import UnmergeEADialog
+        from gmd_scripts.create_enumeration_area import show_create_ea_dialog
+
+        d1 = EALauncherDialog()
+        d2 = SplitEADialog()
+        d3 = UnmergeEADialog()
+
+        for dlg in [d1, d2, d3]:
+            flags = dlg.windowFlags()
+            self.assertTrue(bool(flags & Qt.WindowMinimizeButtonHint), f"{dlg.__class__.__name__} missing WindowMinimizeButtonHint")
+            self.assertTrue(bool(flags & Qt.WindowMaximizeButtonHint), f"{dlg.__class__.__name__} missing WindowMaximizeButtonHint")
+            self.assertTrue(bool(flags & Qt.WindowCloseButtonHint), f"{dlg.__class__.__name__} missing WindowCloseButtonHint")
+
+        # Also verify show_create_ea_dialog sets correct flags
+        mock_iface = MagicMock()
+        mock_iface.mainWindow.return_value = None
+        dlg_launcher = show_create_ea_dialog(mock_iface)
+        launcher_flags = dlg_launcher.windowFlags()
+        self.assertTrue(bool(launcher_flags & Qt.WindowMinimizeButtonHint))
+
+    def test_live_preview_merge_table_includes_merge_partner_column(self):
+        """Verify that merge_table in Live Preview has 6 columns (with Merge Partner dropdown, no Action or Total HH) and generate_preview resolves merge partners."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+        from qgis.core import QgsVectorLayer, QgsField, QgsFeature, QgsGeometry
+        from qgis.PyQt.QtCore import QVariant
+
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        mock_dlg.delineation_table = MagicMock()
+        mock_dlg.merge_table = EALauncherDialog._create_preview_table(mock_dlg, include_merge_partner=True, include_action=False, include_total_hh=False)
+        mock_dlg.prev_ea_combo = MagicMock()
+        mock_dlg.merge_prev_ea_combo = MagicMock()
+        mock_dlg.merge_ea_combo = MagicMock()
+        mock_dlg.all_delineation_candidates = []
+        mock_dlg.all_merge_candidates = []
+        mock_dlg.all_merged_ea_candidates = []
+        mock_dlg.min_hh_spin = MagicMock()
+        mock_dlg.min_hh_spin.value.return_value = 100
+        mock_dlg.max_hh_spin = MagicMock()
+        mock_dlg.max_hh_spin.value.return_value = 300
+        mock_dlg.kpi_delin_val = MagicMock()
+        mock_dlg.kpi_merge_val = MagicMock()
+        mock_dlg.kpi_merged_ea_val = MagicMock()
+        mock_dlg.filter_previews = MagicMock()
+        mock_dlg.output_folder_widget = MagicMock()
+        mock_dlg.output_folder_widget.filePath.return_value = "C:/test"
+        mock_dlg.merge_output_folder_widget = MagicMock()
+        mock_dlg.merge_output_folder_widget.filePath.return_value = ""
+        mock_dlg._get_ea_name = lambda feat, ean, fields: f"EA {ean}"
+        mock_dlg.auto_detect_merge_ea_layer = MagicMock(return_value=None)
+        mock_dlg.current_theme = "light"
+
+        # 1. Verify merge_table has 6 columns (Merge Partner dropdown, no Action or Total HH column)
+        self.assertEqual(mock_dlg.merge_table.columnCount(), 6)
+        headers = [mock_dlg.merge_table.horizontalHeaderItem(i).text() for i in range(6)]
+        self.assertEqual(headers[0], "Geocode")
+        self.assertEqual(headers[1], "Barangay")
+        self.assertEqual(headers[2], "EA Name")
+        self.assertEqual(headers[3], "Household Count")
+        self.assertEqual(headers[4], "Role / Status")
+        self.assertEqual(headers[5], "Merge Partner (Geocode)")
+        self.assertNotIn("Total HH Count", headers)
+        self.assertNotIn("Action", headers)
+
+        # 2. Previous EA layer with two adjacent EAs in the same barangay
+        prev_ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "Prev_EAs", "memory")
+        prev_ea_layer.dataProvider().addAttributes([
+            QgsField("ean", QVariant.String),
+            QgsField("geocode", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hh_count", QVariant.Double)
+        ])
+        prev_ea_layer.updateFields()
+
+        # EA 001: 40 HH (under-threshold candidate)
+        f1 = QgsFeature(prev_ea_layer.fields())
+        f1.setAttributes(["001", "017280010001", "Barangay Alpha", 40.0])
+        f1.setGeometry(QgsGeometry.fromWkt("POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"))
+
+        # EA 002: 120 HH (adjacent partner)
+        f2 = QgsFeature(prev_ea_layer.fields())
+        f2.setAttributes(["002", "017280010002", "Barangay Alpha", 120.0])
+        f2.setGeometry(QgsGeometry.fromWkt("POLYGON((1 0, 2 0, 2 1, 1 1, 1 0))"))
+
+        prev_ea_layer.dataProvider().addFeatures([f1, f2])
+
+        mock_dlg._safe_get_layer.side_effect = lambda combo: (
+            prev_ea_layer if combo in (mock_dlg.prev_ea_combo, mock_dlg.merge_prev_ea_combo)
+            else None
+        )
+
+        EALauncherDialog.generate_preview(mock_dlg)
+
+        # Verify all_merge_candidates has EA 001 and detected neighbor EA 002
+        self.assertEqual(len(mock_dlg.all_merge_candidates), 1)
+        cand = mock_dlg.all_merge_candidates[0]
+        self.assertEqual(cand[0], "001")
+        self.assertEqual(len(cand[5]), 1)
+        self.assertEqual(cand[5][0][0], "017280010002")
+        self.assertEqual(cand[5][0][1], 120.0)
+
+        # 3. Populate merge_table rows and verify dropdown widget in column 5
+        EALauncherDialog._populate_table_rows(mock_dlg, mock_dlg.merge_table, mock_dlg.all_merge_candidates, is_delineation=False)
+        self.assertEqual(mock_dlg.merge_table.rowCount(), 1)
+        # Column 0 displays the full Geocode value, not the short EAN code
+        self.assertEqual(mock_dlg.merge_table.item(0, 0).text(), "017280010001")
+        combo = mock_dlg.merge_table.cellWidget(0, 5)
+        self.assertIsNotNone(combo)
+        self.assertTrue(combo.isEnabled())
+        self.assertEqual(combo.currentText(), "017280010002")
+        # Ensure no Total HH or Action cells exist (table has strictly 6 columns)
+        self.assertIsNone(mock_dlg.merge_table.item(0, 6))
+        self.assertIsNone(mock_dlg.merge_table.cellWidget(0, 6))
+        self.assertIsNone(mock_dlg.merge_table.cellWidget(0, 7))
+
+    def test_ea_merge_validate_inputs_enables_run_when_replacement_layers_empty(self):
+        """Verify that Tab 3 enables the Run button when EA layer and output folder are set even if replacement layers are empty."""
+        from references.create_enumeration_area.dialog import EALauncherDialog
+        from qgis.core import QgsVectorLayer, QgsField, QgsFeature
+        from qgis.PyQt.QtCore import QVariant
+
+        mock_dlg = MagicMock(spec=EALauncherDialog)
+        ea_layer = QgsVectorLayer("Polygon?crs=epsg:4326", "02122_ea2026", "memory")
+        ea_layer.dataProvider().addAttributes([
+            QgsField("geocode", QVariant.String),
+            QgsField("citymun", QVariant.String),
+        ])
+        ea_layer.updateFields()
+        f = QgsFeature(ea_layer.fields())
+        f.setAttribute("geocode", "02122001")
+        f.setAttribute("citymun", "Imus")
+        ea_layer.dataProvider().addFeatures([f])
+
+        mock_dlg.ea_merge_ea_combo = MagicMock()
+        mock_dlg.ea_merge_ea_combo.currentLayer.return_value = ea_layer
+        mock_dlg._ea_merge_replacement_layers = []
+
+        mock_dlg.ea_merge_ea_status_lbl = MagicMock()
+        mock_dlg.ea_merge_val_poly_lbl = MagicMock()
+        mock_dlg.ea_merge_val_name_lbl = MagicMock()
+        mock_dlg.ea_merge_val_geom_lbl = MagicMock()
+        mock_dlg.ea_merge_out_geocode_lbl = MagicMock()
+        mock_dlg.ea_merge_out_layer_lbl = MagicMock()
+        mock_dlg.ea_merge_out_excel_lbl = MagicMock()
+        mock_dlg.ea_merge_output_folder_widget = MagicMock()
+        mock_dlg.ea_merge_output_folder_widget.filePath.return_value = "D:/PSA-GIS/Temporary files/Cavite"
+        mock_dlg.ea_merge_run_btn = MagicMock()
+
+        EALauncherDialog._ea_merge_validate_inputs(mock_dlg)
+
+        # Run button must be enabled even without replacement layers
+        mock_dlg.ea_merge_run_btn.setEnabled.assert_called_with(True)
 
 
 if __name__ == "__main__":

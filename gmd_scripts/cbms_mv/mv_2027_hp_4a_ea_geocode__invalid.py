@@ -28,6 +28,7 @@ from .. import gmdhelpers
 
 
 TARGET_FIELDS = ["sf_ea_geocode", "ref_ea_geocode"]
+SUGGESTED_FIX = ["concatenate_ea_geocode"]
 
 class mv_2027_hp_4a_ea_geocode__invalid(QgsProcessingAlgorithm):
 

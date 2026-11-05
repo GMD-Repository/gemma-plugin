@@ -441,9 +441,9 @@ class CbmsMvReviewDock(QDockWidget):
         is_del = False
         if target_feat:
             for fn in [f.name() for f in target_feat.fields()]:
-                if fn.lower() in ("status", "sf_status"):
+                if fn.lower() in ("status", "sf_status", "is_deleted", "sf_is_deleted"):
                     v = target_feat[fn]
-                    if v is not None and str(v).strip().lower() == "deleted":
+                    if v is True or (v is not None and str(v).strip().lower() in ("deleted", "true", "1")):
                         is_del = True
                         break
 
@@ -703,9 +703,9 @@ class CbmsMvReviewDock(QDockWidget):
         is_already_deleted = False
         if target_feat:
             for fn in [f.name() for f in target_feat.fields()]:
-                if fn.lower() in ("status", "sf_status"):
+                if fn.lower() in ("status", "sf_status", "is_deleted", "sf_is_deleted"):
                     v = target_feat[fn]
-                    if v is not None and str(v).strip().lower() == "deleted":
+                    if v is True or (v is not None and str(v).strip().lower() in ("deleted", "true", "1")):
                         is_already_deleted = True
                         break
 
@@ -723,36 +723,44 @@ class CbmsMvReviewDock(QDockWidget):
         else:
             new_status = "deleted"
 
+        to_del_bool = (new_status == "deleted")
+
         # Update main_layer
         if self.main_layer and self.main_layer.isValid() and main_feat:
-            m_idx = -1
+            if not self.main_layer.isEditable():
+                self.main_layer.startEditing()
+
+            del_idx = -1
             for f in self.main_layer.fields():
-                if f.name().lower() in ("status", "sf_status"):
-                    m_idx = self.main_layer.fields().indexOf(f.name())
+                if f.name().lower() in ("is_deleted", "sf_is_deleted"):
+                    del_idx = self.main_layer.fields().indexOf(f.name())
                     break
-            if m_idx == -1:
+            if del_idx == -1:
                 try:
-                    self.main_layer.dataProvider().addAttributes([QgsField("status", QVariant.String)])
+                    self.main_layer.dataProvider().addAttributes([QgsField("is_deleted", QVariant.Bool)])
                     self.main_layer.updateFields()
-                    m_idx = self.main_layer.fields().indexOf("status")
+                    del_idx = self.main_layer.fields().indexOf("is_deleted")
                 except Exception:
                     pass
-            if m_idx != -1:
-                if not self.main_layer.isEditable():
-                    self.main_layer.startEditing()
-                self.main_layer.changeAttributeValue(main_feat.id(), m_idx, new_status)
+            if del_idx != -1:
+                f_type = self.main_layer.fields().at(del_idx).type()
+                val_to_set = to_del_bool if f_type == QVariant.Bool else ("true" if to_del_bool else "false")
+                self.main_layer.changeAttributeValue(main_feat.id(), del_idx, val_to_set)
 
         # Update error_layer
         if self.error_layer and self.error_layer.isValid() and err_feat:
-            e_idx = -1
+            if not self.error_layer.isEditable():
+                self.error_layer.startEditing()
+
+            e_del_idx = -1
             for f in self.error_layer.fields():
-                if f.name().lower() in ("status", "sf_status"):
-                    e_idx = self.error_layer.fields().indexOf(f.name())
+                if f.name().lower() in ("is_deleted", "sf_is_deleted"):
+                    e_del_idx = self.error_layer.fields().indexOf(f.name())
                     break
-            if e_idx != -1:
-                if not self.error_layer.isEditable():
-                    self.error_layer.startEditing()
-                self.error_layer.changeAttributeValue(err_feat.id(), e_idx, new_status)
+            if e_del_idx != -1:
+                f_type = self.error_layer.fields().at(e_del_idx).type()
+                val_to_set = to_del_bool if f_type == QVariant.Bool else ("true" if to_del_bool else "false")
+                self.error_layer.changeAttributeValue(err_feat.id(), e_del_idx, val_to_set)
 
         # Sync back to parent dialog table if open
         if self.parent_dialog and hasattr(self.parent_dialog, "_sync_feature_status"):

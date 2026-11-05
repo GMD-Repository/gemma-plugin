@@ -32,9 +32,9 @@ Follow this step-by-step guide to package your QGIS project for QField.
 3. **Help Button:** Notice the **Help** button located at the top-right header of the dialog. Clicking it immediately opens this online documentation page in your web browser for quick reference.
 
 
-### Step 2: Configure Global Settings (`⚙ Configuration`)
+### Step 2: Configure Global Settings (Configuration)
 
-Click the **⚙ Configuration** button in the upper header to open the global settings dialog:
+Click the **Configuration** button in the upper header to open the global settings dialog:
 
 #### A. Export Directory
 Select the destination folder on your computer where the packaged QField project folders will be generated.
@@ -56,9 +56,9 @@ Customize editing actions, visibility behavior, and output file formats per laye
 - **QField Action**:
   - `Offline Editing`: Makes vector layers editable in QField (for field data entry).
   - `Copy / Read-Only`: Keeps layers as read-only background reference data.
-- **Identifiable Checkbox (`✓`)**: Determines if feature attributes pop up when tapped in QField.
-- **Read-Only Checkbox (`✓`)**: Locks or unlocks layer editing permissions.
-- **Searchable Checkbox (`✓`)**: Enables searching for layer features using QField's search bar.
+- **Identifiable Checkbox**: Determines if feature attributes pop up when tapped in QField.
+- **Read-Only Checkbox**: Locks or unlocks layer editing permissions.
+- **Searchable Checkbox**: Enables searching for layer features using QField's search bar.
 - **Export Format**: Choose the output file format for each role:
   - `(data.gpkg)`: Bundles reference layers into a single combined GeoPackage dataset.
   - `.geojson`: Standalone GeoJSON format.
@@ -81,8 +81,8 @@ In the top dropdown, select your target packaging level:
 #### B. Managing Layer Groups & Reordering
 Use the **Layer Groups & Styles** tree panel to organize layers into folders:
 
-1. **Add Group**: Type a folder name into the text box and click **`[+]`** (Add Group).
-2. **Delete Item**: Select a group or layer and click **`[-]`** (Delete Group).
+1. **Add Group**: Type a folder name into the text box and click **Add Group**.
+2. **Delete Item**: Select a group or layer and click **Delete Item**.
 3. **Multi-Selection**:
    - `Shift + Click`: Select a contiguous range of layers or group folders.
    - `Ctrl + Click`: Select multiple non-adjacent layers or group folders.
@@ -92,19 +92,19 @@ Use the **Layer Groups & Styles** tree panel to organize layers into folders:
    - `Alt + Down`: Move selected item **DOWN**.
    - `Alt + Left`: Move selected item **OUT** to parent level.
    - `Alt + Right`: Move selected item **IN** into the preceding group folder.
-6. **Layer Visibility Checkboxes (`✓`)**: Check or uncheck the box next to any layer to set whether it is visible by default when opened in QField.
+6. **Layer Visibility Checkboxes**: Check or uncheck the box next to any layer to set whether it is visible by default when opened in QField.
 
 #### C. Assigning Roles & QML Styles
 - **Assigned Role**: Select the functional role for each layer (e.g. `Building points`, `Barangay layer`, `Road layer`).
-- **QML Style**: Select a QML symbology style file to apply. The tool automatically detects matching styles based on layer names. Click **Import QML Style(s)...** to import custom `.qml` files from your computer.
+- **QML Style**: Select a QML symbology style file to apply. The tool automatically detects matching styles based on layer names. Click **Import QML...** to import custom `.qml` files from your computer.
 
 #### D. Using Layout Presets
-- **`📂 Load Preset`**: Load standard built-in templates (`Form 2 Layout`, `Form 8 Layout`) or custom user-saved layouts.
-- **`💾 Save Preset`**: Save your current folder structure and QML assignments into a named preset for quick re-use in future projects.
-- **`🗑 Delete Preset`**: Delete custom user-saved presets.
+- **`Load`**: Load standard built-in templates (`Form 2 Layout`, `Form 8 Layout`) or custom user-saved layouts.
+- **`Save`**: Save your current folder structure and QML assignments into a named preset for quick re-use in future projects.
+- **`Delete Preset`**: Delete custom user-saved presets.
 
 #### E. Apply to QGIS Project
-Click **▶ Create Groups and Apply Style** to restructure your active QGIS project's Layers panel and apply QML symbology styles directly.
+Click **Apply Groups & Styles** to restructure your active QGIS project's Layers panel and apply QML symbology styles directly.
 
 
 ### Step 4: Select Target Administrative Areas (Process Settings)

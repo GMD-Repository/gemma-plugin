@@ -5,6 +5,162 @@ All notable changes to the **GEMMA** (GIS Extension for Map Management and Analy
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.12] - 2026-10-19
+
+### Added
+- add KumoniAksyon QML style and QField package dialog component ([@nbacquiano-ui](https://github.com/nbacquiano-ui)) ([#335](https://github.com/GMD-Repository/gemma-plugin/pull/335))
+- support eadel_update splitting, zero-HH sub-EA preservation, and spatial building recalculation ([@pacoleslaw](https://github.com/pacoleslaw)) ([#376](https://github.com/GMD-Repository/gemma-plugin/pull/376))
+- add KumoniAksyon QML style and QField package dialog component ([@nbacquiano-ui](https://github.com/nbacquiano-ui))
+- add Phase 2 candidate identification, Phase 8 output, and unit tests for building filtering ([@pacoleslaw](https://github.com/pacoleslaw))
+- add custom processing UI dialog module for EA delineation and merging workflow ([@pacoleslaw](https://github.com/pacoleslaw))
+- add enumeration area merge processor, tests, and user documentation ([@pacoleslaw](https://github.com/pacoleslaw))
+- add unit tests and dialog implementations for split EA functionality ([@pacoleslaw](https://github.com/pacoleslaw))
+
+### Fixed
+- resolve candidate role precedence and prioritize raw building layer detection ([@pacoleslaw](https://github.com/pacoleslaw)) ([#365](https://github.com/GMD-Repository/gemma-plugin/pull/365))
+- support direct EA merge consolidation, format whole-number Source Year in EARF, and resolve candidate role precedence ([@pacoleslaw](https://github.com/pacoleslaw)) ([#366](https://github.com/GMD-Repository/gemma-plugin/pull/366))
+
+## [1.0.11] - 2026-10-05
+
+### Fixed
+- Fixed f-string backslash SyntaxError in download button style inliner ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#333](https://github.com/GMD-Repository/gemma-plugin/pull/333))
+
+## [1.0.10] - 2026-10-01
+
+### Added
+- Added an interactive Geometry Repair Toolkit for QGIS polygon layers ([@psacjperez](https://github.com/psacjperez))
+
+### Changed
+- Stabilized batch packaging, layer filter isolation, and safe project state restoration ([@nbacquiano-ui](https://github.com/nbacquiano-ui)) ([#303](https://github.com/GMD-Repository/gemma-plugin/pull/303))
+- Modified MBI Checker output, standardized naming, and polished the UI layout of Know Your Projection ([@psacjperez](https://github.com/psacjperez)) ([#331](https://github.com/GMD-Repository/gemma-plugin/pull/331))
+- Rendered action buttons on one row with mobile-responsive stacking ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### Fixed
+- Batch release email blast to circumvent Gmail 100-recipient limit ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### Removed
+- Added QField packaging dialog, check and update dialog, tests, and documentation, and deprecated the Geometry Repair Toolkit ([@velascojasper0](https://github.com/velascojasper0))
+
+### Documentation
+- Modification of MBI validator and gaps/overlaps checker scripts with user guide documentation ([@psacjperez](https://github.com/psacjperez))
+
+## [1.0.9] - 2026-09-24
+
+### Added
+- Added EA delineation line generation, candidate merge guards, dialog refresh, and unmerge workflow ([@pacoleslaw](https://github.com/pacoleslaw)) ([#300](https://github.com/GMD-Repository/gemma-plugin/pull/300))
+- Implemented enumeration area creation pipeline phases, dialog, and unit tests ([@pacoleslaw](https://github.com/pacoleslaw))
+
+### Changed
+- Replaced in-row preview button with row double-click zoom functionality ([@pacoleslaw](https://github.com/pacoleslaw)) ([#287](https://github.com/GMD-Repository/gemma-plugin/pull/287))
+- Enhanced individual merge workflow by filtering extracted buildings based on execution mode ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#285](https://github.com/GMD-Repository/gemma-plugin/pull/285))
+- Isolated bundled libqfieldsync into gemma_sync namespace ([@velascojasper0](https://github.com/velascojasper0)) ([#299](https://github.com/GMD-Repository/gemma-plugin/pull/299))
+- Enabled GDAL multithreaded raster clipping and removed hardcoded .shp export fallback ([@nbacquiano-ui](https://github.com/nbacquiano-ui)) ([#297](https://github.com/GMD-Repository/gemma-plugin/pull/297))
+- Added QGIS style for delineated EA lines and QField package preference and dialog modules ([@nbacquiano-ui](https://github.com/nbacquiano-ui))
+- Preserved data source during various operations ([@nbacquiano-ui](https://github.com/nbacquiano-ui))
+
+### Fixed
+- Prevented access to deleted C++ layer in pipeline splitting lines cleanup ([@pacoleslaw](https://github.com/pacoleslaw))
+- Restored candidate preview and map canvas zoom in candidate tables ([@pacoleslaw](https://github.com/pacoleslaw))
+- Kept Contested boundary polygons out of geocode deduplication process ([@ftating19](https://github.com/ftating19)) ([#289](https://github.com/GMD-Repository/gemma-plugin/pull/289))
+
+### Removed
+- Removed 255-character cap from remarks/involved_bgys fields ([@ftating19](https://github.com/ftating19)) ([#290](https://github.com/GMD-Repository/gemma-plugin/pull/290))
+
+### Documentation
+- Added EA delineation and merging dialog implementation along with user guide documentation ([@pacoleslaw](https://github.com/pacoleslaw))
+
+## [1.0.8] - 2026-09-21
+
+### Added
+- Implemented EA split dialog, merge preview threshold gating, and barangay-enclosed sequential numbering ([@pacoleslaw](https://github.com/pacoleslaw)) ([#272](https://github.com/GMD-Repository/gemma-plugin/pull/272))
+- Added custom UI dialog and unit tests for EA delineation and merging workflow ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added custom processing UI dialog and unit tests for merge preview threshold and individual merge ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added SplitEADialog and unit tests for splitting enumeration area polygons ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added UI dialog and processing phase modules for enumeration area creation reference ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added Phase 1 initialization module, split dialog, and unit tests for enumeration area creation ([@pacoleslaw](https://github.com/pacoleslaw))
+- Added enumeration area generation phases, dialog, spatial helpers, and unit tests ([@pacoleslaw](https://github.com/pacoleslaw))
+
+### Changed
+- Enhanced QGIS mock environment for CRS, vector layer properties, and iteration ([@pacoleslaw](https://github.com/pacoleslaw))
+- Made candidate preview table columns resizable and responsive on small screens ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#283](https://github.com/GMD-Repository/gemma-plugin/pull/283))
+- Added in-row preview zoom to feature button in candidate tables ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#281](https://github.com/GMD-Repository/gemma-plugin/pull/281))
+
+### Documentation
+- Added EA Delineation and Merging tool interface, preview widget, and user guide ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+## [1.0.7] - 2026-09-16
+
+### Added
+- add EA delineation, unmerge dialog, dynamic preview refresh, and individual merging ([@pacoleslaw](https://github.com/pacoleslaw)) ([#265](https://github.com/GMD-Repository/gemma-plugin/pull/265))
+- implement interactive EA merge preview, individual merging, unmerge restoration, and session reconciliation ([@pacoleslaw](https://github.com/pacoleslaw)) ([#266](https://github.com/GMD-Repository/gemma-plugin/pull/266))
+- add EA delineation, split, unmerge, merge preview threshold gating, and individual EA merge workflow ([@pacoleslaw](https://github.com/pacoleslaw)) ([#268](https://github.com/GMD-Repository/gemma-plugin/pull/268))
+- add enumeration area delineation, split, and unmerge tools along with user documentation and unit tests ([@pacoleslaw](https://github.com/pacoleslaw))
+- add EA delineation and merging module with UI dialog, user guide, and unit tests ([@pacoleslaw](https://github.com/pacoleslaw))
+- add merge preview threshold gating and individual EA merge functionality with unit tests ([@pacoleslaw](https://github.com/pacoleslaw))
+- add QGIS plugin ZIP packaging script and unit tests ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### Changed
+- exclude tests and development assets from plugin ZIP builds ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#269](https://github.com/GMD-Repository/gemma-plugin/pull/269))
+
+## [1.0.6] - 2026-09-14
+
+### Added
+- Updated PSA-LGU Boundary Comparison and Run Analysis Plugin ([@ftating19](https://github.com/ftating19)) ([#263](https://github.com/GMD-Repository/gemma-plugin/pull/263))
+
+### Changed
+- Separated building points outside LGU and PSA boundaries ([@psacjperez](https://github.com/psacjperez))
+
+### Fixed
+- Key deduplication on geocode and prevented cutting islands off barangays ([@psacjperez](https://github.com/psacjperez))
+- Published boundary before exploding multiparts and merged rows by geocode ([@psacjperez](https://github.com/psacjperez))
+- Repaired geometries before writing either output ([@psacjperez](https://github.com/psacjperez))
+- Optimized progress bar to update once instead of per sub-process ([@psacjperez](https://github.com/psacjperez))
+
+## [1.0.5] - 2026-09-14
+
+### Added
+- Added 2026_province_boundary as a 5th packaging role ([@psacjperez](https://github.com/psacjperez))
+
+### Changed
+- Reconciled Packaged Layers documentation with the latest development merge ([@psacjperez](https://github.com/psacjperez))
+
+### Fixed
+- Resolved LGU/PSA boundary precedence and deduplication before MBI detection ([@ftating19](https://github.com/ftating19)) ([#257](https://github.com/GMD-Repository/gemma-plugin/pull/257))
+- Fixed the generation of the 2026_province_boundary layer ([@ftating19](https://github.com/ftating19)) ([#259](https://github.com/GMD-Repository/gemma-plugin/pull/259))
+- Output 2026_CITYMUN_boundary instead of ref_CITYMUN_boundary ([@psacjperez](https://github.com/psacjperez))
+
+### Removed
+- Eliminated the Packaged Layers group and enforced clean grouping across EA tabs ([@pacoleslaw](https://github.com/pacoleslaw)) ([#258](https://github.com/GMD-Repository/gemma-plugin/pull/258))
+- Masked dynamically fetched emails in GitHub Actions logs to enhance security ([@kentemman-gmd](https://github.com/kentemman-gmd)) ([#254](https://github.com/GMD-Repository/gemma-plugin/pull/254))
+
+## [1.0.4] - 2026-09-13
+
+### Added
+- Implemented EA delineation and merging workflow with an interactive split dialog ([@pacoleslaw](https://github.com/pacoleslaw)) ([#220](https://github.com/GMD-Repository/gemma-plugin/pull/220))
+
+### Changed
+- Refined unassigned layer filtering and resolved unzipped libqfieldsync paths ([@nbacquiano-ui](https://github.com/nbacquiano-ui)) ([#213](https://github.com/GMD-Repository/gemma-plugin/pull/213))
+- Standardized unassigned layer filtering to geocode and ea_geocode ([@nbacquiano-ui](https://github.com/nbacquiano-ui)) ([#230](https://github.com/GMD-Repository/gemma-plugin/pull/230))
+- Streamlined projection finder UI and improved edit session handling ([@psacjperez](https://github.com/psacjperez)) ([#249](https://github.com/GMD-Repository/gemma-plugin/pull/249))
+
+### Fixed
+- Removed merge candidates output layer and pruned candidate sinks ([@pacoleslaw](https://github.com/pacoleslaw)) ([#242](https://github.com/GMD-Repository/gemma-plugin/pull/242))
+
+### Documentation
+- Integrated reference MBI cases and updated documentation ([@psacjperez](https://github.com/psacjperez)) ([#214](https://github.com/GMD-Repository/gemma-plugin/pull/214))
+- Updated Geometry Repair Toolkit user guide and enhanced topology diagnostic documentation ([@psacjperez](https://github.com/psacjperez)) ([#221](https://github.com/GMD-Repository/gemma-plugin/pull/221))
+
+## [1.0.3] - 2026-09-03
+
+### Added
+- Implemented EA Delineation and Merging module with a dual-tab UI and included unit tests ([@pacoleslaw](https://github.com/pacoleslaw))
+
+### Fixed
+- Removed unresolvable @actions/github require from workflow dispatch steps ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
+### Documentation
+- Added PSA-LGU boundary comparison tool documentation and configured VitePress ([@kentemman-gmd](https://github.com/kentemman-gmd))
+
 ## [1.0.2] - 2026-09-03
 
 ### Added

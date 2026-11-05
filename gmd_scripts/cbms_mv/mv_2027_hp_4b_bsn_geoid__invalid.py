@@ -36,6 +36,7 @@ from .. import gmdhelpers
 
 
 TARGET_FIELDS = ["sf_bsn_geoid", "sf_bsn"]
+SUGGESTED_FIX = ["concatenate_bsn_geoid"]
 
 class mv_2027_hp_4b_bsn_geoid__invalid(QgsProcessingAlgorithm):
 
@@ -116,7 +117,7 @@ class mv_2027_hp_4b_bsn_geoid__invalid(QgsProcessingAlgorithm):
             "native:extractbyexpression",
             {
                 "INPUT": geojson_data,
-                "EXPRESSION": '"sf_bsn_geoid" IS NULL OR length("sf_bsn_geoid") != 19',
+                "EXPRESSION": '"sf_bsn_geoid" IS NULL OR length("sf_bsn_geoid") != 19 OR substr("sf_bsn_geoid", 1, 14) != "sf_ea_geocode"',
                 "OUTPUT": "memory:",
             },
             context=context,

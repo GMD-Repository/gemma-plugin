@@ -20,6 +20,7 @@ class Preferences(SettingManager):
             String("exportDirectory", Scope.Global, str(home.joinpath("QField/export")))
         )
         self.add_setting(String("exportDirectoryProject", Scope.Project, None))
+        self.add_setting(String("exportDirectoryManual", Scope.Global, ""))
         self.add_setting(
             String("importDirectory", Scope.Global, str(home.joinpath("QField/import")))
         )

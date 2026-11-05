@@ -79,7 +79,6 @@ class TestTab2EmptyOutputs(unittest.TestCase):
         mock_alg.MERGED_OUTPUT = "MERGED_OUTPUT"
         mock_alg.SPECIAL_EA_OUTPUT = "SPECIAL_EA_OUTPUT"
         mock_alg.DELINEATION_CANDIDATE_OUTPUT = "DELINEATION_CANDIDATE_OUTPUT"
-        mock_alg.MERGE_CANDIDATE_OUTPUT = "MERGE_CANDIDATE_OUTPUT"
         mock_alg.EXTRACTED_BUILDINGS_OUTPUT = "EXTRACTED_BUILDINGS_OUTPUT"
 
         fields = QgsFields()
@@ -114,12 +113,9 @@ class TestTab2EmptyOutputs(unittest.TestCase):
             "extracted_buildings_sink": MagicMock(),
             "delineated_dest_id": "delin_id",
             "merged_dest_id": "merged_id",
-            "special_ea_dest_id": "special_id",
             "extracted_buildings_dest_id": "bldg_id",
             "delin_candidate_dest_id": "delin_cand_id",
-            "merge_candidate_dest_id": "merge_cand_id",
             "delin_candidate_feat_count": 0,
-            "merge_candidate_feat_count": 0,
             "extracted_bldg_feat_count": 0,
         }
         p3 = {"road_geoms": {}, "river_geoms": {}}
@@ -182,6 +178,9 @@ class TestTab2EmptyOutputs(unittest.TestCase):
             self.assertNotIn("GAP_INPUT", pipeline_source)
             self.assertNotIn("OVERLAP_INPUT", pipeline_source)
             self.assertNotIn("SPECIAL_EA_OUTPUT", pipeline_source)
+            self.assertNotIn("MERGE_CANDIDATE_OUTPUT", pipeline_source)
+            self.assertNotIn("out_merge_cand_lbl", content_source)
+            self.assertNotIn("merge_cand_edit", content_source)
 
 
 if __name__ == "__main__":

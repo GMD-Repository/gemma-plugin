@@ -53,7 +53,13 @@ def resolve_ea_parent_barangay(
     # 1. Primary: Spatial overlay with Barangay Layer
     parent_feat = get_parent_barangay(ea_feat.geometry(), barangay_index, barangay_by_id)
     if parent_feat:
-        val = parent_feat.attribute(barangay_id_field)
+        val = None
+        for f in parent_feat.fields():
+            if f.name().lower() == "geocode":
+                val = parent_feat.attribute(f.name())
+                break
+        if val is None and parent_feat.fields().indexOf(barangay_id_field) != -1:
+            val = parent_feat.attribute(barangay_id_field)
         res = normalize_to_8_digits(val)
         if res:
             return res
@@ -64,4 +70,50 @@ def resolve_ea_parent_barangay(
         res = normalize_to_8_digits(val)
         if res:
             return res
+    for f in ea_feat.fields():
+        if f.name().lower() == "geocode":
+            res = normalize_to_8_digits(ea_feat.attribute(f.name()))
+            if res:
+                return res
     return "Unknown"
+
+
+def deduplicate_building_points(buildings: list) -> tuple:
+    """
+    Deduplicates building points based on coordinates (x, y rounded to 6 decimal places).
+    The point with the highest household count ('pop') prevails. Duplicate points with lower
+    or equal household counts are discarded.
+    Returns (deduplicated_list, dropped_count).
+    """
+    if not buildings:
+        return [], 0
+    grouped = {}
+    for b in buildings:
+        pt = b.get('point')
+        if pt is None:
+            continue
+        try:
+            x = pt.x() if hasattr(pt, 'x') else pt[0]
+            y = pt.y() if hasattr(pt, 'y') else pt[1]
+            k = (round(float(x), 6), round(float(y), 6))
+        except Exception:
+            continue
+        grouped.setdefault(k, []).append(b)
+
+    deduped = []
+    dropped_count = 0
+    for k, b_list in grouped.items():
+        if len(b_list) == 1:
+            deduped.append(b_list[0])
+        else:
+            # Sort descending by pop, then by bldgpoints_value
+            b_list.sort(
+                key=lambda item: (
+                    float(item.get('pop', 0.0) or 0.0),
+                    float(item.get('bldgpoints_value', 0.0) or 0.0)
+                ),
+                reverse=True
+            )
+            deduped.append(b_list[0])
+            dropped_count += (len(b_list) - 1)
+    return deduped, dropped_count

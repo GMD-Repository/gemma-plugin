@@ -93,6 +93,13 @@ from .copy_geometry_to_coordinates_fix import (
     _run_fix_copy_geometry_to_coordinates,
     copy_geometry_to_coordinates,
 )
+from .update_datafile_coordinates_fix import (
+    FIX_DESCRIPTION as UPDATE_COORD_FIX_DESCRIPTION,
+    FIX_ID as UPDATE_COORD_FIX_ID,
+    FIX_NAME as UPDATE_COORD_FIX_NAME,
+    _run_fix_update_datafile_coordinates,
+    update_datafile_coordinates,
+)
 
 # ---------------------------------------------------------------------------
 # Fix Metadata Registry & Constants
@@ -114,6 +121,10 @@ FIX_REGISTRY = {
         "name": COPY_GEOM_FIX_NAME,
         "description": COPY_GEOM_FIX_DESCRIPTION,
     },
+    UPDATE_COORD_FIX_ID: {
+        "name": UPDATE_COORD_FIX_NAME,
+        "description": UPDATE_COORD_FIX_DESCRIPTION,
+    },
 }
 
 FIX_ID = EA_FIX_ID
@@ -131,6 +142,10 @@ FIX_DESCRIPTION_HP_4A_DUP = HP_4A_DUP_FIX_DESCRIPTION
 FIX_ID_COPY_GEOM = COPY_GEOM_FIX_ID
 FIX_NAME_COPY_GEOM = COPY_GEOM_FIX_NAME
 FIX_DESCRIPTION_COPY_GEOM = COPY_GEOM_FIX_DESCRIPTION
+
+FIX_ID_UPDATE_COORD = UPDATE_COORD_FIX_ID
+FIX_NAME_UPDATE_COORD = UPDATE_COORD_FIX_NAME
+FIX_DESCRIPTION_UPDATE_COORD = UPDATE_COORD_FIX_DESCRIPTION
 
 from .delete_selected_features_fix import (
     delete_selected_features,
@@ -156,6 +171,9 @@ _FIX_DISPATCH = {
     "copy_geometry": _run_fix_copy_geometry_to_coordinates,
     "delete_selected_features": delete_run_fix,
     "delete_features": delete_run_fix,
+    "update_datafiles_coordinates": _run_fix_update_datafile_coordinates,
+    "update_datafile_coordinates": _run_fix_update_datafile_coordinates,
+    "update_coordinates": _run_fix_update_datafile_coordinates,
     # Validation IDs
     "mv_2027_hp_4b_ea_geocode__missing": _run_fix_ea_geocode,
     "mv_2027_hp_4b_ea_geocode_missing": _run_fix_ea_geocode,
@@ -170,6 +188,10 @@ _FIX_DISPATCH = {
     "mv_2027_hp_1a_map_uuid__invalid": _run_fix_copy_geometry_to_coordinates,
     "mv_2027_hp_1a_longitude__invalid": _run_fix_copy_geometry_to_coordinates,
     "mv_2027_hp_1a_latitude__invalid": _run_fix_copy_geometry_to_coordinates,
+    "mv_2027_hp_4a_pos_longit__invalid": _run_fix_update_datafile_coordinates,
+    "mv_2027_hp_4a_pos_longit_invalid": _run_fix_update_datafile_coordinates,
+    "mv_2027_hp_4a_pos_latitu__invalid": _run_fix_update_datafile_coordinates,
+    "mv_2027_hp_4a_pos_latitu_invalid": _run_fix_update_datafile_coordinates,
 }
 
 
@@ -192,6 +214,8 @@ def run_fix(
         handler = _FIX_DISPATCH[clean]
     elif "bsn_geoid" in clean:
         handler = _run_fix_bsn_geoid
+    elif any(k in clean for k in ("update_datafile", "datafile_coord", "datafile_coordinate", "update_coord", "pos_longit", "pos_latitu")):
+        handler = _run_fix_update_datafile_coordinates
     elif any(k in clean for k in ("copy_geometry", "copy_geom", "geometry_to_coord")):
         handler = _run_fix_copy_geometry_to_coordinates
     elif "ea_geocode" in clean:
@@ -235,6 +259,9 @@ __all__ = [
     "FIX_ID_COPY_GEOM",
     "FIX_NAME_COPY_GEOM",
     "FIX_DESCRIPTION_COPY_GEOM",
+    "FIX_ID_UPDATE_COORD",
+    "FIX_NAME_UPDATE_COORD",
+    "FIX_DESCRIPTION_UPDATE_COORD",
     "is_valid_qobject",
     "_normalize_cell_val",
     "_normalize_coordinate",
@@ -262,6 +289,8 @@ __all__ = [
     "_run_fix_longitude_duplicate",
     "_run_fix_copy_geometry_to_coordinates",
     "copy_geometry_to_coordinates",
+    "_run_fix_update_datafile_coordinates",
+    "update_datafile_coordinates",
     "run_fix",
     "make_unique_feature_key",
     "extract_feature_unique_key",

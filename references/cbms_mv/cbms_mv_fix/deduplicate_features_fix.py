@@ -492,7 +492,7 @@ def deduplicate_features(
     elif btn_actions:
         btn_actions.setText("Actions ▾")
     if btn_update_selected:
-        btn_update_selected.setText("Update Selected")
+        btn_update_selected.setText("Apply Fix Action")
         btn_update_selected.setEnabled(False)
 
     if hasattr(dialog, "lbl_footer_status") and dialog.lbl_footer_status:

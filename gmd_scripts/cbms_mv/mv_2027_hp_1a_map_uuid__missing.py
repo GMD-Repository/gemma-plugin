@@ -28,6 +28,7 @@ from .. import gmdhelpers
 
 
 TARGET_FIELDS = ["df_map_uuid", "sf_map_uuid"]
+SUGGESTED_FIX = ["generate_point_geometry"]
 
 class mv_2027_hp_1a_map_uuid__missing(QgsProcessingAlgorithm):
 

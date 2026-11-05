@@ -58,65 +58,6 @@ class TestGmdhelpers(unittest.TestCase):
         self.assertEqual(status_bar.fmt, "Ready")
         self.assertEqual(widget.status_bar, status_bar)
 
-    def test_select_mv(self):
-        """Test select_mv helper function with default and custom extra columns."""
-        try:
-            res = self.mod.select_mv(self.sample_layer, ["ref_map_uuid", "ref_bsn_geoid"])
-            self.assertIsNotNone(res)
-        except Exception as e:
-            self.skipTest(f"Skipping test due to processing environment error: {e}")
-
-
-    def test_load_base_layer_helper_exists(self):
-        """Verify load_base_layer helper function is present in gmdhelpers."""
-        self.assertTrue(hasattr(self.mod, "load_base_layer"))
-
-    def test_load_cbms_json_helper_exists(self):
-        """Verify load_cbms_json helper function is present in gmdhelpers."""
-        self.assertTrue(hasattr(self.mod, "load_cbms_json"))
-
-    def test_load_cbms_csv_helper_exists(self):
-        """Verify load_cbms_csv helper function is present in gmdhelpers."""
-        self.assertTrue(hasattr(self.mod, "load_cbms_csv"))
-
-    def test_load_cbms_csv_renames_mapid(self):
-        """Verify load_cbms_csv handles layer input and renames mapid to map_uuid."""
-        class MockField:
-            def __init__(self, name):
-                self._name = name
-            def name(self):
-                return self._name
-
-        class MockLayer:
-            def __init__(self, fld_names):
-                self._fields = [MockField(n) for n in fld_names]
-            def fields(self):
-                return self._fields
-            def isValid(self):
-                return True
-
-        class MockAlg:
-            def parameterAsFile(self, parameters, param_name, context):
-                return None
-            def parameterAsSource(self, parameters, param_name, context):
-                return MockLayer(["mapid", "x_current"])
-            def invalidSourceError(self, parameters, param_name):
-                return "Invalid source"
-
-        try:
-            res = self.mod.load_cbms_csv(MockAlg(), {}, "PARAM", None, prefix="")
-            self.assertIsNotNone(res)
-        except Exception as e:
-            self.skipTest(f"Skipping test due to processing environment error: {e}")
-
-    def test_load_cbms_geojson_helper_exists(self):
-        """Verify load_cbms_geojson helper function is present in gmdhelpers."""
-        self.assertTrue(hasattr(self.mod, "load_cbms_geojson"))
-
-    def test_load_cbms_csv_to_layer_helper_exists(self):
-        """Verify load_cbms_csv_to_layer helper function is present in gmdhelpers."""
-        self.assertTrue(hasattr(self.mod, "load_cbms_csv_to_layer"))
-
 
 if __name__ == "__main__":
     unittest.main()

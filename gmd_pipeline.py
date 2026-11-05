@@ -43,16 +43,22 @@ class GMDPipeline(object):
         self.toolbar = None
         self.geometry_toolkit_dlg = None
         self.geometry_legacy_dlg = None
+        self.package_layers_dlg = None
         self.check_update_dlg = None
         self.push_dlg = None
-        self.cbmsmv_dlg = None
-        self.cbmsmv_action = None
         self.check_and_update_action = None
         self.comparison_panel_action = None
+        self.projection_finder_action = None
+        self.projection_finder_dlg = None
         self.create_ea_action = None
         self.ea_dlg = None
         self.offline_editing = None
         self.ea_provider = None
+        self.package_style_loader_action = None
+        self.package_style_loader_dlg = None
+        self.cbmsmv_menu = None
+        self.cbmsmv_action = None
+        self.cbmsmv_dlg = None
 
     def gema_add_submenu(self, submenu, icon):
         if self.gema_menu != None:
@@ -184,26 +190,50 @@ class GMDPipeline(object):
         create_ea_icon = QIcon(os.path.dirname(__file__) + "/icons/create_ea.svg")
         geom_toolkit_icon = QIcon(os.path.dirname(__file__) + "/icons/repair_geom.svg")
         others_icon = QIcon(os.path.dirname(__file__) + "/icons/others.svg")
-        cbmsmv_icon = QIcon(os.path.dirname(__file__) + "/icons/others.svg")
+        cbmsmv_icon = QIcon(os.path.dirname(__file__) + "/icons/cbms_mv.svg")
         updating_boundaries_icon = QIcon(os.path.dirname(__file__) + "/icons/updating_boundaries.svg")
         check_and_update_icon = QIcon(os.path.dirname(__file__) + "/icons/check_and_update.svg")
         compare_boundaries_icon = QIcon(os.path.dirname(__file__) + "/icons/compare_boundaries.svg")
+        projection_finder_icon = QIcon(os.path.dirname(__file__) + "/icons/projection_finder.svg")
+        package_layers_icon = QIcon(os.path.dirname(__file__) + "/icons/package_layers.svg")
 
-        # 1. Updating of Boundaries Submenu
-        #self.updating_boundaries_menu = QMenu(u'Updating of Boundaries')
-        #self.gema_add_submenu(self.updating_boundaries_menu, updating_boundaries_icon)
+        # 1. 2027 CBMS Form 2 Map Validation Submenu
+        self.cbmsmv_menu = QMenu(u'2027 CBMS Map Validation')
+        self.gema_add_submenu(self.cbmsmv_menu, cbmsmv_icon)
 
-        #self.check_and_update_action = QAction(check_and_update_icon, "Check and Update", self.iface.mainWindow())
-        #self.check_and_update_action.triggered.connect(self.show_check_and_update_dialog)
-        #self.updating_boundaries_menu.addAction(self.check_and_update_action)
+        self.cbmsmv_action = QAction(cbmsmv_icon, "2027 CBMS MV", self.iface.mainWindow())
+        self.cbmsmv_action.triggered.connect(self.show_cbmsmv_dialog)
+        self.cbmsmv_action.setShortcut("Ctrl+Alt+D")
+        self.cbmsmv_menu.addAction(self.cbmsmv_action)
 
-        #self.comparison_panel_action = QAction(
-        #    compare_boundaries_icon, "PSA - LGU Comparison Review", self.iface.mainWindow()
-        #)
-        #self.comparison_panel_action.triggered.connect(self.show_comparison_panel)
-        #self.updating_boundaries_menu.addAction(self.comparison_panel_action)
+        # 2. Updating of Boundaries Submenu
+        self.updating_boundaries_menu = QMenu(u'Updating of Boundaries')
+        self.gema_add_submenu(self.updating_boundaries_menu, updating_boundaries_icon)
 
-        # 2. EA Delineation Submenu
+        self.check_and_update_action = QAction(check_and_update_icon, "Check and Update", self.iface.mainWindow())
+        self.check_and_update_action.triggered.connect(self.show_check_and_update_dialog)
+        self.updating_boundaries_menu.addAction(self.check_and_update_action)
+
+        self.comparison_panel_action = QAction(
+            compare_boundaries_icon, "PSA - LGU Comparison Review", self.iface.mainWindow()
+        )
+        self.comparison_panel_action.triggered.connect(self.show_comparison_panel)
+        self.updating_boundaries_menu.addAction(self.comparison_panel_action)
+
+        self.projection_finder_action = QAction(
+            projection_finder_icon, "Know Your Projection", self.iface.mainWindow()
+        )
+        self.projection_finder_action.triggered.connect(self.show_projection_finder)
+        self.updating_boundaries_menu.addAction(self.projection_finder_action)
+
+        package_style_loader_icon = QIcon(os.path.dirname(__file__) + "/icons/package_style_loader.svg")
+        self.package_style_loader_action = QAction(
+            package_style_loader_icon, "Package Style Loader", self.iface.mainWindow()
+        )
+        self.package_style_loader_action.triggered.connect(self.show_package_style_loader_dialog)
+        self.updating_boundaries_menu.addAction(self.package_style_loader_action)
+
+        # 3. EA Delineation Submenu
         self.ea_delineation_menu = QMenu(u'EA Delineation')
         self.gema_add_submenu(self.ea_delineation_menu, create_ea_icon)
 
@@ -216,34 +246,30 @@ class GMDPipeline(object):
         self.package_qfield_action.setShortcut("Ctrl+Alt+Q")
         self.ea_delineation_menu.addAction(self.package_qfield_action)
 
-        # 3. Others Submenu
-        #self.others_menu = QMenu(u'Others')
-        #self.gema_add_submenu(self.others_menu, others_icon)
 
-        #self.geometry_legacy_action = QAction(geom_toolkit_icon, "Geometry Check & Repair (Legacy)", self.iface.mainWindow())
-        #self.geometry_legacy_action.triggered.connect(self.show_geometry_legacy)
-        #self.others_menu.addAction(self.geometry_legacy_action)
+
+        # 4. Others Submenu
+        self.others_menu = QMenu(u'Others')
+        self.gema_add_submenu(self.others_menu, others_icon)
+
+        self.geometry_legacy_action = QAction(geom_toolkit_icon, "Geometry Check & Repair (Legacy)", self.iface.mainWindow())
+        self.geometry_legacy_action.triggered.connect(self.show_geometry_legacy)
+        self.others_menu.addAction(self.geometry_legacy_action)
+
+        self.package_layers_action = QAction(package_layers_icon, "Package Layers by City/Mun", self.iface.mainWindow())
+        self.package_layers_action.triggered.connect(self.show_package_layers_dialog)
+        self.others_menu.addAction(self.package_layers_action)
 
         # Gemma Toolbar (Ordered Chronologically: Check and Update -> Create EAs -> Package for QField)
         self.toolbar = self.iface.addToolBar("Gemma Toolbar")
         self.toolbar.setObjectName("Gemma Toolbar")
 
-        # 4. 2027 CBMS Form 2 Map Validation Submenu
-        self.cbmsmv_menu = QMenu(u'2027 CBMS Map Validation')
-        self.gema_add_submenu(self.cbmsmv_menu, cbmsmv_icon)
-
-        self.cbmsmv_action = QAction(cbmsmv_icon, "2027 CBMS MV", self.iface.mainWindow())
-        self.cbmsmv_action.triggered.connect(self.show_cbmsmv_dialog)
-        self.cbmsmv_action.setShortcut("Ctrl+Alt+D")
-        self.cbmsmv_menu.addAction(self.cbmsmv_action)
-        
-
         # 1. Check and Update
-        #self.check_and_update_toolbar_action = QAction(
-        #    check_and_update_icon, "Check and Update", self.iface.mainWindow()
-        #)
-        #self.check_and_update_toolbar_action.triggered.connect(self.show_check_and_update_dialog)
-        #self.toolbar.addAction(self.check_and_update_toolbar_action)
+        self.check_and_update_toolbar_action = QAction(
+            check_and_update_icon, "Check and Update", self.iface.mainWindow()
+        )
+        self.check_and_update_toolbar_action.triggered.connect(self.show_check_and_update_dialog)
+        self.toolbar.addAction(self.check_and_update_toolbar_action)
 
         # 2. EA Delineation and Merging
         self.create_ea_toolbar_action = QAction(
@@ -253,20 +279,11 @@ class GMDPipeline(object):
         self.toolbar.addAction(self.create_ea_toolbar_action)
 
         # 3. Package for QField
-        #self.package_qfield_toolbar_action = QAction(
-        #    packager_icon, "Package for QField", self.iface.mainWindow()
-        #)
-        #self.package_qfield_toolbar_action.triggered.connect(self.show_package_dialog)
-        #self.toolbar.addAction(self.package_qfield_toolbar_action)
-
-
-        # 4. 2027 CBMS Form 2 Map Validation
-        #self.package_qfield_toolbar_action = QAction(
-        #    cbmsmv_icon, "2027 CBMS MV", self.iface.mainWindow()
-        #)
-        #self.package_qfield_toolbar_action.triggered.connect(self.show_package_dialog)
-        #self.toolbar.addAction(self.package_qfield_toolbar_action)
-
+        self.package_qfield_toolbar_action = QAction(
+            packager_icon, "Package for QField", self.iface.mainWindow()
+        )
+        self.package_qfield_toolbar_action.triggered.connect(self.show_package_dialog)
+        self.toolbar.addAction(self.package_qfield_toolbar_action)
 
         # Initialize offline editing for QField packaging
         self.offline_editing = QgsOfflineEditing()
@@ -283,6 +300,20 @@ class GMDPipeline(object):
 
         if self.gema_menu is not None:
             self.iface.mainWindow().menuBar().removeAction(self.gema_menu.menuAction())
+
+        if self.projection_finder_dlg is not None:
+            try:
+                self.projection_finder_dlg.close()
+            except Exception:
+                pass
+            self.projection_finder_dlg = None
+
+        if self.package_style_loader_dlg is not None:
+            try:
+                self.package_style_loader_dlg.close()
+            except Exception:
+                pass
+            self.package_style_loader_dlg = None
 
         if self.toolbar:
             del self.toolbar
@@ -309,6 +340,68 @@ class GMDPipeline(object):
         self.geometry_legacy_dlg.show()
         self.geometry_legacy_dlg.raise_()
         self.geometry_legacy_dlg.activateWindow()
+
+
+    def show_cbmsmv_dialog(self):
+        """Open the 2027 CBMS Map Validation dialog."""
+        from .gmd_scripts.cbms_mv import show_cbmsmv_dialog
+
+        if hasattr(self, 'cbmsmv_dlg') and self.cbmsmv_dlg:
+            try:
+                import sip
+                is_deleted = sip.isdeleted(self.cbmsmv_dlg)
+            except Exception:
+                is_deleted = False
+            if not is_deleted:
+                try:
+                    if getattr(self.cbmsmv_dlg, "_is_docked", False) and getattr(self.cbmsmv_dlg, "_dock_widget", None):
+                        dock = self.cbmsmv_dlg._dock_widget
+                        try:
+                            import sip
+                            dock_deleted = sip.isdeleted(dock)
+                        except Exception:
+                            dock_deleted = False
+                        if not dock_deleted:
+                            dock.show()
+                            dock.raise_()
+                            return
+                    elif getattr(self.cbmsmv_dlg, "isVisible", lambda: False)():
+                        self.cbmsmv_dlg.showNormal()
+                        self.cbmsmv_dlg.raise_()
+                        self.cbmsmv_dlg.activateWindow()
+                        return
+                except Exception:
+                    pass
+            self.cbmsmv_dlg = None
+
+        self.cbmsmv_dlg = show_cbmsmv_dialog(
+                    self.iface,
+                    self.offline_editing,
+                    self.cbmsmv_dialog_finished
+                )
+
+
+    def cbmsmv_dialog_finished(self):
+        """Cleanup when the CBMS MV dialog is closed."""
+        self.cbmsmv_dlg = None
+
+    def show_package_layers_dialog(self):
+        """Open the Package Layers by City/Mun dialog."""
+        from .gmd_scripts.package_layers_by_citymun import PackageLayersDialog
+
+        # Guard against a stale C++ wrapper from a previously closed dialog
+        try:
+            if self.package_layers_dlg is not None:
+                self.package_layers_dlg.isVisible()
+        except RuntimeError:
+            self.package_layers_dlg = None
+
+        if self.package_layers_dlg is None:
+            self.package_layers_dlg = PackageLayersDialog(self.iface)
+
+        self.package_layers_dlg.show()
+        self.package_layers_dlg.raise_()
+        self.package_layers_dlg.activateWindow()
 
     def show_package_dialog(self):
         """
@@ -345,42 +438,6 @@ class GMDPipeline(object):
             self.offline_editing, 
             self.push_dialog_finished
         )
-
-    def show_cbmsmv_dialog(self):
-        """Open the 2027 CBMS Map Validation dialog."""
-        from .gmd_scripts.cbms_mv import show_cbmsmv_dialog
-
-        if hasattr(self, 'cbmsmv_dlg') and self.cbmsmv_dlg:
-            try:
-                import sip
-                is_deleted = sip.isdeleted(self.cbmsmv_dlg)
-            except Exception:
-                is_deleted = False
-            if not is_deleted:
-                try:
-                    if getattr(self.cbmsmv_dlg, "_is_docked", False) and getattr(self.cbmsmv_dlg, "_dock_widget", None):
-                        self.cbmsmv_dlg._dock_widget.show()
-                        self.cbmsmv_dlg._dock_widget.raise_()
-                        return
-                    else:
-                        self.cbmsmv_dlg.showNormal()
-                        self.cbmsmv_dlg.raise_()
-                        self.cbmsmv_dlg.activateWindow()
-                        return
-                except Exception:
-                    pass
-            self.cbmsmv_dlg = None
-
-        self.cbmsmv_dlg = show_cbmsmv_dialog(
-                    self.iface,
-                    self.offline_editing,
-                    self.cbmsmv_dialog_finished
-                )
-
-
-    def cbmsmv_dialog_finished(self):
-        """Cleanup when the CBMS MV dialog is closed."""
-        self.cbmsmv_dlg = None
 
     def show_check_and_update_dialog(self):
         """Open the Check and Update boundary management dialog."""
@@ -429,6 +486,24 @@ class GMDPipeline(object):
         self.ea_dlg.raise_()
         self.ea_dlg.activateWindow()
 
+    def show_projection_finder(self):
+        """Open the Know Your Projection (Projection Finder) dialog."""
+        from .gmd_scripts.projection_finder import ProjectionToolkit
+
+        try:
+            if self.projection_finder_dlg is not None:
+                self.projection_finder_dlg.isVisible()
+        except RuntimeError:
+            self.projection_finder_dlg = None
+
+        if self.projection_finder_dlg is None:
+            self.projection_finder_dlg = ProjectionToolkit(self.iface)
+
+        self.projection_finder_dlg.showNormal()
+        self.projection_finder_dlg.show()
+        self.projection_finder_dlg.raise_()
+        self.projection_finder_dlg.activateWindow()
+
     def push_dialog_finished(self):
         """
         When the push dialog is closed, make sure it's no longer
@@ -438,3 +513,24 @@ class GMDPipeline(object):
             self.push_dlg.setEnabled(False)
         except RuntimeError:
             pass
+
+    def show_package_style_loader_dialog(self):
+        """Open the Package Style Loader dialog."""
+        from .gmd_scripts.package_style_loader import show_package_style_loader_dialog
+
+        try:
+            if self.package_style_loader_dlg is not None:
+                self.package_style_loader_dlg.isVisible()
+        except RuntimeError:
+            self.package_style_loader_dlg = None
+
+        if self.package_style_loader_dlg is None:
+            self.package_style_loader_dlg = show_package_style_loader_dialog(self.iface)
+        else:
+            self.package_style_loader_dlg.showNormal()
+            self.package_style_loader_dlg.show()
+            self.package_style_loader_dlg.raise_()
+            self.package_style_loader_dlg.activateWindow()
+
+    # Alias for backward compatibility
+    show_layer_groups_styles_dialog = show_package_style_loader_dialog

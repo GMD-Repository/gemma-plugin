@@ -22,7 +22,7 @@
 """
 import os
 
-from libqfieldsync.layer import LayerSource
+from gemma_sync.layer import LayerSource
 from qgis.core import QgsMapLayer, QgsProject, QgsProperty, QgsPropertyDefinition
 from qgis.gui import QgsMapLayerConfigWidget, QgsMapLayerConfigWidgetFactory, QgsSpinBox
 from qgis.PyQt.QtWidgets import QLabel

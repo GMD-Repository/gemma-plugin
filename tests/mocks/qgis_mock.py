@@ -20,6 +20,8 @@ try:
         Polygon as ShapelyPolygon,
         MultiPolygon as ShapelyMultiPolygon,
         Point as ShapelyPoint,
+        LineString as ShapelyLineString,
+        MultiLineString as ShapelyMultiLineString,
         box as shapely_box,
     )
     HAS_SHAPELY = True
@@ -54,10 +56,30 @@ class MockGenericClass(metaclass=MockMetaClass):
     Vertical = 2
 
     def __init__(self, *args, **kwargs):
-        pass
+        self._args = args
+        self._kwargs = kwargs
+
+    def name(self):
+        return str(self._args[0]) if self._args else ""
+
+    def color(self, *args, **kwargs):
+        return self
+
+    def lightness(self):
+        return 255
+
+    def value(self):
+        return 255
 
     def setWindowTitle(self, title): pass
+    def setObjectName(self, name): self._object_name = str(name)
+    def objectName(self): return getattr(self, '_object_name', "")
+    def setWindowIcon(self, icon): pass
     def setLayout(self, layout): pass
+    def palette(self): return MockGenericClass()
+    def window(self): return self
+    def setWindowFlags(self, flags): self._window_flags = flags
+    def windowFlags(self): return getattr(self, '_window_flags', 0)
     def exec_(self): return 1
     def exec(self): return 1
     def show(self): pass
@@ -79,6 +101,8 @@ class MockGenericClass(metaclass=MockMetaClass):
     def __ror__(self, other): return self
     def __and__(self, other): return self
     def __rand__(self, other): return self
+    def __iter__(self): return iter([])
+    def __contains__(self, item): return False
 
     def __getattr__(self, name):
         if name.startswith("__"):
@@ -133,10 +157,83 @@ class QgsPointXY:
     def __repr__(self):
         return f"QgsPointXY({self._x}, {self._y})"
 
+    def __eq__(self, other):
+        if not hasattr(other, 'x') or not hasattr(other, 'y'):
+            return False
+        return math.isclose(self._x, other.x(), abs_tol=1e-7) and math.isclose(self._y, other.y(), abs_tol=1e-7)
+
 
 class QgsPolygon:
     def __init__(self):
         self._points = []
+
+
+class QgsRectangle:
+    def __init__(self, xmin=0.0, ymin=0.0, xmax=0.0, ymax=0.0):
+        if isinstance(xmin, QgsRectangle):
+            other = xmin
+            self._xmin = float(other.xMinimum())
+            self._ymin = float(other.yMinimum())
+            self._xmax = float(other.xMaximum())
+            self._ymax = float(other.yMaximum())
+        elif hasattr(xmin, 'x') and hasattr(ymin, 'x'):
+            p1, p2 = xmin, ymin
+            self._xmin = min(float(p1.x()), float(p2.x()))
+            self._xmax = max(float(p1.x()), float(p2.x()))
+            self._ymin = min(float(p1.y()), float(p2.y()))
+            self._ymax = max(float(p1.y()), float(p2.y()))
+        else:
+            try:
+                self._xmin = float(xmin)
+                self._ymin = float(ymin)
+                self._xmax = float(xmax)
+                self._ymax = float(ymax)
+            except (TypeError, ValueError):
+                self._xmin = 0.0
+                self._ymin = 0.0
+                self._xmax = 0.0
+                self._ymax = 0.0
+
+    def xMinimum(self): return self._xmin
+    def yMinimum(self): return self._ymin
+    def xMaximum(self): return self._xmax
+    def yMaximum(self): return self._ymax
+    def width(self): return max(0.0, self._xmax - self._xmin)
+    def height(self): return max(0.0, self._ymax - self._ymin)
+    def isEmpty(self): return self.width() <= 0.0 or self.height() <= 0.0
+    def isNull(self): return self.isEmpty()
+    def center(self): return QgsPointXY(self._xmin + self.width() / 2.0, self._ymin + self.height() / 2.0)
+    def setMinimal(self):
+        self._xmin = float('inf')
+        self._ymin = float('inf')
+        self._xmax = float('-inf')
+        self._ymax = float('-inf')
+    def combineExtentWith(self, other):
+        if hasattr(other, 'xMinimum'):
+            self._xmin = min(self._xmin, other.xMinimum())
+            self._ymin = min(self._ymin, other.yMinimum())
+            self._xmax = max(self._xmax, other.xMaximum())
+            self._ymax = max(self._ymax, other.yMaximum())
+    def intersects(self, other):
+        if hasattr(other, 'xMinimum'):
+            return not (self._xmax < other.xMinimum() or self._xmin > other.xMaximum() or
+                        self._ymax < other.yMinimum() or self._ymin > other.yMaximum())
+        return False
+    def contains(self, other):
+        if hasattr(other, 'xMinimum'):
+            return (self._xmin <= other.xMinimum() and self._xmax >= other.xMaximum() and
+                    self._ymin <= other.yMinimum() and self._ymax >= other.yMaximum())
+        elif hasattr(other, 'x'):
+            return (self._xmin <= other.x() <= self._xmax and self._ymin <= other.y() <= self._ymax)
+        return False
+    def grow(self, width):
+        self._xmin -= width
+        self._ymin -= width
+        self._xmax += width
+        self._ymax += width
+        return self
+    def __repr__(self):
+        return f"QgsRectangle({self._xmin}, {self._ymin}, {self._xmax}, {self._ymax})"
 
 
 class QgsGeometry:
@@ -203,6 +300,10 @@ class QgsGeometry:
             # predicate (contains, intersects, distance) answered nonsense.
             if getattr(self, '_point', None) is not None:
                 return ShapelyPoint(self._point.x(), self._point.y())
+            if getattr(self, '_polyline', None) is not None and self._polyline:
+                return ShapelyLineString([(p.x() if hasattr(p, 'x') else p[0], p.y() if hasattr(p, 'y') else p[1]) for p in self._polyline])
+            if getattr(self, '_polylines', None) is not None and self._polylines:
+                return ShapelyMultiLineString([[(p.x() if hasattr(p, 'x') else p[0], p.y() if hasattr(p, 'y') else p[1]) for p in line] for line in self._polylines])
             if hasattr(self, 'polygons') and self.polygons:
                 spolys = []
                 for poly_rings in self.polygons:
@@ -242,15 +343,36 @@ class QgsGeometry:
                 holes = [[QgsPointXY(x, y) for x, y in ring.coords] for ring in p.interiors]
                 mpolys.append([shell] + holes if holes else [shell])
             return QgsGeometry("MultiPolygon", mpolys)
-        elif stype in ("LineString", "MultiLineString"):
-            return QgsGeometry("LineString")
+        elif stype == "LineString":
+            pts = [QgsPointXY(x, y) for x, y in sg.coords]
+            return QgsGeometry.fromPolylineXY(pts)
+        elif stype == "MultiLineString":
+            polylines = [[QgsPointXY(x, y) for x, y in line.coords] for line in sg.geoms]
+            g = QgsGeometry("MultiLineString")
+            g._polylines = polylines
+            if polylines:
+                g._polyline = polylines[0]
+            return g
         elif stype == "Point":
             return QgsGeometry.fromPointXY(QgsPointXY(sg.x, sg.y))
         elif stype == "GeometryCollection":
             for geom in sg.geoms:
                 if geom.geom_type in ("Polygon", "MultiPolygon"):
                     return QgsGeometry._from_shapely(geom)
+            for geom in sg.geoms:
+                if geom.geom_type in ("LineString", "MultiLineString"):
+                    return QgsGeometry._from_shapely(geom)
         return QgsGeometry("Polygon", [])
+
+    def asPolyline(self):
+        return list(getattr(self, '_polyline', []) or [])
+
+    def asMultiPolyline(self):
+        if getattr(self, '_polylines', None) is not None:
+            return [list(pl) for pl in self._polylines]
+        if getattr(self, '_polyline', None) is not None:
+            return [list(self._polyline)]
+        return []
 
     @staticmethod
     def fromMultiPolygonXY(multipoly):
@@ -297,7 +419,13 @@ class QgsGeometry:
     def isGeosValid(self): return True
     def isMultipart(self): return self.geom_type.startswith("Multi") or (len(self.polygons or []) > 1)
     def makeValid(self): return self
-    def touches(self, other): return True
+    def touches(self, other):
+        if HAS_SHAPELY:
+            s1 = self._to_shapely()
+            s2 = other._to_shapely() if hasattr(other, '_to_shapely') else None
+            if s1 and s2:
+                return bool(s1.touches(s2))
+        return False
     def distance(self, other):
         if HAS_SHAPELY:
             s1 = self._to_shapely()
@@ -373,7 +501,16 @@ class QgsGeometry:
     def mergeLines(self): return QgsGeometry("LineString")
     def simplify(self, tol): return self
     def convertToType(self, dest_type, destructively=False): return QgsGeometry("LineString")
-    def convertToMultiType(self): return True
+    def convertToMultiType(self):
+        if not self.geom_type.startswith("Multi"):
+            self.geom_type = f"Multi{self.geom_type}"
+        return True
+    def convertGeometryCollectionToSubclass(self, subclass_type=None):
+        if self.geom_type == "GeometryCollection":
+            if getattr(self, 'polygons', None):
+                self.geom_type = "MultiPolygon" if len(self.polygons) > 1 else "Polygon"
+                return True
+        return False
     def constParts(self):
         if self.polygons:
             return [QgsGeometry("Polygon", [p]) for p in self.polygons]
@@ -423,6 +560,36 @@ class QgsGeometry:
         return 40.0
 
     def splitGeometry(self, split_line, preserve_input=False):
+        if HAS_SHAPELY:
+            try:
+                import shapely.ops
+                import shapely.geometry
+                s_geom = self._to_shapely()
+                if s_geom and not s_geom.is_empty:
+                    if isinstance(split_line, list):
+                        coords = [(p.x(), p.y()) for p in split_line]
+                        s_line = shapely.geometry.LineString(coords)
+                    elif hasattr(split_line, '_to_shapely'):
+                        s_line = split_line._to_shapely()
+                    else:
+                        s_line = None
+                    if s_line and not s_line.is_empty:
+                        split_res = shapely.ops.split(s_geom, s_line)
+                        polys = [
+                            p for p in split_res.geoms
+                            if isinstance(p, (shapely.geometry.Polygon, shapely.geometry.MultiPolygon)) and not p.is_empty and p.area > 1e-7
+                        ]
+                        if len(polys) >= 2:
+                            first_poly = polys[0]
+                            if hasattr(first_poly, 'exterior'):
+                                self.polygons = [[QgsPointXY(c[0], c[1]) for c in first_poly.exterior.coords]]
+                            else:
+                                self.polygons = [[QgsPointXY(c[0], c[1]) for c in first_poly.geoms[0].exterior.coords]]
+                            new_geoms = [QgsGeometry._from_shapely(p) for p in polys[1:]]
+                            return 0, new_geoms, []
+            except Exception:
+                pass
+
         bbox = self.boundingBox()
         mid_x = (bbox.xMinimum() + bbox.xMaximum()) / 2.0
         self.polygons = [[
@@ -441,12 +608,35 @@ class QgsGeometry:
         ]])
         return 0, [p2], []
 
+    @staticmethod
+    def polygonize(geometries):
+        if HAS_SHAPELY:
+            try:
+                import shapely.ops
+                import shapely.geometry
+                s_lines = []
+                for g in geometries:
+                    s = g._to_shapely() if hasattr(g, '_to_shapely') else None
+                    if s:
+                        s_lines.append(s)
+                if s_lines:
+                    polys = list(shapely.ops.polygonize(s_lines))
+                    if polys:
+                        mp = shapely.geometry.MultiPolygon(polys)
+                        return QgsGeometry._from_shapely(mp)
+            except Exception:
+                pass
+        return QgsGeometry("MultiPolygon", [])
+
     def voronoiDiagram(self, extent=None):
         return QgsGeometry("MultiPolygon")
 
     def centroid(self):
         c = self.boundingBox().center()
         return QgsGeometry.fromPointXY(c)
+
+    def pointOnSurface(self):
+        return self.centroid()
     def asPoint(self): return getattr(self, '_point', QgsPointXY(0.0, 0.0))
 
     def boundingBox(self):
@@ -454,6 +644,9 @@ class QgsGeometry:
             pt = self._point
             xs = [pt.x()]
             ys = [pt.y()]
+        elif getattr(self, '_polyline', None) is not None and self._polyline:
+            xs = [p.x() if hasattr(p, 'x') else p[0] for p in self._polyline]
+            ys = [p.y() if hasattr(p, 'y') else p[1] for p in self._polyline]
         elif self.polygons:
             pts = []
             def _extract_pts(obj):
@@ -485,6 +678,12 @@ class QgsGeometry:
                 def center(self): return QgsPointXY((self._x0+self._x1)/2, (self._y0+self._y1)/2)
                 def buffered(self, b): return self
                 def scale(self, factor): pass
+                def grow(self, width):
+                    self._x0 -= width
+                    self._y0 -= width
+                    self._x1 += width
+                    self._y1 += width
+                    return self
                 def contains(self, pt):
                     px = pt.x() if hasattr(pt, 'x') else pt[0]
                     py = pt.y() if hasattr(pt, 'y') else pt[1]
@@ -500,6 +699,7 @@ class QgsGeometry:
             def center(self): return QgsPointXY(5.0, 5.0)
             def buffered(self, b): return self
             def scale(self, factor): pass
+            def grow(self, width): return self
             def contains(self, pt): return True
         return MockBox()
 
@@ -522,6 +722,27 @@ class QgsField:
     def length(self): return self._length
     def precision(self): return self._precision
     def comment(self): return self._comment
+
+    def convertCompatible(self, val):
+        if val is None:
+            return None
+        t = self._type
+        if t in (1, 10, getattr(MockQVariant, "String", 1)) or str(t).lower() in ("string", "qstring") or self._typeName.lower() in ("string", "text", "varchar"):
+            s = str(val)
+            if self._length > 0:
+                s = s[:self._length]
+            return s
+        if t in (2, 4, getattr(MockQVariant, "Int", 2), getattr(MockQVariant, "LongLong", 4)) or str(t).lower() in ("int", "integer"):
+            try:
+                return int(round(float(val)))
+            except Exception:
+                return None
+        if t in (3, 6, getattr(MockQVariant, "Double", 3)) or str(t).lower() in ("double", "float", "real"):
+            try:
+                return float(val)
+            except Exception:
+                return None
+        return val
 
 
 class QgsFields:
@@ -550,6 +771,17 @@ class QgsFields:
         names = self.names()
         return names.index(name) if name in names else -1
 
+    def lookupField(self, name):
+        name_lower = str(name).lower()
+        for i, f in enumerate(self._fields):
+            fn = f.name() if hasattr(f, 'name') else str(f)
+            if fn.lower() == name_lower:
+                return i
+        return -1
+
+    def toList(self):
+        return list(self._fields)
+
     def count(self):
         return len(self._fields)
 
@@ -564,16 +796,21 @@ class QgsFields:
 
 
 class QgsFeature:
-    def __init__(self, fields=None):
+    def __init__(self, fields=None, id=None):
         if isinstance(fields, QgsFeature):
             self._attributes = list(fields._attributes)
             self._geometry = fields._geometry
             self._id = fields._id
             self._fields = fields._fields
+        elif isinstance(fields, int):
+            self._attributes = []
+            self._geometry = None
+            self._id = fields
+            self._fields = None
         else:
             self._attributes = []
             self._geometry = None
-            self._id = 0
+            self._id = id if id is not None else 0
             self._fields = fields
 
     def isValid(self):
@@ -691,6 +928,40 @@ class MockSignal:
                 pass
 
 
+class QgsCoordinateReferenceSystem:
+    def __init__(self, authid="EPSG:4326"):
+        if isinstance(authid, QgsCoordinateReferenceSystem):
+            self._authid = authid.authid()
+        else:
+            self._authid = str(authid)
+
+    def authid(self):
+        return self._authid
+
+    def isValid(self):
+        return bool(self._authid)
+
+    def isGeographic(self):
+        aid = str(self._authid).upper()
+        return "4326" in aid or "CRS84" in aid or "GEOG" in aid
+
+    def __repr__(self):
+        return f"<QgsCoordinateReferenceSystem: {self._authid}>"
+
+
+class QgsCoordinateTransform:
+    def __init__(self, source_crs=None, dest_crs=None, context=None):
+        self._source_crs = source_crs
+        self._dest_crs = dest_crs
+        self._context = context
+
+    def transform(self, pt):
+        return pt
+
+    def transformBoundingBox(self, rect):
+        return rect
+
+
 _MOCK_LAYER_CACHE = {}
 
 
@@ -699,6 +970,7 @@ class QgsVectorLayer:
         self._path = path
         self._name = name
         self._provider = provider
+        self._id = f"{name}_{id(self)}"
         self._fields = QgsFields()
         self._features = []
         self._selected_fids = set()
@@ -718,6 +990,7 @@ class QgsVectorLayer:
 
     def name(self): return self._name
     def setName(self, name): self._name = name
+    def source(self): return getattr(self, '_path', "")
     def isValid(self): return True
     def isEditable(self): return False
     def rollBack(self): return True
@@ -733,11 +1006,29 @@ class QgsVectorLayer:
     def extent(self): return MockGenericClass()
     def sourceExtent(self): return self.extent()
     def getFeatures(self, request=None): return iter(self._features)
-    def crs(self): return MockGenericClass()
+    def crs(self):
+        authid = "EPSG:4326"
+        p = str(self._path).upper()
+        if "CRS=" in p:
+            parts = p.split("CRS=")
+            if len(parts) > 1:
+                authid = parts[1].split("&")[0].split(";")[0]
+        crs_obj = MockGenericClass()
+        crs_obj.authid = lambda: authid
+        crs_obj.isValid = lambda: True
+        return crs_obj
     def sourceCrs(self): return self.crs()
-    def wkbType(self): return 3  # Polygon
-    def geometryType(self): return 2  # PolygonGeometry
-    def id(self): return f"layer_{self._name}"
+    def wkbType(self):
+        p = str(self._path).lower()
+        if "point" in p: return 1
+        if "line" in p: return 2
+        return 3  # Polygon
+    def geometryType(self):
+        p = str(self._path).lower()
+        if "point" in p: return 0  # PointGeometry
+        if "line" in p: return 1  # LineGeometry
+        return 2  # PolygonGeometry
+    def id(self): return getattr(self, '_id', f"layer_{self._name}")
     def setSubsetString(self, string):
         self._subset_string = string
         return True
@@ -776,12 +1067,65 @@ class QgsVectorLayer:
             if feat.id() == fid:
                 return feat
         return QgsFeature(self._fields)
+    def addFeature(self, feat):
+        return self.dataProvider().addFeatures([feat])
+    def changeGeometry(self, fid, geom):
+        for feat in self._features:
+            if feat.id() == fid:
+                feat.setGeometry(geom)
+                return True
+        return False
     def changeAttributeValue(self, fid, field_idx, value):
         for feat in self._features:
             if feat.id() == fid:
                 feat.setAttribute(field_idx, value)
                 return True
         return False
+    def setEditorWidgetSetup(self, field_idx, setup):
+        if not hasattr(self, '_editor_widget_setups'):
+            self._editor_widget_setups = {}
+        self._editor_widget_setups[field_idx] = setup
+    def editorWidgetSetup(self, field_idx):
+        if not hasattr(self, '_editor_widget_setups'):
+            self._editor_widget_setups = {}
+        return self._editor_widget_setups.get(field_idx, QgsEditorWidgetSetup())
+    def editFormConfig(self):
+        if not hasattr(self, '_edit_form_config') or self._edit_form_config is None:
+            self._edit_form_config = QgsEditFormConfig()
+        return self._edit_form_config
+    def setEditFormConfig(self, config):
+        self._edit_form_config = config
+    def loadNamedStyle(self, uri, categories=None):
+        return ("Success", True)
+    def emitStyleChanged(self):
+        pass
+    def setReadOnly(self, readonly=True):
+        self._layer_readonly = readonly
+    def isReadOnly(self):
+        return getattr(self, '_layer_readonly', False)
+
+
+class QgsEditFormConfig:
+    def __init__(self):
+        self._read_only = {}
+
+    def setReadOnly(self, field_idx, read_only=True):
+        self._read_only[field_idx] = read_only
+
+    def readOnly(self, field_idx):
+        return self._read_only.get(field_idx, False)
+
+
+class QgsEditorWidgetSetup:
+    def __init__(self, widget_type="", config=None):
+        self._type = widget_type
+        self._config = config or {}
+
+    def type(self):
+        return self._type
+
+    def config(self):
+        return self._config
 
 
 class QgsProcessingFeedback:
@@ -835,39 +1179,14 @@ try:
         QgsProcessingFeedback = qgis.core.QgsProcessingFeedback
     if hasattr(qgis.core, "QgsVectorLayer"):
         QgsVectorLayer = qgis.core.QgsVectorLayer
+    if hasattr(qgis.core, "QgsEditorWidgetSetup"):
+        QgsEditorWidgetSetup = qgis.core.QgsEditorWidgetSetup
 except Exception:
     pass
 
 
 class QgsProcessingException(Exception):
     pass
-
-
-class QgsProcessingParameterDefinition:
-    File = 0
-    Folder = 1
-    TypeVectorPolygon = 0
-    TypeVectorPoint = 1
-    TypeVectorAnyGeometry = 2
-    Any = 0
-
-    def __init__(self, name="", description="", *args, **kwargs):
-        self._name = name
-        self._description = description
-
-    def name(self):
-        return self._name
-
-    def description(self):
-        return self._description
-
-
-class QgsProcessingParameterFile(QgsProcessingParameterDefinition): pass
-class QgsProcessingParameterFeatureSink(QgsProcessingParameterDefinition): pass
-class QgsProcessingParameterFeatureSource(QgsProcessingParameterDefinition): pass
-class QgsProcessingParameterField(QgsProcessingParameterDefinition): pass
-class QgsProcessingParameterString(QgsProcessingParameterDefinition): pass
-class QgsProcessingParameterBoolean(QgsProcessingParameterDefinition): pass
 
 
 class QgsSpatialIndex:
@@ -886,7 +1205,20 @@ class QgsSpatialIndex:
             self.addFeature(f)
 
     def intersects(self, bbox):
-        return list(self._features.keys())
+        if not hasattr(bbox, 'xMinimum'):
+            return list(self._features.keys())
+        results = []
+        for fid, feat in self._features.items():
+            geom = feat.geometry() if hasattr(feat, 'geometry') else None
+            if geom and hasattr(geom, 'boundingBox'):
+                fb = geom.boundingBox()
+                if fb and hasattr(fb, 'xMinimum'):
+                    if not (bbox.xMaximum() < fb.xMinimum() or bbox.xMinimum() > fb.xMaximum() or
+                            bbox.yMaximum() < fb.yMinimum() or bbox.yMinimum() > fb.yMaximum()):
+                        results.append(fid)
+                    continue
+            results.append(fid)
+        return results
 
 
 class QgsProject:
@@ -903,6 +1235,26 @@ class QgsProject:
 
     def fileName(self):
         return ""
+
+    def clear(self):
+        self._layers.clear()
+
+    def addMapLayer(self, layer, addToLegend=True):
+        if layer:
+            lid = getattr(layer, 'id', None)
+            lid = lid() if callable(lid) else (lid or getattr(layer, '_id', str(id(layer))))
+            self._layers[lid] = layer
+            return layer
+        return None
+
+    def mapLayersByName(self, name):
+        return [lyr for lyr in self._layers.values() if hasattr(lyr, 'name') and (lyr.name() if callable(lyr.name) else lyr.name) == name]
+
+    def mapLayers(self):
+        return dict(self._layers)
+
+    def crs(self):
+        return QgsCoordinateReferenceSystem("EPSG:4326")
 
     def homePath(self):
         return ""
@@ -963,6 +1315,68 @@ class QgsVectorFileWriter:
 
 
 
+class QgsProcessingParameterDefinition:
+    def __init__(self, name="", description="", *args, **kwargs):
+        self._name = str(name)
+        self._description = str(description)
+        self._metadata = {}
+
+    def name(self):
+        return self._name
+
+    def description(self):
+        return self._description
+
+    def setMetadata(self, metadata):
+        self._metadata = metadata or {}
+
+    def metadata(self):
+        return self._metadata
+
+
+class QgsProcessingParameterMultipleLayers(QgsProcessingParameterDefinition):
+    pass
+
+
+class QgsProcessingParameterEnum(QgsProcessingParameterDefinition):
+    def __init__(self, name="", description="", options=None, defaultValue=0, optional=False, *args, **kwargs):
+        super().__init__(name, description, *args, **kwargs)
+        self._options = options or []
+        self._default_value = defaultValue
+        self._optional = optional
+
+    def defaultValue(self):
+        return self._default_value
+
+    def options(self):
+        return self._options
+
+
+class QgsProcessingParameterVectorLayer(QgsProcessingParameterDefinition):
+    pass
+
+
+class QgsProcessingParameterFeatureSink(QgsProcessingParameterDefinition):
+    pass
+
+
+class QgsProcessingParameterFile(QgsProcessingParameterDefinition):
+    pass
+
+
+class QgsProcessingParameterString(QgsProcessingParameterDefinition):
+    pass
+
+
+class QgsProcessingParameterBoolean(QgsProcessingParameterDefinition):
+    pass
+
+
+class QgsProcessingParameterNumber(QgsProcessingParameterDefinition):
+    Integer = 0
+    Double = 1
+
+
 class QgsProcessingAlgorithm:
     def __init__(self, *args, **kwargs):
         self._parameters = {}
@@ -989,7 +1403,7 @@ class QgsProcessingAlgorithm:
     def parameterDefinition(self, name):
         if not hasattr(self, "_parameters"):
             self._parameters = {}
-        return self._parameters.get(name, MockGenericClass())
+        return self._parameters.get(name, None)
 
 
     def parameterAsLayerList(self, parameters, name, context):
@@ -1086,6 +1500,15 @@ class QgsProject:
     def removeMapLayer(self, layer_id):
         self._layers.pop(layer_id, None)
 
+    def clear(self):
+        self._layers.clear()
+
+    def mapLayersByName(self, name):
+        return [l for l in self._layers.values() if hasattr(l, 'name') and (l.name() if callable(l.name) else l.name) == name]
+
+    def crs(self):
+        return QgsCoordinateReferenceSystem("EPSG:4326")
+
     def removeAllMapLayers(self):
         self._layers.clear()
 
@@ -1161,6 +1584,12 @@ class MockQt(metaclass=MockMetaClass):
     UserRole = 32
     Horizontal = 1
     Vertical = 2
+    Window = 0x00000001
+    Dialog = 0x00000002 | 0x00000001
+    WindowTitleHint = 0x00001000
+    WindowMinimizeButtonHint = 0x00004000
+    WindowMaximizeButtonHint = 0x00008000
+    WindowCloseButtonHint = 0x08000000
 
 
 class MockQCoreApplication:
@@ -1194,7 +1623,20 @@ class MockQObject:
 
 
 class MockQWidget(MockGenericClass):
-    def __init__(self, parent=None): super().__init__()
+    def __init__(self, parent=None):
+        super().__init__()
+        self._visible = True
+    def setVisible(self, visible): self._visible = bool(visible)
+    def isVisible(self): return getattr(self, '_visible', True)
+    def show(self): self.setVisible(True)
+    def hide(self): self.setVisible(False)
+    def setObjectName(self, name): self._object_name = str(name)
+    def objectName(self): return getattr(self, '_object_name', "")
+    def setWindowFlags(self, flags): self._window_flags = flags
+    def windowFlags(self): return getattr(self, '_window_flags', 0)
+    def setWindowIcon(self, icon): pass
+    def palette(self): return MockGenericClass()
+    def window(self): return self
 
 
 class MockQDialog(MockQWidget): pass
@@ -1314,13 +1756,13 @@ def setup_qgis_mock_if_needed():
                 except Exception as e:
                     print(f"[QGIS Native Init Warning]: {e}")
 
-            global QgsProcessingContext, QgsProcessingFeedback, QgsVectorLayer, QgsGeometry, QgsFeature, QgsFields, QgsPointXY, QgsWkbTypes, QgsProject, QgsFeatureSink, QgsSpatialIndex, QgsFeatureRequest, QgsProcessingException, QgsProcessingUtils, QVariant
+            global QgsProcessingContext, QgsProcessingFeedback, QgsVectorLayer, QgsGeometry, QgsFeature, QgsFields, QgsPointXY, QgsWkbTypes, QgsProject, QgsFeatureSink, QgsSpatialIndex, QgsFeatureRequest, QgsProcessingException, QgsProcessingUtils, QVariant, QgsRectangle
             for attr_name in [
                 "QgsProcessingContext", "QgsProcessingFeedback", "QgsVectorLayer",
                 "QgsGeometry", "QgsFeature", "QgsFields", "QgsField", "QgsPointXY",
                 "QgsWkbTypes", "QgsProject", "QgsFeatureSink", "QgsSpatialIndex",
                 "QgsFeatureRequest", "QgsProcessingException", "QgsProcessingUtils",
-                "QVariant"
+                "QVariant", "QgsRectangle"
             ]:
                 if hasattr(qgis.core, attr_name):
                     val = getattr(qgis.core, attr_name)
@@ -1329,6 +1771,10 @@ def setup_qgis_mock_if_needed():
             return
     except ImportError:
         pass
+
+    # If mock environment is already initialized, do not re-create mock classes
+    if "qgis" in sys.modules and isinstance(sys.modules.get("qgis"), DynamicMockModule):
+        return
 
     # Create dynamic mock modules for non-QGIS Python environment
     qgis_mod = DynamicMockModule("qgis")
@@ -1343,6 +1789,7 @@ def setup_qgis_mock_if_needed():
 
     # Explicit Core attributes
     core_mod.QgsPointXY = QgsPointXY
+    core_mod.QgsRectangle = QgsRectangle
     core_mod.QgsPolygon = QgsPolygon
     core_mod.QgsGeometry = QgsGeometry
     core_mod.QgsField = QgsField
@@ -1355,39 +1802,61 @@ def setup_qgis_mock_if_needed():
     core_mod.QgsProcessingException = QgsProcessingException
     core_mod.QgsProcessingAlgorithm = QgsProcessingAlgorithm
     core_mod.QgsProcessingLayerPostProcessorInterface = MockGenericClass
-    core_mod.QgsProcessingParameterDefinition = QgsProcessingParameterDefinition
-    core_mod.QgsProcessingParameterFile = QgsProcessingParameterFile
-    core_mod.QgsProcessingParameterFeatureSink = QgsProcessingParameterFeatureSink
-    core_mod.QgsProcessingParameterFeatureSource = QgsProcessingParameterFeatureSource
-    core_mod.QgsProcessingParameterField = QgsProcessingParameterField
-    core_mod.QgsProcessingParameterString = QgsProcessingParameterString
-    core_mod.QgsProcessingParameterBoolean = QgsProcessingParameterBoolean
     core_mod.QgsProject = QgsProject
     core_mod.QgsApplication = QgsApplication
     core_mod.QgsWkbTypes = QgsWkbTypes
     core_mod.QgsVectorFileWriter = QgsVectorFileWriter
+    core_mod.QgsEditorWidgetSetup = QgsEditorWidgetSetup
+    core_mod.QgsEditFormConfig = QgsEditFormConfig
+    core_mod.QgsProcessingParameterDefinition = QgsProcessingParameterDefinition
+    core_mod.QgsProcessingParameterMultipleLayers = QgsProcessingParameterMultipleLayers
+    core_mod.QgsProcessingParameterEnum = QgsProcessingParameterEnum
+    core_mod.QgsProcessingParameterVectorLayer = QgsProcessingParameterVectorLayer
+    core_mod.QgsProcessingParameterFeatureSink = QgsProcessingParameterFeatureSink
+    core_mod.QgsProcessingParameterFile = QgsProcessingParameterFile
+    core_mod.QgsProcessingParameterString = QgsProcessingParameterString
+    core_mod.QgsProcessingParameterBoolean = QgsProcessingParameterBoolean
+    core_mod.QgsProcessingParameterNumber = QgsProcessingParameterNumber
+    core_mod.QgsCoordinateReferenceSystem = QgsCoordinateReferenceSystem
+    core_mod.QgsCoordinateTransform = QgsCoordinateTransform
 
     # PyQt attributes
     class MockQWidget:
         def __init__(self, parent=None, *args, **kwargs):
             self._parent = parent
             self._enabled = True
+            self._visible = True
         def setParent(self, parent): self._parent = parent
         def parent(self): return self._parent
         def setEnabled(self, enabled): self._enabled = bool(enabled)
         def isEnabled(self): return bool(self._enabled)
+        def setVisible(self, visible): self._visible = bool(visible)
+        def isVisible(self): return getattr(self, '_visible', True)
         def setWindowTitle(self, title): pass
+        def setObjectName(self, name): self._object_name = str(name)
+        def objectName(self): return getattr(self, '_object_name', "")
         def setLayout(self, layout): pass
+        def setSizePolicy(self, *args, **kwargs): pass
+        def sizePolicy(self): return MockGenericClass()
         def setMinimumSize(self, *args): pass
         def setMinimumWidth(self, *args): pass
         def setMinimumHeight(self, *args): pass
         def setMaximumHeight(self, *args): pass
         def setFixedHeight(self, *args): pass
+        def setFixedWidth(self, *args): pass
+        def setFixedSize(self, *args): pass
         def resize(self, *args): pass
-        def show(self): pass
-        def hide(self): pass
+        def show(self): self.setVisible(True)
+        def hide(self): self.setVisible(False)
         def setStyleSheet(self, style): pass
         def setFont(self, font): pass
+        def setToolTip(self, text): self._tooltip = str(text)
+        def toolTip(self): return getattr(self, '_tooltip', "")
+        def setWindowFlags(self, flags): self._window_flags = flags
+        def windowFlags(self): return getattr(self, '_window_flags', 0)
+        def setWindowIcon(self, icon): pass
+        def palette(self): return MockGenericClass()
+        def window(self): return self
 
     class MockQDialog(MockQWidget):
         def exec_(self): return 1
@@ -1416,7 +1885,10 @@ def setup_qgis_mock_if_needed():
             super().__init__(parent)
             self._value = 0
             self._range = (0, 99999)
-        def setValue(self, v): self._value = int(v)
+            self.valueChanged = MockSignal()
+        def setValue(self, v):
+            self._value = int(v)
+            self.valueChanged.emit(self._value)
         def value(self): return int(self._value)
         def setRange(self, min_v, max_v): self._range = (min_v, max_v)
         def setToolTip(self, tip): pass
@@ -1426,11 +1898,349 @@ def setup_qgis_mock_if_needed():
             super().__init__(parent)
             self._value = 0.0
             self._range = (0.0, 99999.0)
-        def setValue(self, v): self._value = float(v)
+            self.valueChanged = MockSignal()
+        def setValue(self, v):
+            self._value = float(v)
+            self.valueChanged.emit(self._value)
         def value(self): return float(self._value)
         def setRange(self, min_v, max_v): self._range = (min_v, max_v)
         def setSingleStep(self, step): pass
+        def setDecimals(self, d): pass
         def setToolTip(self, tip): pass
+
+    class MockQComboBox(MockQWidget):
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self._items = []
+            self._currentIndex = 0
+            self._enabled = True
+            self.currentIndexChanged = MockSignal()
+
+        def addItem(self, text, userData=None):
+            self._items.append((str(text), userData))
+
+        def addItems(self, texts):
+            for t in texts:
+                self.addItem(t)
+
+        def clear(self):
+            self._items.clear()
+            self._currentIndex = 0
+
+        def count(self):
+            return len(self._items)
+
+        def currentText(self):
+            if 0 <= self._currentIndex < len(self._items):
+                return self._items[self._currentIndex][0]
+            return ""
+
+        def currentData(self):
+            if 0 <= self._currentIndex < len(self._items):
+                return self._items[self._currentIndex][1]
+            return None
+
+        def itemText(self, idx):
+            if 0 <= idx < len(self._items):
+                return self._items[idx][0]
+            return ""
+
+        def itemData(self, idx):
+            if 0 <= idx < len(self._items):
+                return self._items[idx][1]
+            return None
+
+        def currentIndex(self):
+            return self._currentIndex
+
+        def setCurrentIndex(self, idx):
+            self._currentIndex = idx
+            self.currentIndexChanged.emit(idx)
+
+        def setCurrentText(self, text):
+            for i, (t, _) in enumerate(self._items):
+                if t == text:
+                    self.setCurrentIndex(i)
+                    break
+
+        def setEnabled(self, enabled):
+            self._enabled = bool(enabled)
+
+        def isEnabled(self):
+            return self._enabled
+
+        def setToolTip(self, tip):
+            self._tooltip = str(tip)
+
+        def toolTip(self):
+            return getattr(self, '_tooltip', "")
+
+        def setStyleSheet(self, style):
+            self._style = style
+
+    class MockQPushButton(MockQWidget):
+        def __init__(self, text="", parent=None):
+            super().__init__(parent)
+            self._text = str(text)
+            self._enabled = True
+            self.clicked = MockSignal()
+
+        def text(self):
+            return self._text
+
+        def setText(self, text):
+            self._text = str(text)
+
+        def setEnabled(self, enabled):
+            self._enabled = bool(enabled)
+
+        def isEnabled(self):
+            return self._enabled
+
+        def setToolTip(self, tip):
+            self._tooltip = str(tip)
+
+        def toolTip(self):
+            return getattr(self, '_tooltip', "")
+
+        def click(self):
+            if self._enabled:
+                self.clicked.emit()
+
+        def setStyleSheet(self, style):
+            self._style = style
+
+        def styleSheet(self):
+            return getattr(self, '_style', "")
+
+        def setIcon(self, icon): pass
+        def setIconSize(self, size): pass
+        def setCursor(self, cursor): pass
+
+    class MockQToolButton(MockQPushButton):
+        def __init__(self, parent=None):
+            super().__init__("", parent)
+            self._checkable = False
+            self._checked = False
+
+        def setCheckable(self, checkable):
+            self._checkable = bool(checkable)
+
+        def isCheckable(self):
+            return self._checkable
+
+        def setChecked(self, checked):
+            self._checked = bool(checked)
+
+        def isChecked(self):
+            return self._checked
+
+    class MockQTextEdit(MockQWidget):
+        def __init__(self, text="", parent=None):
+            super().__init__(parent)
+            self._text = str(text) if text else ""
+        def append(self, text):
+            if self._text:
+                self._text += "\n" + str(text)
+            else:
+                self._text = str(text)
+        def toPlainText(self):
+            return self._text
+        def setPlainText(self, text):
+            self._text = str(text)
+        def clear(self):
+            self._text = ""
+        def setReadOnly(self, ro):
+            self._read_only = ro
+        def isReadOnly(self):
+            return self._read_only
+
+    class MockQTabBar(MockQWidget):
+        def setElideMode(self, mode): pass
+        def setUsesScrollButtons(self, use): pass
+
+    class MockQTabWidget(MockQWidget):
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self._tabs = []  # list of (widget, text)
+            self._current_index = -1
+            self._tab_bar = MockQTabBar(self)
+            self.currentChanged = MockSignal()
+
+        def tabBar(self):
+            return self._tab_bar
+
+        def addTab(self, widget, text=""):
+            self._tabs.append((widget, str(text)))
+            if self._current_index == -1:
+                self._current_index = 0
+                self.currentChanged.emit(0)
+            return len(self._tabs) - 1
+
+        def insertTab(self, index, widget, text=""):
+            self._tabs.insert(index, (widget, str(text)))
+            if self._current_index == -1:
+                self._current_index = 0
+                self.currentChanged.emit(0)
+            return index
+
+        def currentIndex(self):
+            return self._current_index
+
+        def setCurrentIndex(self, index):
+            if index != self._current_index:
+                self._current_index = index
+                self.currentChanged.emit(index)
+
+        def currentWidget(self):
+            if 0 <= self._current_index < len(self._tabs):
+                return self._tabs[self._current_index][0]
+            return None
+
+        def widget(self, index):
+            if 0 <= index < len(self._tabs):
+                return self._tabs[index][0]
+            return None
+
+        def count(self):
+            return len(self._tabs)
+
+        def tabText(self, index):
+            if 0 <= index < len(self._tabs):
+                return self._tabs[index][1]
+            return ""
+
+        def setTabText(self, index, text):
+            if 0 <= index < len(self._tabs):
+                w, _ = self._tabs[index]
+                self._tabs[index] = (w, str(text))
+
+        def setTabEnabled(self, index, enabled): pass
+        def setTabToolTip(self, index, tip): pass
+
+    class MockQTableWidgetItem:
+        def __init__(self, text=""):
+            self._text = str(text)
+            self._bg = None
+            self._fg = None
+            self._alignment = None
+
+        def text(self):
+            return self._text
+
+        def setText(self, text):
+            self._text = str(text)
+
+        def setBackground(self, bg):
+            self._bg = bg
+
+        def background(self):
+            return self._bg
+
+        def setForeground(self, fg):
+            self._fg = fg
+
+        def foreground(self):
+            return self._fg
+
+        def setTextAlignment(self, align):
+            self._alignment = align
+
+        def font(self):
+            return MockGenericClass()
+
+        def setFont(self, font): pass
+
+        def setData(self, role, value):
+            if not hasattr(self, '_data'):
+                self._data = {}
+            self._data[role] = value
+
+        def setToolTip(self, tip):
+            self._tooltip = str(tip)
+
+        def toolTip(self):
+            return getattr(self, '_tooltip', "")
+
+        def data(self, role):
+            if not hasattr(self, '_data'):
+                self._data = {}
+            return self._data.get(role, None)
+
+    class MockQTableWidget(MockQWidget):
+        def __init__(self, rows=0, cols=0, parent=None):
+            super().__init__(parent)
+            self._rowCount = rows
+            self._columnCount = cols
+            self._items = {}
+            self._cellWidgets = {}
+            self._horizontalHeader = MockGenericClass()
+            self.cellDoubleClicked = MockSignal()
+            self.cellClicked = MockSignal()
+
+        def setRowCount(self, count):
+            self._rowCount = count
+
+        def rowCount(self):
+            return self._rowCount
+
+        def setColumnCount(self, count):
+            self._columnCount = count
+
+        def columnCount(self):
+            return self._columnCount
+
+        def setItem(self, row, col, item):
+            self._items[(row, col)] = item
+
+        def item(self, row, col):
+            return self._items.get((row, col), None)
+
+        def setCellWidget(self, row, col, widget):
+            self._cellWidgets[(row, col)] = widget
+
+        def cellWidget(self, row, col):
+            return self._cellWidgets.get((row, col), None)
+
+        def setHorizontalScrollBarPolicy(self, policy): pass
+        def setVerticalScrollBarPolicy(self, policy): pass
+
+        NoEditTriggers = 0
+        SelectRows = 1
+
+        def horizontalHeader(self):
+            return self._horizontalHeader
+
+        def verticalHeader(self):
+            return self._horizontalHeader
+
+        def resizeColumnsToContents(self): pass
+        def columnWidth(self, col):
+            return getattr(self, '_col_widths', {}).get(col, 100)
+        def setColumnWidth(self, col, width):
+            if not hasattr(self, '_col_widths'):
+                self._col_widths = {}
+            self._col_widths[col] = width
+        def viewport(self):
+            m = MockGenericClass()
+            m.width = lambda: 800
+            return m
+        def setHorizontalHeaderLabels(self, labels):
+            self._headerLabels = list(labels)
+        def horizontalHeaderItem(self, col):
+            if hasattr(self, '_headerLabels') and 0 <= col < len(self._headerLabels):
+                return MockQTableWidgetItem(self._headerLabels[col])
+            return MockQTableWidgetItem("")
+        def setEditTriggers(self, triggers): pass
+        def setSelectionBehavior(self, behavior): pass
+        def setAlternatingRowColors(self, val): pass
+        def setMinimumHeight(self, h): pass
+        def setSizePolicy(self, h, v): pass
+        def setHorizontalScrollBarPolicy(self, policy): pass
+        def setVerticalScrollBarPolicy(self, policy): pass
+        def columnWidth(self, col): return 100
+        def setColumnWidth(self, col, w): pass
+        def viewport(self): return MockGenericClass()
 
     qtcore_mod.QCoreApplication = MockQCoreApplication
     qtcore_mod.QThread = MockQThread
@@ -1444,6 +2254,13 @@ def setup_qgis_mock_if_needed():
     qtgui_mod.QCheckBox = MockQCheckBox
     qtgui_mod.QSpinBox = MockQSpinBox
     qtgui_mod.QDoubleSpinBox = MockQDoubleSpinBox
+    qtgui_mod.QComboBox = MockQComboBox
+    qtgui_mod.QPushButton = MockQPushButton
+    qtgui_mod.QToolButton = MockQToolButton
+    qtgui_mod.QTabWidget = MockQTabWidget
+    qtgui_mod.QTableWidget = MockQTableWidget
+    qtgui_mod.QTableWidgetItem = MockQTableWidgetItem
+    qtgui_mod.QTextEdit = MockQTextEdit
 
     gui_mod.QgsMapLayerComboBox = QgsMapLayerComboBox
 
@@ -1499,6 +2316,13 @@ def setup_qgis_mock_if_needed():
         pyqt5_qtgui_mod.QCheckBox = MockQCheckBox
         pyqt5_qtgui_mod.QSpinBox = MockQSpinBox
         pyqt5_qtgui_mod.QDoubleSpinBox = MockQDoubleSpinBox
+        pyqt5_qtgui_mod.QComboBox = MockQComboBox
+        pyqt5_qtgui_mod.QPushButton = MockQPushButton
+        pyqt5_qtgui_mod.QToolButton = MockQToolButton
+        pyqt5_qtgui_mod.QTabWidget = MockQTabWidget
+        pyqt5_qtgui_mod.QTableWidget = MockQTableWidget
+        pyqt5_qtgui_mod.QTableWidgetItem = MockQTableWidgetItem
+        pyqt5_qtgui_mod.QTextEdit = MockQTextEdit
 
         pyqt5_mod.QtCore = pyqt5_qtcore_mod
         pyqt5_mod.QtWidgets = pyqt5_qtgui_mod

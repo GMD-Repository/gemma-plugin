@@ -858,6 +858,176 @@ class TestEAMergeProcessor(unittest.TestCase):
         del ea_layer, repl_layer, processor, result, out_layer
         gc.collect()
 
+    def test_processor_runs_without_replacement_layers(self):
+        """Verify that EAMergeProcessor runs successfully when no replacement layers are provided."""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            processor = EAMergeProcessor(
+                ea_layer=self.ea_layer,
+                replacement_layers=[],
+                output_dir=tmpdir,
+            )
+            result = processor.run()
+            self.assertTrue(result.success, f"Merge failed: {result.error_message}")
+            self.assertEqual(result.summary.replacement_layer_count, 0)
+            self.assertEqual(result.summary.replacement_feature_count, 0)
+            self.assertEqual(result.summary.modified_ea_count, 0)
+            self.assertEqual(result.summary.overall_status, "PASS")
+
+            out_layer = result.output_layer
+            self.assertIsNotNone(out_layer)
+            # Both original features preserved
+            self.assertEqual(out_layer.featureCount(), 2)
+            eans = [f.attribute("ean") for f in out_layer.getFeatures()]
+            self.assertIn("001", eans)
+            self.assertIn("002", eans)
+
+            del processor, result, out_layer
+            gc.collect()
+
+    def test_source_year_written_as_whole_number_in_excel(self):
+        """Verify that Source Year (sy) with decimals like 2024.0 is written as whole number 2024 in Excel."""
+        from references.create_enumeration_area.helpers.earf_writer import EARFWriter
+        import openpyxl
+
+        ea_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "01728001_ea", "memory")
+        pr = ea_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("GEOCODE", QVariant.String),
+            QgsField("ean", QVariant.String),
+            QgsField("barangay", QVariant.String),
+            QgsField("hhcount", QVariant.Double),
+            QgsField("bldgcount", QVariant.Int),
+            QgsField("sy", QVariant.Double),  # Sy stored as double/float 2024.0
+        ])
+        ea_layer.updateFields()
+
+        f = QgsFeature(ea_layer.fields())
+        f.setGeometry(make_square(0, 0, 100))
+        f.setAttributes(["01728001", "001000", "Alzate", 100.0, 20, 2024.0])
+        pr.addFeatures([f])
+        ea_layer.updateExtents()
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            excel_path = os.path.join(tmpdir, "test_sy.xlsx")
+            writer = EARFWriter(
+                layer=ea_layer,
+                geo_code="01728",
+                citymun="Bangar",
+                output_path=excel_path,
+            )
+            ok = writer.write()
+            self.assertTrue(ok)
+
+            wb = openpyxl.load_workbook(excel_path)
+            ws = wb.active
+            # Find data row for EA 001000 (col D == '001000')
+            ea_row = None
+            for r in range(5, ws.max_row + 1):
+                if ws.cell(row=r, column=4).value == "001000":
+                    ea_row = r
+                    break
+            self.assertIsNotNone(ea_row)
+
+            # Col 13 is Source Year
+            sy_cell = ws.cell(row=ea_row, column=13)
+            self.assertEqual(sy_cell.value, 2024)
+            self.assertIsInstance(sy_cell.value, int)
+            self.assertEqual(sy_cell.number_format, "0")
+            self.assertNotIn(".0", str(sy_cell.value))
+
+            wb.close()
+            del ea_layer, writer, wb
+            gc.collect()
+
+    def test_repair_geometry_cleans_geometry_collection_artifacts(self):
+        """Test that _repair_geometry extracts valid polygon parts from GeometryCollection."""
+        from references.create_enumeration_area.ea_merge_processor import _repair_geometry, _clean_polygon_geometry
+        # Create a bowtie / self-intersecting polygon: (0,0)->(10,10)->(0,10)->(10,0)->(0,0)
+        bowtie = QgsGeometry.fromPolygonXY([[
+            QgsPointXY(0, 0),
+            QgsPointXY(10, 10),
+            QgsPointXY(0, 10),
+            QgsPointXY(10, 0),
+            QgsPointXY(0, 0),
+        ]])
+        repaired = _repair_geometry(bowtie)
+        self.assertIsNotNone(repaired)
+        self.assertFalse(repaired.isNull())
+        self.assertFalse(repaired.isEmpty())
+        self.assertTrue(repaired.isGeosValid())
+
+    def test_create_output_layer_multi_polygon_schema(self):
+        """Test that _create_output_layer initializes MultiPolygon schema and coerces features."""
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            processor = EAMergeProcessor(
+                ea_layer=self.ea_layer,
+                replacement_layers=[self.repl_layer1],
+                output_dir=tmpdir,
+            )
+            out_fields = processor._build_output_fields()
+            f1 = QgsFeature(out_fields)
+            f1.setGeometry(make_square(0, 0, 50))
+            f1.setAttribute("ean", "001000")
+
+            f2 = QgsFeature(out_fields)
+            # Create multipart
+            f2.setGeometry(QgsGeometry.fromMultiPolygonXY([
+                [[QgsPointXY(60, 0), QgsPointXY(80, 0), QgsPointXY(80, 20), QgsPointXY(60, 20), QgsPointXY(60, 0)]],
+                [[QgsPointXY(85, 0), QgsPointXY(95, 0), QgsPointXY(95, 10), QgsPointXY(85, 10), QgsPointXY(85, 0)]],
+            ]))
+            f2.setAttribute("ean", "002000")
+
+            out_layer = processor._create_output_layer([f1, f2], out_fields)
+            self.assertIsNotNone(out_layer)
+            self.assertEqual(out_layer.featureCount(), 2)
+            self.assertIn("multipolygon", str(out_layer.source()).lower())
+
+    def test_processor_handles_invalid_input_polygons_without_truncation(self):
+        """Test that EAMergeProcessor does not abort or drop features when input EA layer has self-intersecting polygons."""
+        ea_layer = QgsVectorLayer("Polygon?crs=EPSG:3857", "08201_ea_test", "memory")
+        pr = ea_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("GEOCODE", QVariant.String),
+            QgsField("EA_NO", QVariant.String),
+            QgsField("CITYMUN", QVariant.String),
+            QgsField("hhcount", QVariant.Double),
+            QgsField("bldgcount", QVariant.Int),
+        ])
+        ea_layer.updateFields()
+
+        # Add 5 features: 1 normal, 1 self-intersecting bowtie, 3 more normal features
+        feats = []
+        for i in range(5):
+            f = QgsFeature(ea_layer.fields())
+            if i == 1:
+                # Bowtie self-intersecting polygon
+                f.setGeometry(QgsGeometry.fromPolygonXY([[
+                    QgsPointXY(i * 100, 0),
+                    QgsPointXY(i * 100 + 50, 50),
+                    QgsPointXY(i * 100, 50),
+                    QgsPointXY(i * 100 + 50, 0),
+                    QgsPointXY(i * 100, 0),
+                ]]))
+            else:
+                f.setGeometry(make_square(i * 100, 0, 50))
+            f.setAttributes(["08201001", f"00{i+1}000", "Compostela", 100.0 + i, 20 + i])
+            feats.append(f)
+        pr.addFeatures(feats)
+        ea_layer.updateExtents()
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            processor = EAMergeProcessor(
+                ea_layer=ea_layer,
+                replacement_layers=[],  # direct consolidation
+                output_dir=tmpdir,
+            )
+            result = processor.run()
+            self.assertTrue(result.success, f"Processor failed: {result.error_message}")
+            self.assertIsNotNone(result.output_layer)
+            # All 5 features must be retained in the output layer!
+            self.assertEqual(result.output_layer.featureCount(), 5)
+            self.assertEqual(result.summary.final_ea_feature_count, 5)
+
 
 if __name__ == "__main__":
     unittest.main()
