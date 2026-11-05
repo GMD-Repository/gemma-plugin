@@ -41,7 +41,7 @@ from qgis.core import (
 )
 from qgis.gui import QgsFileWidget
 from qgis.PyQt.QtCore import Qt, QTimer, pyqtSignal, QSize, QEvent, QObject, QVariant
-from qgis.PyQt.QtGui import QIcon, QColor, QFont, QTextCursor, QKeySequence, QPalette
+from qgis.PyQt.QtGui import QIcon, QColor, QBrush, QFont, QTextCursor, QKeySequence, QPalette
 from qgis.PyQt.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -186,6 +186,9 @@ try:
         get_rule_category,
         get_category_info,
         get_rule_workflow_info,
+        resolve_suggested_fixes,
+        normalize_fix_action_id,
+        CBMS_MV_FIX_ACTIONS,
     )
 except (ImportError, ValueError):
     try:
@@ -196,6 +199,9 @@ except (ImportError, ValueError):
             get_rule_category,
             get_category_info,
             get_rule_workflow_info,
+            resolve_suggested_fixes,
+            normalize_fix_action_id,
+            CBMS_MV_FIX_ACTIONS,
         )
     except Exception:
         resolve_target_columns = lambda v, f, c=None: []
@@ -204,6 +210,9 @@ except (ImportError, ValueError):
         get_rule_category = lambda v: "other"
         get_category_info = lambda k: {"label": k.title(), "desc": "", "icon": "mActionOptions.svg"}
         get_rule_workflow_info = lambda v, f=0: (5000000, "Phase 5: Other Checks")
+        resolve_suggested_fixes = lambda v, c=None: []
+        normalize_fix_action_id = lambda k: None
+        CBMS_MV_FIX_ACTIONS = {}
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +244,7 @@ def discover_cbms_mv_rules(cbms_mv_dir: str) -> List[Dict[str, Any]]:
         help_str = ""
         has_base_layer = False
         target_fields = None
+        suggested_fixes = None
 
         try:
             with open(file_path, "r", encoding="utf-8") as fh:
@@ -251,22 +261,43 @@ def discover_cbms_mv_rules(cbms_mv_dir: str) -> List[Dict[str, Any]]:
                             elif hasattr(ast, "Str") and isinstance(stmt.value, ast.Str):
                                 help_str = stmt.value.s
 
-                # Check if BASE_LAYER parameter is assigned/used or TARGET_FIELDS declared
+                # Check if BASE_LAYER parameter is assigned/used or TARGET_FIELDS / SUGGESTED_FIX declared
+                assign_targets = []
+                assign_value = None
                 if isinstance(node, ast.Assign):
-                    for target in node.targets:
-                        if isinstance(target, ast.Name):
-                            if target.id == "BASE_LAYER":
-                                has_base_layer = True
-                            elif target.id in ("TARGET_FIELDS", "TARGET_COLUMNS"):
-                                if isinstance(node.value, (ast.List, ast.Tuple)):
-                                    extracted = []
-                                    for elt in node.value.elts:
-                                        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                                            extracted.append(elt.value)
-                                        elif hasattr(ast, "Str") and isinstance(elt, ast.Str):
-                                            extracted.append(elt.s)
-                                    if extracted:
-                                        target_fields = extracted
+                    assign_targets = node.targets
+                    assign_value = node.value
+                elif hasattr(ast, "AnnAssign") and isinstance(node, ast.AnnAssign) and node.value is not None:
+                    assign_targets = [node.target]
+                    assign_value = node.value
+
+                for target in assign_targets:
+                    if isinstance(target, ast.Name):
+                        if target.id == "BASE_LAYER":
+                            has_base_layer = True
+                        elif target.id in ("TARGET_FIELDS", "TARGET_COLUMNS"):
+                            if isinstance(assign_value, (ast.List, ast.Tuple)):
+                                extracted = []
+                                for elt in assign_value.elts:
+                                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                                        extracted.append(elt.value)
+                                    elif hasattr(ast, "Str") and isinstance(elt, ast.Str):
+                                        extracted.append(elt.s)
+                                if extracted:
+                                    target_fields = extracted
+                        elif target.id in ("SUGGESTED_FIX", "SUGGESTED_FIXES", "SUGGESTED_ACTIONS", "SUGGESTED_FIX_ACTIONS"):
+                            if isinstance(assign_value, (ast.List, ast.Tuple)):
+                                extracted = []
+                                for elt in assign_value.elts:
+                                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                                        extracted.append(elt.value)
+                                    elif hasattr(ast, "Str") and isinstance(elt, ast.Str):
+                                        extracted.append(elt.s)
+                                suggested_fixes = extracted
+                            elif isinstance(assign_value, ast.Constant) and isinstance(assign_value.value, str):
+                                suggested_fixes = [assign_value.value]
+                            elif hasattr(ast, "Str") and isinstance(assign_value, ast.Str):
+                                suggested_fixes = [assign_value.s]
 
         except Exception as exc:
             help_str = f"Error reading algorithm help: {exc}"
@@ -283,6 +314,7 @@ def discover_cbms_mv_rules(cbms_mv_dir: str) -> List[Dict[str, Any]]:
             "category": get_rule_category(val_id),
             "has_base": has_base_layer,
             "target_fields": target_fields or CBMS_MV_RULE_TARGET_FIELDS.get(val_id, []),
+            "suggested_fixes": suggested_fixes,
             "file_path": file_path,
             "default": True,
         })
@@ -1703,6 +1735,8 @@ class CbmsmvDialog(QDialog):
         rule_target_fields = rule.get("target_fields") if rule else None
         target_cols = resolve_target_columns(val_id, field_names, rule_target_fields)
         has_auto_fix = bool(has_fix(val_id))
+        rule_suggested = rule.get("suggested_fixes") if rule else None
+        suggested_fix_ids = resolve_suggested_fixes(val_id, rule_suggested)
 
         tab.setProperty("target_cols", target_cols)
         tab.setProperty("field_names", field_names)
@@ -1795,57 +1829,71 @@ class CbmsmvDialog(QDialog):
         combo_actions.setMaximumWidth(210)
         combo_actions.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         if combo_actions.view():
-            combo_actions.view().setMinimumWidth(380)
+            combo_actions.view().setMinimumWidth(520)
         dropdown_icon = QgsApplication.getThemeIcon("mActionOptions.svg")
         if not dropdown_icon.isNull():
-            combo_actions.addItem(dropdown_icon, "Actions")
+            combo_actions.addItem(dropdown_icon, "Actions", None)
         else:
-            combo_actions.addItem("Actions")
+            combo_actions.addItem("Actions", None)
 
-        concat_ic = QgsApplication.getThemeIcon("mActionCalculateField.svg")
-        if not concat_ic.isNull():
-            combo_actions.addItem(concat_ic, "Concatenate the ea_geocode")
-        else:
-            combo_actions.addItem("Concatenate the ea_geocode")
+        actions_catalog = [
+            ("copy_geometry_to_coordinates", "Copy the geometry and paste it into the longitude and latitude columns", "mActionEditCopy.svg"),
+            ("update_datafiles_coordinates", "Update Datafile's Coordinates", "mActionCalculateField.svg"),
+            ("generate_point_geometry", "Generate point geometry", "mActionCapturePoint.svg"),
+            ("concatenate_ea_geocode", "Concatenate the ea_geocode", "mActionCalculateField.svg"),
+            ("concatenate_bsn_geoid", "Concatenate the bsn_geoid", "mActionCalculateField.svg"),
+            ("deduplicate_features", "Delete duplicate features (retain one)", "mActionDeleteSelected.svg"),
+            ("delete_selected_features", "Delete selected features", "mActionDeleteSelected.svg"),
+        ]
 
-        del_icon_menu = QgsApplication.getThemeIcon("mActionDeleteSelected.svg")
-        if not del_icon_menu.isNull():
-            combo_actions.addItem(del_icon_menu, "Delete selected features")
-        else:
-            combo_actions.addItem("Delete selected features")
+        suggested_items = []
+        for s_id in suggested_fix_ids:
+            found = next((item for item in actions_catalog if item[0] == s_id), None)
+            if found and found not in suggested_items:
+                suggested_items.append(found)
 
-        geom_ic = QgsApplication.getThemeIcon("mActionCapturePoint.svg")
-        if not geom_ic.isNull():
-            combo_actions.addItem(geom_ic, "Generate point geometry")
-        else:
-            combo_actions.addItem("Generate point geometry")
+        other_items = [item for item in actions_catalog if item not in suggested_items]
 
-        dup_ic = QgsApplication.getThemeIcon("mActionDeleteSelected.svg")
-        if not dup_ic.isNull():
-            combo_actions.addItem(dup_ic, "Delete duplicate features (retain one)")
-        else:
-            combo_actions.addItem("Delete duplicate features (retain one)")
+        font_bold = QFont(combo_actions.font())
+        font_bold.setBold(True)
+        suggested_fg = QBrush(QColor("#1D4ED8" if not self.is_dark else "#93C5FD"))
+        suggested_bg = QBrush(QColor("#EFF6FF" if not self.is_dark else "#1E3A5F"))
 
-        concat_bsn_ic = QgsApplication.getThemeIcon("mActionCalculateField.svg")
-        if not concat_bsn_ic.isNull():
-            combo_actions.addItem(concat_bsn_ic, "Concatenate the bsn_geoid")
-        else:
-            combo_actions.addItem("Concatenate the bsn_geoid")
+        for act_id, act_name, act_icon in suggested_items:
+            ic = QgsApplication.getThemeIcon(act_icon)
+            display_text = f"(Suggested) {act_name}"
+            idx = combo_actions.count()
+            if not ic.isNull():
+                combo_actions.addItem(ic, display_text, act_id)
+            else:
+                combo_actions.addItem(display_text, act_id)
+            combo_actions.setItemData(idx, act_id, Qt.UserRole)
+            combo_actions.setItemData(idx, font_bold, Qt.FontRole)
+            combo_actions.setItemData(idx, suggested_fg, Qt.ForegroundRole)
+            combo_actions.setItemData(idx, suggested_bg, Qt.BackgroundRole)
+            combo_actions.setItemData(idx, True, Qt.UserRole + 1)
+            combo_actions.setItemData(idx, f"Suggested fix for {val_id}: {act_name}", Qt.ToolTipRole)
 
-        copy_geom_ic = QgsApplication.getThemeIcon("mActionEditCopy.svg")
-        if not copy_geom_ic.isNull():
-            combo_actions.addItem(copy_geom_ic, "Copy the geometry and paste it into the longitude and latitude columns")
-        else:
-            combo_actions.addItem("Copy the geometry and paste it into the longitude and latitude columns")
+        if suggested_items and other_items:
+            combo_actions.insertSeparator(combo_actions.count())
 
-        update_coord_ic = QgsApplication.getThemeIcon("mActionCalculateField.svg")
-        if not update_coord_ic.isNull():
-            combo_actions.addItem(update_coord_ic, "Update Datafile's Coordinates")
-        else:
-            combo_actions.addItem("Update Datafile's Coordinates")
+        for act_id, act_name, act_icon in other_items:
+            ic = QgsApplication.getThemeIcon(act_icon)
+            idx = combo_actions.count()
+            if not ic.isNull():
+                combo_actions.addItem(ic, act_name, act_id)
+            else:
+                combo_actions.addItem(act_name, act_id)
+            combo_actions.setItemData(idx, act_id, Qt.UserRole)
+            combo_actions.setItemData(idx, False, Qt.UserRole + 1)
 
         combo_actions.setCursor(Qt.PointingHandCursor)
-        combo_actions.setToolTip("Select an action to execute for checked features")
+        if suggested_items:
+            combo_actions.setToolTip(
+                "Suggested fix action(s): " + ", ".join(item[1] for item in suggested_items)
+            )
+        else:
+            combo_actions.setToolTip("Select an action to execute for checked features")
 
         arrow_icon_name = "arrow_down_dark.svg" if self.is_dark else "arrow_down.svg"
         arrow_path = os.path.abspath(
@@ -1949,8 +1997,19 @@ class CbmsmvDialog(QDialog):
                 if table.item(r, 0) and table.item(r, 0).checkState() == Qt.Checked
             )
             idx = combo_actions.currentIndex()
+            act_id = combo_actions.itemData(idx, Qt.UserRole)
+            act_text = combo_actions.itemText(idx).lower()
+
+            if not act_id or act_id == "actions" or idx == 0:
+                QMessageBox.information(
+                    self,
+                    "Choose an Action",
+                    "Please choose an action from the Actions dropdown first."
+                )
+                return
+
             if checked_count == 0:
-                if idx == 4:
+                if act_id == "deduplicate_features" or "duplicate" in act_text:
                     reply = QMessageBox.question(
                         self,
                         "Check All Records for Duplicates?",
@@ -1969,35 +2028,35 @@ class CbmsmvDialog(QDialog):
                 QMessageBox.information(
                     self,
                     "Nothing Selected",
-                    "Please tick the box of at least one row before clicking Update Selected."
+                    "Please tick the box of at least one row before clicking Apply Fix Action."
                 )
                 return
 
-            if idx == 1:
+            if act_id == "concatenate_ea_geocode" or "ea_geocode" in act_text:
                 self._on_concatenate_ea_geocode(
                     layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
-            elif idx == 2:
+            elif act_id == "delete_selected_features" or ("delete" in act_text and "duplicate" not in act_text):
                 self._delete_selected_features(
                     layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
-            elif idx == 3:
+            elif act_id == "generate_point_geometry" or "point geometry" in act_text:
                 self._on_generate_point_geometry(
                     layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
-            elif idx == 4:
+            elif act_id == "deduplicate_features" or "duplicate" in act_text:
                 self._on_deduplicate_features(
                     layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
-            elif idx == 5 or "bsn_geoid" in combo_actions.itemText(idx).lower() or "bsn" in combo_actions.itemText(idx).lower():
+            elif act_id == "concatenate_bsn_geoid" or "bsn_geoid" in act_text or "bsn" in act_text:
                 self._on_concatenate_bsn_geoid(
                     layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
-            elif idx == 6 or ("copy" in combo_actions.itemText(idx).lower() and ("geometry" in combo_actions.itemText(idx).lower() or "longitude" in combo_actions.itemText(idx).lower() or "latitude" in combo_actions.itemText(idx).lower())):
+            elif act_id == "copy_geometry_to_coordinates" or "copy" in act_text:
                 self._on_copy_geometry_to_coordinates(
                     layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
-            elif idx == 7 or ("update" in combo_actions.itemText(idx).lower() and "coordinate" in combo_actions.itemText(idx).lower()):
+            elif act_id == "update_datafiles_coordinates" or "update" in act_text:
                 self._on_update_datafile_coordinates(
                     layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
@@ -2014,8 +2073,9 @@ class CbmsmvDialog(QDialog):
             if not is_valid_qobject(self) or not is_valid_qobject(table):
                 return
             combo_actions.setToolTip(combo_actions.itemText(idx))
+            act_id = combo_actions.itemData(idx, Qt.UserRole)
             action_text = combo_actions.itemText(idx).lower()
-            if "duplicate" in action_text or idx == 4:
+            if act_id == "deduplicate_features" or "duplicate" in action_text:
                 # Automatically select/check all features in the tab
                 table.setProperty("is_populating", True)
                 visible_count = 0
@@ -2346,8 +2406,15 @@ class CbmsmvDialog(QDialog):
             elif btn_actions:
                 btn_actions.setText("Actions ▾")
             if btn_update_selected:
+                is_dup_action = bool(
+                    combo_actions
+                    and (
+                        combo_actions.currentData(Qt.UserRole) == "deduplicate_features"
+                        or "duplicate" in combo_actions.currentText().lower()
+                    )
+                )
                 btn_update_selected.setText(f"Apply Fix Action ({checked_count})" if checked_count > 0 else "Apply Fix Action")
-                btn_update_selected.setEnabled(checked_count > 0 or bool(combo_actions and combo_actions.currentIndex() == 4))
+                btn_update_selected.setEnabled(checked_count > 0 or is_dup_action)
             return
 
         # Case 2: Action column
@@ -2669,8 +2736,15 @@ class CbmsmvDialog(QDialog):
         elif btn_actions:
             btn_actions.setText("Actions ▾")
         if btn_update_selected:
+            is_dup_action = bool(
+                combo_actions
+                and (
+                    combo_actions.currentData(Qt.UserRole) == "deduplicate_features"
+                    or "duplicate" in combo_actions.currentText().lower()
+                )
+            )
             btn_update_selected.setText(f"Apply Fix Action ({checked_count})" if checked_count > 0 else "Apply Fix Action")
-            btn_update_selected.setEnabled(checked_count > 0)
+            btn_update_selected.setEnabled(checked_count > 0 or is_dup_action)
         btn_select_all.setText("Select None" if target_state == Qt.Checked else "Select All")
         toggle_ic = QgsApplication.getThemeIcon(
             "mActionDeselectAll.svg" if target_state == Qt.Checked else "mActionSelectAll.svg"
@@ -4154,8 +4228,15 @@ class CbmsmvDialog(QDialog):
         if combo_actions:
             combo_actions.setItemText(0, "Actions")
         if btn_update_selected:
+            is_dup_action = bool(
+                combo_actions
+                and (
+                    combo_actions.currentData(Qt.UserRole) == "deduplicate_features"
+                    or "duplicate" in combo_actions.currentText().lower()
+                )
+            )
             btn_update_selected.setText(f"Apply Fix Action ({checked_count})" if checked_count > 0 else "Apply Fix Action")
-            btn_update_selected.setEnabled(checked_count > 0)
+            btn_update_selected.setEnabled(checked_count > 0 or is_dup_action)
 
         # Trigger canvas zoom and feature flash
         self._on_table_row_clicked(layer, table, row_idx)

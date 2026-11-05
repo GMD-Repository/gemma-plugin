@@ -28,6 +28,7 @@ from .. import gmdhelpers
 
 
 TARGET_FIELDS = ["sf_longitude", "sf_latitude"]
+SUGGESTED_FIX = ["copy_geometry_to_coordinates", "generate_point_geometry"]
 
 class mv_2027_hp_4b_longitude__invalid(QgsProcessingAlgorithm):
 

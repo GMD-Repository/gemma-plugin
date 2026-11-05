@@ -30,6 +30,7 @@ from .. import gmdhelpers
 
 
 TARGET_FIELDS = ["sf_longitude", "sf_latitude", "df_x_current", "df_y_current", "sf_map_uuid", "df_map_uuid"]
+SUGGESTED_FIX = ["copy_geometry_to_coordinates", "update_datafiles_coordinates"]
 
 class mv_2027_hp_1a_longitude__invalid(QgsProcessingAlgorithm):
 

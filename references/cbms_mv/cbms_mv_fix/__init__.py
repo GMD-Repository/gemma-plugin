@@ -13,6 +13,15 @@ from .concatenate_bsn_geoid_fix import concatenate_bsn_geoid, run_fix as _run_bs
 from .copy_geometry_to_coordinates_fix import copy_geometry_to_coordinates, run_fix as _run_copy_fix
 from .update_datafile_coordinates_fix import update_datafile_coordinates, run_fix as _run_update_coord_fix
 from .common import is_valid_qobject, make_unique_feature_key
+try:
+    from ..cbms_mv_targets import resolve_suggested_fixes, normalize_fix_action_id, CBMS_MV_FIX_ACTIONS
+except (ImportError, ValueError):
+    try:
+        from cbms_mv_targets import resolve_suggested_fixes, normalize_fix_action_id, CBMS_MV_FIX_ACTIONS
+    except Exception:
+        resolve_suggested_fixes = lambda v, c=None: []
+        normalize_fix_action_id = lambda k: None
+        CBMS_MV_FIX_ACTIONS = {}
 
 _DIRECT_FIX_MAP = {
     "concatenate_ea_geocode": _run_ea_fix,
@@ -83,4 +92,7 @@ __all__ = [
     "has_fix",
     "is_valid_qobject",
     "make_unique_feature_key",
+    "resolve_suggested_fixes",
+    "normalize_fix_action_id",
+    "CBMS_MV_FIX_ACTIONS",
 ]

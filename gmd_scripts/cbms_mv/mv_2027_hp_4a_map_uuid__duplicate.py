@@ -37,6 +37,7 @@ from .. import gmdhelpers
 
 
 TARGET_FIELDS = ["sf_map_uuid"]
+SUGGESTED_FIX = ["deduplicate_features", "delete_selected_features"]
 
 class mv_2027_hp_4a_map_uuid__duplicate(QgsProcessingAlgorithm):
 

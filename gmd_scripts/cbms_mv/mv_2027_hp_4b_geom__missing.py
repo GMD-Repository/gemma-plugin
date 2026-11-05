@@ -29,6 +29,7 @@ from .. import gmdhelpers
 
 
 TARGET_FIELDS = ["sf_longitude", "sf_latitude"]
+SUGGESTED_FIX = ["generate_point_geometry", "delete_selected_features"]
 
 class mv_2027_hp_4b_geom__missing(QgsProcessingAlgorithm):
 

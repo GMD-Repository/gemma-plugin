@@ -36,6 +36,7 @@ from .. import gmdhelpers
 
 
 TARGET_FIELDS = ["sf_bsn_geoid", "sf_bsn"]
+SUGGESTED_FIX = ["concatenate_bsn_geoid"]
 
 class mv_2027_hp_4b_bsn_geoid__invalid(QgsProcessingAlgorithm):
 
