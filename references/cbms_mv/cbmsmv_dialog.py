@@ -5850,6 +5850,16 @@ class CbmsmvDialog(QDialog):
     # -----------------------------------------------------------------------
     def _reset_form(self):
         """Reset inputs, table selections, and results to defaults."""
+        reply = QMessageBox.question(
+            self,
+            "Reset Form",
+            "Are you sure you want to reset the form?\n\nThis will clear all current inputs, rule selections, and validation results.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
         self.file_form2.setFilePath("")
         self.file_points.setFilePath("")
         self.file_base.setFilePath("")
