@@ -56,6 +56,9 @@ class GMDPipeline(object):
         self.ea_provider = None
         self.package_style_loader_action = None
         self.package_style_loader_dlg = None
+        self.cbmsmv_menu = None
+        self.cbmsmv_action = None
+        self.cbmsmv_dlg = None
 
     def gema_add_submenu(self, submenu, icon):
         if self.gema_menu != None:
@@ -187,13 +190,23 @@ class GMDPipeline(object):
         create_ea_icon = QIcon(os.path.dirname(__file__) + "/icons/create_ea.svg")
         geom_toolkit_icon = QIcon(os.path.dirname(__file__) + "/icons/repair_geom.svg")
         others_icon = QIcon(os.path.dirname(__file__) + "/icons/others.svg")
+        cbmsmv_icon = QIcon(os.path.dirname(__file__) + "/icons/cbms_mv.svg")
         updating_boundaries_icon = QIcon(os.path.dirname(__file__) + "/icons/updating_boundaries.svg")
         check_and_update_icon = QIcon(os.path.dirname(__file__) + "/icons/check_and_update.svg")
         compare_boundaries_icon = QIcon(os.path.dirname(__file__) + "/icons/compare_boundaries.svg")
         projection_finder_icon = QIcon(os.path.dirname(__file__) + "/icons/projection_finder.svg")
         package_layers_icon = QIcon(os.path.dirname(__file__) + "/icons/package_layers.svg")
 
-        # 1. Updating of Boundaries Submenu
+        # 1. 2027 CBMS Form 2 Map Validation Submenu
+        self.cbmsmv_menu = QMenu(u'2027 CBMS Map Validation')
+        self.gema_add_submenu(self.cbmsmv_menu, cbmsmv_icon)
+
+        self.cbmsmv_action = QAction(cbmsmv_icon, "2027 CBMS MV", self.iface.mainWindow())
+        self.cbmsmv_action.triggered.connect(self.show_cbmsmv_dialog)
+        self.cbmsmv_action.setShortcut("Ctrl+Alt+D")
+        self.cbmsmv_menu.addAction(self.cbmsmv_action)
+
+        # 2. Updating of Boundaries Submenu
         self.updating_boundaries_menu = QMenu(u'Updating of Boundaries')
         self.gema_add_submenu(self.updating_boundaries_menu, updating_boundaries_icon)
 
@@ -220,7 +233,7 @@ class GMDPipeline(object):
         self.package_style_loader_action.triggered.connect(self.show_package_style_loader_dialog)
         self.updating_boundaries_menu.addAction(self.package_style_loader_action)
 
-        # 2. EA Delineation Submenu
+        # 3. EA Delineation Submenu
         self.ea_delineation_menu = QMenu(u'EA Delineation')
         self.gema_add_submenu(self.ea_delineation_menu, create_ea_icon)
 
@@ -233,7 +246,9 @@ class GMDPipeline(object):
         self.package_qfield_action.setShortcut("Ctrl+Alt+Q")
         self.ea_delineation_menu.addAction(self.package_qfield_action)
 
-        # 3. Others Submenu
+
+
+        # 4. Others Submenu
         self.others_menu = QMenu(u'Others')
         self.gema_add_submenu(self.others_menu, others_icon)
 
@@ -325,6 +340,50 @@ class GMDPipeline(object):
         self.geometry_legacy_dlg.show()
         self.geometry_legacy_dlg.raise_()
         self.geometry_legacy_dlg.activateWindow()
+
+
+    def show_cbmsmv_dialog(self):
+        """Open the 2027 CBMS Map Validation dialog."""
+        from .gmd_scripts.cbms_mv import show_cbmsmv_dialog
+
+        if hasattr(self, 'cbmsmv_dlg') and self.cbmsmv_dlg:
+            try:
+                import sip
+                is_deleted = sip.isdeleted(self.cbmsmv_dlg)
+            except Exception:
+                is_deleted = False
+            if not is_deleted:
+                try:
+                    if getattr(self.cbmsmv_dlg, "_is_docked", False) and getattr(self.cbmsmv_dlg, "_dock_widget", None):
+                        dock = self.cbmsmv_dlg._dock_widget
+                        try:
+                            import sip
+                            dock_deleted = sip.isdeleted(dock)
+                        except Exception:
+                            dock_deleted = False
+                        if not dock_deleted:
+                            dock.show()
+                            dock.raise_()
+                            return
+                    elif getattr(self.cbmsmv_dlg, "isVisible", lambda: False)():
+                        self.cbmsmv_dlg.showNormal()
+                        self.cbmsmv_dlg.raise_()
+                        self.cbmsmv_dlg.activateWindow()
+                        return
+                except Exception:
+                    pass
+            self.cbmsmv_dlg = None
+
+        self.cbmsmv_dlg = show_cbmsmv_dialog(
+                    self.iface,
+                    self.offline_editing,
+                    self.cbmsmv_dialog_finished
+                )
+
+
+    def cbmsmv_dialog_finished(self):
+        """Cleanup when the CBMS MV dialog is closed."""
+        self.cbmsmv_dlg = None
 
     def show_package_layers_dialog(self):
         """Open the Package Layers by City/Mun dialog."""

@@ -1,0 +1,130 @@
+import os
+import json
+import processing
+from typing import Any, Optional, Dict, List
+
+from PyQt5.QtCore import QVariant
+from qgis.core import (
+    NULL,
+    QgsField,
+    QgsFields,
+    QgsFeature,
+    QgsFeatureSink,
+    QgsProcessing,
+    QgsProcessingAlgorithm,
+    QgsProcessingContext,
+    QgsProcessingException,
+    QgsProcessingFeedback,
+    QgsProcessingParameterFeatureSink,
+    QgsProcessingParameterFile,
+    QgsVectorLayer,
+    QgsGeometry,
+    QgsWkbTypes,
+    QgsCoordinateReferenceSystem,
+    QgsProviderRegistry,
+    QgsDistanceArea,
+    QgsPointXY,
+)
+from PyQt5.QtGui import QIcon
+from .. import gmdhelpers
+
+
+
+TARGET_FIELDS = ["sf_remarks"]
+
+class mv_2027_hp_4c_remarks__invalid(QgsProcessingAlgorithm):
+
+    INPUT_DATA = "INPUT_DATA"
+    INPUT_LAYER = "INPUT_LAYER"
+    OUTPUT = "OUTPUT"
+
+    def name(self) -> str:
+        return "mv_2027_hp_4c_remarks__invalid"
+
+    def displayName(self) -> str:
+        return "mv_2027_hp_4c_remarks__invalid"
+
+    def group(self) -> str:
+        return "2027 CBMS"
+
+    def groupId(self) -> str:
+        return "cbms_mv"
+
+    def shortHelpString(self) -> str:
+        return (
+            "List of geotagged points with deletion or review remarks. \n \n"
+            "Features with remarks value are flagged for review and/or deletion.\n"
+        )
+
+    def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):
+        
+        self.addParameter(
+            QgsProcessingParameterFile(
+                self.INPUT_DATA,
+                "INPUT_DATA (.csv file)",
+                behavior=QgsProcessingParameterFile.File,
+                extension="csv",
+                optional=False,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterFile(
+                self.INPUT_LAYER,
+                "INPUT_LAYER (.geojson file)",
+                behavior=QgsProcessingParameterFile.File,
+                extension="geojson",
+                optional=False,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterFeatureSink(
+                self.OUTPUT,
+                "mv_2027_hp_4c_remarks__invalid",
+                QgsProcessing.TypeVectorAnyGeometry,
+            )
+        )
+
+    def processAlgorithm(
+        self,
+        parameters: Dict[str, Any],
+        context: QgsProcessingContext,
+        feedback: QgsProcessingFeedback,
+    ) -> Dict[str, Any]:
+
+        geojson_data = gmdhelpers.load_cbms_geojson(self, parameters, self.INPUT_LAYER, context)
+        json_data = gmdhelpers.load_cbms_csv(self, parameters, self.INPUT_DATA, context, feedback)
+
+        filtered_layer = processing.run(
+            "native:extractbyexpression",
+            {
+                "INPUT": geojson_data,
+                "EXPRESSION": 'regexp_match(lower("sf_remarks"), \'delet|erase|remove|wrong tag|test\') > 0',
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+
+        final_output = gmdhelpers.select_mv(
+            filtered_layer,
+            [],
+            context=context,
+            feedback=feedback,
+        )
+
+        return gmdhelpers.export_features_to_sink(
+            self,
+            parameters,
+            self.OUTPUT,
+            context,
+            final_output.fields(),
+            final_output.wkbType(),
+            final_output.sourceCrs(),
+            final_output.getFeatures(),
+            feedback,
+        )
+
+    def createInstance(self):
+        return self.__class__()
