@@ -3333,7 +3333,7 @@ class CbmsmvDialog(QDialog):
         if not res.get("success"):
             QMessageBox.warning(
                 self,
-                "Fix Not Applied",
+                res.get("title", "Fix Not Applied"),
                 res.get("message", "The fix could not be applied."),
             )
             return
@@ -3353,13 +3353,23 @@ class CbmsmvDialog(QDialog):
         )
         # Synchronize table cells and layer across all rows matching unique features
         table.setProperty("is_populating", True)
+        was_table_signals_blocked = table.blockSignals(True) if hasattr(table, "blockSignals") else False
+        self._suppress_dirty_ui_refresh = True
+        if hasattr(table, "setUpdatesEnabled"):
+            table.setUpdatesEnabled(False)
         try:
             if not layer.isEditable():
                 layer.startEditing()
 
-            for r in range(table.rowCount()):
-                if target_rows is not None and r not in target_rows_set:
-                    continue
+            layer_field_idx_map: Dict[str, int] = (
+                {f.name(): idx for idx, f in enumerate(layer.fields())}
+                if (layer and hasattr(layer, "fields"))
+                else {}
+            )
+            rows_to_iter = target_rows if target_rows is not None else range(table.rowCount())
+            col_count = table.columnCount()
+
+            for r in rows_to_iter:
                 item0 = table.item(r, 0)
                 if not item0:
                     continue
@@ -3434,7 +3444,8 @@ class CbmsmvDialog(QDialog):
                         pass
 
                 if col_updates:
-                    for c in range(1, table.columnCount() - 1):
+                    target_layer_fid = r_err_fid if r_err_fid is not None else r_fid
+                    for c in range(1, col_count - 1):
                         c_item = table.item(r, c)
                         if c_item:
                             fname = c_item.data(Qt.UserRole + 2)
@@ -3444,9 +3455,9 @@ class CbmsmvDialog(QDialog):
                                 # Highlight fixed cell in green
                                 self._style_table_cell(c_item, "fixed")
                                 # Also update result layer
-                                f_idx = layer.fields().indexOf(fname)
+                                f_idx = layer_field_idx_map.get(fname, -1)
                                 if f_idx != -1:
-                                    layer.changeAttributeValue(r_err_fid if r_err_fid is not None else r_fid, f_idx, new_text)
+                                    layer.changeAttributeValue(target_layer_fid, f_idx, new_text)
                                 # If fname is df_* or uuid/mapid, buffer into pending JSON edits
                                 fname_l = fname.lower()
                                 is_fix_uuid = fname_l in ("map_uuid", "mapid", "sf_map_uuid", "df_map_uuid", "df_mapid", "uuid")
@@ -3472,7 +3483,7 @@ class CbmsmvDialog(QDialog):
                     r_df_fid_buf = (
                         item0.data(Qt.UserRole + 4)
                         if (item0.data(Qt.UserRole + 4) is not None and str(item0.data(Qt.UserRole + 4)).strip() not in ("", "NULL", "None"))
-                        else item0.data(Qt.UserRole + 2)
+                        else item0.data(Qt.UserRole)
                     )
                     r_df_uuid_buf = str(item0.data(Qt.UserRole + 5) or r_uuid or "").strip()
                     rec_k_buf = f"fid_{r_df_fid_buf}" if r_df_fid_buf is not None else f"uuid_{r_df_uuid_buf}"
@@ -3529,7 +3540,7 @@ class CbmsmvDialog(QDialog):
                     item0.setCheckState(Qt.Unchecked)
 
                     # Update the row's Fix button to show Fixed
-                    action_cell = table.cellWidget(r, table.columnCount() - 1)
+                    action_cell = table.cellWidget(r, col_count - 1)
                     if action_cell:
                         for btn in action_cell.findChildren(QPushButton):
                             if btn.text() == "Fix":
@@ -3537,6 +3548,11 @@ class CbmsmvDialog(QDialog):
                                 btn.setEnabled(False)
                                 self._style_row_fix_button(btn, enabled=False, fixed=True)
         finally:
+            self._suppress_dirty_ui_refresh = False
+            if hasattr(table, "blockSignals"):
+                table.blockSignals(was_table_signals_blocked)
+            if hasattr(table, "setUpdatesEnabled"):
+                table.setUpdatesEnabled(True)
             table.setProperty("is_populating", False)
 
         # Refresh map canvas if available
@@ -3545,9 +3561,18 @@ class CbmsmvDialog(QDialog):
 
         if fixed_count == 0:
             self.lbl_footer_status.setText(f"No records were fixed for '{val_id}'.")
+            default_zero_title = (
+                "Check all columns"
+                if (
+                    "bsn_geoid" in str(val_id).lower()
+                    or "ea_geocode" in str(val_id).lower()
+                    or res.get("null_columns_warning")
+                )
+                else "Fix Not Applied"
+            )
             QMessageBox.warning(
                 self,
-                "Fix Not Applied",
+                res.get("title", default_zero_title),
                 res.get(
                     "message",
                     f"No records were fixed for '{val_id}'.\n\n"
@@ -3560,13 +3585,23 @@ class CbmsmvDialog(QDialog):
         self.lbl_footer_status.setText(
             f"Fixed {fixed_count} record(s) for '{val_id}'. Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo."
         )
-        QMessageBox.information(
-            self,
-            "Fix Applied",
-            f"Fixed {fixed_count} record(s) for:\n{val_id}\n\n"
-            f"These changes are not saved yet.\n"
-            f"Click 'Save Changes' (or press Ctrl+S) to keep them, or click 'Discard' to undo.",
-        )
+        null_cols_warn = res.get("null_columns_warning", "")
+        if null_cols_warn:
+            QMessageBox.warning(
+                self,
+                res.get("title", "Check all columns"),
+                f"Fixed {fixed_count} record(s) for:\n{val_id}\n\n"
+                f"However, {null_cols_warn}\n\n"
+                f"Fixed changes are not saved yet. Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo.",
+            )
+        else:
+            QMessageBox.information(
+                self,
+                "Fix Applied",
+                f"Fixed {fixed_count} record(s) for:\n{val_id}\n\n"
+                f"These changes are not saved yet.\n"
+                f"Click 'Save Changes' (or press Ctrl+S) to keep them, or click 'Discard' to undo.",
+            )
 
     # -----------------------------------------------------------------------
     # Process: Soft Delete & Status Synchronization (Delegated to cbms_mv_fix)
@@ -3645,6 +3680,8 @@ class CbmsmvDialog(QDialog):
 
     def _on_watched_layer_dirty_changed(self, *args, **kwargs) -> None:
         """Slot called whenever a watched QGIS layer's edit buffer state changes."""
+        if getattr(self, "_suppress_dirty_ui_refresh", False):
+            return
         if is_valid_qobject(self):
             getattr(self, "_update_save_discard_ui_state", lambda: None)()
 
@@ -3656,16 +3693,26 @@ class CbmsmvDialog(QDialog):
             return True
         if getattr(self, "_pending_json_edits", None):
             return True
-        main_layer = self._find_existing_main_building_layer() if hasattr(self, "_find_existing_main_building_layer") else None
-        if main_layer and main_layer.isValid():
-            self._connect_layer_dirty_signals(main_layer)
-            if main_layer.isEditable() and main_layer.isModified():
-                return True
-        form2_layer = self._find_existing_form2_layer() if hasattr(self, "_find_existing_form2_layer") else None
-        if form2_layer and form2_layer.isValid():
-            self._connect_layer_dirty_signals(form2_layer)
-            if form2_layer.isEditable() and form2_layer.isModified():
-                return True
+        main_layers = (
+            self._find_all_main_building_layers()
+            if hasattr(self, "_find_all_main_building_layers")
+            else ([self._find_existing_main_building_layer()] if hasattr(self, "_find_existing_main_building_layer") else [])
+        )
+        for main_layer in main_layers:
+            if main_layer and main_layer.isValid():
+                self._connect_layer_dirty_signals(main_layer)
+                if main_layer.isEditable() and main_layer.isModified():
+                    return True
+        form2_layers = (
+            self._find_all_form2_layers()
+            if hasattr(self, "_find_all_form2_layers")
+            else ([self._find_existing_form2_layer()] if hasattr(self, "_find_existing_form2_layer") else [])
+        )
+        for form2_layer in form2_layers:
+            if form2_layer and form2_layer.isValid():
+                self._connect_layer_dirty_signals(form2_layer)
+                if form2_layer.isEditable() and form2_layer.isModified():
+                    return True
         result_layers = getattr(self, "_result_layers", None)
         if result_layers:
             for r_info in result_layers.values():
@@ -4113,7 +4160,7 @@ class CbmsmvDialog(QDialog):
 
         return True, updated_count, f"Successfully saved {updated_count} record(s) to Form 2 JSON."
 
-    def _save_changes(self, target_val_id: Optional[str] = None) -> bool:
+    def _save_changes(self, target_val_id: Optional[str] = None, skip_rerun: bool = False) -> bool:
         """
         Commit pending edits on both the Geotagged Building Points (.geojson)
         and Form 2 Data (.json) files to disk, and automatically re-run the
@@ -4145,22 +4192,33 @@ class CbmsmvDialog(QDialog):
             except Exception:
                 pass
 
-        main_layer = self._get_or_load_main_building_layer()
+        main_layers = (
+            self._find_all_main_building_layers()
+            if hasattr(self, "_find_all_main_building_layers")
+            else []
+        )
+        primary_main_layer = self._get_or_load_main_building_layer()
+        if primary_main_layer and primary_main_layer not in main_layers:
+            main_layers.insert(0, primary_main_layer)
+
         geojson_saved = False
         geojson_err = None
 
-        # 1. Commit GeoJSON Layer changes if dirty
-        if main_layer and main_layer.isValid() and main_layer.isEditable() and main_layer.isModified():
-            try:
-                success = main_layer.commitChanges()
-                if success:
-                    main_layer.startEditing()  # Keep editable for continued workflow
-                    geojson_saved = True
-                else:
-                    errors = main_layer.commitErrors()
-                    geojson_err = "\n".join(errors) if errors else "Unknown commit error."
-            except Exception as exc:
-                geojson_err = str(exc)
+        # 1. Commit GeoJSON Layer changes if dirty across all matching main building layers
+        for main_layer in main_layers:
+            if main_layer and main_layer.isValid() and main_layer.isEditable() and main_layer.isModified():
+                try:
+                    success = main_layer.commitChanges()
+                    if success:
+                        main_layer.startEditing()  # Keep editable for continued workflow
+                        geojson_saved = True
+                    else:
+                        errors = main_layer.commitErrors()
+                        geojson_err = "\n".join(errors) if errors else "Unknown commit error."
+                        break
+                except Exception as exc:
+                    geojson_err = str(exc)
+                    break
 
         if geojson_err:
             QMessageBox.critical(
@@ -4170,16 +4228,34 @@ class CbmsmvDialog(QDialog):
             )
             return False
 
+        # Reload any other non-modified duplicate layer instances pointing to the same file
+        if geojson_saved:
+            for main_layer in main_layers:
+                if main_layer and main_layer.isValid() and not main_layer.isModified():
+                    try:
+                        if hasattr(main_layer, "dataProvider") and main_layer.dataProvider():
+                            main_layer.dataProvider().forceReload()
+                        main_layer.triggerRepaint()
+                    except Exception:
+                        pass
+
         # 2. Commit Form 2 Data (CSV or JSON) changes if dirty
         form2_saved = False
         form2_updated_count = 0
         form2_path = self.file_form2.filePath().strip() if hasattr(self, "file_form2") else ""
+        form2_layers = (
+            self._find_all_form2_layers()
+            if hasattr(self, "_find_all_form2_layers")
+            else []
+        )
         if isinstance(self, CbmsmvDialog) or "_find_existing_form2_layer" in getattr(self, "__dict__", {}):
             form2_layer = self._find_existing_form2_layer()
         else:
             form2_layer = None
         if form2_layer is None and "_get_or_load_form2_layer" in getattr(self, "__dict__", {}):
             form2_layer = self._get_or_load_form2_layer()
+        if form2_layer and form2_layer not in form2_layers:
+            form2_layers.insert(0, form2_layer)
 
         if form2_path.lower().endswith(".csv"):
             if self._pending_json_edits:
@@ -4192,13 +4268,19 @@ class CbmsmvDialog(QDialog):
                     )
                     return False
                 form2_saved = True
-                if form2_layer and form2_layer.isValid() and form2_layer.isModified():
-                    try:
-                        form2_layer.rollBack()
-                        form2_layer.dataProvider().forceReload()
-                        form2_layer.triggerRepaint()
-                    except Exception:
-                        pass
+                for f2_lyr in form2_layers:
+                    if f2_lyr and f2_lyr.isValid():
+                        try:
+                            if f2_lyr.isEditable() and f2_lyr.isModified():
+                                if getattr(f2_lyr, "providerType", lambda: "ogr")() == "memory":
+                                    f2_lyr.commitChanges()
+                                else:
+                                    f2_lyr.rollBack()
+                            if hasattr(f2_lyr, "dataProvider") and f2_lyr.dataProvider():
+                                f2_lyr.dataProvider().forceReload()
+                            f2_lyr.triggerRepaint()
+                        except Exception:
+                            pass
             elif form2_layer and form2_layer.isValid() and form2_layer.isEditable() and form2_layer.isModified():
                 try:
                     success = form2_layer.commitChanges()
@@ -4243,6 +4325,12 @@ class CbmsmvDialog(QDialog):
                 )
                 return False
             form2_saved = True
+
+        # Clear cached reference / Form 2 indexes so subsequent fixes read fresh disk state
+        self._cached_f2_index = None
+        self._cached_ref_bldg_index = None
+        if hasattr(self, "_uncommitted_fid_map") and isinstance(self._uncommitted_fid_map, dict):
+            self._uncommitted_fid_map.clear()
 
         # 3. Assemble saved message
         saved_parts = []
@@ -4291,8 +4379,8 @@ class CbmsmvDialog(QDialog):
                         val_id = r["id"]
                         break
 
-        # 5. Re-run validation check if a valid val_id is active (skip when dialog is closing)
-        if getattr(self, "_is_closing", False):
+        # 5. Re-run validation check if a valid val_id is active (skip when dialog is closing or caller handles rerun)
+        if getattr(self, "_is_closing", False) or skip_rerun:
             return True
 
         if val_id:
@@ -4393,41 +4481,69 @@ class CbmsmvDialog(QDialog):
                 act_w = table.cellWidget(r, table.columnCount() - 1)
                 if act_w:
                     for btn in act_w.findChildren(QPushButton):
-                        if btn.text() in ("Fixed", "Deleted"):
-                            btn.setText("Edit" if btn.text() == "Fixed" else "Delete")
+                        if btn.text() == "Fixed":
+                            btn.setText("Fix")
+                            btn.setEnabled(True)
+                            if hasattr(self, "_style_row_fix_button"):
+                                self._style_row_fix_button(btn, enabled=True, fixed=False)
+                        elif btn.text() == "Deleted":
+                            btn.setText("Delete")
                             btn.setEnabled(True)
         finally:
             table.setProperty("is_populating", False)
 
-    def _discard_changes(self, target_val_id: Optional[str] = None) -> bool:
+    def _discard_changes(self, target_val_id: Optional[str] = None, skip_rerun: bool = False) -> bool:
         """
         Discard pending in-memory and buffer edits, restoring layers and table to disk state.
         """
         if not is_valid_qobject(self):
             return False
 
-        # 1. Roll back GeoJSON main building layer edits
-        main_layer = self._find_existing_main_building_layer()
-        if main_layer and main_layer.isValid() and main_layer.isEditable():
-            try:
-                main_layer.rollBack()
-                main_layer.startEditing()
-            except Exception:
-                pass
+        # 1. Roll back ALL GeoJSON main building layers and reload from original disk file
+        main_layers = (
+            self._find_all_main_building_layers()
+            if hasattr(self, "_find_all_main_building_layers")
+            else ([self._find_existing_main_building_layer()] if hasattr(self, "_find_existing_main_building_layer") else [])
+        )
+        for main_layer in main_layers:
+            if main_layer and main_layer.isValid():
+                try:
+                    if main_layer.isEditable():
+                        main_layer.rollBack()
+                    if hasattr(main_layer, "dataProvider") and main_layer.dataProvider():
+                        main_layer.dataProvider().forceReload()
+                    main_layer.updateExtents()
+                    main_layer.startEditing()
+                    main_layer.triggerRepaint()
+                except Exception:
+                    pass
 
-        # 2. Roll back Form 2 layer edits if active
+        # 2. Roll back ALL Form 2 layer edits and reload from original disk file
+        form2_layers = (
+            self._find_all_form2_layers()
+            if hasattr(self, "_find_all_form2_layers")
+            else []
+        )
         if isinstance(self, CbmsmvDialog) or "_find_existing_form2_layer" in getattr(self, "__dict__", {}):
             form2_layer = self._find_existing_form2_layer()
         else:
             form2_layer = None
         if form2_layer is None and "_get_or_load_form2_layer" in getattr(self, "__dict__", {}):
             form2_layer = self._get_or_load_form2_layer()
-        if form2_layer and form2_layer.isValid() and form2_layer.isEditable():
-            try:
-                form2_layer.rollBack()
-                form2_layer.startEditing()
-            except Exception:
-                pass
+        if form2_layer and form2_layer not in form2_layers:
+            form2_layers.insert(0, form2_layer)
+
+        for f2_lyr in form2_layers:
+            if f2_lyr and f2_lyr.isValid():
+                try:
+                    if f2_lyr.isEditable():
+                        f2_lyr.rollBack()
+                    if hasattr(f2_lyr, "dataProvider") and f2_lyr.dataProvider() and getattr(f2_lyr, "providerType", lambda: "ogr")() != "memory":
+                        f2_lyr.dataProvider().forceReload()
+                    f2_lyr.startEditing()
+                    f2_lyr.triggerRepaint()
+                except Exception:
+                    pass
 
         # 3. Roll back any result layers if modified in edit buffer
         if hasattr(self, "_result_layers") and self._result_layers:
@@ -4441,9 +4557,13 @@ class CbmsmvDialog(QDialog):
                         except Exception:
                             pass
 
-        # 4. Clear pending in-memory Form 2 edits and table dirty flag
+        # 4. Clear pending in-memory Form 2 edits, caches, and table dirty flag
         self._pending_json_edits.clear()
         self._has_unsaved_table_edits = False
+        self._cached_f2_index = None
+        self._cached_ref_bldg_index = None
+        if hasattr(self, "_uncommitted_fid_map") and isinstance(self._uncommitted_fid_map, dict):
+            self._uncommitted_fid_map.clear()
         getattr(self, "_update_save_discard_ui_state", lambda: None)()
 
         # 5. Refresh map canvas
@@ -4477,18 +4597,22 @@ class CbmsmvDialog(QDialog):
                         val_id = r["id"]
                         break
 
-        # 7. Revert active table cells in-memory as immediate zero-latency feedback
+        # 7. Revert ALL table widgets across all category tabs in-memory as immediate zero-latency feedback
         try:
-            if hasattr(self, "results_tab_widget"):
-                cur_w = self.results_tab_widget.currentWidget()
-                if cur_w:
-                    tbl = cur_w.findChild(QTableWidget)
-                    if tbl:
-                        self._revert_table_cells_to_original(tbl, val_id)
+            if hasattr(self, "results_tab_widget") and self.results_tab_widget:
+                for tbl in self.results_tab_widget.findChildren(QTableWidget):
+                    tbl_val_id = None
+                    p_w = tbl.parentWidget()
+                    while p_w is not None and p_w != self.results_tab_widget:
+                        if p_w.property("val_id"):
+                            tbl_val_id = p_w.property("val_id")
+                            break
+                        p_w = p_w.parentWidget()
+                    self._revert_table_cells_to_original(tbl, tbl_val_id or val_id)
         except Exception:
             pass
 
-        if getattr(self, "_is_closing", False):
+        if getattr(self, "_is_closing", False) or skip_rerun:
             return True
 
         discard_msg = "Changes discarded. The files are back to how they were."
@@ -4896,25 +5020,54 @@ class CbmsmvDialog(QDialog):
     # -----------------------------------------------------------------------
     # Review & Fix Dock Integration (Check & Update Pattern)
     # -----------------------------------------------------------------------
+    def _find_all_main_building_layers(self) -> List[QgsVectorLayer]:
+        """
+        Return all loaded QgsVectorLayer instances in the QGIS project matching the
+        main Geotagged Building Points file path (or fallback persistent building point layers).
+        """
+        points_path = self.file_points.filePath().strip() if hasattr(self, "file_points") else ""
+        proj = self.project if self.project else QgsProject.instance()
+        matched: List[QgsVectorLayer] = []
+
+        if points_path:
+            norm_path = os.path.normpath(points_path).lower()
+            for layer in proj.mapLayers().values():
+                if isinstance(layer, QgsVectorLayer) and layer.isValid():
+                    src = os.path.normpath(layer.source().split("|")[0]).lower()
+                    if src == norm_path:
+                        self._connect_layer_dirty_signals(layer)
+                        matched.append(layer)
+
+        if not matched:
+            for layer in proj.mapLayers().values():
+                if isinstance(layer, QgsVectorLayer) and layer.isValid():
+                    if layer.providerType() == "memory":
+                        continue
+                    is_point = False
+                    try:
+                        is_point = (layer.geometryType() == QgsWkbTypes.PointGeometry)
+                    except Exception:
+                        try:
+                            is_point = (layer.geometryType() == Qgis.GeometryType.Point)
+                        except Exception:
+                            pass
+                    if is_point:
+                        fnames = [f.name().lower() for f in layer.fields()]
+                        if "sf_map_uuid" in fnames or "map_uuid" in fnames:
+                            self._connect_layer_dirty_signals(layer)
+                            matched.append(layer)
+
+        # Prefer modified/editable layers first
+        matched.sort(key=lambda lyr: (not (lyr.isEditable() and lyr.isModified()), not lyr.isEditable()))
+        return matched
+
     def _find_existing_main_building_layer(self) -> Optional[QgsVectorLayer]:
         """
         Locate the main Geotagged Building Points layer ONLY if it is already loaded
         in the QGIS project. Never loads or creates new layers in the project.
         """
-        points_path = self.file_points.filePath().strip() if hasattr(self, "file_points") else ""
-        if not points_path:
-            return None
-
-        proj = self.project if self.project else QgsProject.instance()
-        norm_path = os.path.normpath(points_path).lower()
-
-        for layer in proj.mapLayers().values():
-            if isinstance(layer, QgsVectorLayer) and layer.isValid():
-                src = os.path.normpath(layer.source().split("|")[0]).lower()
-                if src == norm_path:
-                    self._connect_layer_dirty_signals(layer)
-                    return layer
-        return None
+        layers = self._find_all_main_building_layers()
+        return layers[0] if layers else None
 
     def _get_or_load_main_building_layer(self) -> Optional[QgsVectorLayer]:
         """
@@ -4927,12 +5080,16 @@ class CbmsmvDialog(QDialog):
         # 1. Search existing project layers by path
         if points_path:
             norm_path = os.path.normpath(points_path).lower()
+            path_matches = []
             for layer in proj.mapLayers().values():
                 if isinstance(layer, QgsVectorLayer) and layer.isValid():
                     src = os.path.normpath(layer.source().split("|")[0]).lower()
                     if src == norm_path:
                         self._connect_layer_dirty_signals(layer)
-                        return layer
+                        path_matches.append(layer)
+            if path_matches:
+                path_matches.sort(key=lambda lyr: (not (lyr.isEditable() and lyr.isModified()), not lyr.isEditable()))
+                return path_matches[0]
 
         # 2. Load from points_path if file exists on disk
         if points_path and os.path.exists(points_path):
@@ -4951,23 +5108,9 @@ class CbmsmvDialog(QDialog):
                 self._log_error(f"Error loading building points layer: {exc}")
 
         # 3. Fallback: Search existing persistent project layers by geometry and key fields (excluding memory/error layers)
-        for layer in proj.mapLayers().values():
-            if isinstance(layer, QgsVectorLayer) and layer.isValid():
-                if layer.providerType() == "memory":
-                    continue
-                is_point = False
-                try:
-                    is_point = (layer.geometryType() == QgsWkbTypes.PointGeometry)
-                except Exception:
-                    try:
-                        is_point = (layer.geometryType() == Qgis.GeometryType.Point)
-                    except Exception:
-                        pass
-                if is_point:
-                    fnames = [f.name().lower() for f in layer.fields()]
-                    if "sf_map_uuid" in fnames or "map_uuid" in fnames:
-                        self._connect_layer_dirty_signals(layer)
-                        return layer
+        fallback_layers = self._find_all_main_building_layers()
+        if fallback_layers:
+            return fallback_layers[0]
 
         if is_valid_qobject(self):
             QMessageBox.warning(
@@ -4978,26 +5121,36 @@ class CbmsmvDialog(QDialog):
             )
         return None
 
-    def _find_existing_form2_layer(self) -> Optional[QgsVectorLayer]:
+    def _find_all_form2_layers(self) -> List[QgsVectorLayer]:
         """
-        Locate the Form 2 table layer (CSV/JSON) ONLY if it is already loaded in the
-        QGIS project. Never loads or creates new layers in the project.
+        Return all loaded Form 2 table layers (CSV/JSON) in the QGIS project.
         """
         form2_path = self.file_form2.filePath().strip() if hasattr(self, "file_form2") else ""
         if not form2_path:
-            return None
+            return []
 
         proj = self.project if self.project else QgsProject.instance()
         norm_path = os.path.normpath(form2_path).lower()
         expected_name = f"Form 2 ({os.path.basename(form2_path)})"
+        matched: List[QgsVectorLayer] = []
 
         for layer in proj.mapLayers().values():
             if isinstance(layer, QgsVectorLayer) and layer.isValid():
                 src = os.path.normpath(layer.source().split("|")[0]).lower()
                 if src == norm_path or layer.name() == expected_name:
                     self._connect_layer_dirty_signals(layer)
-                    return layer
-        return None
+                    matched.append(layer)
+
+        matched.sort(key=lambda lyr: (not (lyr.isEditable() and lyr.isModified()), not lyr.isEditable()))
+        return matched
+
+    def _find_existing_form2_layer(self) -> Optional[QgsVectorLayer]:
+        """
+        Locate the Form 2 table layer (CSV/JSON) ONLY if it is already loaded in the
+        QGIS project. Never loads or creates new layers in the project.
+        """
+        layers = self._find_all_form2_layers()
+        return layers[0] if layers else None
 
     def _get_or_load_form2_layer(self) -> Optional[QgsVectorLayer]:
         """
@@ -6822,7 +6975,7 @@ class CbmsmvDialog(QDialog):
         inputs_group = self._get_or_create_layer_group(group_name)
 
         # 1. Form 2 Data File (.csv / .json)
-        if form2_path and os.path.exists(form2_path):
+        if form2_path and os.path.exists(form2_path) and not self._find_existing_form2_layer():
             try:
                 layer_name = f"Form 2 ({os.path.basename(form2_path)})"
                 if form2_path.lower().endswith(".csv"):
@@ -6843,7 +6996,7 @@ class CbmsmvDialog(QDialog):
                 self._log_error(f"Failed to load Form 2 into QGIS Layers: {e}")
 
         # 2. Geotagged Building Points (.geojson)
-        if points_path and os.path.exists(points_path):
+        if points_path and os.path.exists(points_path) and not self._find_existing_main_building_layer():
             try:
                 self._log_info(f"Loading Geotagged Building Points into QGIS Layers: {os.path.basename(points_path)}")
                 layer_name = f"Building Points ({os.path.basename(points_path)})"
@@ -6946,6 +7099,31 @@ class CbmsmvDialog(QDialog):
             )
             self._switch_to_config(0)
             return
+
+        # 1b. If user clicks Run Validation manually while unsaved partial edits exist, prompt Save / Discard / Cancel
+        if not auto_rerun and hasattr(self, "_has_unsaved_changes") and self._has_unsaved_changes():
+            reply = QMessageBox.question(
+                self,
+                "Unsaved Changes",
+                "You have unsaved changes from a recent fix or edit.\n\n"
+                "• Click 'Save' to permanently save your changes before running validation.\n"
+                "• Click 'Discard' to discard unsaved changes and return to the original files.\n"
+                "• Click 'Cancel' to stay on your current work.",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Save,
+            )
+            if reply == QMessageBox.Cancel:
+                return
+            elif reply == QMessageBox.Save:
+                if not self._save_changes(skip_rerun=True):
+                    return
+            elif reply == QMessageBox.Discard:
+                self._discard_changes(skip_rerun=True)
+
+        self._cached_f2_index = None
+        self._cached_ref_bldg_index = None
+        if hasattr(self, "_uncommitted_fid_map") and isinstance(self._uncommitted_fid_map, dict):
+            self._uncommitted_fid_map.clear()
 
         # 2. Get enabled validation rules
         selected_rules = [

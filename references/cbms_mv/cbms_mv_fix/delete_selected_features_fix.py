@@ -400,8 +400,12 @@ def mark_feature_deleted(
             ]
             if not m_del_indices:
                 try:
-                    main_layer.dataProvider().addAttributes([QgsField("is_deleted", QVariant.Bool)])
-                    main_layer.updateFields()
+                    new_fld = QgsField("is_deleted", QVariant.Bool)
+                    if hasattr(main_layer, "addAttribute") and main_layer.isEditable() and getattr(main_layer, "providerType", lambda: "memory")() != "memory":
+                        main_layer.addAttribute(new_fld)
+                    else:
+                        main_layer.dataProvider().addAttributes([new_fld])
+                        main_layer.updateFields()
                     idx = main_layer.fields().indexOf("is_deleted")
                     if idx != -1:
                         m_del_indices.append(idx)
@@ -542,8 +546,12 @@ def run_fix(
             del_idx = main_layer.fields().indexOf(fld.name())
             break
     if del_idx == -1:
-        main_layer.dataProvider().addAttributes([QgsField("is_deleted", QVariant.Bool)])
-        main_layer.updateFields()
+        new_fld = QgsField("is_deleted", QVariant.Bool)
+        if hasattr(main_layer, "addAttribute") and main_layer.isEditable() and getattr(main_layer, "providerType", lambda: "memory")() != "memory":
+            main_layer.addAttribute(new_fld)
+        else:
+            main_layer.dataProvider().addAttributes([new_fld])
+            main_layer.updateFields()
         del_idx = main_layer.fields().indexOf("is_deleted")
 
     f_type = main_layer.fields().at(del_idx).type() if del_idx != -1 else QVariant.Bool

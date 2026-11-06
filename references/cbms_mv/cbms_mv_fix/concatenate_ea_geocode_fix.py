@@ -23,12 +23,16 @@ from qgis.core import (
     QgsVectorLayer,
 )
 try:
-    from qgis.PyQt.QtCore import QVariant
+    from qgis.PyQt.QtCore import Qt, QVariant
+    from qgis.PyQt.QtWidgets import QMessageBox
 except ImportError:
     try:
-        from PyQt5.QtCore import QVariant
+        from PyQt5.QtCore import Qt, QVariant
+        from PyQt5.QtWidgets import QMessageBox
     except ImportError:
+        Qt = None
         QVariant = None
+        QMessageBox = None
 
 try:
     from .common import _flatten_ids, _get_val, is_valid_qobject, make_unique_feature_key
@@ -127,6 +131,81 @@ def compute_ea_geocode_field_calculator(
     return ""
 
 
+def _inspect_missing_ea_geocode_columns(
+    feat: Optional[QgsFeature] = None,
+    row_attrs: Optional[Dict[str, Any]] = None,
+    ef: Optional[QgsFeature] = None,
+) -> List[str]:
+    """Return the list of required columns that are NULL/empty when EA Geocode concatenation produces NULL."""
+    a_lower: Dict[str, str] = {}
+    if row_attrs:
+        for k, v in row_attrs.items():
+            if v is not None and v != NULL:
+                s = str(v).strip()
+                if s and s.upper() not in ("", "NULL", "NONE", "NAN"):
+                    a_lower[str(k).strip().lower()] = s
+
+    def _has_any(*col_names: str) -> bool:
+        for cn in col_names:
+            if feat is not None and _get_val(feat, cn) is not None:
+                return True
+            if ef is not None and _get_val(ef, cn) is not None:
+                return True
+            if cn.lower() in a_lower:
+                return True
+        return False
+
+    missing_cols: List[str] = []
+    if not _has_any("sf_province_code", "province_code", "df_province_code"):
+        missing_cols.append("sf_province_code / province_code")
+    if not _has_any("sf_city_mun_code", "city_mun_code", "df_city_mun_code"):
+        missing_cols.append("sf_city_mun_code / city_mun_code")
+    if not _has_any("sf_barangay_code", "barangay_code", "df_barangay_code"):
+        missing_cols.append("sf_barangay_code / barangay_code")
+    if not _has_any("sf_ean", "ean", "df_ean"):
+        missing_cols.append("sf_ean / ean")
+    if not _has_any("sf_bsn_geoid", "bsn_geoid", "df_bsn_geoid"):
+        missing_cols.append("sf_bsn_geoid / bsn_geoid")
+    return missing_cols
+
+
+def _build_null_ea_geocode_message(
+    null_records: List[Dict[str, Any]],
+    selected_count: int = 0,
+) -> str:
+    """Build a detailed user-facing prompt indicating that all required columns need to be checked when EA Geocode remains NULL."""
+    count = len(null_records) or selected_count
+    count_str = f"{count} selected record(s)" if count > 0 else "all selected record(s)"
+    header = (
+        f"The concatenated EA GEOCODE is still NULL for {count_str}.\n"
+        "All required columns need to be checked because one or more values are missing or NULL.\n\n"
+    )
+    row_lines: List[str] = []
+    for item in null_records[:5]:
+        label = item.get("label", "Record")
+        missing = item.get("missing_cols") or []
+        if missing:
+            row_lines.append(f"  • {label}: check {', '.join(missing)}")
+        else:
+            row_lines.append(f"  • {label}: all required columns need to be checked")
+    if len(null_records) > 5:
+        row_lines.append(f"  • ...and {len(null_records) - 5} more record(s).")
+
+    rows_section = ("Affected Record(s):\n" + "\n".join(row_lines) + "\n\n") if row_lines else ""
+
+    columns_guide = (
+        "All columns that need to be checked:\n\n"
+        "1st Scenario (Geographic Codes):\n"
+        "  • sf_province_code (or province_code)\n"
+        "  • sf_city_mun_code (or city_mun_code)\n"
+        "  • sf_barangay_code (or barangay_code)\n"
+        "  • sf_ean (or ean)\n\n"
+        "2nd Scenario (BSN GEOID — first 14 chars):\n"
+        "  • sf_bsn_geoid (or bsn_geoid)"
+    )
+    return f"{header}{rows_section}{columns_guide}"
+
+
 def _run_fix_ea_geocode(
     main_layer: QgsVectorLayer,
     target_fids: Optional[List[Any]] = None,
@@ -166,8 +245,12 @@ def _run_fix_ea_geocode(
     if not target_fields:
         if not active_layer.isEditable():
             active_layer.startEditing()
-        active_layer.dataProvider().addAttributes([QgsField("ea_geocode", QVariant.String, len=30)])
-        active_layer.updateFields()
+        new_fld = QgsField("ea_geocode", QVariant.String, len=30)
+        if hasattr(active_layer, "addAttribute") and active_layer.isEditable() and getattr(active_layer, "providerType", lambda: "memory")() != "memory":
+            active_layer.addAttribute(new_fld)
+        else:
+            active_layer.dataProvider().addAttributes([new_fld])
+            active_layer.updateFields()
         target_fields.append("ea_geocode")
         field_names = active_layer.fields().names() if hasattr(active_layer.fields(), "names") else []
 
@@ -184,6 +267,55 @@ def _run_fix_ea_geocode(
     is_error_active = (error_layer is not None and active_layer == error_layer)
     updated_values: Dict[Any, Dict[str, str]] = {}
     fixed_count = 0
+    null_records: List[Dict[str, Any]] = []
+    table = kwargs.get("table")
+    dialog = kwargs.get("dialog")
+    target_rows = kwargs.get("target_rows")
+
+    # Pre-index table row labels and row attributes so Affected Record(s) matches Row #N (FID: ...)
+    row_info_by_key: Dict[str, Dict[str, Any]] = {}
+    row_info_by_fid: Dict[str, Dict[str, Any]] = {}
+    if table is not None and is_valid_qobject(table) and Qt is not None:
+        rows_iter = list(target_rows) if target_rows else list(range(table.rowCount()))
+        for r in rows_iter:
+            if r < 0 or r >= table.rowCount():
+                continue
+            item0 = table.item(r, 0)
+            s_fid = item0.data(Qt.UserRole) if item0 else None
+            u_str = str(item0.data(Qt.UserRole + 1) or "").strip() if item0 else ""
+            e_fid = item0.data(Qt.UserRole + 3) if item0 else None
+            df_f = item0.data(Qt.UserRole + 4) if item0 else None
+            df_u = str(item0.data(Qt.UserRole + 5) or "").strip() if item0 else ""
+            sf_f = item0.data(Qt.UserRole + 6) if item0 else None
+            sf_u = str(item0.data(Qt.UserRole + 7) or "").strip() if item0 else ""
+            row_uuid = sf_u or u_str or df_u
+            key_fid = (
+                sf_f
+                if (sf_f is not None and str(sf_f).strip() not in ("", "NULL", "None"))
+                else (
+                    s_fid
+                    if (s_fid is not None and str(s_fid).strip() not in ("", "NULL", "None"))
+                    else (df_f if (df_f is not None and str(df_f).strip() not in ("", "NULL", "None")) else e_fid)
+                )
+            )
+            fid_disp = key_fid if key_fid is not None else (r + 1)
+            row_attrs = {}
+            for c in range(table.columnCount()):
+                h_item = table.horizontalHeaderItem(c)
+                col_name = h_item.text().strip() if h_item else ""
+                it = table.item(r, c)
+                if it and col_name:
+                    row_attrs[col_name] = it.text().strip()
+            r_info = {
+                "row": r,
+                "label": f"Row #{r + 1} (FID: {fid_disp})",
+                "row_attrs": row_attrs,
+            }
+            uk = make_unique_feature_key(key_fid, row_uuid)
+            if uk:
+                row_info_by_key[uk.lower()] = r_info
+            for fc in _flatten_ids(key_fid):
+                row_info_by_fid[str(fc)] = r_info
 
     for feat in active_layer.getFeatures():
         if feedback and feedback.isCanceled():
@@ -251,6 +383,22 @@ def _run_fix_ea_geocode(
 
         concat_geocode = compute_ea_geocode_field_calculator(feat, active_layer)
         if not concat_geocode:
+            matched_r_info = None
+            for ck_l in cand_keys_lower:
+                if ck_l in row_info_by_key:
+                    matched_r_info = row_info_by_key[ck_l]
+                    break
+            if not matched_r_info:
+                for fid_c in spatial_ids:
+                    if str(fid_c) in row_info_by_fid:
+                        matched_r_info = row_info_by_fid[str(fid_c)]
+                        break
+            label = matched_r_info["label"] if matched_r_info else f"FID: {f_id}"
+            r_attrs = matched_r_info["row_attrs"] if matched_r_info else None
+            null_records.append({
+                "label": label,
+                "missing_cols": _inspect_missing_ea_geocode_columns(feat, r_attrs, None),
+            })
             continue
 
         for tf_name in target_fields:
@@ -324,10 +472,44 @@ def _run_fix_ea_geocode(
     if feedback:
         feedback.pushInfo(f"Calculated and assigned EA geocode for {fixed_count} feature(s).")
 
+    # If no active_layer feature matched a selected table row when fixed_count == 0, still populate null_records from the table
+    if fixed_count == 0 and not null_records and row_info_by_fid:
+        seen_rows = set()
+        for r_info in row_info_by_fid.values():
+            if r_info["row"] not in seen_rows:
+                seen_rows.add(r_info["row"])
+                null_records.append({
+                    "label": r_info["label"],
+                    "missing_cols": _inspect_missing_ea_geocode_columns(None, r_info["row_attrs"], None),
+                })
+
+    selected_count = len(target_rows or target_fids or target_uuids or [])
+    null_warning_msg = (
+        _build_null_ea_geocode_message(null_records, selected_count=selected_count)
+        if (null_records or fixed_count == 0)
+        else ""
+    )
+    if fixed_count == 0:
+        if dialog is None and QMessageBox is not None and kwargs.get("parent") is not None:
+            try:
+                QMessageBox.warning(kwargs["parent"], "Check all columns", null_warning_msg)
+            except Exception:
+                pass
+        return {
+            "success": True,
+            "fixed_count": 0,
+            "updated_values": {},
+            "title": "Check all columns",
+            "null_columns_warning": null_warning_msg,
+            "message": null_warning_msg,
+        }
+
     return {
         "success": True,
         "fixed_count": fixed_count,
         "updated_values": updated_values,
+        "title": "Check all columns" if null_warning_msg else "Fix Applied",
+        "null_columns_warning": null_warning_msg,
         "message": f"Updated EA geocode for {fixed_count} record(s).",
     }
 

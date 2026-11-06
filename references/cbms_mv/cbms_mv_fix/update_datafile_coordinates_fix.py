@@ -205,8 +205,12 @@ def _run_fix_update_datafile_coordinates(
                 f_to_add.append(QgsField("df_y_current", QVariant.Double))
             if f_to_add:
                 try:
-                    lyr.dataProvider().addAttributes(f_to_add)
-                    lyr.updateFields()
+                    if hasattr(lyr, "addAttribute") and lyr.isEditable() and getattr(lyr, "providerType", lambda: "memory")() != "memory":
+                        for nf in f_to_add:
+                            lyr.addAttribute(nf)
+                    else:
+                        lyr.dataProvider().addAttributes(f_to_add)
+                        lyr.updateFields()
                 except Exception:
                     pass
 

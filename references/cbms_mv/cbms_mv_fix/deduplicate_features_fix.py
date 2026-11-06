@@ -649,18 +649,22 @@ def _run_fix_longitude_duplicate(
         if f.name().lower() in ("status", "sf_status"):
             status_field_name = f.name()
             break
+    if not main_layer.isEditable():
+        main_layer.startEditing()
+
     if status_field_name is None:
         try:
-            main_layer.dataProvider().addAttributes([QgsField("status", QVariant.String)])
-            main_layer.updateFields()
+            new_fld = QgsField("status", QVariant.String)
+            if hasattr(main_layer, "addAttribute") and main_layer.isEditable() and getattr(main_layer, "providerType", lambda: "memory")() != "memory":
+                main_layer.addAttribute(new_fld)
+            else:
+                main_layer.dataProvider().addAttributes([new_fld])
+                main_layer.updateFields()
             status_field_name = "status"
         except Exception:
             status_field_name = "status"
 
     status_idx = main_layer.fields().indexOf(status_field_name)
-
-    if not main_layer.isEditable():
-        main_layer.startEditing()
 
     updated_values = {}
     deleted_count = 0

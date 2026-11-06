@@ -110,16 +110,24 @@ def _run_fix_copy_geometry_to_coordinates(
 
     if not target_lon_fields:
         try:
-            active_layer.dataProvider().addAttributes([QgsField("sf_longitude", QVariant.Double)])
-            active_layer.updateFields()
+            new_fld = QgsField("sf_longitude", QVariant.Double)
+            if hasattr(active_layer, "addAttribute") and active_layer.isEditable() and getattr(active_layer, "providerType", lambda: "memory")() != "memory":
+                active_layer.addAttribute(new_fld)
+            else:
+                active_layer.dataProvider().addAttributes([new_fld])
+                active_layer.updateFields()
             target_lon_fields.append("sf_longitude")
         except Exception:
             pass
 
     if not target_lat_fields:
         try:
-            active_layer.dataProvider().addAttributes([QgsField("sf_latitude", QVariant.Double)])
-            active_layer.updateFields()
+            new_fld = QgsField("sf_latitude", QVariant.Double)
+            if hasattr(active_layer, "addAttribute") and active_layer.isEditable() and getattr(active_layer, "providerType", lambda: "memory")() != "memory":
+                active_layer.addAttribute(new_fld)
+            else:
+                active_layer.dataProvider().addAttributes([new_fld])
+                active_layer.updateFields()
             target_lat_fields.append("sf_latitude")
         except Exception:
             pass

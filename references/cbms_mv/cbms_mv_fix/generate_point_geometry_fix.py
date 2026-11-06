@@ -8,11 +8,12 @@ Generates point geometries in the Form 2 Geotagged Building Points layer (.geojs
 using coordinates (x_current, y_current) from the CSV datafile when no corresponding
 point exists in the GeoJSON layer. Automatically derives bsn_geoid by concatenating
 province_code, city_mun_code, barangay_code, ean, and bsn_code, and generates or
-preserves map_uuid across both GeoJSON and CSV datafiles.
+preserves map_uuid across GeoJSON, CSV datafiles, and the Reference Building Points layer.
 """
 import math
+import os
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from qgis.core import (
     NULL,
@@ -104,11 +105,22 @@ def _format_bsn_code(val: Any) -> str:
     return _pad_code(val, 5)
 
 
+def _is_regular_bsn(bsn_str: str) -> bool:
+    """Check if BSN represents a regular building (00001 - 55554)."""
+    if not bsn_str:
+        return False
+    try:
+        b_int = int(str(bsn_str).strip())
+        return 0 < b_int < 55555
+    except (ValueError, TypeError):
+        return False
+
+
 def _extract_first_matching(source: Dict[str, Any], candidates: List[str]) -> str:
     """Extract first non-empty value matching candidates (case-insensitive) from a dict."""
     if not source:
         return ""
-    source_lower = {str(k).lower(): v for k, v in source.items()}
+    source_lower = {str(k).lower(): v for k, v in source.items() if _format_clean_code(v)}
     for cand in candidates:
         cand_l = cand.lower()
         if cand_l in source_lower:
@@ -133,38 +145,43 @@ def _extract_padded_boundary_codes(
     Returns dict with keys:
       region_code, province_code, city_mun_code, barangay_code, ean, bsn, ea_geocode, bsn_geoid.
     """
-    attrs = dict(attributes)
-    if extra_feat and extra_feat.isValid():
+    attrs: Dict[str, Any] = {}
+    for k, v in (attributes or {}).items():
+        if _format_clean_code(v):
+            attrs[k] = v
+            attrs[str(k).lower()] = v
+
+    if _is_usable_feature(extra_feat):
         for fld in extra_feat.fields():
             fn = fld.name()
-            if fn.lower() not in [k.lower() for k in attrs]:
-                v = extra_feat[fn]
-                if v is not None and v != NULL:
-                    attrs[fn] = v
+            v = _safe_get_attr(extra_feat, fn)
+            if _format_clean_code(v) and fn.lower() not in attrs:
+                attrs[fn] = v
+                attrs[fn.lower()] = v
 
     raw_reg = _extract_first_matching(
         attrs,
-        ["df_region_code", "region_code", "sf_region_code", "df_reg_code", "reg_code", "sf_reg_code"]
+        ["df_region_code", "region_code", "ref_region_code", "sf_region_code", "df_reg_code", "reg_code", "ref_reg_code", "sf_reg_code"],
     )
     raw_prov = _extract_first_matching(
         attrs,
-        ["df_province_code", "province_code", "sf_province_code", "df_prov_code", "prov_code", "sf_prov_code"]
+        ["df_province_code", "province_code", "ref_province_code", "sf_province_code", "df_prov_code", "prov_code", "ref_prov_code", "sf_prov_code"],
     )
     raw_mun = _extract_first_matching(
         attrs,
-        ["df_city_mun_code", "city_mun_code", "sf_city_mun_code", "df_mun_code", "mun_code", "sf_mun_code", "df_city_code", "city_code"]
+        ["df_city_mun_code", "city_mun_code", "ref_city_mun_code", "sf_city_mun_code", "df_mun_code", "mun_code", "ref_mun_code", "sf_mun_code", "df_city_code", "city_code"],
     )
     raw_brgy = _extract_first_matching(
         attrs,
-        ["df_barangay_code", "df_barangay__code", "barangay_code", "barangay__code", "sf_barangay_code", "sf_barangay__code", "df_brgy_code", "brgy_code", "sf_brgy_code", "df_bgy_code", "bgy_code"]
+        ["df_barangay_code", "df_barangay__code", "barangay_code", "barangay__code", "ref_barangay_code", "sf_barangay_code", "sf_barangay__code", "df_brgy_code", "brgy_code", "ref_brgy_code", "sf_brgy_code", "df_bgy_code", "bgy_code"],
     )
     raw_ean = _extract_first_matching(
         attrs,
-        ["df_ean", "ean", "sf_ean", "df_ea_code", "ea_code", "sf_ea_code", "df_ean_code", "ean_code", "df_ea_num", "ea_num"]
+        ["df_ean", "ean", "ref_ean", "sf_ean", "df_ea_code", "ea_code", "ref_ea_code", "sf_ea_code", "df_ean_code", "ean_code", "df_ea_num", "ea_num"],
     )
     raw_bsn = _extract_first_matching(
         attrs,
-        ["df_bsn", "bsn", "df_bsn_code", "bsn_code", "sf_bsn", "sf_bsn_code", "df_bldg_sn", "bldg_sn", "sf_bldg_sn", "bsn_num"]
+        ["df_bsn", "bsn", "df_bsn_code", "bsn_code", "ref_bsn", "sf_bsn", "sf_bsn_code", "df_bldg_sn", "bldg_sn", "sf_bldg_sn", "bsn_num"],
     )
 
     reg = _pad_code(raw_reg, 2)
@@ -176,17 +193,44 @@ def _extract_padded_boundary_codes(
 
     ea_geo = _extract_first_matching(
         attrs,
-        ["df_ea_geocode", "ea_geocode", "sf_ea_geocode", "geocode", "df_geocode"]
+        ["df_ea_geocode", "ea_geocode", "ref_ea_geocode", "sf_ea_geocode", "geocode", "df_geocode"],
     )
 
     if not ea_geo and prov and mun and brgy and ean:
         ea_geo = f"{prov}{mun}{brgy}{ean}"
 
-    bsn_geoid = ""
+    bsn_geoid = _extract_first_matching(
+        attrs,
+        ["df_bsn_geoid", "bsn_geoid", "ref_bsn_geoid", "sf_bsn_geoid"],
+    )
     if prov and mun and brgy and ean and bsn:
         bsn_geoid = f"{prov}{mun}{brgy}{ean}{bsn}"
     elif ea_geo and bsn:
         bsn_geoid = f"{ea_geo}{bsn}"
+
+    # If bsn_geoid was present (e.g. from Reference Layer) and components were missing, derive them
+    if bsn_geoid and len(bsn_geoid) == 19:
+        if not ea_geo:
+            ea_geo = bsn_geoid[:14]
+        if not prov:
+            prov = bsn_geoid[0:3]
+        if not mun:
+            mun = bsn_geoid[3:5]
+        if not brgy:
+            brgy = bsn_geoid[5:8]
+        if not ean:
+            ean = bsn_geoid[8:14]
+        if not bsn:
+            bsn = bsn_geoid[14:19]
+    elif ea_geo and len(ea_geo) == 14:
+        if not prov:
+            prov = ea_geo[0:3]
+        if not mun:
+            mun = ea_geo[3:5]
+        if not brgy:
+            brgy = ea_geo[5:8]
+        if not ean:
+            ean = ea_geo[8:14]
 
     return {
         "region_code": reg,
@@ -215,6 +259,33 @@ def _compute_bsn_geoid(attributes: Dict[str, Any], extra_feat: Optional[QgsFeatu
     return res["bsn_geoid"], res["ea_geocode"]
 
 
+def _is_usable_feature(feat: Any) -> bool:
+    """Return True if feat is a valid, populated QgsFeature."""
+    if feat is None:
+        return False
+    try:
+        if not feat.isValid():
+            return False
+        if hasattr(feat, "_attributes") and isinstance(feat._attributes, list) and len(feat._attributes) == 0:
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def _safe_get_attr(feat: Any, field_name: str) -> Any:
+    """Safely retrieve an attribute value from a QgsFeature without raising IndexError or KeyError."""
+    if not _is_usable_feature(feat):
+        return None
+    try:
+        return feat[field_name]
+    except Exception:
+        try:
+            return feat.attribute(field_name)
+        except Exception:
+            return None
+
+
 def _set_feat_attr(feat: Any, field_name: str, val: Any) -> None:
     try:
         feat.setAttribute(field_name, val)
@@ -235,6 +306,156 @@ def _prompt_numerical_digitize(
     return None
 
 
+def _load_reference_bldg_layer(dialog: Any = None, kwargs: Optional[Dict[str, Any]] = None) -> Optional[QgsVectorLayer]:
+    """Locate or load the Reference Building Points layer (*_bldg_point) from dialog, project, or kwargs."""
+    if kwargs:
+        for k in ("reference_layer", "base_layer", "ref_layer"):
+            cand = kwargs.get(k)
+            if isinstance(cand, QgsVectorLayer) and cand.isValid():
+                return cand
+
+    base_path = ""
+    if kwargs and isinstance(kwargs.get("base_layer_path"), str):
+        base_path = kwargs["base_layer_path"].strip()
+    if not base_path and dialog is not None and hasattr(dialog, "file_base") and dialog.file_base:
+        try:
+            base_path = dialog.file_base.filePath().strip()
+        except Exception:
+            base_path = ""
+
+    proj = getattr(dialog, "project", None) if dialog is not None else None
+    if proj is None:
+        try:
+            proj = QgsProject.instance()
+        except Exception:
+            proj = None
+
+    # 1. Search already loaded project layers
+    if proj is not None and hasattr(proj, "mapLayers"):
+        try:
+            norm_base = os.path.normpath(base_path).lower() if base_path else ""
+            for lyr in proj.mapLayers().values():
+                if not isinstance(lyr, QgsVectorLayer) or not lyr.isValid():
+                    continue
+                src_raw = lyr.source() if hasattr(lyr, "source") else ""
+                src_file = os.path.normpath(src_raw.split("|")[0]).lower() if src_raw else ""
+                lyr_name_lower = (lyr.name() or "").lower()
+                if norm_base and src_file == norm_base and (
+                    "_bldg_point" in src_raw.lower() or lyr_name_lower.endswith("_bldg_point")
+                ):
+                    return lyr
+                if not norm_base and lyr_name_lower.endswith("_bldg_point"):
+                    return lyr
+        except Exception:
+            pass
+
+    # 2. Load sublayer ending with '_bldg_point' from GeoPackage on disk (cached on dialog)
+    if base_path and os.path.exists(base_path):
+        if dialog is not None:
+            cached_lyr_pair = getattr(dialog, "_cached_ref_bldg_layer", None)
+            if (
+                isinstance(cached_lyr_pair, tuple)
+                and len(cached_lyr_pair) == 2
+                and cached_lyr_pair[0] == base_path
+                and cached_lyr_pair[1] is not None
+                and hasattr(cached_lyr_pair[1], "isValid")
+                and cached_lyr_pair[1].isValid()
+            ):
+                return cached_lyr_pair[1]
+        try:
+            bldg_sublayer = None
+            try:
+                import sqlite3
+                conn = sqlite3.connect(base_path)
+                cur = conn.cursor()
+                cur.execute("SELECT table_name FROM gpkg_contents WHERE LOWER(table_name) LIKE '%_bldg_point'")
+                row_s = cur.fetchone()
+                conn.close()
+                if row_s and row_s[0]:
+                    bldg_sublayer = str(row_s[0]).strip()
+            except Exception:
+                bldg_sublayer = None
+
+            if bldg_sublayer:
+                ref_lyr = QgsVectorLayer(
+                    f"{base_path}|layername={bldg_sublayer}",
+                    bldg_sublayer,
+                    "ogr",
+                )
+                if ref_lyr and ref_lyr.isValid():
+                    if dialog is not None:
+                        try:
+                            setattr(dialog, "_cached_ref_bldg_layer", (base_path, ref_lyr))
+                        except Exception:
+                            pass
+                    return ref_lyr
+
+            tmp_layer = QgsVectorLayer(base_path, "tmp_ref_gpkg", "ogr")
+            if tmp_layer and tmp_layer.isValid():
+                for sub_item in tmp_layer.dataProvider().subLayers():
+                    parts = sub_item.split("!!::!!") if "!!::!!" in sub_item else sub_item.split(":")
+                    for part in parts:
+                        if part.strip().endswith("_bldg_point"):
+                            bldg_sublayer = part.strip()
+                            break
+                    if bldg_sublayer:
+                        break
+                if bldg_sublayer:
+                    ref_lyr = QgsVectorLayer(
+                        f"{base_path}|layername={bldg_sublayer}",
+                        bldg_sublayer,
+                        "ogr",
+                    )
+                    if ref_lyr and ref_lyr.isValid():
+                        if dialog is not None:
+                            try:
+                                setattr(dialog, "_cached_ref_bldg_layer", (base_path, ref_lyr))
+                            except Exception:
+                                pass
+                        return ref_lyr
+                fnames = [f.name().lower() for f in tmp_layer.fields()]
+                if any(u in fnames for u in ("map_uuid", "ref_map_uuid", "bsn_geoid", "ref_bsn_geoid")):
+                    if dialog is not None:
+                        try:
+                            setattr(dialog, "_cached_ref_bldg_layer", (base_path, tmp_layer))
+                        except Exception:
+                            pass
+                    return tmp_layer
+        except Exception:
+            pass
+
+    return None
+
+
+def _extract_feature_xy(feat: Any) -> Tuple[Optional[float], Optional[float]]:
+    """Extract valid (x, y) from feature geometry or coordinate attributes."""
+    if feat is None:
+        return None, None
+    try:
+        if hasattr(feat, "hasGeometry") and feat.hasGeometry() and not feat.geometry().isEmpty():
+            pt = feat.geometry().asPoint()
+            if _is_valid_coord(pt.x()) and _is_valid_coord(pt.y()):
+                return float(pt.x()), float(pt.y())
+    except Exception:
+        pass
+
+    if hasattr(feat, "fields") and feat.fields():
+        fnames_map = {f.name().lower(): f.name() for f in feat.fields()}
+        fx, fy = None, None
+        for xk in ("longitude", "ref_longitude", "sf_longitude", "pos_longit", "x_current", "df_x_current", "x"):
+            v = _safe_get_attr(feat, fnames_map[xk]) if xk in fnames_map else None
+            if _is_valid_coord(v):
+                fx = float(str(v).strip())
+                break
+        for yk in ("latitude", "ref_latitude", "sf_latitude", "pos_latitu", "y_current", "df_y_current", "y"):
+            v = _safe_get_attr(feat, fnames_map[yk]) if yk in fnames_map else None
+            if _is_valid_coord(v):
+                fy = float(str(v).strip())
+                break
+        return fx, fy
+    return None, None
+
+
 def _extract_row_data(
     r: int,
     table: Optional[Any],
@@ -243,6 +464,15 @@ def _extract_row_data(
     target_uuids: Optional[List[str]],
     target_rows: Optional[List[int]] = None,
     dialog: Optional[Any] = None,
+    header_map: Optional[Dict[str, int]] = None,
+    err_by_fid: Optional[Dict[Any, QgsFeature]] = None,
+    err_by_uuid: Optional[Dict[str, QgsFeature]] = None,
+    err_feats_list: Optional[List[QgsFeature]] = None,
+    f2_layer: Optional[QgsVectorLayer] = None,
+    target_row_to_idx: Optional[Dict[int, int]] = None,
+    f2_by_fid: Optional[Dict[Any, QgsFeature]] = None,
+    f2_by_uuid: Optional[Dict[str, QgsFeature]] = None,
+    f2_fnames_map: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Extract coordinates, UUID, and other attributes from table row, error_layer, and form2_layer."""
     row_info = {
@@ -250,67 +480,56 @@ def _extract_row_data(
         "y": None,
         "uuid": "",
         "df_fid": None,
+        "sf_fid": None,
         "source_fid": None,
         "err_fid": None,
         "attributes": {},
     }
 
-    target_idx = target_rows.index(r) if (target_rows and r in target_rows) else r
+    if target_row_to_idx is not None:
+        target_idx = target_row_to_idx.get(r, r)
+    else:
+        target_idx = target_rows.index(r) if (target_rows and r in target_rows) else r
 
     # 1. Read from table widget if provided
     if table is not None:
-        header_map = {}
-        for c in range(table.columnCount()):
-            h_item = table.horizontalHeaderItem(c)
-            h_text = h_item.text().strip().lower() if h_item else ""
-            if h_text and h_text not in ("", "action", "actions"):
-                header_map[h_text] = c
+        if header_map is None:
+            header_map = {}
+            for c in range(table.columnCount()):
+                h_item = table.horizontalHeaderItem(c)
+                h_text = h_item.text().strip().lower() if h_item else ""
+                if h_text and h_text not in ("", "action", "actions"):
+                    header_map[h_text] = c
 
         # Extract X coordinate
         for candidate in (
-            "df_x_current", "x_current", "sf_longitude", "longitude", "x",
+            "df_x_current", "x_current", "sf_longitude", "longitude", "ref_longitude", "x",
             "pos_longit", "sf_pos_longit", "df_longitude", "df_x"
         ):
             if candidate in header_map:
                 it = table.item(r, header_map[candidate])
-                if it and it.text().strip():
-                    txt = it.text().strip()
-                    if txt.lower() not in ("null", "none", "nan", ""):
-                        try:
-                            val = float(txt)
-                            if abs(val) > 1e-5:
-                                row_info["x"] = val
-                                break
-                        except (ValueError, TypeError):
-                            pass
+                if it and _is_valid_coord(it.text()):
+                    row_info["x"] = float(it.text().strip())
+                    break
 
         # Extract Y coordinate
         for candidate in (
-            "df_y_current", "y_current", "sf_latitude", "latitude", "y",
+            "df_y_current", "y_current", "sf_latitude", "latitude", "ref_latitude", "y",
             "pos_latitu", "sf_pos_latitu", "df_latitude", "df_y"
         ):
             if candidate in header_map:
                 it = table.item(r, header_map[candidate])
-                if it and it.text().strip():
-                    txt = it.text().strip()
-                    if txt.lower() not in ("null", "none", "nan", ""):
-                        try:
-                            val = float(txt)
-                            if abs(val) > 1e-5:
-                                row_info["y"] = val
-                                break
-                        except (ValueError, TypeError):
-                            pass
+                if it and _is_valid_coord(it.text()):
+                    row_info["y"] = float(it.text().strip())
+                    break
 
         # Extract UUID
-        for candidate in ("df_map_uuid", "map_uuid", "sf_map_uuid", "df_mapid", "mapid", "uuid"):
+        for candidate in ("df_map_uuid", "ref_map_uuid", "map_uuid", "sf_map_uuid", "df_mapid", "mapid", "uuid"):
             if candidate in header_map:
                 it = table.item(r, header_map[candidate])
-                if it and it.text().strip():
-                    t_str = it.text().strip()
-                    if t_str.lower() not in ("null", "none", "nan", ""):
-                        row_info["uuid"] = t_str
-                        break
+                if it and _is_valid_uuid(it.text()):
+                    row_info["uuid"] = it.text().strip()
+                    break
 
         # Extract metadata from Item 0
         it0 = table.item(r, 0)
@@ -319,7 +538,7 @@ def _extract_row_data(
             if not row_info["uuid"]:
                 for u_role in (0x0100 + 1, 1, 0x0100 + 5, 5, 0x0100 + 7, 7):
                     u_data = it0.data(u_role)
-                    if u_data and str(u_data).strip().lower() not in ("null", "none", "nan", ""):
+                    if _is_valid_uuid(u_data):
                         row_info["uuid"] = str(u_data).strip()
                         break
             row_info["df_fid"] = next(
@@ -330,124 +549,197 @@ def _extract_row_data(
                 None,
             )
             row_info["err_fid"] = it0.data(0x0100 + 3) if it0.data(0x0100 + 3) is not None else it0.data(3)
+            row_info["sf_fid"] = it0.data(0x0100 + 6) if it0.data(0x0100 + 6) is not None else it0.data(6)
 
-        # Extract other table attributes
+        # Extract non-empty table attributes
         for col_name, c_idx in header_map.items():
             it = table.item(r, c_idx)
             if it:
-                row_info["attributes"][col_name] = it.text().strip()
+                cell_txt = it.text().strip()
+                if _format_clean_code(cell_txt):
+                    row_info["attributes"][col_name] = cell_txt
                 fn_role = it.data(0x0100 + 2)
-                if fn_role:
-                    row_info["attributes"][str(fn_role).strip().lower()] = it.text().strip()
+                if fn_role and _format_clean_code(cell_txt):
+                    row_info["attributes"][str(fn_role).strip().lower()] = cell_txt
 
-    # 2. Augment from error_layer if coordinates or UUID are missing
+    # 2. Augment from error_layer if coordinates, UUID, or attributes are missing
     if error_layer and error_layer.isValid():
         matching_feat = None
         if row_info["err_fid"] is not None:
-            try:
-                matching_feat = error_layer.getFeature(row_info["err_fid"])
-            except Exception:
-                pass
+            if err_by_fid is not None:
+                matching_feat = err_by_fid.get(row_info["err_fid"]) or err_by_fid.get(str(row_info["err_fid"]))
+            if not matching_feat and err_by_fid is None:
+                try:
+                    cand_f = error_layer.getFeature(row_info["err_fid"])
+                    if _is_usable_feature(cand_f):
+                        matching_feat = cand_f
+                except Exception:
+                    pass
 
         if not matching_feat and row_info["uuid"]:
-            clean_uuid = str(row_info["uuid"]).replace("'", "''")
-            for uf in ("df_map_uuid", "map_uuid", "sf_map_uuid", "df_mapid", "mapid", "uuid"):
-                if uf in error_layer.fields().names():
-                    try:
-                        for f in error_layer.getFeatures(f'"{uf}" = \'{clean_uuid}\''):
-                            matching_feat = f
-                            break
-                    except Exception:
-                        pass
-                if matching_feat:
-                    break
+            u_low = str(row_info["uuid"]).strip().lower()
+            if err_by_uuid is not None and u_low in err_by_uuid:
+                matching_feat = err_by_uuid[u_low]
+            elif err_by_uuid is None:
+                clean_uuid = str(row_info["uuid"]).replace("'", "''")
+                for uf in ("df_map_uuid", "ref_map_uuid", "map_uuid", "sf_map_uuid", "df_mapid", "mapid", "uuid"):
+                    if uf in error_layer.fields().names():
+                        try:
+                            for f in error_layer.getFeatures(f'"{uf}" = \'{clean_uuid}\''):
+                                if _is_usable_feature(f):
+                                    matching_feat = f
+                                    break
+                        except Exception:
+                            pass
+                    if matching_feat:
+                        break
 
         if not matching_feat and target_fids and target_idx < len(target_fids):
-            try:
-                matching_feat = error_layer.getFeature(target_fids[target_idx])
-            except Exception:
-                pass
+            tfid = target_fids[target_idx]
+            if err_by_fid is not None and tfid is not None:
+                matching_feat = err_by_fid.get(tfid) or err_by_fid.get(str(tfid))
+            if not matching_feat and err_by_fid is None and tfid is not None:
+                try:
+                    cand_f = error_layer.getFeature(tfid)
+                    if _is_usable_feature(cand_f):
+                        matching_feat = cand_f
+                except Exception:
+                    pass
 
-        if matching_feat:
-            for x_col_candidate in ("df_x_current", "x_current", "sf_longitude", "longitude", "x"):
-                if row_info["x"] is None and x_col_candidate in matching_feat.fields().names():
-                    val = matching_feat[x_col_candidate]
-                    if val is not None and val != NULL:
-                        try:
-                            row_info["x"] = float(str(val).strip())
-                        except (ValueError, TypeError):
-                            pass
+        if not matching_feat:
+            if err_feats_list is not None:
+                if target_idx < len(err_feats_list):
+                    matching_feat = err_feats_list[target_idx]
+            else:
+                try:
+                    feats_list = [f for f in error_layer.getFeatures() if _is_usable_feature(f)]
+                    if target_idx < len(feats_list):
+                        matching_feat = feats_list[target_idx]
+                except Exception:
+                    pass
 
-            for y_col_candidate in ("df_y_current", "y_current", "sf_latitude", "latitude", "y"):
-                if row_info["y"] is None and y_col_candidate in matching_feat.fields().names():
-                    val = matching_feat[y_col_candidate]
-                    if val is not None and val != NULL:
-                        try:
-                            row_info["y"] = float(str(val).strip())
-                        except (ValueError, TypeError):
-                            pass
+        if _is_usable_feature(matching_feat):
+            err_fnames = matching_feat.fields().names()
+            for x_col_candidate in ("df_x_current", "x_current", "sf_longitude", "longitude", "ref_longitude", "x"):
+                if row_info["x"] is None and x_col_candidate in err_fnames:
+                    val = _safe_get_attr(matching_feat, x_col_candidate)
+                    if _is_valid_coord(val):
+                        row_info["x"] = float(str(val).strip())
+
+            for y_col_candidate in ("df_y_current", "y_current", "sf_latitude", "latitude", "ref_latitude", "y"):
+                if row_info["y"] is None and y_col_candidate in err_fnames:
+                    val = _safe_get_attr(matching_feat, y_col_candidate)
+                    if _is_valid_coord(val):
+                        row_info["y"] = float(str(val).strip())
 
             if not row_info["uuid"]:
-                for u_candidate in ("df_map_uuid", "map_uuid", "sf_map_uuid", "df_mapid", "mapid", "uuid"):
-                    if u_candidate in matching_feat.fields().names():
-                        val = matching_feat[u_candidate]
-                        if val is not None and val != NULL:
-                            s = str(val).strip()
-                            if s.lower() not in ("null", "none", "nan", ""):
-                                row_info["uuid"] = s
-                                break
+                for u_candidate in ("df_map_uuid", "ref_map_uuid", "map_uuid", "sf_map_uuid", "df_mapid", "mapid", "uuid"):
+                    if u_candidate in err_fnames:
+                        val = _safe_get_attr(matching_feat, u_candidate)
+                        if _is_valid_uuid(val):
+                            row_info["uuid"] = str(val).strip()
+                            break
+
+            if row_info["df_fid"] is None and "df_fid" in err_fnames:
+                val_df = _safe_get_attr(matching_feat, "df_fid")
+                if _format_clean_code(val_df):
+                    row_info["df_fid"] = val_df
+
+            if row_info["sf_fid"] is None and "sf_fid" in err_fnames:
+                val_sf = _safe_get_attr(matching_feat, "sf_fid")
+                if _format_clean_code(val_sf):
+                    row_info["sf_fid"] = val_sf
 
             for fld in matching_feat.fields():
                 fn = fld.name()
-                if fn not in row_info["attributes"]:
-                    row_info["attributes"][fn] = matching_feat[fn]
+                val = _safe_get_attr(matching_feat, fn)
+                if _format_clean_code(val) and not _format_clean_code(row_info["attributes"].get(fn)):
+                    row_info["attributes"][fn] = val
 
-    # 3. Augment from Form 2 CSV layer if available in dialog
-    if dialog and hasattr(dialog, "_get_or_load_form2_layer"):
+    # 3. Augment from Form 2 CSV layer in O(1) using pre-indexed dicts (or fallback if called standalone)
+    f2_feat = None
+    lookup_fid = row_info.get("df_fid") if row_info.get("df_fid") is not None else row_info.get("source_fid")
+    lookup_uuid = row_info.get("uuid")
+    if f2_by_fid is not None or f2_by_uuid is not None:
+        if lookup_fid is not None and f2_by_fid:
+            f2_feat = f2_by_fid.get(lookup_fid) or f2_by_fid.get(str(lookup_fid).strip())
+        if f2_feat is None and lookup_uuid and f2_by_uuid:
+            f2_feat = f2_by_uuid.get(str(lookup_uuid).strip().lower())
+    elif dialog and hasattr(dialog, "_find_form2_feature"):
         try:
-            f2_layer = dialog._get_or_load_form2_layer()
-            if f2_layer and f2_layer.isValid() and hasattr(dialog, "_find_form2_feature"):
+            active_f2 = f2_layer if (f2_layer is not None and f2_layer.isValid()) else (
+                dialog._get_or_load_form2_layer() if hasattr(dialog, "_get_or_load_form2_layer") else None
+            )
+            if active_f2 and active_f2.isValid():
                 f2_feat = dialog._find_form2_feature(
-                    f2_layer,
-                    fid=row_info.get("df_fid") if row_info.get("df_fid") is not None else row_info.get("source_fid"),
-                    map_uuid=row_info.get("uuid"),
+                    active_f2,
+                    fid=lookup_fid,
+                    map_uuid=lookup_uuid,
                 )
-                if f2_feat and f2_feat.isValid():
-                    f2_fnames = [f.name().lower() for f in f2_feat.fields()]
-                    if row_info["x"] is None:
-                        for xc in ("x_current", "df_x_current", "longitude", "pos_longit", "x"):
-                            if xc in f2_fnames:
-                                val = f2_feat[xc]
-                                if _is_valid_coord(val):
-                                    row_info["x"] = float(str(val).strip())
-                                    break
-                    if row_info["y"] is None:
-                        for yc in ("y_current", "df_y_current", "latitude", "pos_latitu", "y"):
-                            if yc in f2_fnames:
-                                val = f2_feat[yc]
-                                if _is_valid_coord(val):
-                                    row_info["y"] = float(str(val).strip())
-                                    break
-                    if not row_info["uuid"]:
-                        for uc in ("map_uuid", "mapid", "df_map_uuid", "df_mapid", "uuid"):
-                            if uc in f2_fnames:
-                                val = f2_feat[uc]
-                                if _is_valid_uuid(val):
-                                    row_info["uuid"] = str(val).strip()
-                                    break
-                    for fld in f2_feat.fields():
-                        fn = fld.name()
-                        if fn.lower() not in [k.lower() for k in row_info["attributes"]]:
-                            v = f2_feat[fn]
-                            if v is not None and v != NULL:
-                                row_info["attributes"][fn] = v
-                                row_info["attributes"][f"df_{fn}"] = v
+        except Exception:
+            f2_feat = None
+
+    if isinstance(f2_feat, dict):
+        try:
+            f2_fnames = f2_fnames_map if f2_fnames_map is not None else {k.lower(): k for k in f2_feat}
+            if row_info["x"] is None:
+                for xc in ("x_current", "df_x_current", "longitude", "pos_longit", "x"):
+                    if xc in f2_fnames and _is_valid_coord(f2_feat.get(f2_fnames[xc])):
+                        row_info["x"] = float(str(f2_feat[f2_fnames[xc]]).strip())
+                        break
+            if row_info["y"] is None:
+                for yc in ("y_current", "df_y_current", "latitude", "pos_latitu", "y"):
+                    if yc in f2_fnames and _is_valid_coord(f2_feat.get(f2_fnames[yc])):
+                        row_info["y"] = float(str(f2_feat[f2_fnames[yc]]).strip())
+                        break
+            if not row_info["uuid"]:
+                for uc in ("map_uuid", "mapid", "df_map_uuid", "df_mapid", "uuid"):
+                    if uc in f2_fnames and _is_valid_uuid(f2_feat.get(f2_fnames[uc])):
+                        row_info["uuid"] = str(f2_feat[f2_fnames[uc]]).strip()
+                        break
+            existing_lower = {k.lower(): k for k in row_info["attributes"] if _format_clean_code(row_info["attributes"][k])}
+            for fn_low, fn in f2_fnames.items():
+                v = f2_feat.get(fn)
+                if _format_clean_code(v):
+                    if fn_low not in existing_lower:
+                        row_info["attributes"][fn] = v
+                    if f"df_{fn_low}" not in existing_lower:
+                        row_info["attributes"][f"df_{fn}"] = v
+        except Exception:
+            pass
+    elif _is_usable_feature(f2_feat):
+        try:
+            f2_fnames = f2_fnames_map if f2_fnames_map is not None else {f.name().lower(): f.name() for f in f2_feat.fields()}
+            if row_info["x"] is None:
+                for xc in ("x_current", "df_x_current", "longitude", "pos_longit", "x"):
+                    if xc in f2_fnames and _is_valid_coord(_safe_get_attr(f2_feat, f2_fnames[xc])):
+                        row_info["x"] = float(str(_safe_get_attr(f2_feat, f2_fnames[xc])).strip())
+                        break
+            if row_info["y"] is None:
+                for yc in ("y_current", "df_y_current", "latitude", "pos_latitu", "y"):
+                    if yc in f2_fnames and _is_valid_coord(_safe_get_attr(f2_feat, f2_fnames[yc])):
+                        row_info["y"] = float(str(_safe_get_attr(f2_feat, f2_fnames[yc])).strip())
+                        break
+            if not row_info["uuid"]:
+                for uc in ("map_uuid", "mapid", "df_map_uuid", "df_mapid", "uuid"):
+                    if uc in f2_fnames and _is_valid_uuid(_safe_get_attr(f2_feat, f2_fnames[uc])):
+                        row_info["uuid"] = str(_safe_get_attr(f2_feat, f2_fnames[uc])).strip()
+                        break
+            existing_lower = {k.lower(): k for k in row_info["attributes"] if _format_clean_code(row_info["attributes"][k])}
+            for fn_low, fn in f2_fnames.items():
+                v = _safe_get_attr(f2_feat, fn)
+                if _format_clean_code(v):
+                    if fn_low not in existing_lower:
+                        row_info["attributes"][fn] = v
+                    if f"df_{fn_low}" not in existing_lower:
+                        row_info["attributes"][f"df_{fn}"] = v
         except Exception:
             pass
 
     # 4. Fallback to target_uuids list if UUID still missing
     if not row_info["uuid"] and target_uuids and target_idx < len(target_uuids):
-        row_info["uuid"] = str(target_uuids[target_idx]).strip()
+        if _is_valid_uuid(target_uuids[target_idx]):
+            row_info["uuid"] = str(target_uuids[target_idx]).strip()
 
     return row_info
 
@@ -469,7 +761,8 @@ def _run_fix_map_uuid_missing(
     """
     Execute automated fix: generates and writes point geometries into the
     Form 2 Geotagged Building Points layer using coordinates (x_current, y_current)
-    from the selected row, generating or preserving map_uuid, and computing bsn_geoid.
+    from the selected row (or Reference Building Points layer fallback),
+    generating or preserving map_uuid, and computing bsn_geoid.
     Universally accessible across all validation rules.
     """
     active_layer = main_layer if (main_layer and main_layer.isValid()) else error_layer
@@ -480,6 +773,8 @@ def _run_fix_map_uuid_missing(
             "fixed_count": 0,
             "updated_values": {},
         }
+
+    dlg = dialog if dialog is not None else kwargs.get("dialog")
 
     # 1. Determine which table rows to fix (Strict Selection Scope)
     if target_rows is not None:
@@ -505,7 +800,7 @@ def _run_fix_map_uuid_missing(
 
     # Strict Selection Scope check: Ensure fix applies ONLY to explicitly checked/selected rows
     if not rows_to_process:
-        parent_w = dialog or kwargs.get("parent")
+        parent_w = dlg or kwargs.get("parent")
         if parent_w and hasattr(parent_w, "iface") and parent_w.iface:
             parent_w = parent_w.iface.mainWindow()
         if QMessageBox and parent_w:
@@ -521,12 +816,169 @@ def _run_fix_map_uuid_missing(
             "updated_values": {},
         }
 
-    # Deduplicate rows_to_process by unique composite key (fid + map_uuid)
-    if table is not None and len(rows_to_process) > 1:
-        seen_row_keys = set()
-        deduped_rows = []
-        for r in rows_to_process:
-            row_info = _extract_row_data(r, table, error_layer, target_fids, target_uuids, target_rows=target_rows, dialog=dialog)
+    # Precompute target_rows index map for O(1) lookup instead of O(N) list.index()
+    target_row_to_idx: Dict[int, int] = {r: idx for idx, r in enumerate(target_rows)} if target_rows else {}
+
+    # Precompute table header map once
+    header_map: Optional[Dict[str, int]] = None
+    if table is not None:
+        header_map = {}
+        for c in range(table.columnCount()):
+            h_item = table.horizontalHeaderItem(c)
+            h_text = h_item.text().strip().lower() if h_item else ""
+            if h_text and h_text not in ("", "action", "actions"):
+                header_map[h_text] = c
+
+    # Pre-index error_layer once for O(1) lookup
+    err_by_fid: Dict[Any, QgsFeature] = {}
+    err_by_uuid: Dict[str, QgsFeature] = {}
+    err_feats_list: List[QgsFeature] = []
+    if error_layer and error_layer.isValid():
+        try:
+            err_fnames = error_layer.fields().names()
+            err_uuid_cols = [uf for uf in ("df_map_uuid", "ref_map_uuid", "map_uuid", "sf_map_uuid", "df_mapid", "mapid", "uuid") if uf in err_fnames]
+            for ef in error_layer.getFeatures():
+                if not _is_usable_feature(ef):
+                    continue
+                err_feats_list.append(ef)
+                ef_id = ef.id()
+                if ef_id is not None:
+                    err_by_fid[ef_id] = ef
+                    err_by_fid[str(ef_id)] = ef
+                for u_col in err_uuid_cols:
+                    u_val = _safe_get_attr(ef, u_col)
+                    if _is_valid_uuid(u_val):
+                        u_low = str(u_val).strip().lower()
+                        if u_low not in err_by_uuid:
+                            err_by_uuid[u_low] = ef
+        except Exception:
+            pass
+
+    # Load and pre-index Form 2 records once before row loop (cached on dialog; uses fast direct CSV reader when possible)
+    f2_layer = None
+    f2_by_fid: Dict[Any, Any] = {}
+    f2_by_uuid: Dict[str, Any] = {}
+    f2_fnames_map: Dict[str, str] = {}
+    form2_csv_path = ""
+    if dlg is not None and hasattr(dlg, "file_form2") and dlg.file_form2:
+        try:
+            form2_csv_path = dlg.file_form2.filePath().strip()
+        except Exception:
+            form2_csv_path = ""
+
+    if form2_csv_path and form2_csv_path.lower().endswith(".csv") and os.path.exists(form2_csv_path):
+        try:
+            f2_mtime = os.path.getmtime(form2_csv_path)
+            f2_cache_key = ("csv_direct", form2_csv_path, f2_mtime)
+            cached_f2 = getattr(dlg, "_cached_f2_index", None) if dlg is not None else None
+            if isinstance(cached_f2, tuple) and len(cached_f2) == 4 and cached_f2[0] == f2_cache_key:
+                _, f2_by_fid, f2_by_uuid, f2_fnames_map = cached_f2
+            else:
+                import csv as _csv
+                with open(form2_csv_path, "r", encoding="utf-8-sig", errors="replace") as f_csv:
+                    reader = _csv.DictReader(f_csv)
+                    fnames = reader.fieldnames or []
+                    f2_fnames_map = {fn.strip().lower(): fn for fn in fnames if fn}
+                    f2_fid_cols = [f2_fnames_map[c] for c in ("fid", "df_fid", "id", "ogc_fid") if c in f2_fnames_map]
+                    f2_uuid_cols = [f2_fnames_map[c] for c in ("map_uuid", "mapid", "df_map_uuid", "df_mapid", "uuid") if c in f2_fnames_map]
+                    for row_1based, row_d in enumerate(reader, start=1):
+                        f2_by_fid[row_1based] = row_d
+                        f2_by_fid[str(row_1based)] = row_d
+                        for fc in f2_fid_cols:
+                            fval = row_d.get(fc)
+                            if fval is not None:
+                                s_fval = str(fval).strip()
+                                if s_fval and s_fval not in f2_by_fid:
+                                    f2_by_fid[s_fval] = row_d
+                        for uc in f2_uuid_cols:
+                            uval = row_d.get(uc)
+                            if _is_valid_uuid(uval):
+                                u_low = str(uval).strip().lower()
+                                if u_low not in f2_by_uuid:
+                                    f2_by_uuid[u_low] = row_d
+                if dlg is not None:
+                    try:
+                        setattr(dlg, "_cached_f2_index", (f2_cache_key, f2_by_fid, f2_by_uuid, f2_fnames_map))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    else:
+        if dlg is not None:
+            if hasattr(dlg, "_find_existing_form2_layer"):
+                try:
+                    f2_layer = dlg._find_existing_form2_layer()
+                except Exception:
+                    f2_layer = None
+            if f2_layer is None and hasattr(dlg, "_get_or_load_form2_layer"):
+                try:
+                    f2_layer = dlg._get_or_load_form2_layer()
+                except Exception:
+                    f2_layer = None
+        if f2_layer and f2_layer.isValid():
+            try:
+                f2_src = f2_layer.source() if hasattr(f2_layer, "source") else id(f2_layer)
+                f2_cnt = f2_layer.featureCount() if hasattr(f2_layer, "featureCount") else -1
+                f2_cache_key = (f2_src, f2_cnt)
+                cached_f2 = getattr(dlg, "_cached_f2_index", None) if dlg is not None else None
+                if isinstance(cached_f2, tuple) and len(cached_f2) == 4 and cached_f2[0] == f2_cache_key:
+                    _, f2_by_fid, f2_by_uuid, f2_fnames_map = cached_f2
+                else:
+                    f2_fnames_map = {f.name().lower(): f.name() for f in f2_layer.fields()}
+                    f2_fid_cols = [f2_fnames_map[c] for c in ("fid", "df_fid", "id", "ogc_fid") if c in f2_fnames_map]
+                    f2_uuid_cols = [f2_fnames_map[c] for c in ("map_uuid", "mapid", "df_map_uuid", "df_mapid", "uuid") if c in f2_fnames_map]
+                    for f2_f in f2_layer.getFeatures():
+                        if not _is_usable_feature(f2_f):
+                            continue
+                        fid_id = f2_f.id()
+                        if fid_id is not None:
+                            f2_by_fid[fid_id] = f2_f
+                            f2_by_fid[str(fid_id)] = f2_f
+                        for fc in f2_fid_cols:
+                            fval = _safe_get_attr(f2_f, fc)
+                            if fval is not None:
+                                s_fval = str(fval).strip()
+                                if s_fval and s_fval not in f2_by_fid:
+                                    f2_by_fid[s_fval] = f2_f
+                        for uc in f2_uuid_cols:
+                            uval = _safe_get_attr(f2_f, uc)
+                            if _is_valid_uuid(uval):
+                                u_low = str(uval).strip().lower()
+                                if u_low not in f2_by_uuid:
+                                    f2_by_uuid[u_low] = f2_f
+                    if dlg is not None:
+                        try:
+                            setattr(dlg, "_cached_f2_index", (f2_cache_key, f2_by_fid, f2_by_uuid, f2_fnames_map))
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+    # Extract row data once per row and deduplicate by unique composite key (fid + map_uuid)
+    row_info_cache: Dict[int, Dict[str, Any]] = {}
+    seen_row_keys = set()
+    deduped_rows = []
+    for r in rows_to_process:
+        row_info = _extract_row_data(
+            r,
+            table,
+            error_layer,
+            target_fids,
+            target_uuids,
+            target_rows=target_rows,
+            dialog=dlg,
+            header_map=header_map,
+            err_by_fid=err_by_fid,
+            err_by_uuid=err_by_uuid,
+            err_feats_list=err_feats_list,
+            f2_layer=f2_layer,
+            target_row_to_idx=target_row_to_idx,
+            f2_by_fid=f2_by_fid,
+            f2_by_uuid=f2_by_uuid,
+            f2_fnames_map=f2_fnames_map,
+        )
+        row_info_cache[r] = row_info
+        if table is not None and len(rows_to_process) > 1:
             r_fid = next(
                 (
                     v for v in (row_info.get("source_fid"), row_info.get("df_fid"), row_info.get("err_fid"))
@@ -540,35 +992,229 @@ def _run_fix_map_uuid_missing(
                 continue
             if uk:
                 seen_row_keys.add(uk)
-            deduped_rows.append(r)
-        rows_to_process = deduped_rows
+        deduped_rows.append(r)
+    rows_to_process = deduped_rows
 
-    # 2. Validation: Check if valid coordinates (x_current, y_current) are present
-    # If map_uuid is not present, auto-generate a fresh UUID
-    valid_rows_data: List[Tuple[int, Dict[str, Any], float, float, str, str, str]] = []
-    # Items: (r, row_info, x, y, target_uuid, bsn_geoid, ea_geo)
+    # Load Reference Building Points layer (*_bldg_point in .gpkg) if available (cached per layer source)
+    ref_layer = _load_reference_bldg_layer(dlg, kwargs)
+    ref_by_uuid: Dict[str, QgsFeature] = {}
+    ref_by_bsn_geoid: Dict[str, QgsFeature] = {}
+    ref_features_list: List[Tuple[QgsFeature, Optional[float], Optional[float], str, str]] = []
+    ref_valid_uuids: Set[str] = set()
+
+    if ref_layer and ref_layer.isValid():
+        try:
+            ref_src = ref_layer.source() if hasattr(ref_layer, "source") else id(ref_layer)
+            ref_cnt = ref_layer.featureCount() if hasattr(ref_layer, "featureCount") else -1
+            ref_cache_key = (ref_src, ref_cnt)
+            cached_ref = getattr(dlg, "_cached_ref_bldg_index", None) if dlg is not None else None
+            if isinstance(cached_ref, tuple) and len(cached_ref) == 5 and cached_ref[0] == ref_cache_key:
+                _, ref_by_uuid, ref_by_bsn_geoid, ref_features_list, ref_valid_uuids = cached_ref
+            else:
+                ref_fnames = ref_layer.fields().names()
+                ref_lmap = {fn.lower(): fn for fn in ref_fnames}
+                ref_uuid_cols = [ref_lmap[uf] for uf in ("ref_map_uuid", "map_uuid", "sf_map_uuid", "uuid") if uf in ref_lmap]
+                ref_bsn_geoid_col = next((ref_lmap[c] for c in ("bsn_geoid", "ref_bsn_geoid", "sf_bsn_geoid", "df_bsn_geoid") if c in ref_lmap), None)
+                ref_ea_col = next((ref_lmap[c] for c in ("ea_geocode", "ref_ea_geocode", "sf_ea_geocode", "geocode") if c in ref_lmap), None)
+                ref_bsn_col = next((ref_lmap[c] for c in ("bsn", "ref_bsn", "bsn_code", "sf_bsn", "bldg_sn") if c in ref_lmap), None)
+                for r_feat in ref_layer.getFeatures():
+                    r_uuid = ""
+                    for uf in ref_uuid_cols:
+                        val_u = _safe_get_attr(r_feat, uf)
+                        if _is_valid_uuid(val_u):
+                            r_uuid = str(val_u).strip()
+                            break
+                    r_bsn_geoid = _format_clean_code(_safe_get_attr(r_feat, ref_bsn_geoid_col)) if ref_bsn_geoid_col else ""
+                    r_bsn = _pad_code(_safe_get_attr(r_feat, ref_bsn_col), 5) if ref_bsn_col else ""
+                    if not r_bsn_geoid:
+                        if ref_ea_col and r_bsn:
+                            r_ea = _format_clean_code(_safe_get_attr(r_feat, ref_ea_col))
+                            if r_ea:
+                                r_bsn_geoid = f"{r_ea}{r_bsn}"
+                        if not r_bsn_geoid:
+                            r_padded = _extract_padded_boundary_codes({}, extra_feat=r_feat)
+                            r_bsn_geoid = r_padded["bsn_geoid"]
+                            r_bsn = r_padded["bsn"]
+                    elif not r_bsn and len(r_bsn_geoid) == 19:
+                        r_bsn = r_bsn_geoid[14:19]
+                    rx, ry = _extract_feature_xy(r_feat)
+                    if r_uuid:
+                        ref_by_uuid[r_uuid.lower()] = r_feat
+                        ref_valid_uuids.add(r_uuid.lower())
+                    if r_bsn_geoid and _is_regular_bsn(r_bsn):
+                        ref_by_bsn_geoid[r_bsn_geoid] = r_feat
+                    ref_features_list.append((r_feat, rx, ry, r_uuid, r_bsn_geoid))
+                if dlg is not None:
+                    try:
+                        setattr(dlg, "_cached_ref_bldg_index", (ref_cache_key, ref_by_uuid, ref_by_bsn_geoid, ref_features_list, ref_valid_uuids))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    # Pre-index active_layer (.geojson) in a single O(N) pass and determine max_positive_fid
+    main_fields = active_layer.fields()
+    main_field_names = [f.name() for f in main_fields]
+    field_idx_map: Dict[str, int] = {f.name(): idx for idx, f in enumerate(main_fields)}
+    uuid_fields = [fn for fn in main_field_names if fn.lower() in ("map_uuid", "sf_map_uuid", "uuid")]
+    fid_attr_fields = [fn for fn in main_field_names if fn.lower() in ("fid", "sf_fid")]
+
+    active_by_uuid: Dict[str, Tuple[QgsFeature, str]] = {}
+    active_by_fid: Dict[int, Tuple[QgsFeature, str]] = {}
+    active_by_bsn_geoid: Dict[str, Tuple[QgsFeature, str]] = {}
+    active_coords_list: List[Tuple[QgsFeature, Optional[float], Optional[float], str]] = []
+    max_positive_fid: int = 0
+    uncommitted_feats: List[QgsFeature] = []
+    display_fid_by_feat_id: Dict[int, int] = {}
+    uncommitted_fid_map: Dict[int, int] = {}
+    if dlg is not None:
+        existing_uncommitted_map = getattr(dlg, "_uncommitted_fid_map", None)
+        if isinstance(existing_uncommitted_map, dict):
+            uncommitted_fid_map = existing_uncommitted_map
+        else:
+            try:
+                setattr(dlg, "_uncommitted_fid_map", uncommitted_fid_map)
+            except Exception:
+                pass
+
+    try:
+        for feat in active_layer.getFeatures():
+            if not _is_usable_feature(feat):
+                continue
+            f_id = feat.id()
+            pos_fid = None
+            if isinstance(f_id, int) and f_id >= 0:
+                pos_fid = f_id
+                if f_id > max_positive_fid:
+                    max_positive_fid = f_id
+            elif isinstance(f_id, int) and f_id < 0 and f_id in uncommitted_fid_map:
+                pos_fid = uncommitted_fid_map[f_id]
+                if pos_fid > max_positive_fid:
+                    max_positive_fid = pos_fid
+            for ff in fid_attr_fields:
+                fv = _safe_get_attr(feat, ff)
+                if fv is not None and str(fv).strip().lstrip("-").isdigit():
+                    try:
+                        fv_int = int(str(fv).strip())
+                        if fv_int >= 0 and (pos_fid is None or (isinstance(f_id, int) and f_id < 0 and fv_int > 0)):
+                            pos_fid = fv_int
+                        if fv_int > max_positive_fid:
+                            max_positive_fid = fv_int
+                    except Exception:
+                        pass
+            if f_id is not None:
+                if pos_fid is not None and pos_fid >= 0:
+                    display_fid_by_feat_id[f_id] = pos_fid
+                    if isinstance(f_id, int) and f_id < 0:
+                        uncommitted_fid_map[f_id] = pos_fid
+                else:
+                    uncommitted_feats.append(feat)
+
+            cand_u = ""
+            for uf in uuid_fields:
+                vu = _safe_get_attr(feat, uf)
+                if _is_valid_uuid(vu):
+                    cand_u = str(vu).strip()
+                    u_low = cand_u.lower()
+                    if u_low not in active_by_uuid:
+                        active_by_uuid[u_low] = (feat, cand_u)
+                    break
+
+            if isinstance(f_id, int):
+                active_by_fid[f_id] = (feat, cand_u)
+            if pos_fid is not None and pos_fid not in active_by_fid:
+                active_by_fid[pos_fid] = (feat, cand_u)
+
+            f_padded = _extract_padded_boundary_codes({}, extra_feat=feat)
+            if f_padded["bsn_geoid"] and _is_regular_bsn(f_padded["bsn"]):
+                if f_padded["bsn_geoid"] not in active_by_bsn_geoid:
+                    active_by_bsn_geoid[f_padded["bsn_geoid"]] = (feat, cand_u)
+
+            fx, fy = _extract_feature_xy(feat)
+            active_coords_list.append((feat, fx, fy, cand_u))
+
+        for u_feat in uncommitted_feats:
+            uf_id = u_feat.id()
+            if uf_id is not None and uf_id not in display_fid_by_feat_id:
+                max_positive_fid += 1
+                display_fid_by_feat_id[uf_id] = max_positive_fid
+                if isinstance(uf_id, int) and uf_id < 0:
+                    uncommitted_fid_map[uf_id] = max_positive_fid
+    except Exception:
+        pass
+
+    # 2. Validation & Reference Layer Enrichment:
+    # Check if valid coordinates (x_current, y_current) are present, or recover from Reference Layer / existing feature
+    valid_rows_data: List[Tuple[int, Dict[str, Any], float, float, str, str, str, Dict[str, str], str]] = []
+    # Items: (r, row_info, x, y, clean_uuid, bsn_geoid, ea_geo, padded_dict, ref_uuid)
     invalid_rows_data: List[Tuple[int, Dict[str, Any], bool, bool]] = []
 
     for r in rows_to_process:
-        row_info = _extract_row_data(r, table, error_layer, target_fids, target_uuids, target_rows=target_rows, dialog=dialog)
+        row_info = row_info_cache[r]
         x = row_info.get("x")
         y = row_info.get("y")
-        target_uuid = row_info.get("uuid")
+        raw_uuid = row_info.get("uuid")
+        clean_uuid = str(raw_uuid).strip() if _is_valid_uuid(raw_uuid) else ""
 
+        padded_dict = _extract_padded_boundary_codes(row_info.get("attributes", {}))
+        bsn_geoid = padded_dict["bsn_geoid"]
+        bsn_val = padded_dict["bsn"]
+
+        # Match in Reference Layer (*_bldg_point) by map_uuid, bsn_geoid, or coordinates
+        ref_feat = None
+        if clean_uuid and clean_uuid.lower() in ref_by_uuid:
+            ref_feat = ref_by_uuid[clean_uuid.lower()]
+        elif bsn_geoid and _is_regular_bsn(bsn_val) and bsn_geoid in ref_by_bsn_geoid:
+            ref_feat = ref_by_bsn_geoid[bsn_geoid]
+        elif _is_valid_coord(x) and _is_valid_coord(y) and not clean_uuid and ref_features_list:
+            for cand_rf, rx, ry, _, _ in ref_features_list:
+                if rx is not None and ry is not None and abs(rx - float(x)) <= 1e-5 and abs(ry - float(y)) <= 1e-5:
+                    ref_feat = cand_rf
+                    break
+
+        ref_uuid = ""
+        if ref_feat is not None:
+            for uf in ("ref_map_uuid", "map_uuid", "sf_map_uuid", "uuid"):
+                if uf in ref_feat.fields().names() and _is_valid_uuid(_safe_get_attr(ref_feat, uf)):
+                    ref_uuid = str(_safe_get_attr(ref_feat, uf)).strip()
+                    break
+            # Enrich missing attributes and padded boundary codes from Reference Layer feature
+            padded_dict = _extract_padded_boundary_codes(row_info.get("attributes", {}), extra_feat=ref_feat)
+            for fld in ref_feat.fields():
+                fn = fld.name()
+                val = _safe_get_attr(ref_feat, fn)
+                if _format_clean_code(val) and not _format_clean_code(row_info["attributes"].get(fn)):
+                    row_info["attributes"][fn] = val
+            if not (_is_valid_coord(x) and _is_valid_coord(y)):
+                rx, ry = _extract_feature_xy(ref_feat)
+                if _is_valid_coord(rx) and _is_valid_coord(ry):
+                    x, y = rx, ry
+
+        # If coordinates still missing, check if feature already exists in active_layer by UUID or bsn_geoid (O(1) lookup)
+        if not (_is_valid_coord(x) and _is_valid_coord(y)):
+            search_u = (ref_uuid or clean_uuid).lower()
+            matched_active = None
+            if search_u and search_u in active_by_uuid:
+                matched_active = active_by_uuid[search_u][0]
+            elif padded_dict["bsn_geoid"] and padded_dict["bsn_geoid"] in active_by_bsn_geoid:
+                matched_active = active_by_bsn_geoid[padded_dict["bsn_geoid"]][0]
+            if matched_active is not None:
+                ex_x, ex_y = _extract_feature_xy(matched_active)
+                if _is_valid_coord(ex_x) and _is_valid_coord(ex_y):
+                    x, y = ex_x, ex_y
+
+        bsn_geoid = padded_dict["bsn_geoid"]
+        ea_geo = padded_dict["ea_geocode"]
         has_coords = _is_valid_coord(x) and _is_valid_coord(y)
-        has_uuid = _is_valid_uuid(target_uuid)
+        has_uuid = bool(ref_uuid or clean_uuid)
 
         if has_coords:
-            clean_uuid = str(target_uuid).strip() if has_uuid else ""
-            padded_dict = _extract_padded_boundary_codes(row_info.get("attributes", {}))
-            bsn_geoid = padded_dict["bsn_geoid"]
-            ea_geo = padded_dict["ea_geocode"]
-            valid_rows_data.append((r, row_info, float(x), float(y), clean_uuid, bsn_geoid, ea_geo, padded_dict))
+            valid_rows_data.append((r, row_info, float(x), float(y), clean_uuid, bsn_geoid, ea_geo, padded_dict, ref_uuid))
         else:
             invalid_rows_data.append((r, row_info, False, has_uuid))
 
     if not valid_rows_data:
-        parent_w = dialog or kwargs.get("parent")
+        parent_w = dlg or kwargs.get("parent")
         if parent_w and hasattr(parent_w, "iface") and parent_w.iface:
             parent_w = parent_w.iface.mainWindow()
         if QMessageBox and parent_w:
@@ -586,53 +1232,7 @@ def _run_fix_map_uuid_missing(
             "updated_values": {},
         }
 
-    # 3. Prompting: Prompt the user for confirmation before executing the fix
-    prompt_confirm = kwargs.get("prompt_confirm", True)
-    parent_w = dialog or kwargs.get("parent")
-    if prompt_confirm and QMessageBox and parent_w:
-        if hasattr(parent_w, "iface") and parent_w.iface:
-            parent_w = parent_w.iface.mainWindow()
-
-        if len(valid_rows_data) == 1:
-            r_idx, _, v_x, v_y, v_uuid, v_bsn = valid_rows_data[0][:6]
-            prompt_msg = (
-                f"Generate point geometry for row #{r_idx + 1}?\n\n"
-                f"• Coordinates: X={v_x}, Y={v_y}\n"
-                f"• Map UUID: {v_uuid or 'Auto-generated'}\n"
-            )
-            if v_bsn:
-                prompt_msg += f"• BSN GEOID: {v_bsn}\n"
-            prompt_msg += "\nThis will create or link the point geometry in the Form 2 Building Points layer (.geojson)."
-        else:
-            prompt_msg = (
-                f"Generate point geometries for {len(valid_rows_data)} selected record(s)?\n\n"
-                f"Valid coordinates (x_current, y_current) are present for all "
-                f"{len(valid_rows_data)} record(s).\n\n"
-                "This will create or link the point geometries in the Form 2 Building Points layer (.geojson) and derive BSN GEOID."
-            )
-
-        if invalid_rows_data:
-            prompt_msg += (
-                f"\n\nNote: {len(invalid_rows_data)} selected row(s) will be skipped "
-                "because they are missing valid GPS coordinates (x_current, y_current)."
-            )
-
-        reply = QMessageBox.question(
-            parent_w,
-            "Confirm Generate Point Geometry",
-            prompt_msg,
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
-        )
-        if reply != QMessageBox.Yes:
-            return {
-                "success": False,
-                "message": "Point geometry generation was cancelled by the user.",
-                "fixed_count": 0,
-                "updated_values": {},
-            }
-
-    # 4. Ensure active_layer is in editing mode
+    # 3. Ensure active_layer is in editing mode (generate points directly without confirmation prompt)
     if not active_layer.isEditable() and not active_layer.startEditing():
         return {
             "success": False,
@@ -641,15 +1241,15 @@ def _run_fix_map_uuid_missing(
             "updated_values": {},
         }
 
-    main_fields = active_layer.fields()
-    main_field_names = [f.name() for f in main_fields]
-
     # Coordinate transformation if layer is projected
     src_crs = QgsCoordinateReferenceSystem("EPSG:4326")
-    dest_crs = active_layer.crs()
+    dest_crs = active_layer.crs() if hasattr(active_layer, "crs") else None
     transform = None
-    if dest_crs.isValid() and dest_crs != src_crs and not dest_crs.isGeographic():
+    if dest_crs and dest_crs.isValid() and dest_crs != src_crs and not dest_crs.isGeographic():
         transform = QgsCoordinateTransform(src_crs, dest_crs, QgsProject.instance())
+
+    is_geo = dest_crs.isGeographic() if (dest_crs and hasattr(dest_crs, "isGeographic") and dest_crs.isValid()) else True
+    tol = 1e-5 if is_geo else 0.5
 
     updated_values: Dict[Any, Dict[str, Any]] = {}
     fixed_count = 0
@@ -659,399 +1259,509 @@ def _run_fix_map_uuid_missing(
     created_batch_fids = set()
     created_batch_features: List[Tuple[Any, Any, float, float, str]] = []  # (assigned_fid, pt, x, y, target_uuid)
 
-    for r, row_info, x, y, target_uuid, bsn_geoid, ea_geo, padded_dict in valid_rows_data:
-        if feedback and feedback.isCanceled():
-            break
+    def _set_layer_attr_if_changed(fid_val: int, feat_obj: Optional[QgsFeature], field_name: str, new_val: Any) -> None:
+        idx = field_idx_map.get(field_name, -1)
+        if idx == -1:
+            return
+        if feat_obj is not None:
+            cur_val = _safe_get_attr(feat_obj, field_name)
+            if cur_val == new_val or (cur_val is not None and new_val is not None and str(cur_val) == str(new_val) and not isinstance(new_val, bool)):
+                return
+        active_layer.changeAttributeValue(fid_val, idx, new_val)
 
-        clean_uuid = target_uuid
+    has_edit_cmd = False
+    if hasattr(active_layer, "beginEditCommand"):
+        try:
+            active_layer.beginEditCommand("Generate Point Geometry")
+            has_edit_cmd = True
+        except Exception:
+            has_edit_cmd = False
 
-        pt = QgsPointXY(x, y)
-        if transform:
-            try:
-                pt = transform.transform(pt)
-            except Exception:
-                pass
+    if dlg is not None:
+        dlg._suppress_dirty_ui_refresh = True
 
-        new_geom = QgsGeometry.fromPointXY(pt)
-        if not new_geom or new_geom.isEmpty():
-            failed_rows.append((r, x, y))
-            continue
+    try:
+        for r, row_info, x, y, clean_uuid, bsn_geoid, ea_geo, padded_dict, ref_uuid in valid_rows_data:
+            if feedback and feedback.isCanceled():
+                break
 
-        existing_feat = None
-        existing_feat_id = None
-        existing_uuid = None
-        is_reused_from_batch = False
-        uuid_fields = [fn for fn in main_field_names if fn.lower() in ("map_uuid", "sf_map_uuid", "uuid")]
+            effective_search_uuid = ref_uuid or clean_uuid
 
-        # 1. Match by explicit existing UUID in active_layer
-        if clean_uuid and uuid_fields:
-            for feat in active_layer.getFeatures():
-                if feat.id() in created_batch_fids:
+            pt = QgsPointXY(x, y)
+            if transform:
+                try:
+                    pt = transform.transform(pt)
+                except Exception:
+                    pass
+
+            new_geom = QgsGeometry.fromPointXY(pt)
+            if not new_geom or new_geom.isEmpty():
+                failed_rows.append((r, x, y))
+                continue
+
+            existing_feat = None
+            existing_feat_id = None
+            existing_uuid = None
+            is_reused_from_batch = False
+
+            # 1a. O(1) Match by explicit existing UUID (reference UUID or Form 2 UUID) in active_layer
+            for search_u in ([effective_search_uuid, clean_uuid] if (effective_search_uuid and clean_uuid and effective_search_uuid != clean_uuid) else [effective_search_uuid]):
+                if not search_u:
                     continue
-                for uf in uuid_fields:
-                    val = feat[uf]
-                    if val is not None and val != NULL:
-                        s_val = str(val).strip()
-                        if s_val.lower() not in ("null", "none", "nan", "") and s_val.lower() == clean_uuid.lower():
-                            existing_feat = feat
-                            existing_feat_id = feat.id()
-                            existing_uuid = clean_uuid
-                            break
-                if existing_feat_id is not None:
-                    break
+                u_low = search_u.strip().lower()
+                if u_low in active_by_uuid:
+                    cand_f, cand_u = active_by_uuid[u_low]
+                    if cand_f.id() not in created_batch_fids:
+                        existing_feat = cand_f
+                        existing_feat_id = cand_f.id()
+                        existing_uuid = cand_u
+                        break
 
-        # 2a. Check if a feature was created earlier in current batch with the same clean_uuid
-        if existing_feat_id is None and clean_uuid:
-            for c_fid, c_pt, c_x, c_y, c_uuid in created_batch_features:
-                if c_uuid and c_uuid.strip().lower() == clean_uuid.strip().lower():
-                    existing_feat_id = c_fid
-                    existing_uuid = c_uuid
-                    is_reused_from_batch = True
-                    break
+            # 1b. O(1) Match by explicit sf_fid if present (e.g. mv_2027_hp_4b_geom__missing)
+            if existing_feat_id is None and _format_clean_code(row_info.get("sf_fid")):
+                try:
+                    sf_fid_int = int(str(row_info["sf_fid"]).strip())
+                    if sf_fid_int in active_by_fid:
+                        cand_f, cand_u = active_by_fid[sf_fid_int]
+                        if cand_f.id() not in created_batch_fids:
+                            existing_feat = cand_f
+                            existing_feat_id = cand_f.id()
+                            existing_uuid = cand_u
+                    else:
+                        cand_f = active_layer.getFeature(sf_fid_int)
+                        if _is_usable_feature(cand_f) and cand_f.id() not in created_batch_fids:
+                            existing_feat = cand_f
+                            existing_feat_id = cand_f.id()
+                            for uf in uuid_fields:
+                                val_u = _safe_get_attr(cand_f, uf)
+                                if _is_valid_uuid(val_u):
+                                    existing_uuid = str(val_u).strip()
+                                    break
+                except Exception:
+                    pass
 
-        # 2b. Only if clean_uuid is empty/NULL: match by (X, Y) coordinates
-        if existing_feat_id is None and not clean_uuid:
-            is_geo = dest_crs.isGeographic() if (dest_crs and hasattr(dest_crs, "isGeographic")) else True
-            tol = 1e-5 if is_geo else 0.5
+            # 1c. O(1) Match by regular bsn_geoid in active_layer if UUID wasn't matched
+            if existing_feat_id is None and bsn_geoid and _is_regular_bsn(padded_dict.get("bsn", "")):
+                if bsn_geoid in active_by_bsn_geoid:
+                    cand_f, cand_u = active_by_bsn_geoid[bsn_geoid]
+                    if cand_f.id() not in created_batch_fids:
+                        if not cand_u or (effective_search_uuid and cand_u.lower() == effective_search_uuid.lower()) or (cand_u.lower() not in ref_valid_uuids):
+                            existing_feat = cand_f
+                            existing_feat_id = cand_f.id()
+                            existing_uuid = cand_u
 
-            for c_fid, c_pt, c_x, c_y, c_uuid in created_batch_features:
-                if (abs(c_x - x) <= 1e-5 and abs(c_y - y) <= 1e-5) or (abs(c_pt.x() - pt.x()) <= tol and abs(c_pt.y() - pt.y()) <= tol):
-                    existing_feat_id = c_fid
-                    existing_uuid = c_uuid
-                    is_reused_from_batch = True
-                    break
+            # 2a. Check if a feature was created earlier in current batch with the same UUID or compatible coordinates
+            if existing_feat_id is None and effective_search_uuid:
+                for c_fid, c_pt, c_x, c_y, c_uuid in created_batch_features:
+                    if c_uuid and c_uuid.strip().lower() == effective_search_uuid.strip().lower():
+                        existing_feat_id = c_fid
+                        existing_uuid = c_uuid
+                        is_reused_from_batch = True
+                        break
 
             if existing_feat_id is None:
-                for feat in active_layer.getFeatures():
+                for c_fid, c_pt, c_x, c_y, c_uuid in created_batch_features:
+                    if (abs(c_x - x) <= 1e-5 and abs(c_y - y) <= 1e-5) or (abs(c_pt.x() - pt.x()) <= tol and abs(c_pt.y() - pt.y()) <= tol):
+                        if not effective_search_uuid or not c_uuid or c_uuid.lower() == effective_search_uuid.lower():
+                            existing_feat_id = c_fid
+                            existing_uuid = c_uuid
+                            is_reused_from_batch = True
+                            break
+
+            # 2b. Fast in-memory match of existing feature in active_layer by (X, Y) coordinates
+            if existing_feat_id is None:
+                for feat, feat_x, feat_y, cand_uuid in active_coords_list:
                     if feat.id() in created_batch_fids:
                         continue
-                    if feat.hasGeometry() and not feat.geometry().isEmpty():
-                        try:
-                            f_pt = feat.geometry().asPoint()
-                            if abs(f_pt.x() - pt.x()) <= tol and abs(f_pt.y() - pt.y()) <= tol:
-                                existing_feat = feat
-                                existing_feat_id = feat.id()
-                                break
-                        except Exception:
-                            pass
-                    if existing_feat_id is None:
-                        feat_x, feat_y = None, None
-                        for xf in ("longitude", "pos_longit", "sf_longitude", "x_current", "df_x_current", "x"):
-                            if xf in main_field_names and feat[xf] not in (None, NULL):
-                                try:
-                                    feat_x = float(str(feat[xf]).strip())
-                                    break
-                                except (ValueError, TypeError):
-                                    pass
-                        for yf in ("latitude", "pos_latitu", "sf_latitude", "y_current", "df_y_current", "y"):
-                            if yf in main_field_names and feat[yf] not in (None, NULL):
-                                try:
-                                    feat_y = float(str(feat[yf]).strip())
-                                    break
-                                except (ValueError, TypeError):
-                                    pass
-                        if feat_x is not None and feat_y is not None:
-                            if abs(feat_x - x) <= 1e-5 and abs(feat_y - y) <= 1e-5:
-                                existing_feat = feat
-                                existing_feat_id = feat.id()
-                                break
+                    if feat_x is not None and feat_y is not None:
+                        if abs(feat_x - x) <= 1e-5 and abs(feat_y - y) <= 1e-5:
+                            if (
+                                effective_search_uuid
+                                and cand_uuid
+                                and cand_uuid.lower() != effective_search_uuid.lower()
+                                and cand_uuid.lower() in ref_valid_uuids
+                            ):
+                                continue
+                            existing_feat = feat
+                            existing_feat_id = feat.id()
+                            existing_uuid = cand_uuid
+                            break
 
-                if existing_feat is not None and not existing_uuid:
-                    for uf in uuid_fields:
-                        val = existing_feat[uf]
-                        if val is not None and val != NULL:
-                            s_val = str(val).strip()
-                            if s_val.lower() not in ("null", "none", "nan", ""):
-                                existing_uuid = s_val
-                                break
+            if existing_feat_id is not None:
+                assigned_fid = existing_feat_id
+                if isinstance(existing_feat_id, int) and existing_feat_id >= 0:
+                    display_sf_fid = display_fid_by_feat_id.get(existing_feat_id, existing_feat_id)
+                elif existing_feat_id in display_fid_by_feat_id:
+                    display_sf_fid = display_fid_by_feat_id[existing_feat_id]
+                else:
+                    max_positive_fid += 1
+                    display_sf_fid = max_positive_fid
+                    display_fid_by_feat_id[existing_feat_id] = display_sf_fid
+                    if isinstance(existing_feat_id, int) and existing_feat_id < 0:
+                        uncommitted_fid_map[existing_feat_id] = display_sf_fid
 
-        if existing_feat_id is not None:
-            assigned_fid = existing_feat_id
-            if not existing_uuid:
-                existing_uuid = clean_uuid or str(uuid.uuid4())
+                # Authoritative UUID priority: Reference Layer UUID -> Form 2 UUID -> Existing Feature UUID -> New UUID4
+                if ref_uuid:
+                    target_uuid = ref_uuid
+                elif clean_uuid:
+                    target_uuid = clean_uuid
+                elif existing_uuid:
+                    target_uuid = existing_uuid
+                else:
+                    target_uuid = str(uuid.uuid4())
+
                 if existing_feat is not None:
                     for uf in uuid_fields:
-                        idx = main_fields.indexOf(uf)
-                        if idx != -1:
-                            active_layer.changeAttributeValue(existing_feat_id, idx, existing_uuid)
+                        _set_layer_attr_if_changed(existing_feat_id, existing_feat, uf, target_uuid)
 
-            target_uuid = existing_uuid
+                    if not is_reused_from_batch:
+                        if hasattr(active_layer, "changeGeometry"):
+                            active_layer.changeGeometry(existing_feat_id, new_geom)
+                        elif hasattr(active_layer, "dataProvider") and hasattr(active_layer.dataProvider(), "changeGeometryValues"):
+                            active_layer.dataProvider().changeGeometryValues({existing_feat_id: new_geom})
 
-            if existing_feat is not None:
-                if not is_reused_from_batch:
-                    if hasattr(active_layer, "changeGeometry"):
-                        active_layer.changeGeometry(existing_feat_id, new_geom)
-                    elif hasattr(active_layer, "dataProvider") and hasattr(active_layer.dataProvider(), "changeGeometryValues"):
-                        active_layer.dataProvider().changeGeometryValues({existing_feat_id: new_geom})
+                    for sf in ("status", "sf_status"):
+                        _set_layer_attr_if_changed(existing_feat_id, existing_feat, sf, "active")
 
-                for sf in ("status", "sf_status"):
-                    idx = main_fields.indexOf(sf)
-                    if idx != -1:
-                        active_layer.changeAttributeValue(existing_feat_id, idx, "active")
+                    # Reset soft-delete flag so load_cbms_geojson does not filter this feature out
+                    for df_col in ("is_deleted", "sf_is_deleted"):
+                        _set_layer_attr_if_changed(existing_feat_id, existing_feat, df_col, False)
+
+                    for xf in ("longitude", "pos_longit", "sf_longitude", "x_current", "df_x_current", "x"):
+                        _set_layer_attr_if_changed(existing_feat_id, existing_feat, xf, str(x))
+
+                    for yf in ("latitude", "pos_latitu", "sf_latitude", "y_current", "df_y_current", "y"):
+                        _set_layer_attr_if_changed(existing_feat_id, existing_feat, yf, str(y))
+
+                    _set_layer_attr_if_changed(existing_feat_id, existing_feat, "remarks", "")
+                    _set_layer_attr_if_changed(existing_feat_id, existing_feat, "up_feature", 1)
+                    _set_layer_attr_if_changed(existing_feat_id, existing_feat, "uplocation", "1")
+
+                    # Re-derive boundary codes incorporating any existing_feat attributes as fallback
+                    if not bsn_geoid or not ea_geo:
+                        merged_padded = _extract_padded_boundary_codes(row_info.get("attributes", {}), extra_feat=existing_feat)
+                        bsn_geoid = bsn_geoid or merged_padded["bsn_geoid"]
+                        ea_geo = ea_geo or merged_padded["ea_geocode"]
+                        for pk, pv in merged_padded.items():
+                            if pv and not padded_dict.get(pk):
+                                padded_dict[pk] = pv
+
+                    if bsn_geoid:
+                        for bf in ("bsn_geoid", "sf_bsn_geoid", "df_bsn_geoid"):
+                            _set_layer_attr_if_changed(existing_feat_id, existing_feat, bf, bsn_geoid)
+
+                    if ea_geo:
+                        for ef in ("ea_geocode", "sf_ea_geocode", "df_ea_geocode"):
+                            _set_layer_attr_if_changed(existing_feat_id, existing_feat, ef, ea_geo)
+
+                    # Update padded separate columns on existing feature
+                    p_reg = padded_dict.get("region_code")
+                    if p_reg:
+                        for rf in ("region_code", "sf_region_code", "df_region_code", "reg_code", "sf_reg_code", "df_reg_code"):
+                            _set_layer_attr_if_changed(existing_feat_id, existing_feat, rf, p_reg)
+
+                    p_prov = padded_dict.get("province_code")
+                    if p_prov:
+                        for pf in ("province_code", "sf_province_code", "df_province_code", "prov_code", "sf_prov_code", "df_prov_code"):
+                            _set_layer_attr_if_changed(existing_feat_id, existing_feat, pf, p_prov)
+
+                    p_mun = padded_dict.get("city_mun_code")
+                    if p_mun:
+                        for mf in ("city_mun_code", "sf_city_mun_code", "df_city_mun_code", "mun_code", "sf_mun_code", "df_mun_code", "city_code", "df_city_code"):
+                            _set_layer_attr_if_changed(existing_feat_id, existing_feat, mf, p_mun)
+
+                    p_brgy = padded_dict.get("barangay_code")
+                    if p_brgy:
+                        for bf in ("barangay_code", "sf_barangay_code", "df_barangay_code", "barangay__code", "sf_barangay__code", "df_barangay__code", "brgy_code", "sf_brgy_code", "df_brgy_code"):
+                            _set_layer_attr_if_changed(existing_feat_id, existing_feat, bf, p_brgy)
+
+                    p_ean = padded_dict.get("ean")
+                    if p_ean:
+                        for ef in ("ean", "sf_ean", "df_ean", "ea_code", "sf_ea_code", "df_ea_code", "ean_code", "df_ean_code"):
+                            _set_layer_attr_if_changed(existing_feat_id, existing_feat, ef, p_ean)
+
+                    p_bsn = padded_dict.get("bsn")
+                    if p_bsn:
+                        for bf in ("bsn", "sf_bsn", "df_bsn", "bsn_code", "sf_bsn_code", "df_bsn_code", "bldg_sn", "sf_bldg_sn", "df_bldg_sn"):
+                            _set_layer_attr_if_changed(existing_feat_id, existing_feat, bf, p_bsn)
+
+                    # Populate any missing non-boundary attributes (e.g. en_code) onto existing_feat
+                    for attr_k, attr_v in row_info["attributes"].items():
+                        if not _format_clean_code(attr_v):
+                            continue
+                        clean_k = attr_k
+                        for pfx in ("df_", "sf_", "ref_"):
+                            if clean_k.lower().startswith(pfx):
+                                clean_k = clean_k[len(pfx):]
+                                break
+                        if clean_k.lower() in (
+                            "fid", "id", "sf_fid", "df_fid", "ref_fid",
+                            "map_uuid", "mapid", "uuid", "x_current", "y_current", "longitude", "latitude", "x", "y",
+                            "bsn_geoid", "ea_geocode", "region_code", "reg_code", "province_code", "city_mun_code", "barangay_code",
+                            "barangay__code", "ean", "bsn", "bsn_code", "prov_code", "mun_code", "brgy_code",
+                            "bldg_sn", "bsn_num", "is_deleted", "sf_is_deleted", "status", "sf_status",
+                        ):
+                            continue
+                        for target_k in (attr_k, clean_k, f"sf_{clean_k}"):
+                            if target_k in field_idx_map and target_k.lower() not in ("fid", "id", "sf_fid", "df_fid", "ref_fid"):
+                                cur_existing = _safe_get_attr(existing_feat, target_k)
+                                if not _format_clean_code(cur_existing):
+                                    _set_layer_attr_if_changed(existing_feat_id, existing_feat, target_k, attr_v)
+
+                reused_count += 1
+
+            else:
+                target_uuid = ref_uuid or clean_uuid or str(uuid.uuid4())
+                new_feat = QgsFeature(main_fields)
+                new_geom = QgsGeometry.fromPointXY(pt)
+                new_feat.setGeometry(new_geom)
+
+                for uf in uuid_fields:
+                    _set_feat_attr(new_feat, uf, target_uuid)
 
                 for xf in ("longitude", "pos_longit", "sf_longitude", "x_current", "df_x_current", "x"):
-                    idx = main_fields.indexOf(xf)
-                    if idx != -1:
-                        active_layer.changeAttributeValue(existing_feat_id, idx, str(x))
+                    if xf in main_field_names:
+                        _set_feat_attr(new_feat, xf, str(x))
 
                 for yf in ("latitude", "pos_latitu", "sf_latitude", "y_current", "df_y_current", "y"):
-                    idx = main_fields.indexOf(yf)
-                    if idx != -1:
-                        active_layer.changeAttributeValue(existing_feat_id, idx, str(y))
+                    if yf in main_field_names:
+                        _set_feat_attr(new_feat, yf, str(y))
 
-                idx_rem = main_fields.indexOf("remarks")
-                if idx_rem != -1:
-                    active_layer.changeAttributeValue(existing_feat_id, idx_rem, "")
+                for sf in ("status", "sf_status"):
+                    if sf in main_field_names:
+                        _set_feat_attr(new_feat, sf, "active")
 
-                idx_up = main_fields.indexOf("up_feature")
-                if idx_up != -1:
-                    active_layer.changeAttributeValue(existing_feat_id, idx_up, 1)
+                for df_col in ("is_deleted", "sf_is_deleted"):
+                    if df_col in main_field_names:
+                        _set_feat_attr(new_feat, df_col, False)
 
-                idx_uploc = main_fields.indexOf("uplocation")
-                if idx_uploc != -1:
-                    active_layer.changeAttributeValue(existing_feat_id, idx_uploc, "1")
+                if "up_feature" in main_field_names:
+                    _set_feat_attr(new_feat, "up_feature", 1)
+                if "uplocation" in main_field_names:
+                    _set_feat_attr(new_feat, "uplocation", "1")
 
                 if bsn_geoid:
                     for bf in ("bsn_geoid", "sf_bsn_geoid", "df_bsn_geoid"):
-                        idx = main_fields.indexOf(bf)
-                        if idx != -1:
-                            active_layer.changeAttributeValue(existing_feat_id, idx, bsn_geoid)
+                        if bf in main_field_names:
+                            _set_feat_attr(new_feat, bf, bsn_geoid)
 
                 if ea_geo:
                     for ef in ("ea_geocode", "sf_ea_geocode", "df_ea_geocode"):
-                        idx = main_fields.indexOf(ef)
-                        if idx != -1:
-                            active_layer.changeAttributeValue(existing_feat_id, idx, ea_geo)
+                        if ef in main_field_names:
+                            _set_feat_attr(new_feat, ef, ea_geo)
 
-                # Update padded separate columns on existing feature
+                # Set padded separate columns on new feature
                 p_reg = padded_dict.get("region_code")
                 if p_reg:
                     for rf in ("region_code", "sf_region_code", "df_region_code", "reg_code", "sf_reg_code", "df_reg_code"):
-                        idx = main_fields.indexOf(rf)
-                        if idx != -1:
-                            active_layer.changeAttributeValue(existing_feat_id, idx, p_reg)
+                        if rf in main_field_names:
+                            _set_feat_attr(new_feat, rf, p_reg)
 
                 p_prov = padded_dict.get("province_code")
                 if p_prov:
                     for pf in ("province_code", "sf_province_code", "df_province_code", "prov_code", "sf_prov_code", "df_prov_code"):
-                        idx = main_fields.indexOf(pf)
-                        if idx != -1:
-                            active_layer.changeAttributeValue(existing_feat_id, idx, p_prov)
+                        if pf in main_field_names:
+                            _set_feat_attr(new_feat, pf, p_prov)
 
                 p_mun = padded_dict.get("city_mun_code")
                 if p_mun:
                     for mf in ("city_mun_code", "sf_city_mun_code", "df_city_mun_code", "mun_code", "sf_mun_code", "df_mun_code", "city_code", "df_city_code"):
-                        idx = main_fields.indexOf(mf)
-                        if idx != -1:
-                            active_layer.changeAttributeValue(existing_feat_id, idx, p_mun)
+                        if mf in main_field_names:
+                            _set_feat_attr(new_feat, mf, p_mun)
 
                 p_brgy = padded_dict.get("barangay_code")
                 if p_brgy:
                     for bf in ("barangay_code", "sf_barangay_code", "df_barangay_code", "barangay__code", "sf_barangay__code", "df_barangay__code", "brgy_code", "sf_brgy_code", "df_brgy_code"):
-                        idx = main_fields.indexOf(bf)
-                        if idx != -1:
-                            active_layer.changeAttributeValue(existing_feat_id, idx, p_brgy)
+                        if bf in main_field_names:
+                            _set_feat_attr(new_feat, bf, p_brgy)
 
                 p_ean = padded_dict.get("ean")
                 if p_ean:
                     for ef in ("ean", "sf_ean", "df_ean", "ea_code", "sf_ea_code", "df_ea_code", "ean_code", "df_ean_code"):
-                        idx = main_fields.indexOf(ef)
-                        if idx != -1:
-                            active_layer.changeAttributeValue(existing_feat_id, idx, p_ean)
+                        if ef in main_field_names:
+                            _set_feat_attr(new_feat, ef, p_ean)
 
                 p_bsn = padded_dict.get("bsn")
                 if p_bsn:
                     for bf in ("bsn", "sf_bsn", "df_bsn", "bsn_code", "sf_bsn_code", "df_bsn_code", "bldg_sn", "sf_bldg_sn", "df_bldg_sn"):
-                        idx = main_fields.indexOf(bf)
-                        if idx != -1:
-                            active_layer.changeAttributeValue(existing_feat_id, idx, p_bsn)
+                        if bf in main_field_names:
+                            _set_feat_attr(new_feat, bf, p_bsn)
 
-            reused_count += 1
+                for attr_k, attr_v in row_info["attributes"].items():
+                    if not _format_clean_code(attr_v):
+                        continue
+                    clean_k = attr_k
+                    for pfx in ("df_", "sf_", "ref_"):
+                        if clean_k.lower().startswith(pfx):
+                            clean_k = clean_k[len(pfx):]
+                            break
+                    if clean_k.lower() in (
+                        "fid", "id", "sf_fid", "df_fid", "ref_fid",
+                        "map_uuid", "mapid", "uuid", "x_current", "y_current", "longitude", "latitude", "x", "y",
+                        "bsn_geoid", "ea_geocode", "region_code", "reg_code", "province_code", "city_mun_code", "barangay_code",
+                        "barangay__code", "ean", "bsn", "bsn_code", "prov_code", "mun_code", "brgy_code",
+                        "bldg_sn", "bsn_num", "is_deleted", "sf_is_deleted", "status", "sf_status",
+                    ):
+                        continue
+                    for target_k in (attr_k, clean_k, f"sf_{clean_k}"):
+                        if target_k in field_idx_map and target_k.lower() not in ("fid", "id", "sf_fid", "df_fid", "ref_fid"):
+                            try:
+                                _set_feat_attr(new_feat, target_k, attr_v)
+                            except Exception:
+                                pass
 
-        else:
-            target_uuid = clean_uuid or str(uuid.uuid4())
-            new_feat = QgsFeature(main_fields)
-            new_geom = QgsGeometry.fromPointXY(pt)
-            new_feat.setGeometry(new_geom)
+                max_positive_fid += 1
+                display_sf_fid = max_positive_fid
+                for ff in fid_attr_fields:
+                    _set_feat_attr(new_feat, ff, display_sf_fid)
 
-            for uf in uuid_fields:
-                _set_feat_attr(new_feat, uf, target_uuid)
+                if hasattr(active_layer, "addFeature"):
+                    active_layer.addFeature(new_feat)
+                elif hasattr(active_layer, "addFeatures"):
+                    active_layer.addFeatures([new_feat])
+                elif hasattr(active_layer, "dataProvider") and hasattr(active_layer.dataProvider(), "addFeatures"):
+                    active_layer.dataProvider().addFeatures([new_feat])
+                assigned_fid = new_feat.id()
+                if assigned_fid is not None:
+                    if isinstance(assigned_fid, int) and assigned_fid > 0:
+                        display_sf_fid = assigned_fid
+                        if assigned_fid > max_positive_fid:
+                            max_positive_fid = assigned_fid
+                    display_fid_by_feat_id[assigned_fid] = display_sf_fid
+                    if isinstance(assigned_fid, int) and assigned_fid < 0:
+                        uncommitted_fid_map[assigned_fid] = display_sf_fid
+                    created_batch_fids.add(assigned_fid)
+                    created_batch_features.append((assigned_fid, pt, x, y, target_uuid))
 
-            for xf in ("longitude", "pos_longit", "sf_longitude", "x_current", "df_x_current", "x"):
-                if xf in main_field_names:
-                    _set_feat_attr(new_feat, xf, str(x))
+                created_count += 1
 
-            for yf in ("latitude", "pos_latitu", "sf_latitude", "y_current", "df_y_current", "y"):
-                if yf in main_field_names:
-                    _set_feat_attr(new_feat, yf, str(y))
-
-            for sf in ("status", "sf_status"):
-                if sf in main_field_names:
-                    _set_feat_attr(new_feat, sf, "active")
-
-            if "up_feature" in main_field_names:
-                _set_feat_attr(new_feat, "up_feature", 1)
-            if "uplocation" in main_field_names:
-                _set_feat_attr(new_feat, "uplocation", "1")
-
+            col_dict = {
+                "sf_map_uuid": target_uuid,
+                "df_map_uuid": target_uuid,
+                "map_uuid": target_uuid,
+                "mapid": target_uuid,
+                "df_mapid": target_uuid,
+                "sf_fid": display_sf_fid,
+                "sf_longitude": str(x),
+                "sf_latitude": str(y),
+                "df_x_current": str(x),
+                "df_y_current": str(y),
+                "x_current": str(x),
+                "y_current": str(y),
+                "sf_status": "active",
+                "status": "active",
+                "sf_is_deleted": False,
+                "is_deleted": False,
+            }
             if bsn_geoid:
-                for bf in ("bsn_geoid", "sf_bsn_geoid", "df_bsn_geoid"):
-                    if bf in main_field_names:
-                        _set_feat_attr(new_feat, bf, bsn_geoid)
-
+                col_dict["bsn_geoid"] = bsn_geoid
+                col_dict["sf_bsn_geoid"] = bsn_geoid
+                col_dict["df_bsn_geoid"] = bsn_geoid
             if ea_geo:
-                for ef in ("ea_geocode", "sf_ea_geocode", "df_ea_geocode"):
-                    if ef in main_field_names:
-                        _set_feat_attr(new_feat, ef, ea_geo)
+                col_dict["ea_geocode"] = ea_geo
+                col_dict["sf_ea_geocode"] = ea_geo
+                col_dict["df_ea_geocode"] = ea_geo
 
-            # Set padded separate columns on new feature
+            # Populate padded separate columns into col_dict for table cells and CSV sync
             p_reg = padded_dict.get("region_code")
             if p_reg:
                 for rf in ("region_code", "sf_region_code", "df_region_code", "reg_code", "sf_reg_code", "df_reg_code"):
-                    if rf in main_field_names:
-                        _set_feat_attr(new_feat, rf, p_reg)
+                    col_dict[rf] = p_reg
 
             p_prov = padded_dict.get("province_code")
             if p_prov:
                 for pf in ("province_code", "sf_province_code", "df_province_code", "prov_code", "sf_prov_code", "df_prov_code"):
-                    if pf in main_field_names:
-                        _set_feat_attr(new_feat, pf, p_prov)
+                    col_dict[pf] = p_prov
 
             p_mun = padded_dict.get("city_mun_code")
             if p_mun:
                 for mf in ("city_mun_code", "sf_city_mun_code", "df_city_mun_code", "mun_code", "sf_mun_code", "df_mun_code", "city_code", "df_city_code"):
-                    if mf in main_field_names:
-                        _set_feat_attr(new_feat, mf, p_mun)
+                    col_dict[mf] = p_mun
 
             p_brgy = padded_dict.get("barangay_code")
             if p_brgy:
                 for bf in ("barangay_code", "sf_barangay_code", "df_barangay_code", "barangay__code", "sf_barangay__code", "df_barangay__code", "brgy_code", "sf_brgy_code", "df_brgy_code"):
-                    if bf in main_field_names:
-                        _set_feat_attr(new_feat, bf, p_brgy)
+                    col_dict[bf] = p_brgy
 
             p_ean = padded_dict.get("ean")
             if p_ean:
                 for ef in ("ean", "sf_ean", "df_ean", "ea_code", "sf_ea_code", "df_ea_code", "ean_code", "df_ean_code"):
-                    if ef in main_field_names:
-                        _set_feat_attr(new_feat, ef, p_ean)
+                    col_dict[ef] = p_ean
 
             p_bsn = padded_dict.get("bsn")
             if p_bsn:
                 for bf in ("bsn", "sf_bsn", "df_bsn", "bsn_code", "sf_bsn_code", "df_bsn_code", "bldg_sn", "sf_bldg_sn", "df_bldg_sn"):
-                    if bf in main_field_names:
-                        _set_feat_attr(new_feat, bf, p_bsn)
+                    col_dict[bf] = p_bsn
+
+            # Populate other non-empty attributes (such as sf_en_code, en_code) into col_dict so table cells update from NULL
+            if _is_usable_feature(existing_feat):
+                for fld in existing_feat.fields():
+                    fn = fld.name()
+                    if fn.lower() in ("fid", "id", "sf_fid", "df_fid", "ref_fid"):
+                        continue
+                    fv = _safe_get_attr(existing_feat, fn)
+                    if _format_clean_code(fv):
+                        clean_fn = fn
+                        for pfx in ("df_", "sf_", "ref_"):
+                            if clean_fn.lower().startswith(pfx):
+                                clean_fn = clean_fn[len(pfx):]
+                                break
+                        for tk in (fn, clean_fn, f"sf_{clean_fn}"):
+                            if tk not in col_dict:
+                                col_dict[tk] = fv
 
             for attr_k, attr_v in row_info["attributes"].items():
-                if attr_v is None or str(attr_v).strip().lower() in ("null", "none", "nan", ""):
+                if not _format_clean_code(attr_v):
                     continue
                 clean_k = attr_k
-                if clean_k.startswith("df_") or clean_k.startswith("sf_"):
-                    clean_k = clean_k[3:]
-                if clean_k.lower() in (
-                    "map_uuid", "uuid", "x_current", "y_current", "longitude", "latitude", "x", "y",
-                    "bsn_geoid", "ea_geocode", "region_code", "reg_code", "province_code", "city_mun_code", "barangay_code",
-                    "barangay__code", "ean", "bsn", "bsn_code", "prov_code", "mun_code", "brgy_code",
-                    "bldg_sn", "bsn_num"
-                ):
+                for pfx in ("df_", "sf_", "ref_"):
+                    if clean_k.lower().startswith(pfx):
+                        clean_k = clean_k[len(pfx):]
+                        break
+                if clean_k.lower() in ("fid", "id", "sf_fid", "df_fid", "ref_fid"):
                     continue
-                for target_k in (attr_k, clean_k, f"sf_{clean_k}"):
-                    if target_k in main_field_names:
-                        try:
-                            _set_feat_attr(new_feat, target_k, attr_v)
-                        except Exception:
-                            pass
+                for tk in (attr_k, clean_k, f"sf_{clean_k}"):
+                    if tk not in col_dict:
+                        col_dict[tk] = attr_v
 
-            if hasattr(active_layer, "addFeature"):
-                active_layer.addFeature(new_feat)
-            elif hasattr(active_layer, "addFeatures"):
-                active_layer.addFeatures([new_feat])
-            elif hasattr(active_layer, "dataProvider") and hasattr(active_layer.dataProvider(), "addFeatures"):
-                active_layer.dataProvider().addFeatures([new_feat])
-            assigned_fid = new_feat.id()
-            if assigned_fid is not None:
-                created_batch_fids.add(assigned_fid)
-                created_batch_features.append((assigned_fid, pt, x, y, target_uuid))
+            # Store by namespaced row index so table row r matches unambiguously
+            updated_values[f"row_{r}"] = col_dict
 
-            created_count += 1
+            # Register composite unique keys (fid + map_uuid) to avoid collisions across rows
+            cand_fids = [row_info.get("source_fid"), row_info.get("df_fid"), row_info.get("err_fid"), row_info.get("sf_fid"), assigned_fid, display_sf_fid]
+            target_idx = target_row_to_idx.get(r, r)
+            if target_fids and target_idx < len(target_fids):
+                cand_fids.append(target_fids[target_idx])
+            for f_val in cand_fids:
+                if f_val is not None and str(f_val).strip() not in ("", "NULL", "None"):
+                    for u_val in (target_uuid, clean_uuid, ref_uuid):
+                        uk = make_unique_feature_key(f_val, u_val)
+                        if uk:
+                            updated_values[uk] = col_dict
+                            updated_values[uk.lower()] = col_dict
 
-        col_dict = {
-            "sf_map_uuid": target_uuid,
-            "df_map_uuid": target_uuid,
-            "map_uuid": target_uuid,
-            "mapid": target_uuid,
-            "df_mapid": target_uuid,
-            "sf_fid": assigned_fid,
-            "sf_longitude": str(x),
-            "sf_latitude": str(y),
-            "df_x_current": str(x),
-            "df_y_current": str(y),
-            "x_current": str(x),
-            "y_current": str(y),
-            "sf_status": "active",
-            "status": "active",
-        }
-        if bsn_geoid:
-            col_dict["bsn_geoid"] = bsn_geoid
-            col_dict["sf_bsn_geoid"] = bsn_geoid
-            col_dict["df_bsn_geoid"] = bsn_geoid
-        if ea_geo:
-            col_dict["ea_geocode"] = ea_geo
-            col_dict["sf_ea_geocode"] = ea_geo
-            col_dict["df_ea_geocode"] = ea_geo
+            fixed_count += 1
+    finally:
+        if dlg is not None:
+            dlg._suppress_dirty_ui_refresh = False
 
-        # Populate padded separate columns into col_dict for table cells and CSV sync
-        p_reg = padded_dict.get("region_code")
-        if p_reg:
-            for rf in ("region_code", "sf_region_code", "df_region_code", "reg_code", "sf_reg_code", "df_reg_code"):
-                col_dict[rf] = p_reg
-
-        p_prov = padded_dict.get("province_code")
-        if p_prov:
-            for pf in ("province_code", "sf_province_code", "df_province_code", "prov_code", "sf_prov_code", "df_prov_code"):
-                col_dict[pf] = p_prov
-
-        p_mun = padded_dict.get("city_mun_code")
-        if p_mun:
-            for mf in ("city_mun_code", "sf_city_mun_code", "df_city_mun_code", "mun_code", "sf_mun_code", "df_mun_code", "city_code", "df_city_code"):
-                col_dict[mf] = p_mun
-
-        p_brgy = padded_dict.get("barangay_code")
-        if p_brgy:
-            for bf in ("barangay_code", "sf_barangay_code", "df_barangay_code", "barangay__code", "sf_barangay__code", "df_barangay__code", "brgy_code", "sf_brgy_code", "df_brgy_code"):
-                col_dict[bf] = p_brgy
-
-        p_ean = padded_dict.get("ean")
-        if p_ean:
-            for ef in ("ean", "sf_ean", "df_ean", "ea_code", "sf_ea_code", "df_ea_code", "ean_code", "df_ean_code"):
-                col_dict[ef] = p_ean
-
-        p_bsn = padded_dict.get("bsn")
-        if p_bsn:
-            for bf in ("bsn", "sf_bsn", "df_bsn", "bsn_code", "sf_bsn_code", "df_bsn_code", "bldg_sn", "sf_bldg_sn", "df_bldg_sn"):
-                col_dict[bf] = p_bsn
-
-        # Store by namespaced row index so table row r matches unambiguously
-        updated_values[f"row_{r}"] = col_dict
-
-        # Register composite unique keys (fid + map_uuid) to avoid collisions across rows
-        cand_fids = [row_info.get("source_fid"), row_info.get("df_fid"), row_info.get("err_fid"), assigned_fid]
-        target_idx = target_rows.index(r) if (target_rows and r in target_rows) else r
-        if target_fids and target_idx < len(target_fids):
-            cand_fids.append(target_fids[target_idx])
-        for f_val in cand_fids:
-            if f_val is not None and str(f_val).strip() not in ("", "NULL", "None"):
-                for u_val in (target_uuid, clean_uuid):
-                    uk = make_unique_feature_key(f_val, u_val)
-                    if uk:
-                        updated_values[uk] = col_dict
-                        updated_values[uk.lower()] = col_dict
-
-        fixed_count += 1
+    if has_edit_cmd and hasattr(active_layer, "endEditCommand"):
+        try:
+            if fixed_count > 0:
+                active_layer.endEditCommand()
+            elif hasattr(active_layer, "destroyEditCommand"):
+                active_layer.destroyEditCommand()
+        except Exception:
+            pass
 
     if fixed_count > 0:
+        if hasattr(active_layer, "layerModified") and hasattr(active_layer.layerModified, "emit"):
+            try:
+                active_layer.layerModified.emit()
+            except Exception:
+                pass
         active_layer.triggerRepaint()
 
-        dlg = kwargs.get("dialog") or dialog
         if dlg and hasattr(dlg, "iface") and dlg.iface and hasattr(dlg.iface, "mapCanvas") and dlg.iface.mapCanvas():
             try:
                 dlg.iface.mapCanvas().refresh()
