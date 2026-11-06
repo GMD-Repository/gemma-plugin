@@ -136,7 +136,7 @@ def _extract_row_data(
                 u_data = it0.data(0x0100 + 1)
                 if u_data:
                     row_info["uuid"] = str(u_data).strip()
-            row_info["df_fid"] = it0.data(0x0100 + 2)
+            row_info["df_fid"] = it0.data(0x0100 + 4) if it0.data(0x0100 + 4) is not None else it0.data(0x0100 + 2)
             row_info["err_fid"] = it0.data(0x0100 + 3)
 
         # Extract other table attributes
@@ -268,7 +268,7 @@ def _run_fix_map_uuid_missing(
         deduped_rows = []
         for r in rows_to_process:
             row_info = _extract_row_data(r, table, error_layer, target_fids, target_uuids)
-            r_fid = row_info.get("source_fid") or row_info.get("df_fid") or row_info.get("err_fid")
+            r_fid = next((v for v in (row_info.get("source_fid"), row_info.get("df_fid"), row_info.get("err_fid")) if v is not None and str(v).strip() not in ("", "NULL", "None")), None)
             r_uuid = row_info.get("uuid")
             uk = make_unique_feature_key(r_fid, r_uuid)
             if uk and uk in seen_row_keys:
@@ -543,6 +543,7 @@ def _run_fix_map_uuid_missing(
             "status": "active",
         }
 
+        updated_values[f"row_{r}"] = col_dict
         updated_values[r] = col_dict
         updated_values[str(r)] = col_dict
         if target_uuid:

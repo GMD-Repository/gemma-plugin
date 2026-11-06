@@ -158,7 +158,7 @@ def delete_selected_features(
             val_id,
             layer,
             table,
-            source_fid=best_f or s_fid,
+            source_fid=best_f if (best_f is not None and str(best_f).strip() not in ("", "NULL", "None")) else s_fid,
             map_uuid=best_u or u_str,
             err_fid=e_fid,
             button=row_del_btn,
@@ -317,7 +317,7 @@ def mark_feature_deleted(
             reply = QMessageBox.question(
                 dialog,
                 "Restore Record?",
-                f"Record #{source_fid or err_fid} is currently marked as deleted.\n\n"
+                f"Record #{source_fid if source_fid is not None else err_fid} is currently marked as deleted.\n\n"
                 f"Do you want to restore it?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
@@ -427,13 +427,15 @@ def mark_feature_deleted(
     if hasattr(dialog, "lbl_footer_status") and dialog.lbl_footer_status:
         if to_delete:
             dialog.lbl_footer_status.setText(
-                f"Marked record #{source_fid or err_fid} as deleted (is_deleted = true). Click 'Save Changes' (Ctrl+S) to keep it."
+                f"Marked record #{source_fid if source_fid is not None else err_fid} as deleted (is_deleted = true). Click 'Save Changes' (Ctrl+S) to keep it."
             )
         else:
             dialog.lbl_footer_status.setText(
-                f"Restored record #{source_fid or err_fid} (is_deleted = false). Click 'Save Changes' (Ctrl+S) to keep it."
+                f"Restored record #{source_fid if source_fid is not None else err_fid} (is_deleted = false). Click 'Save Changes' (Ctrl+S) to keep it."
             )
 
+    if hasattr(dialog, "_mark_unsaved_table_edit"):
+        dialog._mark_unsaved_table_edit()
     if hasattr(dialog, "iface") and dialog.iface and dialog.iface.mapCanvas():
         dialog.iface.mapCanvas().refresh()
 
@@ -504,6 +506,8 @@ def sync_feature_status(
                                 dialog._style_row_delete_button(child, is_deleted=to_delete)
                             break
                 break
+    if hasattr(dialog, "_mark_unsaved_table_edit"):
+        dialog._mark_unsaved_table_edit()
 
 
 def run_fix(
