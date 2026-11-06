@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 CBMS Map Validation - Copy Geometry to Coordinates Process
-Action: "Copy the geometry and paste it into the longitude and latitude columns"
+Action: "Copy the geometry to coordinates columns"
 Validation ID: copy_geometry_to_coordinates
 
 Extracts original $x (longitude) and $y (latitude) coordinates from point geometries
@@ -37,10 +37,10 @@ except ImportError:
     from common import _flatten_ids, is_valid_qobject, make_unique_feature_key
 
 FIX_ID = "copy_geometry_to_coordinates"
-FIX_NAME = "Copy geometry and paste into longitude and latitude columns"
+FIX_NAME = "Copy the geometry to coordinates columns"
 FIX_DESCRIPTION = (
-    "Extracts original X (longitude) and Y (latitude) from point geometries and updates "
-    "the corresponding longitude and latitude columns."
+    "Updates the coordinates columns (longitude and latitude columns) in the attribute table to reflect "
+    "the values of the feature’s actual coordinates (geometry)."
 )
 
 
@@ -84,12 +84,19 @@ def _run_fix_copy_geometry_to_coordinates(
         except Exception:
             pass
 
+    target_err_fids = kwargs.get("target_err_fids")
+    target_err_set = _flatten_ids(target_err_fids) if target_err_fids is not None else set()
     target_keys_set = set(target_keys) if target_keys else set()
     target_keys_lower = {str(k).strip().lower() for k in target_keys_set if k}
-    is_targeted = (target_fids is not None) or (target_uuids is not None) or bool(target_keys_set)
+    is_targeted = (
+        (target_fids is not None)
+        or (target_uuids is not None)
+        or bool(target_keys_set)
+        or (target_err_fids is not None)
+    )
     target_set = _flatten_ids(target_fids) | _flatten_ids(target_uuids)
 
-    if is_targeted and not target_set and not target_keys_set:
+    if is_targeted and not target_set and not target_keys_set and not target_err_set:
         return {
             "success": True,
             "fixed_count": 0,
@@ -117,6 +124,9 @@ def _run_fix_copy_geometry_to_coordinates(
         except Exception:
             pass
 
+    active_field_names = active_layer.fields().names() if hasattr(active_layer.fields(), "names") else []
+    is_error_active = (error_layer is not None and active_layer == error_layer)
+
     wgs84 = QgsCoordinateReferenceSystem("EPSG:4326")
     updated_values: Dict[Any, Dict[str, str]] = {}
     fixed_count = 0
@@ -127,27 +137,62 @@ def _run_fix_copy_geometry_to_coordinates(
             break
 
         f_id = feat.id()
-        feat_ids = _flatten_ids(f_id)
+        spatial_ids = _flatten_ids(f_id)
+        feat_ids = set(spatial_ids)
         feat_uuid = ""
-        for col in ("sf_fid", "fid", "df_fid", "sf_map_uuid", "map_uuid", "uuid"):
-            if col in active_layer.fields().names():
+
+        if "sf_fid" in active_field_names:
+            try:
+                sf_val = feat.attribute("sf_fid")
+                if sf_val is not None and sf_val != NULL:
+                    if is_error_active:
+                        spatial_ids = _flatten_ids(sf_val)
+                    else:
+                        spatial_ids.update(_flatten_ids(sf_val))
+                    feat_ids.update(_flatten_ids(sf_val))
+            except Exception:
+                pass
+
+        for col in ("sf_map_uuid", "map_uuid", "uuid"):
+            if col in active_field_names:
                 try:
                     val = feat.attribute(col)
                     if val is not None and val != NULL:
-                        feat_ids.update(_flatten_ids(val))
-                        if not feat_uuid and col in ("sf_map_uuid", "map_uuid", "uuid"):
-                            feat_uuid = str(val).strip()
+                        s_val = str(val).strip()
+                        if s_val and s_val.lower() not in ("null", "none"):
+                            feat_ids.update(_flatten_ids(s_val))
+                            if not feat_uuid:
+                                feat_uuid = s_val
                 except Exception:
                     pass
 
-        cand_keys = {make_unique_feature_key(fid_val, feat_uuid) for fid_val in feat_ids}
+        if is_error_active or not target_keys_set or (f_id is not None and f_id < 0):
+            for col in ("fid", "df_fid"):
+                if col in active_field_names:
+                    try:
+                        val = feat.attribute(col)
+                        if val is not None and val != NULL:
+                            feat_ids.update(_flatten_ids(val))
+                            if is_error_active or (f_id is not None and f_id < 0):
+                                spatial_ids.update(_flatten_ids(val))
+                    except Exception:
+                        pass
+
+        cand_keys = {make_unique_feature_key(fid_val, feat_uuid) for fid_val in spatial_ids}
+        if feat_uuid:
+            cand_keys.add(make_unique_feature_key(None, feat_uuid))
         cand_keys.discard("")
         cand_keys_lower = {k.lower() for k in cand_keys}
 
         if is_targeted:
-            matched = bool(target_set and (feat_ids & target_set))
-            if not matched and target_keys_set:
+            if is_error_active and target_err_set:
+                matched = bool(_flatten_ids(f_id) & target_err_set)
+            elif target_keys_set:
                 matched = bool(cand_keys & target_keys_set) or bool(cand_keys_lower & target_keys_lower)
+                if not matched and not feat_uuid and target_set:
+                    matched = bool(spatial_ids & target_set)
+            else:
+                matched = bool(target_set and (feat_ids & target_set))
             if not matched:
                 continue
 
@@ -157,17 +202,31 @@ def _run_fix_copy_geometry_to_coordinates(
 
         # Fallback to error_layer feature geometry if active_layer feature lacked geometry
         if not geom and error_layer and error_layer.isValid() and error_layer != active_layer:
+            err_fnames = error_layer.fields().names() if hasattr(error_layer.fields(), "names") else []
             for ef in error_layer.getFeatures():
-                ef_ids = _flatten_ids(ef.id())
-                for col in ("sf_fid", "fid", "df_fid", "sf_map_uuid", "map_uuid", "uuid"):
-                    if col in error_layer.fields().names():
+                ef_uuid = ""
+                for col in ("sf_map_uuid", "map_uuid", "uuid", "df_map_uuid"):
+                    if col in err_fnames:
                         try:
                             val = ef.attribute(col)
-                            if val is not None and val != NULL:
-                                ef_ids.update(_flatten_ids(val))
+                            if val is not None and val != NULL and str(val).strip():
+                                ef_uuid = str(val).strip()
+                                break
                         except Exception:
                             pass
-                if ef_ids & feat_ids:
+                ef_matched = False
+                if "sf_fid" in err_fnames:
+                    try:
+                        ef_sf = ef.attribute("sf_fid")
+                        if ef_sf is not None and ef_sf != NULL:
+                            ef_uk = make_unique_feature_key(ef_sf, ef_uuid)
+                            ef_matched = bool(ef_uk and (ef_uk in cand_keys or ef_uk.lower() in cand_keys_lower))
+                    except Exception:
+                        pass
+                elif feat_uuid and ef_uuid:
+                    ef_matched = (ef_uuid.lower() == feat_uuid.lower())
+
+                if ef_matched:
                     if ef.hasGeometry() and not ef.geometry().isEmpty():
                         geom = ef.geometry()
                         source_crs = error_layer.crs()
@@ -259,6 +318,16 @@ def _run_fix_copy_geometry_to_coordinates(
             "df_x_current": lon_str,
             "df_y_current": lat_str,
         }
+        if is_error_active:
+            updated_values[f"err_{f_id}"] = payload
+        sf_keys = {make_unique_feature_key(fid_val, feat_uuid) for fid_val in spatial_ids} - {""}
+        for uk in sf_keys:
+            updated_values[uk] = payload
+            updated_values[uk.lower()] = payload
+            updated_values[f"sf_{uk}"] = payload
+            updated_values[f"sf_{uk.lower()}"] = payload
+        if feat_uuid:
+            updated_values[f"uuid_{feat_uuid.lower()}"] = payload
         for k in feat_ids:
             updated_values[k] = payload
         for ck in cand_keys:
@@ -272,38 +341,48 @@ def _run_fix_copy_geometry_to_coordinates(
         err_field_names = error_layer.fields().names() if hasattr(error_layer.fields(), "names") else []
         err_lon_fields = [f for f in ("sf_longitude", "longitude", "x_current", "df_x_current") if f in err_field_names]
         err_lat_fields = [f for f in ("sf_latitude", "latitude", "y_current", "df_y_current") if f in err_field_names]
+        has_err_sf_fid = ("sf_fid" in err_field_names or "fid" in err_field_names)
         if err_lon_fields or err_lat_fields:
             for ef in error_layer.getFeatures():
-                ef_ids = _flatten_ids(ef.id())
                 ef_uuid = ""
-                for col in ("sf_fid", "fid", "df_fid", "sf_map_uuid", "map_uuid", "uuid"):
+                for col in ("sf_map_uuid", "map_uuid", "uuid", "df_map_uuid"):
                     if col in err_field_names:
                         try:
                             val = ef.attribute(col)
-                            if val is not None and val != NULL:
-                                ef_ids.update(_flatten_ids(val))
-                                if not ef_uuid and col in ("sf_map_uuid", "map_uuid", "uuid"):
-                                    ef_uuid = str(val).strip()
+                            if val is not None and val != NULL and str(val).strip():
+                                ef_uuid = str(val).strip()
+                                break
                         except Exception:
                             pass
-                cand_ef_keys = {make_unique_feature_key(fid_val, ef_uuid) for fid_val in ef_ids}
-                cand_ef_keys.discard("")
 
-                matched_cand = None
-                for k in list(ef_ids) + list(cand_ef_keys) + [k.lower() for k in cand_ef_keys]:
-                    if k in updated_values:
-                        matched_cand = k
-                        break
-                if matched_cand:
-                    p = updated_values[matched_cand]
+                matched_payload = None
+                if has_err_sf_fid:
+                    sf_col_name = "sf_fid" if "sf_fid" in err_field_names else "fid"
+                    try:
+                        ef_sf_val = ef.attribute(sf_col_name)
+                    except Exception:
+                        ef_sf_val = None
+                    if ef_sf_val is not None and ef_sf_val != NULL:
+                        for fid_c in _flatten_ids(ef_sf_val):
+                            uk = make_unique_feature_key(fid_c, ef_uuid)
+                            if uk and f"sf_{uk}" in updated_values:
+                                matched_payload = updated_values[f"sf_{uk}"]
+                                break
+                            if uk and f"sf_{uk.lower()}" in updated_values:
+                                matched_payload = updated_values[f"sf_{uk.lower()}"]
+                                break
+                elif ef_uuid and f"uuid_{ef_uuid.lower()}" in updated_values:
+                    matched_payload = updated_values[f"uuid_{ef_uuid.lower()}"]
+
+                if matched_payload:
                     for lf in err_lon_fields:
                         idx = error_layer.fields().indexOf(lf)
                         if idx != -1:
-                            error_layer.changeAttributeValue(ef.id(), idx, p["sf_longitude"])
+                            error_layer.changeAttributeValue(ef.id(), idx, matched_payload["sf_longitude"])
                     for lf in err_lat_fields:
                         idx = error_layer.fields().indexOf(lf)
                         if idx != -1:
-                            error_layer.changeAttributeValue(ef.id(), idx, p["sf_latitude"])
+                            error_layer.changeAttributeValue(ef.id(), idx, matched_payload["sf_latitude"])
 
     if feedback:
         feedback.pushInfo(f"Copied geometry to longitude and latitude for {fixed_count} feature(s).")

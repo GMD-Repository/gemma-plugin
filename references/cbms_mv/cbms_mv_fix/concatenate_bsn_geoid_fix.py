@@ -206,22 +206,44 @@ def _run_fix_bsn_geoid(
             "updated_values": {},
         }
 
+    target_err_fids = kwargs.get("target_err_fids")
+    target_err_set = _flatten_ids(target_err_fids) if target_err_fids is not None else set()
     target_keys_set = set(target_keys) if target_keys else set()
     target_keys_lower = {str(k).strip().lower() for k in target_keys_set if k}
-    is_targeted = (target_fids is not None) or (target_uuids is not None) or (target_rows is not None) or bool(target_keys_set)
+    is_targeted = (
+        (target_fids is not None)
+        or (target_uuids is not None)
+        or (target_rows is not None)
+        or bool(target_keys_set)
+        or (target_err_fids is not None)
+    )
     target_set = _flatten_ids(target_fids) | _flatten_ids(target_uuids)
+    is_error_active = (error_layer is not None and active_layer == error_layer)
 
-    if is_targeted and not target_set and target_rows:
+    if is_targeted and not target_set and not target_keys_set and target_rows:
         if table is not None and is_valid_qobject(table):
             for r in target_rows:
                 it0 = table.item(r, 0)
                 if it0:
-                    for off in (0, 1, 3, 4, 5, 6, 7):
-                        v = it0.data(0x0100 + off)
-                        if v is not None:
-                            target_set.update(_flatten_ids(v))
+                    sf_v = it0.data(0x0100 + 6)
+                    s_v = it0.data(0x0100)
+                    e_v = it0.data(0x0100 + 3)
+                    u_v = it0.data(0x0100 + 7) or it0.data(0x0100 + 1) or it0.data(0x0100 + 5)
+                    if e_v is not None:
+                        target_err_set.update(_flatten_ids(e_v))
+                    fid_use = sf_v if (sf_v is not None and str(sf_v).strip() not in ("", "NULL", "None")) else s_v
+                    uk = make_unique_feature_key(fid_use, u_v)
+                    if uk:
+                        target_keys_set.add(uk)
+                        target_keys_lower.add(uk.lower())
 
-    if is_targeted and not target_set and not target_keys_set and (target_fids is not None or target_uuids is not None):
+    if (
+        is_targeted
+        and not target_set
+        and not target_keys_set
+        and not target_err_set
+        and (target_fids is not None or target_uuids is not None)
+    ):
         return {
             "success": True,
             "fixed_count": 0,
@@ -238,6 +260,7 @@ def _run_fix_bsn_geoid(
         active_layer.dataProvider().addAttributes([QgsField("sf_bsn_geoid", QVariant.String, len=30)])
         active_layer.updateFields()
         target_fields.append("sf_bsn_geoid")
+        field_names = active_layer.fields().names() if hasattr(active_layer.fields(), "names") else []
 
     if not active_layer.isEditable() and not active_layer.startEditing():
         return {
@@ -253,24 +276,37 @@ def _run_fix_bsn_geoid(
 
     err_feats_lookup = {}
     if error_layer and error_layer.isValid() and error_layer != active_layer:
+        err_fnames = error_layer.fields().names() if hasattr(error_layer.fields(), "names") else []
         for ef in error_layer.getFeatures():
-            ef_ids = _flatten_ids(ef.id())
             ef_uuid = ""
-            for col in ("sf_fid", "fid", "df_fid", "sf_map_uuid", "map_uuid", "uuid"):
-                try:
-                    val = ef.attribute(col)
-                    if val is not None and val != NULL:
-                        ef_ids.update(_flatten_ids(val))
-                        if not ef_uuid and col in ("sf_map_uuid", "map_uuid", "uuid"):
+            for col in ("sf_map_uuid", "map_uuid", "uuid", "df_map_uuid"):
+                if col in err_fnames:
+                    try:
+                        val = ef.attribute(col)
+                        if val is not None and val != NULL and str(val).strip():
                             ef_uuid = str(val).strip()
-                except Exception:
-                    pass
-            for eid in ef_ids:
-                err_feats_lookup[eid] = ef
-                uk = make_unique_feature_key(eid, ef_uuid)
-                if uk:
-                    err_feats_lookup[uk] = ef
-                    err_feats_lookup[uk.lower()] = ef
+                            break
+                    except Exception:
+                        pass
+            if ef_uuid:
+                err_feats_lookup[ef_uuid] = ef
+                err_feats_lookup[ef_uuid.lower()] = ef
+                uk_u = make_unique_feature_key(None, ef_uuid)
+                if uk_u:
+                    err_feats_lookup[uk_u] = ef
+                    err_feats_lookup[uk_u.lower()] = ef
+            for col in ("sf_fid", "fid"):
+                if col in err_fnames:
+                    try:
+                        val = ef.attribute(col)
+                        if val is not None and val != NULL:
+                            for eid in _flatten_ids(val):
+                                uk = make_unique_feature_key(eid, ef_uuid)
+                                if uk:
+                                    err_feats_lookup[uk] = ef
+                                    err_feats_lookup[uk.lower()] = ef
+                    except Exception:
+                        pass
 
     updated_values: Dict[Any, Dict[str, str]] = {}
     fixed_count = 0
@@ -280,33 +316,68 @@ def _run_fix_bsn_geoid(
             break
 
         f_id = feat.id()
-        feat_ids = _flatten_ids(f_id)
+        spatial_ids = _flatten_ids(f_id)
+        feat_ids = set(spatial_ids)
         feat_uuid = ""
-        for col in ("sf_fid", "fid", "df_fid", "sf_map_uuid", "map_uuid", "uuid"):
+
+        if "sf_fid" in field_names:
+            try:
+                sf_val = feat.attribute("sf_fid")
+                if sf_val is not None and sf_val != NULL:
+                    if is_error_active:
+                        spatial_ids = _flatten_ids(sf_val)
+                    else:
+                        spatial_ids.update(_flatten_ids(sf_val))
+                    feat_ids.update(_flatten_ids(sf_val))
+            except Exception:
+                pass
+
+        for col in ("sf_map_uuid", "map_uuid", "uuid"):
             if col in field_names:
                 try:
                     val = feat.attribute(col)
                     if val is not None and val != NULL:
-                        feat_ids.update(_flatten_ids(val))
-                        if not feat_uuid and col in ("sf_map_uuid", "map_uuid", "uuid"):
-                            feat_uuid = str(val).strip()
+                        s_val = str(val).strip()
+                        if s_val and s_val.lower() not in ("null", "none"):
+                            feat_ids.update(_flatten_ids(s_val))
+                            if not feat_uuid:
+                                feat_uuid = s_val
                 except Exception:
                     pass
 
-        cand_keys = {make_unique_feature_key(fid_val, feat_uuid) for fid_val in feat_ids}
+        if is_error_active or not target_keys_set or (f_id is not None and f_id < 0):
+            for col in ("fid", "df_fid"):
+                if col in field_names:
+                    try:
+                        val = feat.attribute(col)
+                        if val is not None and val != NULL:
+                            feat_ids.update(_flatten_ids(val))
+                            if is_error_active or (f_id is not None and f_id < 0):
+                                spatial_ids.update(_flatten_ids(val))
+                    except Exception:
+                        pass
+
+        cand_keys = {make_unique_feature_key(fid_val, feat_uuid) for fid_val in spatial_ids}
+        if feat_uuid:
+            cand_keys.add(make_unique_feature_key(None, feat_uuid))
         cand_keys.discard("")
         cand_keys_lower = {k.lower() for k in cand_keys}
 
         if is_targeted:
-            matched = bool(target_set and (feat_ids & target_set))
-            if not matched and target_keys_set:
+            if is_error_active and target_err_set:
+                matched = bool(_flatten_ids(f_id) & target_err_set)
+            elif target_keys_set:
                 matched = bool(cand_keys & target_keys_set) or bool(cand_keys_lower & target_keys_lower)
+                if not matched and not feat_uuid and target_set:
+                    matched = bool(spatial_ids & target_set)
+            else:
+                matched = bool(target_set and (feat_ids & target_set))
             if not matched:
                 continue
 
         concat_bsn_geoid = compute_bsn_geoid_field_calculator(feat, active_layer)
         if not concat_bsn_geoid:
-            for kid in list(feat_ids) + list(cand_keys):
+            for kid in list(cand_keys) + list(cand_keys_lower) + ([feat_uuid, feat_uuid.lower()] if feat_uuid else []):
                 if kid in err_feats_lookup:
                     concat_bsn_geoid = compute_bsn_geoid_field_calculator(err_feats_lookup[kid], error_layer)
                     if concat_bsn_geoid:
@@ -321,6 +392,16 @@ def _run_fix_bsn_geoid(
                 active_layer.changeAttributeValue(f_id, idx, concat_bsn_geoid)
 
         payload = {"sf_bsn_geoid": concat_bsn_geoid, "bsn_geoid": concat_bsn_geoid}
+        if is_error_active:
+            updated_values[f"err_{f_id}"] = payload
+        sf_keys = {make_unique_feature_key(fid_val, feat_uuid) for fid_val in spatial_ids} - {""}
+        for uk in sf_keys:
+            updated_values[uk] = payload
+            updated_values[uk.lower()] = payload
+            updated_values[f"sf_{uk}"] = payload
+            updated_values[f"sf_{uk.lower()}"] = payload
+        if feat_uuid:
+            updated_values[f"uuid_{feat_uuid.lower()}"] = payload
         for k in feat_ids:
             updated_values[k] = payload
         for ck in cand_keys:
@@ -332,30 +413,41 @@ def _run_fix_bsn_geoid(
     if error_layer and error_layer.isValid() and error_layer != active_layer:
         err_field_names = error_layer.fields().names() if hasattr(error_layer.fields(), "names") else []
         err_target_fields = [f for f in ("sf_bsn_geoid", "bsn_geoid") if f in err_field_names]
+        has_err_sf_fid = ("sf_fid" in err_field_names or "fid" in err_field_names)
         if err_target_fields:
             for ef in error_layer.getFeatures():
-                ef_ids = _flatten_ids(ef.id())
                 ef_uuid = ""
-                for col in ("sf_fid", "fid", "df_fid", "sf_map_uuid", "map_uuid", "uuid"):
+                for col in ("sf_map_uuid", "map_uuid", "uuid", "df_map_uuid"):
                     if col in err_field_names:
                         try:
                             val = ef.attribute(col)
-                            if val is not None and val != NULL:
-                                ef_ids.update(_flatten_ids(val))
-                                if not ef_uuid and col in ("sf_map_uuid", "map_uuid", "uuid"):
-                                    ef_uuid = str(val).strip()
+                            if val is not None and val != NULL and str(val).strip():
+                                ef_uuid = str(val).strip()
+                                break
                         except Exception:
                             pass
-                cand_ef_keys = {make_unique_feature_key(fid_val, ef_uuid) for fid_val in ef_ids}
-                cand_ef_keys.discard("")
 
-                matched_cand = None
-                for k in list(ef_ids) + list(cand_ef_keys) + [k.lower() for k in cand_ef_keys]:
-                    if k in updated_values:
-                        matched_cand = k
-                        break
-                if matched_cand:
-                    new_val = updated_values[matched_cand]["sf_bsn_geoid"]
+                matched_payload = None
+                if has_err_sf_fid:
+                    sf_col_name = "sf_fid" if "sf_fid" in err_field_names else "fid"
+                    try:
+                        ef_sf_val = ef.attribute(sf_col_name)
+                    except Exception:
+                        ef_sf_val = None
+                    if ef_sf_val is not None and ef_sf_val != NULL:
+                        for fid_c in _flatten_ids(ef_sf_val):
+                            uk = make_unique_feature_key(fid_c, ef_uuid)
+                            if uk and f"sf_{uk}" in updated_values:
+                                matched_payload = updated_values[f"sf_{uk}"]
+                                break
+                            if uk and f"sf_{uk.lower()}" in updated_values:
+                                matched_payload = updated_values[f"sf_{uk.lower()}"]
+                                break
+                elif ef_uuid and f"uuid_{ef_uuid.lower()}" in updated_values:
+                    matched_payload = updated_values[f"uuid_{ef_uuid.lower()}"]
+
+                if matched_payload:
+                    new_val = matched_payload["sf_bsn_geoid"]
                     for tf_name in err_target_fields:
                         idx = error_layer.fields().indexOf(tf_name)
                         if idx != -1:

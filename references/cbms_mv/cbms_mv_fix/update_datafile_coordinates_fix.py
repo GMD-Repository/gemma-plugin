@@ -36,8 +36,8 @@ except ImportError:
 FIX_ID = "update_datafiles_coordinates"
 FIX_NAME = "Update Datafile's Coordinates"
 FIX_DESCRIPTION = (
-    "Updates the df_x_current and df_y_current columns based on the values "
-    "of sf_longitude and sf_latitude columns."
+    "Copies the values of the sf_longitude and sf_latitude  columns into the "
+    "df_x_current and df_y_current columns, respectively."
 )
 
 
@@ -137,12 +137,20 @@ def _run_fix_update_datafile_coordinates(
         except Exception:
             pass
 
+    target_err_fids = kwargs.get("target_err_fids")
+    target_err_set = _flatten_ids(target_err_fids) if target_err_fids is not None else set()
     target_keys_set = set(target_keys) if target_keys else set()
     target_keys_lower = {str(k).strip().lower() for k in target_keys_set if k}
-    is_targeted = (target_fids is not None) or (target_uuids is not None) or bool(target_keys_set)
+    is_targeted = (
+        (target_fids is not None)
+        or (target_uuids is not None)
+        or bool(target_keys_set)
+        or (target_err_fids is not None)
+    )
     target_set = _flatten_ids(target_fids) | _flatten_ids(target_uuids)
+    is_error_active = (error_layer is not None and active_layer == error_layer)
 
-    if is_targeted and not target_set and not target_keys_set:
+    if is_targeted and not target_set and not target_keys_set and not target_err_set:
         return {
             "success": True,
             "fixed_count": 0,
@@ -167,28 +175,9 @@ def _run_fix_update_datafile_coordinates(
                     pass
 
     updated_values: Dict[Any, Dict[str, str]] = {}
+    fixed_df_keys: Dict[str, Dict[str, str]] = {}
     fixed_count = 0
     skipped_count = 0
-
-    # Build row lookup from table if available
-    row_coord_map: Dict[int, Tuple[str, str]] = {}
-    if table and hasattr(table, "rowCount"):
-        sf_lon_col = -1
-        sf_lat_col = -1
-        for col_i in range(table.columnCount()):
-            hdr = table.horizontalHeaderItem(col_i)
-            hdr_text = (hdr.text() if hdr else "").strip().lower()
-            if hdr_text in ("sf_longitude", "sf_longitud", "pos_longitude", "pos_longit"):
-                sf_lon_col = col_i
-            elif hdr_text in ("sf_latitude", "sf_latitud", "pos_latitude", "pos_latitu"):
-                sf_lat_col = col_i
-
-        if sf_lon_col != -1 or sf_lat_col != -1:
-            for r in range(table.rowCount()):
-                t_lon = table.item(r, sf_lon_col).text().strip() if (sf_lon_col != -1 and table.item(r, sf_lon_col)) else ""
-                t_lat = table.item(r, sf_lat_col).text().strip() if (sf_lat_col != -1 and table.item(r, sf_lat_col)) else ""
-                if t_lon or t_lat:
-                    row_coord_map[r] = (t_lon, t_lat)
 
     # Process features from active_layer
     field_names = active_layer.fields().names() if hasattr(active_layer.fields(), "names") else []
@@ -198,7 +187,9 @@ def _run_fix_update_datafile_coordinates(
 
         f_id = feat.id()
         feat_ids = _flatten_ids(f_id)
+        attr_fids = set()
         feat_uuid = ""
+        sf_fid_val = None
         df_fid_val = None
         df_uuid_val = ""
 
@@ -208,6 +199,10 @@ def _run_fix_update_datafile_coordinates(
                     val = feat.attribute(col)
                     if val is not None and val != NULL:
                         feat_ids.update(_flatten_ids(val))
+                        if col in ("sf_fid", "fid", "df_fid"):
+                            attr_fids.update(_flatten_ids(val))
+                        if col == "sf_fid" and sf_fid_val is None:
+                            sf_fid_val = val
                         if col in ("sf_map_uuid", "map_uuid", "uuid") and not feat_uuid:
                             feat_uuid = str(val).strip()
                         if col == "df_fid" and df_fid_val is None:
@@ -217,14 +212,26 @@ def _run_fix_update_datafile_coordinates(
                 except Exception:
                     pass
 
-        cand_keys = {make_unique_feature_key(fid_val, feat_uuid) for fid_val in feat_ids}
+        best_u = feat_uuid or df_uuid_val
+        key_fids = attr_fids if attr_fids else _flatten_ids(f_id)
+        cand_keys = set()
+        for u_cand in {u for u in (feat_uuid, df_uuid_val, best_u) if u is not None}:
+            for fid_val in key_fids:
+                cand_keys.add(make_unique_feature_key(fid_val, u_cand))
+            if u_cand:
+                cand_keys.add(make_unique_feature_key(None, u_cand))
         cand_keys.discard("")
         cand_keys_lower = {k.lower() for k in cand_keys}
 
         if is_targeted:
-            matched = bool(target_set and (feat_ids & target_set))
-            if not matched and target_keys_set:
+            if is_error_active and target_err_set:
+                matched = bool(_flatten_ids(f_id) & target_err_set)
+            elif target_keys_set:
                 matched = bool(cand_keys & target_keys_set) or bool(cand_keys_lower & target_keys_lower)
+                if not matched and not best_u and target_set:
+                    matched = bool(key_fids & target_set)
+            else:
+                matched = bool(target_set and (feat_ids & target_set))
             if not matched:
                 continue
 
@@ -234,17 +241,35 @@ def _run_fix_update_datafile_coordinates(
         # Fallback to main_layer if missing
         if (not lon_val or not lat_val) and main_layer and main_layer.isValid() and main_layer != active_layer:
             m_field_names = main_layer.fields().names() if hasattr(main_layer.fields(), "names") else []
+            sf_target_ids = _flatten_ids(sf_fid_val) if sf_fid_val is not None else set()
             for mf in main_layer.getFeatures():
-                mf_ids = _flatten_ids(mf.id())
-                for col in ("sf_fid", "fid", "sf_map_uuid", "map_uuid", "uuid"):
+                mf_uuid = ""
+                for col in ("sf_map_uuid", "map_uuid", "uuid"):
                     if col in m_field_names:
                         try:
                             v = mf.attribute(col)
-                            if v is not None and v != NULL:
-                                mf_ids.update(_flatten_ids(v))
+                            if v is not None and v != NULL and str(v).strip():
+                                mf_uuid = str(v).strip()
+                                break
                         except Exception:
                             pass
-                if mf_ids & feat_ids:
+                mf_matched = False
+                if sf_target_ids:
+                    mf_sf_ids = _flatten_ids(mf.id())
+                    if "sf_fid" in m_field_names:
+                        try:
+                            v_sf = mf.attribute("sf_fid")
+                            if v_sf is not None and v_sf != NULL:
+                                mf_sf_ids.update(_flatten_ids(v_sf))
+                        except Exception:
+                            pass
+                    mf_matched = bool(mf_sf_ids & sf_target_ids) and (
+                        not best_u or not mf_uuid or mf_uuid.lower() == best_u.lower()
+                    )
+                elif best_u and mf_uuid:
+                    mf_matched = (mf_uuid.lower() == best_u.lower())
+
+                if mf_matched:
                     m_lon, m_lat = _extract_source_coords(mf, m_field_names)
                     lon_val = lon_val or m_lon
                     lat_val = lat_val or m_lat
@@ -270,22 +295,25 @@ def _run_fix_update_datafile_coordinates(
         if error_layer and error_layer.isValid() and error_layer != active_layer:
             idx_err_lon = error_layer.fields().indexOf("df_x_current")
             idx_err_lat = error_layer.fields().indexOf("df_y_current")
+            err_fnames = error_layer.fields().names() if hasattr(error_layer.fields(), "names") else []
             for ef in error_layer.getFeatures():
-                ef_ids = _flatten_ids(ef.id())
-                for col in ("sf_fid", "fid", "df_fid", "sf_map_uuid", "map_uuid", "uuid"):
-                    if col in error_layer.fields().names():
+                ef_u = ""
+                for col in ("df_map_uuid", "sf_map_uuid", "map_uuid", "uuid"):
+                    if col in err_fnames:
                         try:
                             val = ef.attribute(col)
-                            if val is not None and val != NULL:
-                                ef_ids.update(_flatten_ids(val))
+                            if val is not None and val != NULL and str(val).strip():
+                                ef_u = str(val).strip()
+                                break
                         except Exception:
                             pass
-                if ef_ids & feat_ids:
+                ef_df_fid = ef.attribute("df_fid") if "df_fid" in err_fnames else None
+                ef_uk = make_unique_feature_key(ef_df_fid, ef_u)
+                if (ef_uk and ef_uk in cand_keys) or (not ef_uk and best_u and ef_u.lower() == best_u.lower()):
                     if idx_err_lon != -1:
                         error_layer.changeAttributeValue(ef.id(), idx_err_lon, lon_str)
                     if idx_err_lat != -1:
                         error_layer.changeAttributeValue(ef.id(), idx_err_lat, lat_str)
-                    break
 
         # Register in updated_values dictionary
         payload = {
@@ -298,6 +326,18 @@ def _run_fix_update_datafile_coordinates(
             "df_longitude": lon_str,
             "df_latitude": lat_str,
         }
+        if is_error_active:
+            updated_values[f"err_{f_id}"] = payload
+        rec_uuid = df_uuid_val or feat_uuid
+        if df_fid_val is not None:
+            df_uk = make_unique_feature_key(df_fid_val, rec_uuid)
+            if df_uk:
+                updated_values[f"df_{df_uk}"] = payload
+                updated_values[f"df_{df_uk.lower()}"] = payload
+                fixed_df_keys[df_uk.lower()] = payload
+        elif rec_uuid:
+            fixed_df_keys[f"_{rec_uuid.lower()}"] = payload
+
         for k in feat_ids:
             updated_values[k] = payload
         for ck in cand_keys:
@@ -306,7 +346,6 @@ def _run_fix_update_datafile_coordinates(
 
         # Direct synchronization with dialog pending JSON/CSV edits buffer
         if dialog and hasattr(dialog, "_pending_json_edits"):
-            rec_uuid = df_uuid_val or feat_uuid
             rec_k = f"fid_{df_fid_val}" if df_fid_val is not None else f"uuid_{rec_uuid}"
             if rec_k not in dialog._pending_json_edits:
                 dialog._pending_json_edits[rec_k] = {
@@ -322,7 +361,7 @@ def _run_fix_update_datafile_coordinates(
         fixed_count += 1
 
     # Synchronize loaded Form 2 vector layer if present in project
-    if dialog and hasattr(dialog, "project") and dialog.project:
+    if dialog and hasattr(dialog, "project") and dialog.project and fixed_df_keys:
         for lyr in dialog.project.mapLayers().values():
             if lyr.name().startswith("Form 2 ("):
                 f2_fields = lyr.fields().names() if hasattr(lyr.fields(), "names") else []
@@ -335,31 +374,32 @@ def _run_fix_update_datafile_coordinates(
                         except Exception:
                             pass
                     for f2_feat in lyr.getFeatures():
-                        f2_ids = _flatten_ids(f2_feat.id())
+                        f2_fids = _flatten_ids(f2_feat.id())
                         f2_u = ""
                         for col in ("map_uuid", "uuid", "fid"):
                             if col in f2_fields:
                                 try:
                                     v = f2_feat.attribute(col)
                                     if v is not None and v != NULL:
-                                        f2_ids.update(_flatten_ids(v))
-                                        if col in ("map_uuid", "uuid") and not f2_u:
+                                        if col == "fid":
+                                            f2_fids.update(_flatten_ids(v))
+                                        elif not f2_u:
                                             f2_u = str(v).strip()
                                 except Exception:
                                     pass
-                        cand_f2_keys = {make_unique_feature_key(fid_val, f2_u) for fid_val in f2_ids}
-                        cand_f2_keys.discard("")
-                        matched_k = None
-                        for k in list(f2_ids) + list(cand_f2_keys) + [k.lower() for k in cand_f2_keys]:
-                            if k in updated_values:
-                                matched_k = k
+                        matched_p = None
+                        for fid_c in f2_fids:
+                            uk = make_unique_feature_key(fid_c, f2_u).lower()
+                            if uk in fixed_df_keys:
+                                matched_p = fixed_df_keys[uk]
                                 break
-                        if matched_k:
-                            p = updated_values[matched_k]
+                        if not matched_p and f2_u and f"_{f2_u.lower()}" in fixed_df_keys:
+                            matched_p = fixed_df_keys[f"_{f2_u.lower()}"]
+                        if matched_p:
                             if f2_lon_idx != -1:
-                                lyr.changeAttributeValue(f2_feat.id(), f2_lon_idx, p["longitude"])
+                                lyr.changeAttributeValue(f2_feat.id(), f2_lon_idx, matched_p["longitude"])
                             if f2_lat_idx != -1:
-                                lyr.changeAttributeValue(f2_feat.id(), f2_lat_idx, p["latitude"])
+                                lyr.changeAttributeValue(f2_feat.id(), f2_lat_idx, matched_p["latitude"])
 
     if feedback:
         feedback.pushInfo(f"Updated Datafile coordinates for {fixed_count} feature(s).")
