@@ -5,11 +5,90 @@ Resolves target fields defined directly in algorithm scripts (via TARGET_FIELDS)
 against actual layer attribute columns for UI highlighting, focus chips,
 auto-scrolling, and Review Dock guidance.
 """
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Any, Dict, List, Optional, Tuple
 import re
 
 # Optional dictionary for legacy / external overrides if needed
 CBMS_MV_RULE_TARGET_FIELDS: Dict[str, List[str]] = {}
+
+# Canonical Fix Actions Registry for 2027 CBMS Map Validation
+CBMS_MV_FIX_ACTIONS: Dict[str, Dict[str, Any]] = {
+    "concatenate_ea_geocode": {
+        "label": "Concatenate the ea_geocode",
+        "icon": "mActionCalculateField.svg",
+        "aliases": ["concat_ea_geocode", "ea_geocode"],
+    },
+    "concatenate_bsn_geoid": {
+        "label": "Concatenate the bsn_geoid",
+        "icon": "mActionCalculateField.svg",
+        "aliases": ["concat_bsn_geoid", "bsn_geoid"],
+    },
+    "generate_point_geometry": {
+        "label": "Generate point geometry",
+        "icon": "mActionAddPtSymbol.svg",
+        "aliases": ["generate_point", "point_geometry", "create_point_geometry"],
+    },
+    "deduplicate_features": {
+        "label": "Deduplicate features",
+        "icon": "mActionFilter2.svg",
+        "aliases": ["deduplicate", "dedup_features"],
+    },
+    "copy_geometry_to_coordinates": {
+        "label": "Copy geometry to coordinate fields",
+        "icon": "mActionCapturePoint.svg",
+        "aliases": ["copy_geometry", "copy_geom_to_coords", "geometry_to_coordinates"],
+    },
+    "update_datafiles_coordinates": {
+        "label": "Update datafile's coordinates",
+        "icon": "mActionCalculateField.svg",
+        "aliases": ["update_datafile_coordinates", "update_coordinates", "datafile_coordinates"],
+    },
+    "update_point_geometry": {
+        "label": "Update point geometry using sf_longitude and sf_latitude",
+        "icon": "mActionMoveVertex.svg",
+        "aliases": [
+            "update_point_geometry_using_sf_longitude_and_sf_latitude",
+            "update_geometry_using_sf_longitude_and_sf_latitude",
+            "update_coordinates_using_sf_longitude_and_sf_latitude",
+        ],
+    },
+    "delete_selected_features": {
+        "label": "Delete Selected Feature(s)",
+        "icon": "mActionDeleteSelectedFeatures.svg",
+        "aliases": ["delete_features", "delete_selected", "soft_delete"],
+    },
+}
+
+
+def normalize_fix_action_id(raw_id: str) -> Optional[str]:
+    """Normalize a raw action identifier or alias into a canonical CBMS_MV_FIX_ACTIONS key."""
+    if not raw_id:
+        return None
+    clean = str(raw_id).strip().lower()
+    if clean in CBMS_MV_FIX_ACTIONS:
+        return clean
+    for canonical_id, meta in CBMS_MV_FIX_ACTIONS.items():
+        if clean == str(meta.get("label", "")).strip().lower():
+            return canonical_id
+        for alias in meta.get("aliases", []):
+            if clean == str(alias).strip().lower():
+                return canonical_id
+    return None
+
+
+def resolve_suggested_fixes(custom_suggested_fixes: Optional[List[str]] = None) -> List[str]:
+    """
+    Resolve and deduplicate a list of suggested fix action IDs (from SUGGESTED_FIX in scripts)
+    into canonical action IDs while preserving script-defined priority order.
+    """
+    if not custom_suggested_fixes:
+        return []
+    resolved: List[str] = []
+    for raw in custom_suggested_fixes:
+        norm = normalize_fix_action_id(raw)
+        if norm and norm not in resolved:
+            resolved.append(norm)
+    return resolved
 
 # Canonical category metadata for 2027 CBMS Form 2 Map Validation checks
 CBMS_MV_CATEGORIES: Dict[str, Dict[str, str]] = {
@@ -204,150 +283,3 @@ def get_rule_workflow_info(val_id: str, flags: int = 0, status: str = "") -> Tup
     sort_rank = clean_offset + (base_priority * 10_000) + (sub * 10_000) + flag_penalty
 
     return sort_rank, phase_label
-
-
-# ---------------------------------------------------------------------------
-# Fix Action Metadata & Suggested Fix Resolution
-# ---------------------------------------------------------------------------
-CBMS_MV_FIX_ACTIONS: Dict[str, Dict[str, Any]] = {
-    "copy_geometry_to_coordinates": {
-        "id": "copy_geometry_to_coordinates",
-        "name": "Copy the geometry and paste it into the longitude and latitude columns",
-        "short_name": "Copy geometry to coordinates",
-        "icon": "mActionEditCopy.svg",
-        "aliases": [
-            "copy_geometry_to_coordinates",
-            "copy_geometry",
-            "copy_geom",
-            "geometry_to_coordinates",
-            "copy_geometry_to_coords",
-        ],
-    },
-    "update_datafiles_coordinates": {
-        "id": "update_datafiles_coordinates",
-        "name": "Update Datafile's Coordinates",
-        "short_name": "Update Datafile coordinates",
-        "icon": "mActionCalculateField.svg",
-        "aliases": [
-            "update_datafiles_coordinates",
-            "update_datafile_coordinates",
-            "update_coordinates",
-            "update_coord",
-            "update_datafile",
-        ],
-    },
-    "generate_point_geometry": {
-        "id": "generate_point_geometry",
-        "name": "Generate point geometry",
-        "short_name": "Generate point geometry",
-        "icon": "mActionCapturePoint.svg",
-        "aliases": [
-            "generate_point_geometry",
-            "generate_geometry",
-            "generate_point",
-            "mv_2027_hp_1a_map_uuid__missing",
-        ],
-    },
-    "concatenate_ea_geocode": {
-        "id": "concatenate_ea_geocode",
-        "name": "Concatenate the ea_geocode",
-        "short_name": "Concatenate ea_geocode",
-        "icon": "mActionCalculateField.svg",
-        "aliases": [
-            "concatenate_ea_geocode",
-            "ea_geocode",
-            "concatenate_ea",
-            "mv_2027_hp_4b_ea_geocode__missing",
-        ],
-    },
-    "concatenate_bsn_geoid": {
-        "id": "concatenate_bsn_geoid",
-        "name": "Concatenate the bsn_geoid",
-        "short_name": "Concatenate bsn_geoid",
-        "icon": "mActionCalculateField.svg",
-        "aliases": [
-            "concatenate_bsn_geoid",
-            "bsn_geoid",
-            "concatenate_bsn",
-            "mv_2027_hp_4b_bsn_geoid__invalid",
-            "mv_2027_hp_4b_bsn_geoid__missing",
-        ],
-    },
-    "deduplicate_features": {
-        "id": "deduplicate_features",
-        "name": "Delete duplicate features (retain one)",
-        "short_name": "Delete duplicate features",
-        "icon": "mActionDeleteSelected.svg",
-        "aliases": [
-            "deduplicate_features",
-            "deduplicate",
-            "duplicate",
-            "delete_duplicates",
-            "mv_2027_hp_4a_longitude__duplicate",
-        ],
-    },
-    "delete_selected_features": {
-        "id": "delete_selected_features",
-        "name": "Delete selected features",
-        "short_name": "Delete selected features",
-        "icon": "mActionDeleteSelected.svg",
-        "aliases": [
-            "delete_selected_features",
-            "delete_selected",
-            "delete",
-            "soft_delete",
-        ],
-    },
-}
-
-
-def normalize_fix_action_id(fix_key: str) -> Optional[str]:
-    """Map any alias, action ID, or descriptive label to the canonical fix action ID."""
-    if not fix_key:
-        return None
-    clean = str(fix_key).strip().lower()
-    for canon_id, info in CBMS_MV_FIX_ACTIONS.items():
-        if clean == canon_id:
-            return canon_id
-        if clean in [a.lower() for a in info.get("aliases", [])]:
-            return canon_id
-        if clean in info.get("name", "").lower() or clean in info.get("short_name", "").lower():
-            return canon_id
-    return None
-
-
-def resolve_suggested_fixes(
-    val_id: str,
-    custom_fixes: Optional[List[str]] = None,
-) -> List[str]:
-    """
-    Resolve list of canonical fix action IDs suggested for a validation rule.
-    Prioritizes explicit custom_fixes (declared via SUGGESTED_FIX in algorithm script).
-    Falls back to sensible defaults by rule category / name if not explicitly specified.
-    """
-    results: List[str] = []
-    seen = set()
-
-    if custom_fixes is not None:
-        raw_candidates = list(custom_fixes)
-    else:
-        raw_candidates = []
-        clean_id = str(val_id).strip().lower()
-        if "duplicate" in clean_id:
-            raw_candidates = ["deduplicate_features"]
-        elif "map_uuid__missing" in clean_id or ("missing" in clean_id and "map_uuid" in clean_id):
-            raw_candidates = ["generate_point_geometry"]
-        elif "ea_geocode" in clean_id and "missing" in clean_id:
-            raw_candidates = ["concatenate_ea_geocode"]
-        elif "bsn_geoid" in clean_id and ("invalid" in clean_id or "missing" in clean_id):
-            raw_candidates = ["concatenate_bsn_geoid"]
-        elif "pos_longit" in clean_id or "pos_latitu" in clean_id:
-            raw_candidates = ["copy_geometry_to_coordinates", "update_datafiles_coordinates"]
-
-    for raw in raw_candidates:
-        canon = normalize_fix_action_id(raw)
-        if canon and canon not in seen and canon in CBMS_MV_FIX_ACTIONS:
-            results.append(canon)
-            seen.add(canon)
-
-    return results
