@@ -173,10 +173,12 @@ def _make_point_geometry_for_layer(
 
 
 def _apply_geometry_to_feature(layer: QgsVectorLayer, feat_id: int, new_geom: QgsGeometry) -> bool:
-    """Update feature geometry on an editable layer with dataProvider fallback."""
+    """Update feature geometry on an editable layer with dataProvider fallback for mocks/memory."""
     if hasattr(layer, "changeGeometry"):
         if layer.changeGeometry(feat_id, new_geom):
             return True
+        if hasattr(layer, "providerType") and callable(layer.providerType) and layer.providerType() == "ogr":
+            return False
     if hasattr(layer, "dataProvider") and layer.dataProvider() and hasattr(layer.dataProvider(), "changeGeometryValues"):
         return bool(layer.dataProvider().changeGeometryValues({feat_id: new_geom}))
     return False

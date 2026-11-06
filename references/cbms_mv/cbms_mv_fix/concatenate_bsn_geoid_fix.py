@@ -227,6 +227,85 @@ def _compute_bsn_geoid_from_dict(attrs: Dict[str, Any]) -> str:
     return ""
 
 
+def _inspect_missing_bsn_geoid_columns(
+    feat: Optional[QgsFeature] = None,
+    row_attrs: Optional[Dict[str, Any]] = None,
+    ef: Optional[QgsFeature] = None,
+) -> List[str]:
+    """Return the list of required columns that are NULL/empty when BSN GEOID concatenation produces NULL."""
+    a_lower: Dict[str, str] = {}
+    if row_attrs:
+        for k, v in row_attrs.items():
+            if v is not None and v != NULL:
+                s = str(v).strip()
+                if s and s.upper() not in ("", "NULL", "NONE", "NAN"):
+                    a_lower[str(k).strip().lower()] = s
+
+    def _has_any(*col_names: str) -> bool:
+        for cn in col_names:
+            if feat is not None and _get_val(feat, cn) is not None:
+                return True
+            if ef is not None and _get_val(ef, cn) is not None:
+                return True
+            if cn.lower() in a_lower:
+                return True
+        return False
+
+    missing_cols: List[str] = []
+    if not _has_any("sf_ea_geocode", "ea_geocode", "df_ea_geocode", "geocode"):
+        missing_cols.append("sf_ea_geocode / ea_geocode")
+    if not _has_any("sf_province_code", "province_code", "df_province_code"):
+        missing_cols.append("sf_province_code / province_code")
+    if not _has_any("sf_city_mun_code", "city_mun_code", "df_city_mun_code"):
+        missing_cols.append("sf_city_mun_code / city_mun_code")
+    if not _has_any("sf_barangay_code", "barangay_code", "df_barangay_code"):
+        missing_cols.append("sf_barangay_code / barangay_code")
+    if not _has_any("sf_ean", "ean", "df_ean"):
+        missing_cols.append("sf_ean / ean")
+    if not _has_any("sf_bsn", "bsn", "df_bsn", "bsn_num", "bldg_sn"):
+        missing_cols.append("sf_bsn / bsn")
+    return missing_cols
+
+
+def _build_null_bsn_geoid_message(
+    null_records: List[Dict[str, Any]],
+    selected_count: int = 0,
+) -> str:
+    """Build a detailed user-facing prompt indicating that all required columns need to be checked when BSN GEOID remains NULL."""
+    count = len(null_records) or selected_count
+    count_str = f"{count} selected record(s)" if count > 0 else "all selected record(s)"
+    header = (
+        f"The concatenated BSN GEOID is still NULL for {count_str}.\n"
+        "All required columns need to be checked because one or more values are missing or NULL.\n\n"
+    )
+    row_lines: List[str] = []
+    for item in null_records[:5]:
+        label = item.get("label", "Record")
+        missing = item.get("missing_cols") or []
+        if missing:
+            row_lines.append(f"  • {label}: check {', '.join(missing)}")
+        else:
+            row_lines.append(f"  • {label}: all required columns need to be checked")
+    if len(null_records) > 5:
+        row_lines.append(f"  • ...and {len(null_records) - 5} more record(s).")
+
+    rows_section = ("Affected Record(s):\n" + "\n".join(row_lines) + "\n\n") if row_lines else ""
+
+    columns_guide = (
+        "All columns that need to be checked:\n\n"
+        "1st Scenario (EA Geocode + BSN):\n"
+        "  • sf_ea_geocode (or ea_geocode)\n"
+        "  • sf_bsn (or bsn)\n\n"
+        "2nd Scenario (Geographic Codes + BSN):\n"
+        "  • sf_province_code (or province_code)\n"
+        "  • sf_city_mun_code (or city_mun_code)\n"
+        "  • sf_barangay_code (or barangay_code)\n"
+        "  • sf_ean (or ean)\n"
+        "  • sf_bsn (or bsn)"
+    )
+    return f"{header}{rows_section}{columns_guide}"
+
+
 def _run_fix_bsn_geoid(
     main_layer: QgsVectorLayer,
     target_fids: Optional[List[Any]] = None,
@@ -311,8 +390,12 @@ def _run_fix_bsn_geoid(
     if not target_fields:
         if not active_layer.isEditable():
             active_layer.startEditing()
-        active_layer.dataProvider().addAttributes([QgsField("sf_bsn_geoid", QVariant.String, len=30)])
-        active_layer.updateFields()
+        new_fld = QgsField("sf_bsn_geoid", QVariant.String, len=30)
+        if hasattr(active_layer, "addAttribute") and active_layer.isEditable() and getattr(active_layer, "providerType", lambda: "memory")() != "memory":
+            active_layer.addAttribute(new_fld)
+        else:
+            active_layer.dataProvider().addAttributes([new_fld])
+            active_layer.updateFields()
         target_fields.append("sf_bsn_geoid")
 
     if not active_layer.isEditable() and not active_layer.startEditing():
@@ -332,6 +415,7 @@ def _run_fix_bsn_geoid(
 
     updated_values: Dict[Any, Dict[str, str]] = {}
     fixed_count = 0
+    null_records: List[Dict[str, Any]] = []
 
     # Branch A: Process by selected table rows (UI selection scope)
     if rows_to_process and table is not None and is_valid_qobject(table):
@@ -448,6 +532,11 @@ def _run_fix_bsn_geoid(
                 concat_bsn_geoid = compute_bsn_geoid_field_calculator(ef, error_layer)
 
             if not concat_bsn_geoid:
+                fid_disp = key_fid if key_fid is not None else (r + 1)
+                null_records.append({
+                    "label": f"Row #{r + 1} (FID: {fid_disp})",
+                    "missing_cols": _inspect_missing_bsn_geoid_columns(target_feat, row_attrs, ef),
+                })
                 continue
 
             # Update active_layer feature strictly
@@ -576,6 +665,15 @@ def _run_fix_bsn_geoid(
                             break
 
             if not concat_bsn_geoid:
+                matched_ef_for_null = None
+                for kid in list(feat_ids) + list(cand_keys):
+                    if kid in err_feats_lookup:
+                        matched_ef_for_null = err_feats_lookup[kid]
+                        break
+                null_records.append({
+                    "label": f"FID {f_id}",
+                    "missing_cols": _inspect_missing_bsn_geoid_columns(feat, None, matched_ef_for_null),
+                })
                 continue
 
             for tf_name in target_fields:
@@ -639,10 +737,34 @@ def _run_fix_bsn_geoid(
     if feedback:
         feedback.pushInfo(f"Calculated and assigned BSN GEOID for {fixed_count} feature(s).")
 
+    selected_count = len(target_rows or target_fids or target_uuids or [])
+    null_warning_msg = (
+        _build_null_bsn_geoid_message(null_records, selected_count=selected_count)
+        if (null_records or fixed_count == 0)
+        else ""
+    )
+    if fixed_count == 0:
+        # When called standalone (not via dialog._execute_fix), show the warning prompt directly
+        if dialog is None and QMessageBox is not None and kwargs.get("parent") is not None:
+            try:
+                QMessageBox.warning(kwargs["parent"], "Check all columns", null_warning_msg)
+            except Exception:
+                pass
+        return {
+            "success": True,
+            "fixed_count": 0,
+            "updated_values": {},
+            "title": "Check all columns",
+            "null_columns_warning": null_warning_msg,
+            "message": null_warning_msg,
+        }
+
     return {
         "success": True,
         "fixed_count": fixed_count,
         "updated_values": updated_values,
+        "title": "Check all columns" if null_warning_msg else "Fix Applied",
+        "null_columns_warning": null_warning_msg,
         "message": f"Updated BSN GEOID for {fixed_count} record(s).",
     }
 
