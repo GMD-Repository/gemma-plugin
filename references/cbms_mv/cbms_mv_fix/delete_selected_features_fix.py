@@ -213,9 +213,11 @@ def delete_selected_features(
         btn_update_selected.setText("Apply Fix Action")
         btn_update_selected.setEnabled(False)
 
+    if hasattr(dialog, "_mark_unsaved_table_edit"):
+        dialog._mark_unsaved_table_edit()
     if hasattr(dialog, "lbl_footer_status") and dialog.lbl_footer_status:
         dialog.lbl_footer_status.setText(
-            f"Marked {deleted_count} record(s) as deleted (is_deleted = true). Click 'Save Changes' (Ctrl+S) to keep them."
+            f"Marked {deleted_count} record(s) as deleted (is_deleted = true). Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo."
         )
     if hasattr(dialog, "iface") and dialog.iface and dialog.iface.mapCanvas():
         dialog.iface.mapCanvas().refresh()
@@ -333,7 +335,8 @@ def mark_feature_deleted(
 
     # 4. Update QTableWidget is_deleted cells
     if target_row is not None:
-        table.setProperty("is_populating", True)
+        if hasattr(table, "setProperty"):
+            table.setProperty("is_populating", True)
         try:
             for c in del_col_indices:
                 cell_item = table.item(target_row, c)
@@ -346,7 +349,8 @@ def mark_feature_deleted(
                     if hasattr(dialog, "_style_table_cell"):
                         dialog._style_table_cell(cell_item, "deleted" if to_delete else "normal")
         finally:
-            table.setProperty("is_populating", False)
+            if hasattr(table, "setProperty"):
+                table.setProperty("is_populating", False)
 
     # 5. Update Result Memory Layer
     if layer and hasattr(layer, "isValid") and layer.isValid():
@@ -424,18 +428,19 @@ def mark_feature_deleted(
             dialog._style_row_delete_button(button, is_deleted=to_delete)
 
     # 8. Update Footer Status
+    disp_fid = source_fid if source_fid is not None else err_fid
+    if hasattr(dialog, "_mark_unsaved_table_edit"):
+        dialog._mark_unsaved_table_edit()
     if hasattr(dialog, "lbl_footer_status") and dialog.lbl_footer_status:
         if to_delete:
             dialog.lbl_footer_status.setText(
-                f"Marked record #{source_fid if source_fid is not None else err_fid} as deleted (is_deleted = true). Click 'Save Changes' (Ctrl+S) to keep it."
+                f"Marked record #{disp_fid} as deleted (is_deleted = true). Click 'Save Changes' (Ctrl+S) to keep it, or 'Discard' to undo."
             )
         else:
             dialog.lbl_footer_status.setText(
-                f"Restored record #{source_fid if source_fid is not None else err_fid} (is_deleted = false). Click 'Save Changes' (Ctrl+S) to keep it."
+                f"Restored record #{disp_fid} (is_deleted = false). Click 'Save Changes' (Ctrl+S) to keep it, or 'Discard' to undo."
             )
 
-    if hasattr(dialog, "_mark_unsaved_table_edit"):
-        dialog._mark_unsaved_table_edit()
     if hasattr(dialog, "iface") and dialog.iface and dialog.iface.mapCanvas():
         dialog.iface.mapCanvas().refresh()
 
@@ -548,18 +553,19 @@ def run_fix(
     updated_values = {}
     for feat in main_layer.getFeatures():
         f_id = feat.id()
-        feat_ids = _flatten_ids(f_id)
+        attr_ids = set()
         feat_uuid = ""
         for col in ("sf_fid", "fid", "df_fid", "sf_map_uuid", "map_uuid", "uuid"):
             if col in main_layer.fields().names():
                 try:
                     val = feat.attribute(col)
                     if val is not None and val != NULL:
-                        feat_ids.update(_flatten_ids(val))
+                        attr_ids.update(_flatten_ids(val))
                         if not feat_uuid and col in ("sf_map_uuid", "map_uuid", "uuid"):
                             feat_uuid = str(val).strip()
                 except Exception:
                     pass
+        feat_ids = set(attr_ids) if attr_ids else _flatten_ids(f_id)
 
         cand_keys = {make_unique_feature_key(fid_val, feat_uuid) for fid_val in feat_ids}
         cand_keys.discard("")

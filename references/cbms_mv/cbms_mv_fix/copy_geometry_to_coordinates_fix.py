@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 CBMS Map Validation - Copy Geometry to Coordinates Process
-Action: "Copy the geometry to coordinates columns"
+Action: "Copy the geometry and paste it into the longitude and latitude columns"
 Validation ID: copy_geometry_to_coordinates
 
 Extracts original $x (longitude) and $y (latitude) coordinates from point geometries
@@ -37,10 +37,10 @@ except ImportError:
     from common import _flatten_ids, is_valid_qobject, make_unique_feature_key
 
 FIX_ID = "copy_geometry_to_coordinates"
-FIX_NAME = "Copy the geometry to coordinates columns"
+FIX_NAME = "Copy geometry and paste into longitude and latitude columns"
 FIX_DESCRIPTION = (
-    "Updates the coordinates columns (longitude and latitude columns) in the attribute table to reflect "
-    "the values of the feature’s actual coordinates (geometry)."
+    "Extracts original X (longitude) and Y (latitude) from point geometries and updates "
+    "the corresponding longitude and latitude columns."
 )
 
 

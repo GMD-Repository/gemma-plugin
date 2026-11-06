@@ -176,46 +176,43 @@ except (ImportError, ValueError):
         except Exception:
             get_fix_handler = lambda v: None
             has_fix = lambda v: False
-            make_unique_feature_key = lambda f, u: (
-                f"{f}_{u}" if (not _is_empty_val(f) and not _is_empty_val(u))
-                else (f"{f}_" if not _is_empty_val(f) else (f"_{u}" if not _is_empty_val(u) else ""))
-            )
+            make_unique_feature_key = lambda f, u: f"{f}_{u}" if (f and u) else (f"{f}_" if f else (f"_{u}" if u else ""))
 
 try:
     from .cbms_mv_targets import (
         resolve_target_columns,
         CBMS_MV_RULE_TARGET_FIELDS,
+        CBMS_MV_FIX_ACTIONS,
+        normalize_fix_action_id,
+        resolve_suggested_fixes,
         CBMS_MV_CATEGORIES,
         get_rule_category,
         get_category_info,
         get_rule_workflow_info,
-        resolve_suggested_fixes,
-        normalize_fix_action_id,
-        CBMS_MV_FIX_ACTIONS,
     )
 except (ImportError, ValueError):
     try:
         from cbms_mv_targets import (
             resolve_target_columns,
             CBMS_MV_RULE_TARGET_FIELDS,
+            CBMS_MV_FIX_ACTIONS,
+            normalize_fix_action_id,
+            resolve_suggested_fixes,
             CBMS_MV_CATEGORIES,
             get_rule_category,
             get_category_info,
             get_rule_workflow_info,
-            resolve_suggested_fixes,
-            normalize_fix_action_id,
-            CBMS_MV_FIX_ACTIONS,
         )
     except Exception:
         resolve_target_columns = lambda v, f, c=None: []
         CBMS_MV_RULE_TARGET_FIELDS = {}
+        CBMS_MV_FIX_ACTIONS = {}
+        normalize_fix_action_id = lambda v: None
+        resolve_suggested_fixes = lambda c=None: []
         CBMS_MV_CATEGORIES = {}
         get_rule_category = lambda v: "other"
         get_category_info = lambda k: {"label": k.title(), "desc": "", "icon": "mActionOptions.svg"}
         get_rule_workflow_info = lambda v, f=0: (5000000, "Phase 5: Other Checks")
-        resolve_suggested_fixes = lambda v, c=None: []
-        normalize_fix_action_id = lambda k: None
-        CBMS_MV_FIX_ACTIONS = {}
 
 
 # ---------------------------------------------------------------------------
@@ -265,42 +262,31 @@ def discover_cbms_mv_rules(cbms_mv_dir: str) -> List[Dict[str, Any]]:
                                 help_str = stmt.value.s
 
                 # Check if BASE_LAYER parameter is assigned/used or TARGET_FIELDS / SUGGESTED_FIX declared
-                assign_targets = []
-                assign_value = None
                 if isinstance(node, ast.Assign):
-                    assign_targets = node.targets
-                    assign_value = node.value
-                elif hasattr(ast, "AnnAssign") and isinstance(node, ast.AnnAssign) and node.value is not None:
-                    assign_targets = [node.target]
-                    assign_value = node.value
-
-                for target in assign_targets:
-                    if isinstance(target, ast.Name):
-                        if target.id == "BASE_LAYER":
-                            has_base_layer = True
-                        elif target.id in ("TARGET_FIELDS", "TARGET_COLUMNS"):
-                            if isinstance(assign_value, (ast.List, ast.Tuple)):
-                                extracted = []
-                                for elt in assign_value.elts:
-                                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                                        extracted.append(elt.value)
-                                    elif hasattr(ast, "Str") and isinstance(elt, ast.Str):
-                                        extracted.append(elt.s)
-                                if extracted:
-                                    target_fields = extracted
-                        elif target.id in ("SUGGESTED_FIX", "SUGGESTED_FIXES", "SUGGESTED_ACTIONS", "SUGGESTED_FIX_ACTIONS"):
-                            if isinstance(assign_value, (ast.List, ast.Tuple)):
-                                extracted = []
-                                for elt in assign_value.elts:
-                                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                                        extracted.append(elt.value)
-                                    elif hasattr(ast, "Str") and isinstance(elt, ast.Str):
-                                        extracted.append(elt.s)
-                                suggested_fixes = extracted
-                            elif isinstance(assign_value, ast.Constant) and isinstance(assign_value.value, str):
-                                suggested_fixes = [assign_value.value]
-                            elif hasattr(ast, "Str") and isinstance(assign_value, ast.Str):
-                                suggested_fixes = [assign_value.s]
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            if target.id == "BASE_LAYER":
+                                has_base_layer = True
+                            elif target.id in ("TARGET_FIELDS", "TARGET_COLUMNS"):
+                                if isinstance(node.value, (ast.List, ast.Tuple)):
+                                    extracted = []
+                                    for elt in node.value.elts:
+                                        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                                            extracted.append(elt.value)
+                                        elif hasattr(ast, "Str") and isinstance(elt, ast.Str):
+                                            extracted.append(elt.s)
+                                    if extracted:
+                                        target_fields = extracted
+                            elif target.id in ("SUGGESTED_FIX", "SUGGESTED_FIXES", "SUGGESTED_ACTIONS"):
+                                if isinstance(node.value, (ast.List, ast.Tuple)):
+                                    extracted_fixes = []
+                                    for elt in node.value.elts:
+                                        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                                            extracted_fixes.append(elt.value)
+                                        elif hasattr(ast, "Str") and isinstance(elt, ast.Str):
+                                            extracted_fixes.append(elt.s)
+                                    if extracted_fixes:
+                                        suggested_fixes = extracted_fixes
 
         except Exception as exc:
             help_str = f"Error reading algorithm help: {exc}"
@@ -317,7 +303,7 @@ def discover_cbms_mv_rules(cbms_mv_dir: str) -> List[Dict[str, Any]]:
             "category": get_rule_category(val_id),
             "has_base": has_base_layer,
             "target_fields": target_fields or CBMS_MV_RULE_TARGET_FIELDS.get(val_id, []),
-            "suggested_fixes": suggested_fixes,
+            "suggested_fixes": resolve_suggested_fixes(suggested_fixes),
             "file_path": file_path,
             "default": True,
         })
@@ -424,6 +410,20 @@ class CbmsmvDockWidget(QDockWidget):
         if parent is not None and not isinstance(parent, QWidget):
             parent = None
         super().__init__(title, parent)
+
+    def resizeEvent(self, event):
+        """Ensure contained widget recalibrates dynamic frame dimensions when dock/floating window is resized."""
+        super().resizeEvent(event)
+        try:
+            w = self.widget()
+            if w and is_valid_qobject(w):
+                w.setGeometry(self.rect())
+                if w.layout():
+                    w.layout().activate()
+                w.updateGeometry()
+                w.update()
+        except Exception:
+            pass
 
     def closeEvent(self, event):
         """Emit closed signal when user clicks the [X] button on the dock widget."""
@@ -807,6 +807,7 @@ class CbmsmvDialog(QDialog):
         # Central container holding the entire UI (can be reparented between dialog and dock widget)
         self._central_container = QWidget()
         self._central_container.setObjectName("cbmsmvCentralContainer")
+        self._central_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         container_layout = QVBoxLayout(self._central_container)
         container_layout.setContentsMargins(12, 10, 12, 10)
         container_layout.setSpacing(8)
@@ -834,7 +835,7 @@ class CbmsmvDialog(QDialog):
         bottom_bar = self._create_bottom_action_bar()
         container_layout.addWidget(bottom_bar)
 
-        self._dialog_layout.addWidget(self._central_container)
+        self._dialog_layout.addWidget(self._central_container, 1)
 
     # -----------------------------------------------------------------------
     # Top Navigation Bar
@@ -856,7 +857,7 @@ class CbmsmvDialog(QDialog):
         bar_layout.addStretch()
 
         # Dock Toggle Button (Attribute Table style with native QGIS mDockify icon)
-        self.btn_dock = QPushButton("Dock at Bottom")
+        self.btn_dock = QPushButton("Switch to Dock Mode")
         self.btn_dock.setObjectName("btnDock")
         dock_icon = QgsApplication.getThemeIcon("mDockify.svg")
         if not dock_icon.isNull():
@@ -1476,7 +1477,9 @@ class CbmsmvDialog(QDialog):
         layout.addWidget(filter_frame)
 
         # Scorecard Table
+        tab.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         table = QTableWidget()
+        table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         table.setColumnCount(7)
         table.setHorizontalHeaderLabels([
             "Status",
@@ -1740,8 +1743,6 @@ class CbmsmvDialog(QDialog):
         rule_target_fields = rule.get("target_fields") if rule else None
         target_cols = resolve_target_columns(val_id, field_names, rule_target_fields)
         has_auto_fix = bool(has_fix(val_id))
-        rule_suggested = rule.get("suggested_fixes") if rule else None
-        suggested_fix_ids = resolve_suggested_fixes(val_id, rule_suggested)
 
         tab.setProperty("target_cols", target_cols)
         tab.setProperty("field_names", field_names)
@@ -1834,69 +1835,81 @@ class CbmsmvDialog(QDialog):
         combo_actions.setMaximumWidth(210)
         combo_actions.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         if combo_actions.view():
-            combo_actions.view().setMinimumWidth(520)
+            combo_actions.view().setMinimumWidth(420)
         dropdown_icon = QgsApplication.getThemeIcon("mActionOptions.svg")
         if not dropdown_icon.isNull():
-            combo_actions.addItem(dropdown_icon, "Actions", None)
+            combo_actions.addItem(dropdown_icon, "Actions")
         else:
-            combo_actions.addItem("Actions", None)
+            combo_actions.addItem("Actions")
+        combo_actions.setItemData(0, "", Qt.UserRole)
+
+        rule_suggested_fixes = resolve_suggested_fixes(rule.get("suggested_fixes") if rule else None)
+
+        concat_ic = QgsApplication.getThemeIcon("mActionCalculateField.svg")
+        del_icon_menu = QgsApplication.getThemeIcon("mActionDeleteSelected.svg")
+        geom_ic = QgsApplication.getThemeIcon("mActionCapturePoint.svg")
+        dup_ic = QgsApplication.getThemeIcon("mActionDeleteSelected.svg")
+        concat_bsn_ic = QgsApplication.getThemeIcon("mActionCalculateField.svg")
+        copy_geom_ic = QgsApplication.getThemeIcon("mActionEditCopy.svg")
+        update_coord_ic = QgsApplication.getThemeIcon("mActionCalculateField.svg")
+        update_geom_ic = QgsApplication.getThemeIcon("mActionMoveFeaturePoint.svg")
+        if update_geom_ic.isNull():
+            update_geom_ic = QgsApplication.getThemeIcon("mActionCapturePoint.svg")
 
         actions_catalog = [
-            ("copy_geometry_to_coordinates", "Copy the geometry and paste it into the longitude and latitude columns", "mActionEditCopy.svg"),
-            ("update_datafiles_coordinates", "Update Datafile's Coordinates", "mActionCalculateField.svg"),
-            ("generate_point_geometry", "Generate point geometry", "mActionCapturePoint.svg"),
-            ("concatenate_ea_geocode", "Concatenate the ea_geocode", "mActionCalculateField.svg"),
-            ("concatenate_bsn_geoid", "Concatenate the bsn_geoid", "mActionCalculateField.svg"),
-            ("deduplicate_features", "Delete duplicate features (retain one)", "mActionDeleteSelected.svg"),
-            ("delete_selected_features", "Delete selected features", "mActionDeleteSelected.svg"),
+            ("concatenate_ea_geocode", "Concatenate the ea_geocode", concat_ic),
+            ("delete_selected_features", "Delete selected features", del_icon_menu),
+            ("generate_point_geometry", "Generate point geometry", geom_ic),
+            ("deduplicate_features", "Delete duplicate features (retain one)", dup_ic),
+            ("concatenate_bsn_geoid", "Concatenate the bsn_geoid", concat_bsn_ic),
+            ("copy_geometry_to_coordinates", "Copy the geometry and paste it into the longitude and latitude columns", copy_geom_ic),
+            ("update_datafiles_coordinates", "Update Datafile's Coordinates", update_coord_ic),
+            ("update_point_geometry", "Update point geometry using sf_longitude and sf_latitude", update_geom_ic),
         ]
 
-        suggested_items = []
-        for s_id in suggested_fix_ids:
-            found = next((item for item in actions_catalog if item[0] == s_id), None)
-            if found and found not in suggested_items:
-                suggested_items.append(found)
+        suggested_entries = []
+        other_entries = []
+        catalog_map = {aid: (aid, label, ic) for aid, label, ic in actions_catalog}
+        for s_id in rule_suggested_fixes:
+            if s_id in catalog_map:
+                suggested_entries.append(catalog_map[s_id])
+        for aid, label, ic in actions_catalog:
+            if aid not in rule_suggested_fixes:
+                other_entries.append((aid, label, ic))
 
-        other_items = [item for item in actions_catalog if item not in suggested_items]
+        sug_bg = QColor("#1C3B2B" if self.is_dark else "#ECFDF5")
+        sug_fg = QColor("#4ADE80" if self.is_dark else "#065F46")
+        sug_font = QFont(combo_actions.font())
+        sug_font.setBold(True)
 
-        font_bold = QFont(combo_actions.font())
-        font_bold.setBold(True)
-        suggested_fg = QBrush(QColor("#1D4ED8" if not self.is_dark else "#93C5FD"))
-        suggested_bg = QBrush(QColor("#EFF6FF" if not self.is_dark else "#1E3A5F"))
-
-        for act_id, act_name, act_icon in suggested_items:
-            ic = QgsApplication.getThemeIcon(act_icon)
-            display_text = f"(Suggested) {act_name}"
-            idx = combo_actions.count()
-            if not ic.isNull():
-                combo_actions.addItem(ic, display_text, act_id)
+        for act_id, label, ic in suggested_entries:
+            display_label = f"(Suggested) {label}"
+            if ic and not ic.isNull():
+                combo_actions.addItem(ic, display_label)
             else:
-                combo_actions.addItem(display_text, act_id)
-            combo_actions.setItemData(idx, act_id, Qt.UserRole)
-            combo_actions.setItemData(idx, font_bold, Qt.FontRole)
-            combo_actions.setItemData(idx, suggested_fg, Qt.ForegroundRole)
-            combo_actions.setItemData(idx, suggested_bg, Qt.BackgroundRole)
-            combo_actions.setItemData(idx, True, Qt.UserRole + 1)
-            combo_actions.setItemData(idx, f"Suggested fix for {val_id}: {act_name}", Qt.ToolTipRole)
+                combo_actions.addItem(display_label)
+            row_i = combo_actions.count() - 1
+            combo_actions.setItemData(row_i, act_id, Qt.UserRole)
+            combo_actions.setItemData(row_i, QBrush(sug_bg), Qt.BackgroundRole)
+            combo_actions.setItemData(row_i, QBrush(sug_fg), Qt.ForegroundRole)
+            combo_actions.setItemData(row_i, sug_font, Qt.FontRole)
+            combo_actions.setItemData(row_i, f"Suggested fix action for '{val_id}': {label}", Qt.ToolTipRole)
 
-        if suggested_items and other_items:
+        if suggested_entries and other_entries:
             combo_actions.insertSeparator(combo_actions.count())
 
-        for act_id, act_name, act_icon in other_items:
-            ic = QgsApplication.getThemeIcon(act_icon)
-            idx = combo_actions.count()
-            if not ic.isNull():
-                combo_actions.addItem(ic, act_name, act_id)
+        for act_id, label, ic in other_entries:
+            if ic and not ic.isNull():
+                combo_actions.addItem(ic, label)
             else:
-                combo_actions.addItem(act_name, act_id)
-            combo_actions.setItemData(idx, act_id, Qt.UserRole)
-            combo_actions.setItemData(idx, False, Qt.UserRole + 1)
+                combo_actions.addItem(label)
+            row_i = combo_actions.count() - 1
+            combo_actions.setItemData(row_i, act_id, Qt.UserRole)
 
         combo_actions.setCursor(Qt.PointingHandCursor)
-        if suggested_items:
-            combo_actions.setToolTip(
-                "Suggested fix action(s): " + ", ".join(item[1] for item in suggested_items)
-            )
+        if suggested_entries:
+            sug_names = ", ".join(lbl for _, lbl, _ in suggested_entries)
+            combo_actions.setToolTip(f"Suggested for this check: {sug_names}")
         else:
             combo_actions.setToolTip("Select an action to execute for checked features")
 
@@ -2001,19 +2014,15 @@ class CbmsmvDialog(QDialog):
                 1 for r in range(table.rowCount())
                 if table.item(r, 0) and table.item(r, 0).checkState() == Qt.Checked
             )
+            sel_count = (
+                len(set(i.row() for i in table.selectionModel().selectedRows()))
+                if hasattr(table, "selectionModel") and table.selectionModel()
+                else 0
+            )
             idx = combo_actions.currentIndex()
-            act_id = combo_actions.itemData(idx, Qt.UserRole)
+            act_id = str(combo_actions.itemData(idx, Qt.UserRole) or "").strip()
             act_text = combo_actions.itemText(idx).lower()
-
-            if not act_id or act_id == "actions" or idx == 0:
-                QMessageBox.information(
-                    self,
-                    "Choose an Action",
-                    "Please choose an action from the Actions dropdown first."
-                )
-                return
-
-            if checked_count == 0:
+            if checked_count == 0 and sel_count == 0:
                 if act_id == "deduplicate_features" or "duplicate" in act_text:
                     reply = QMessageBox.question(
                         self,
@@ -2045,7 +2054,7 @@ class CbmsmvDialog(QDialog):
                 self._delete_selected_features(
                     layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
-            elif act_id == "generate_point_geometry" or "point geometry" in act_text:
+            elif act_id == "generate_point_geometry" or "generate point" in act_text:
                 self._on_generate_point_geometry(
                     layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
@@ -2057,12 +2066,16 @@ class CbmsmvDialog(QDialog):
                 self._on_concatenate_bsn_geoid(
                     layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
-            elif act_id == "copy_geometry_to_coordinates" or "copy" in act_text:
+            elif act_id == "copy_geometry_to_coordinates" or ("copy" in act_text and ("geometry" in act_text or "longitude" in act_text or "latitude" in act_text)):
                 self._on_copy_geometry_to_coordinates(
                     layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
-            elif act_id == "update_datafiles_coordinates" or "update" in act_text:
+            elif act_id == "update_datafiles_coordinates" or ("update" in act_text and "datafile" in act_text):
                 self._on_update_datafile_coordinates(
+                    layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
+                )
+            elif act_id == "update_point_geometry" or ("update" in act_text and ("geometry" in act_text or "sf_longitude" in act_text)):
+                self._on_update_point_geometry(
                     layer, table, combo_actions=combo_actions, btn_update_selected=btn_update_selected
                 )
             else:
@@ -2077,9 +2090,10 @@ class CbmsmvDialog(QDialog):
         def _on_combo_actions_changed(idx: int):
             if not is_valid_qobject(self) or not is_valid_qobject(table):
                 return
-            combo_actions.setToolTip(combo_actions.itemText(idx))
-            act_id = combo_actions.itemData(idx, Qt.UserRole)
+            act_id = str(combo_actions.itemData(idx, Qt.UserRole) or "").strip()
             action_text = combo_actions.itemText(idx).lower()
+            if idx > 0 and combo_actions.itemText(idx):
+                combo_actions.setToolTip(combo_actions.itemText(idx))
             if act_id == "deduplicate_features" or "duplicate" in action_text:
                 # Automatically select/check all features in the tab
                 table.setProperty("is_populating", True)
@@ -2104,15 +2118,20 @@ class CbmsmvDialog(QDialog):
                     1 for r in range(table.rowCount())
                     if not table.isRowHidden(r) and table.item(r, 0) and table.item(r, 0).checkState() == Qt.Checked
                 )
-                btn_update_selected.setText(f"Apply Fix Action ({checked_count})" if checked_count > 0 else "Apply Fix Action")
-                btn_update_selected.setEnabled(checked_count > 0)
+                sel_count = (
+                    len(set(i.row() for i in table.selectionModel().selectedRows() if not table.isRowHidden(i.row())))
+                    if hasattr(table, "selectionModel") and table.selectionModel()
+                    else 0
+                )
+                active_sel_count = checked_count if checked_count > 0 else sel_count
+                btn_update_selected.setText(f"Apply Fix Action ({active_sel_count})" if active_sel_count > 0 else "Apply Fix Action")
+                btn_update_selected.setEnabled(active_sel_count > 0 and bool(act_id or idx > 0))
 
         combo_actions.currentIndexChanged.connect(_on_combo_actions_changed)
         combo_actions.activated.connect(_on_combo_actions_changed)
 
         toolbar.addWidget(combo_actions)
         toolbar.addWidget(btn_update_selected)
-
 
         is_dirty = self._has_unsaved_changes()
 
@@ -2273,6 +2292,7 @@ class CbmsmvDialog(QDialog):
 
         table.setColumnWidth(0, 38)
         table.setColumnWidth(action_col, 80)
+        table.setColumnHidden(action_col, True)
 
         table.setProperty("is_populating", True)
 
@@ -2286,9 +2306,9 @@ class CbmsmvDialog(QDialog):
             df_fid_col = field_names_lower.get("df_fid")
             fid_col = sf_fid_col or df_fid_col
 
-            sf_uuid_col = field_names_lower.get("sf_map_uuid")
-            df_uuid_col = field_names_lower.get("df_map_uuid")
-            uuid_col = sf_uuid_col or field_names_lower.get("map_uuid") or df_uuid_col
+            sf_uuid_col = field_names_lower.get("sf_map_uuid") or field_names_lower.get("sf_mapid")
+            df_uuid_col = field_names_lower.get("df_map_uuid") or field_names_lower.get("df_mapid")
+            uuid_col = sf_uuid_col or field_names_lower.get("map_uuid") or field_names_lower.get("mapid") or df_uuid_col or field_names_lower.get("uuid")
 
             def _is_empty(v):
                 if v is None or v == NULL:
@@ -2350,6 +2370,11 @@ class CbmsmvDialog(QDialog):
                         item.setToolTip("Reference dataset attribute (read-only)")
                         if fname in target_cols:
                             self._style_table_cell(item, "target")
+                    elif fn_lower in ("x_geometry", "y_geometry", "distance_m"):
+                        item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                        item.setToolTip("Derived geometry value (read-only)")
+                        if fname in target_cols:
+                            self._style_table_cell(item, "target")
                     else:
                         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
                         if fname in target_cols:
@@ -2366,24 +2391,24 @@ class CbmsmvDialog(QDialog):
                     item.setData(Qt.UserRole + 20, val_str)
                     table.setItem(row_idx, col_idx + 1, item)
 
-                # Column Action: Edit button only
-                action_widget = QWidget()
-                action_layout = QHBoxLayout(action_widget)
-                action_layout.setContentsMargins(4, 2, 4, 2)
-                action_layout.setSpacing(4)
-                action_layout.setAlignment(Qt.AlignCenter)
-
-                btn_row_edit = QPushButton("Edit")
-                btn_row_edit.setToolTip(f"Open Navigation Review Dock / Feature Form for feature #{row_idx + 1}")
-                self._style_row_edit_button(btn_row_edit)
-                btn_row_edit.clicked.connect(
-                    lambda checked=False, s_id=source_fid, u=uuid_str, df_u=df_uuid_str, sf_u=sf_uuid_str: self._launch_review_dock(
-                        val_id, check_name, layer, target_fid=s_id, target_uuid=u or df_u or sf_u
-                    )
-                )
-                action_layout.addWidget(btn_row_edit)
-
-                table.setCellWidget(row_idx, action_col, action_widget)
+                # Column Action: Edit button only (commented out until a dedicated workflow is defined)
+                # action_widget = QWidget()
+                # action_layout = QHBoxLayout(action_widget)
+                # action_layout.setContentsMargins(4, 2, 4, 2)
+                # action_layout.setSpacing(4)
+                # action_layout.setAlignment(Qt.AlignCenter)
+                #
+                # btn_row_edit = QPushButton("Edit")
+                # btn_row_edit.setToolTip(f"Open Navigation Review Dock / Feature Form for feature #{row_idx + 1}")
+                # self._style_row_edit_button(btn_row_edit)
+                # btn_row_edit.clicked.connect(
+                #     lambda checked=False, s_id=source_fid, u=uuid_str, df_u=df_uuid_str, sf_u=sf_uuid_str: self._launch_review_dock(
+                #         val_id, check_name, layer, target_fid=s_id, target_uuid=u or df_u or sf_u
+                #     )
+                # )
+                # action_layout.addWidget(btn_row_edit)
+                #
+                # table.setCellWidget(row_idx, action_col, action_widget)
 
             table.setSortingEnabled(True)
 
@@ -2441,7 +2466,7 @@ class CbmsmvDialog(QDialog):
         btn_update_selected: Optional[QPushButton] = None,
     ):
         """Handle checkbox toggles and direct cell value editing."""
-        if table.property("is_populating"):
+        if hasattr(table, "property") and table.property("is_populating"):
             return
 
         col = item.column()
@@ -2458,15 +2483,11 @@ class CbmsmvDialog(QDialog):
             elif btn_actions:
                 btn_actions.setText("Actions ▾")
             if btn_update_selected:
-                is_dup_action = bool(
-                    combo_actions
-                    and (
-                        combo_actions.currentData(Qt.UserRole) == "deduplicate_features"
-                        or "duplicate" in combo_actions.currentText().lower()
-                    )
+                is_dedup_selected = bool(
+                    combo_actions and str(combo_actions.currentData(Qt.UserRole) or "") == "deduplicate_features"
                 )
                 btn_update_selected.setText(f"Apply Fix Action ({checked_count})" if checked_count > 0 else "Apply Fix Action")
-                btn_update_selected.setEnabled(checked_count > 0 or is_dup_action)
+                btn_update_selected.setEnabled(checked_count > 0 or is_dedup_selected)
             return
 
         # Case 2: Action column
@@ -2485,35 +2506,38 @@ class CbmsmvDialog(QDialog):
             return
 
         fn_lower = str(field_name).strip().lower()
-        if fn_lower in ("fid", "sf_fid", "df_fid", "ref_fid", "action", "") or fn_lower.startswith("ref_"):
+        if fn_lower in ("fid", "sf_fid", "df_fid", "ref_fid", "x_geometry", "y_geometry", "distance_m", "action", "") or fn_lower.startswith("ref_"):
             return
 
         chk_item = table.item(row, 0)
-        target_fid = item.data(Qt.UserRole) if not _is_empty_val(item.data(Qt.UserRole)) else (chk_item.data(Qt.UserRole) if chk_item else None)
-        map_uuid = item.data(Qt.UserRole + 1) or (chk_item.data(Qt.UserRole + 1) if chk_item else None)
-        err_fid = item.data(Qt.UserRole + 3) if not _is_empty_val(item.data(Qt.UserRole + 3)) else (chk_item.data(Qt.UserRole + 3) if chk_item else None)
-        df_fid = item.data(Qt.UserRole + 4) if not _is_empty_val(item.data(Qt.UserRole + 4)) else (chk_item.data(Qt.UserRole + 4) if chk_item else None)
-        df_uuid = item.data(Qt.UserRole + 5) or (chk_item.data(Qt.UserRole + 5) if chk_item else None)
-        raw_sf_fid = item.data(Qt.UserRole + 6) if not _is_empty_val(item.data(Qt.UserRole + 6)) else (chk_item.data(Qt.UserRole + 6) if chk_item and not _is_empty_val(chk_item.data(Qt.UserRole + 6)) else None)
-        sf_fid = raw_sf_fid if raw_sf_fid is not None else (target_fid if _is_empty_val(df_fid) and target_fid != err_fid else None)
-        sf_uuid = item.data(Qt.UserRole + 7) or (chk_item.data(Qt.UserRole + 7) if chk_item else None) or map_uuid
+        target_fid = item.data(Qt.UserRole) if item.data(Qt.UserRole) is not None else (chk_item.data(Qt.UserRole) if chk_item else None)
+        orig_map_uuid = item.data(Qt.UserRole + 1) or (chk_item.data(Qt.UserRole + 1) if chk_item else None)
+        err_fid = item.data(Qt.UserRole + 3) if item.data(Qt.UserRole + 3) is not None else (chk_item.data(Qt.UserRole + 3) if chk_item else None)
+        df_fid = item.data(Qt.UserRole + 4) if item.data(Qt.UserRole + 4) is not None else (chk_item.data(Qt.UserRole + 4) if chk_item else None)
+        orig_df_uuid = item.data(Qt.UserRole + 5) or (chk_item.data(Qt.UserRole + 5) if chk_item else None)
+        raw_sf_fid = next(
+            (
+                v for v in (
+                    item.data(Qt.UserRole + 6),
+                    chk_item.data(Qt.UserRole + 6) if chk_item else None,
+                )
+                if v is not None and str(v).strip() not in ("", "NULL", "None")
+            ),
+            None,
+        )
+        sf_fid = (
+            raw_sf_fid
+            if raw_sf_fid is not None
+            else (
+                target_fid
+                if (df_fid is None or str(df_fid).strip() in ("", "NULL", "None")) and target_fid != err_fid
+                else None
+            )
+        )
+        orig_sf_uuid = item.data(Qt.UserRole + 7) or (chk_item.data(Qt.UserRole + 7) if chk_item else None) or orig_map_uuid
 
         new_val_str = item.text().strip()
         is_del_field = fn_lower in ("is_deleted", "sf_is_deleted")
-
-        # If map_uuid was edited, keep cached UUID in table items synchronized
-        if fn_lower in ("map_uuid", "sf_map_uuid"):
-            sf_uuid = new_val_str
-            item.setData(Qt.UserRole + 7, new_val_str)
-            item.setData(Qt.UserRole + 1, new_val_str)
-            if chk_item:
-                chk_item.setData(Qt.UserRole + 7, new_val_str)
-                chk_item.setData(Qt.UserRole + 1, new_val_str)
-        elif fn_lower == "df_map_uuid":
-            df_uuid = new_val_str
-            item.setData(Qt.UserRole + 5, new_val_str)
-            if chk_item:
-                chk_item.setData(Qt.UserRole + 5, new_val_str)
 
         # Handle boolean is_deleted editing: parse any input gracefully
         if is_del_field:
@@ -2554,7 +2578,7 @@ class CbmsmvDialog(QDialog):
             # 2. Update main building points layer
             main_layer = self._get_or_load_main_building_layer()
             if main_layer and main_layer.isValid():
-                main_feat = self._find_main_feature(main_layer, fid=sf_fid, map_uuid=sf_uuid)
+                main_feat = self._find_main_feature(main_layer, fid=sf_fid, map_uuid=orig_sf_uuid or orig_map_uuid)
                 if main_feat:
                     target_m_name = (
                         field_name[3:]
@@ -2569,10 +2593,7 @@ class CbmsmvDialog(QDialog):
                         val_to_set_main = bool_to_save if m_type == QVariant.Bool else normalized_str
                         main_layer.changeAttributeValue(main_feat.id(), m_idx, val_to_set_main)
 
-
-
-            if hasattr(self, "_mark_unsaved_table_edit"):
-                self._mark_unsaved_table_edit()
+            getattr(self, "_mark_unsaved_table_edit", lambda: None)()
             self.lbl_footer_status.setText(
                 f"Set '{field_name}' = '{normalized_str}' ({'deleted' if is_del else 'active'}) for feature FID #{sf_fid} (Press Ctrl+S to save)"
             )
@@ -2586,57 +2607,126 @@ class CbmsmvDialog(QDialog):
                     layer.startEditing()
                 layer.changeAttributeValue(err_fid if err_fid is not None else target_fid, f_idx, new_val_str)
 
-        # 2. If it's a df_ column -> update Form 2 layer and buffer for disk save
-        if fn_lower.startswith("df_"):
-            clean_prop = field_name[3:]
+        # Check if this column is a UUID/mapid column
+        UUID_FIELD_NAMES = ("map_uuid", "mapid", "sf_map_uuid", "df_map_uuid", "df_mapid", "sf_mapid", "uuid")
+        is_uuid_edit = fn_lower in UUID_FIELD_NAMES
+
+        applied_to_form2 = False
+        applied_to_main = False
+
+        # 2. Update Form 2 layer and buffer for disk save if it's a df_ column OR a uuid edit
+        if fn_lower.startswith("df_") or is_uuid_edit:
+            clean_prop = field_name[3:] if fn_lower.startswith("df_") else field_name
             form2_layer = self._get_or_load_form2_layer()
             if form2_layer and form2_layer.isValid():
-                form2_feat = self._find_form2_feature(form2_layer, fid=df_fid, map_uuid=df_uuid or map_uuid)
+                form2_feat = self._find_form2_feature(
+                    form2_layer, fid=df_fid, map_uuid=orig_df_uuid or orig_map_uuid
+                )
                 if form2_feat:
-                    target_f_name = (
-                        clean_prop
-                        if (clean_prop in [f.name() for f in form2_layer.fields()])
-                        else field_name
-                    )
-                    f_idx = form2_layer.fields().indexOf(target_f_name)
-                    if f_idx != -1:
-                        if not form2_layer.isEditable():
-                            form2_layer.startEditing()
-                        form2_layer.changeAttributeValue(form2_feat.id(), f_idx, new_val_str)
+                    target_f_name = None
+                    if is_uuid_edit:
+                        for cand in ("mapid", "df_mapid", "map_uuid", "df_map_uuid", "uuid"):
+                            idx = form2_layer.fields().lookupField(cand)
+                            if idx != -1:
+                                target_f_name = form2_layer.fields().at(idx).name()
+                                break
+                    if not target_f_name:
+                        for cand in (clean_prop, field_name, f"df_{clean_prop}"):
+                            idx = form2_layer.fields().lookupField(cand)
+                            if idx != -1:
+                                target_f_name = form2_layer.fields().at(idx).name()
+                                break
+                    if target_f_name:
+                        f_idx = form2_layer.fields().indexOf(target_f_name)
+                        if f_idx != -1:
+                            if not form2_layer.isEditable():
+                                form2_layer.startEditing()
+                            form2_layer.changeAttributeValue(form2_feat.id(), f_idx, new_val_str)
+                            applied_to_form2 = True
 
-            rec_k = f"fid_{df_fid}" if df_fid is not None else f"uuid_{df_uuid or map_uuid}"
+            # Always anchor pending edits by original disk uuid/fid so disk save matches record correctly
+            disk_uuid = orig_df_uuid or orig_map_uuid
+            rec_k = f"fid_{df_fid}" if df_fid is not None else f"uuid_{disk_uuid}"
             if rec_k not in self._pending_json_edits:
                 self._pending_json_edits[rec_k] = {
                     "df_fid": df_fid,
-                    "uuid": df_uuid or map_uuid,
+                    "uuid": disk_uuid,
                     "props": {},
                 }
-            self._pending_json_edits[rec_k]["props"][clean_prop] = new_val_str
-            self.lbl_footer_status.setText(f"Updated '{clean_prop}' = '{new_val_str}' for Form 2 record (Press Ctrl+S to save)")
+            if is_uuid_edit:
+                # Store under all common key aliases so both CSV (mapid) and GeoJSON/JSON (map_uuid) match
+                self._pending_json_edits[rec_k]["props"]["map_uuid"] = new_val_str
+                self._pending_json_edits[rec_k]["props"]["mapid"] = new_val_str
+                self._pending_json_edits[rec_k]["props"]["df_map_uuid"] = new_val_str
+                self._pending_json_edits[rec_k]["props"]["df_mapid"] = new_val_str
+            else:
+                self._pending_json_edits[rec_k]["props"][clean_prop] = new_val_str
 
-        # 3. If it's an sf_ or unprefixed column -> update main building points layer in memory
-        else:
+            if is_uuid_edit or fn_lower in ("df_map_uuid", "df_mapid"):
+                item.setData(Qt.UserRole + 5, new_val_str)
+                if chk_item:
+                    chk_item.setData(Qt.UserRole + 5, new_val_str)
+
+            if not is_uuid_edit:
+                self.lbl_footer_status.setText(f"Updated '{clean_prop}' = '{new_val_str}' for Form 2 record (Press Ctrl+S to save)")
+
+        # 3. Update main building points layer in memory if it's an sf_ / unprefixed column OR a uuid edit
+        if (not fn_lower.startswith("df_")) or is_uuid_edit:
             main_layer = self._get_or_load_main_building_layer()
             if main_layer and main_layer.isValid():
-                main_feat = self._find_main_feature(main_layer, fid=sf_fid, map_uuid=sf_uuid)
+                main_feat = self._find_main_feature(
+                    main_layer,
+                    fid=sf_fid,
+                    map_uuid=orig_sf_uuid or orig_map_uuid or orig_df_uuid,
+                    is_editing_uuid=is_uuid_edit,
+                )
                 if main_feat:
-                    # Strip sf_ prefix if main layer has unprefixed field
-                    target_m_name = (
-                        field_name[3:]
-                        if (field_name.startswith("sf_") and field_name not in [f.name() for f in main_layer.fields()])
-                        else field_name
-                    )
-                    m_idx = main_layer.fields().indexOf(target_m_name)
-                    if m_idx != -1:
-                        if not main_layer.isEditable():
-                            main_layer.startEditing()
-                        field_type = main_layer.fields().at(m_idx).type()
-                        if field_type == QVariant.Bool:
-                            val_to_set = new_val_str.strip().lower() in ("true", "1", "t", "yes", "deleted")
-                        else:
-                            val_to_set = new_val_str
-                        main_layer.changeAttributeValue(main_feat.id(), m_idx, val_to_set)
-            self.lbl_footer_status.setText(f"Updated '{field_name}' = '{new_val_str}' for feature FID #{sf_fid} (Press Ctrl+S to save)")
+                    target_m_name = None
+                    if is_uuid_edit:
+                        for cand in ("map_uuid", "sf_map_uuid", "mapid", "uuid"):
+                            idx = main_layer.fields().lookupField(cand)
+                            if idx != -1:
+                                target_m_name = main_layer.fields().at(idx).name()
+                                break
+                    if not target_m_name:
+                        for cand in (field_name[3:] if field_name.startswith("sf_") else field_name, field_name):
+                            idx = main_layer.fields().lookupField(cand)
+                            if idx != -1:
+                                target_m_name = main_layer.fields().at(idx).name()
+                                break
+                    if target_m_name:
+                        m_idx = main_layer.fields().indexOf(target_m_name)
+                        if m_idx != -1:
+                            if not main_layer.isEditable():
+                                main_layer.startEditing()
+                            field_type = main_layer.fields().at(m_idx).type()
+                            if field_type == QVariant.Bool:
+                                val_to_set = new_val_str.strip().lower() in ("true", "1", "t", "yes", "deleted")
+                            else:
+                                val_to_set = new_val_str
+                            main_layer.changeAttributeValue(main_feat.id(), m_idx, val_to_set)
+                            applied_to_main = True
+
+            if is_uuid_edit:
+                item.setData(Qt.UserRole + 7, new_val_str)
+                item.setData(Qt.UserRole + 1, new_val_str)
+                if chk_item:
+                    chk_item.setData(Qt.UserRole + 7, new_val_str)
+                    chk_item.setData(Qt.UserRole + 1, new_val_str)
+
+            if is_uuid_edit:
+                status_targets = []
+                if applied_to_main:
+                    status_targets.append("Building Points")
+                if applied_to_form2 or self._pending_json_edits:
+                    status_targets.append("Form 2 Data")
+                target_desc = " & ".join(status_targets) if status_targets else "layer(s)"
+                self.lbl_footer_status.setText(f"Updated UUID/mapid = '{new_val_str}' for {target_desc} (Press Ctrl+S to save)")
+            elif applied_to_main:
+                self.lbl_footer_status.setText(f"Updated '{field_name}' = '{new_val_str}' for feature FID #{sf_fid} (Press Ctrl+S to save)")
+            else:
+                self._log_warning(f"Could not locate feature in main building layer for '{field_name}' = '{new_val_str}' (FID: {sf_fid}, UUID: {orig_sf_uuid}).")
+                self.lbl_footer_status.setText(f"Updated '{field_name}' in table, but feature not found in building layer (Press Ctrl+S to save)")
 
         # Update cell styling for other fields
         if fn_lower in ("status", "sf_status"):
@@ -2651,14 +2741,14 @@ class CbmsmvDialog(QDialog):
         else:
             # Subtle highlight to show cell was manually modified
             self._style_table_cell(item, "modified")
-        if hasattr(self, "_mark_unsaved_table_edit"):
-            self._mark_unsaved_table_edit()
+        getattr(self, "_mark_unsaved_table_edit", lambda: None)()
 
     def _find_main_feature(
         self,
         main_layer: QgsVectorLayer,
         fid: Any = None,
         map_uuid: Optional[str] = None,
+        is_editing_uuid: bool = False,
     ) -> Optional[QgsFeature]:
         """
         Locate a feature in main_layer prioritizing fid, then fallback to map_uuid.
@@ -2674,36 +2764,44 @@ class CbmsmvDialog(QDialog):
             if s and s.lower() not in ("null", "none"):
                 clean_fid = int(s) if s.isdigit() else fid
 
+        m_flds = {f.name().lower(): f.name() for f in main_layer.fields()}
+        u_col = m_flds.get("map_uuid") or m_flds.get("sf_map_uuid") or m_flds.get("mapid") or m_flds.get("uuid")
+
         # 1. Primary: Locate by native QGIS internal feature ID ($id)
         if clean_fid is not None:
             try:
                 feat = main_layer.getFeature(int(clean_fid))
                 if feat.isValid():
-                    # If map_uuid is also provided, confirm it matches as a safety check
-                    if not map_uuid:
+                    clean_u = str(map_uuid).strip() if map_uuid else ""
+                    if not clean_u or not u_col:
                         return feat
-                    clean_u = str(map_uuid).strip()
-                    m_flds = {f.name().lower(): f.name() for f in main_layer.fields()}
-                    u_col = m_flds.get("map_uuid") or m_flds.get("sf_map_uuid")
-                    if not u_col or str(feat[u_col] or "").strip() == clean_u:
+                    feat_u = str(feat[u_col] or "").strip()
+                    if feat_u == clean_u:
                         return feat
             except Exception:
                 pass
 
-        # 2. Fallback: Locate by map_uuid (if internal feature ID shifted)
+        # 2. Fallback: Locate by map_uuid / mapid across all alias columns
         if map_uuid:
             clean_uuid = str(map_uuid).strip().replace("'", "''")
             if clean_uuid and clean_uuid.lower() not in ("null", "none"):
-                for f in main_layer.getFeatures(QgsFeatureRequest().setFilterExpression(f'"map_uuid" = \'{clean_uuid}\'')):
-                    return f
+                for cand_col in ("map_uuid", "sf_map_uuid", "mapid", "sf_mapid", "uuid"):
+                    if cand_col in m_flds:
+                        real_col = m_flds[cand_col]
+                        try:
+                            for f in main_layer.getFeatures(QgsFeatureRequest().setFilterExpression(f'"{real_col}" = \'{clean_uuid}\'')):
+                                return f
+                        except Exception:
+                            pass
 
         # 3. Fallback: Locate by fid attribute if 'fid' field exists in main_layer
-        if clean_fid is not None and "fid" in [f.name().lower() for f in main_layer.fields()]:
+        if clean_fid is not None and "fid" in m_flds:
             try:
+                fid_attr = m_flds["fid"]
                 if isinstance(clean_fid, int):
-                    expr = f'"fid" = {clean_fid}'
+                    expr = f'"{fid_attr}" = {clean_fid}'
                 else:
-                    expr = f'"fid" = \'{str(clean_fid).replace(chr(39), chr(39)+chr(39))}\''
+                    expr = f'"{fid_attr}" = \'{str(clean_fid).replace(chr(39), chr(39)+chr(39))}\''
                 for f in main_layer.getFeatures(QgsFeatureRequest().setFilterExpression(expr)):
                     return f
             except Exception:
@@ -2747,10 +2845,10 @@ class CbmsmvDialog(QDialog):
             except Exception:
                 pass
 
-        # 3. Fallback: Locate by map_uuid
+        # 3. Fallback: Locate by map_uuid or mapid
         if map_uuid:
             clean_uuid = str(map_uuid).strip().replace("'", "''")
-            for uuid_col in ("map_uuid", "df_map_uuid"):
+            for uuid_col in ("mapid", "df_mapid", "map_uuid", "df_map_uuid", "uuid"):
                 if uuid_col in f_names_lower:
                     try:
                         for f in form2_layer.getFeatures(QgsFeatureRequest().setFilterExpression(f'"{uuid_col}" = \'{clean_uuid}\'')):
@@ -2795,15 +2893,11 @@ class CbmsmvDialog(QDialog):
         elif btn_actions:
             btn_actions.setText("Actions ▾")
         if btn_update_selected:
-            is_dup_action = bool(
-                combo_actions
-                and (
-                    combo_actions.currentData(Qt.UserRole) == "deduplicate_features"
-                    or "duplicate" in combo_actions.currentText().lower()
-                )
+            is_dedup_selected = bool(
+                combo_actions and str(combo_actions.currentData(Qt.UserRole) or "") == "deduplicate_features"
             )
             btn_update_selected.setText(f"Apply Fix Action ({checked_count})" if checked_count > 0 else "Apply Fix Action")
-            btn_update_selected.setEnabled(checked_count > 0 or is_dup_action)
+            btn_update_selected.setEnabled(checked_count > 0 or is_dedup_selected)
         btn_select_all.setText("Select None" if target_state == Qt.Checked else "Select All")
         toggle_ic = QgsApplication.getThemeIcon(
             "mActionDeselectAll.svg" if target_state == Qt.Checked else "mActionSelectAll.svg"
@@ -2842,7 +2936,7 @@ class CbmsmvDialog(QDialog):
             btn_actions=btn_actions,
             btn_update_selected=btn_update_selected,
         )
-        self._update_save_discard_ui_state()
+        getattr(self, "_update_save_discard_ui_state", lambda: None)()
 
     def _on_concatenate_ea_geocode(
         self,
@@ -2984,6 +3078,34 @@ class CbmsmvDialog(QDialog):
             btn_update_selected.setText("Apply Fix Action")
             btn_update_selected.setEnabled(False)
 
+    def _on_update_point_geometry(
+        self,
+        *args,
+        combo_actions: Optional[QComboBox] = None,
+        btn_actions: Optional[Any] = None,
+        btn_update_selected: Optional[QPushButton] = None,
+        **kwargs,
+    ):
+        """Directly update point geometry using sf_longitude and sf_latitude for selected/checked features."""
+        if not is_valid_qobject(self):
+            return
+        if len(args) >= 2 and hasattr(args[1], "rowCount"):
+            layer, table = args[0], args[1]
+        elif len(args) >= 3 and hasattr(args[2], "rowCount"):
+            layer, table = args[1], args[2]
+        else:
+            layer = kwargs.get("layer")
+            table = kwargs.get("table")
+
+        self._fix_selected_features("update_point_geometry", layer, table)
+        if combo_actions:
+            combo_actions.setItemText(0, "Actions")
+        elif btn_actions:
+            btn_actions.setText("Actions")
+        if btn_update_selected:
+            btn_update_selected.setText("Apply Fix Action")
+            btn_update_selected.setEnabled(False)
+
     def _on_deduplicate_features(
         self,
         *args,
@@ -3024,81 +3146,96 @@ class CbmsmvDialog(QDialog):
         if btn_update_selected:
             btn_update_selected.setText("Apply Fix Action")
             btn_update_selected.setEnabled(False)
-        self._update_save_discard_ui_state()
+        getattr(self, "_update_save_discard_ui_state", lambda: None)()
 
     def _fix_selected_features(self, val_id: str, layer: QgsVectorLayer, table: QTableWidget):
         """Batch execute fix for all checked rows in the table, deduplicated by unique (fid + map_uuid)."""
         if not is_valid_qobject(self):
             return
+
+        def _has_id(v: Any) -> bool:
+            return v is not None and str(v).strip() not in ("", "NULL", "None", "null", "none")
+
         target_fids = []
         target_uuids = []
-        target_err_fids = []
         target_rows = []
+        target_err_fids = []
         target_keys = set()
         seen_keys = set()
+
+        def _collect_row_target(r: int, item0: Any) -> None:
+            s_id = item0.data(Qt.UserRole)
+            u = item0.data(Qt.UserRole + 1)
+            e_id = item0.data(Qt.UserRole + 3)
+            df_f = item0.data(Qt.UserRole + 4)
+            df_u = item0.data(Qt.UserRole + 5)
+            sf_f = item0.data(Qt.UserRole + 6)
+            sf_u = item0.data(Qt.UserRole + 7)
+
+            if _has_id(sf_f):
+                spatial_fid = sf_f
+            elif _has_id(s_id) and not _has_id(df_f) and s_id != e_id:
+                spatial_fid = s_id
+            else:
+                spatial_fid = None
+
+            if spatial_fid is not None:
+                best_fid = spatial_fid
+            elif _has_id(df_f):
+                best_fid = df_f
+            elif _has_id(s_id):
+                best_fid = s_id
+            else:
+                best_fid = e_id
+
+            best_uuid = ""
+            for cand_u in (sf_u, u, df_u):
+                if _has_id(cand_u):
+                    best_uuid = str(cand_u).strip()
+                    break
+
+            ukey = make_unique_feature_key(best_fid, best_uuid)
+            if ukey:
+                target_keys.add(ukey)
+                target_keys.add(ukey.lower())
+            if spatial_fid is None and best_uuid:
+                uuid_only_key = make_unique_feature_key(None, best_uuid)
+                if uuid_only_key:
+                    target_keys.add(uuid_only_key)
+                    target_keys.add(uuid_only_key.lower())
+
+            target_rows.append(r)
+            dedup_key = ukey if ukey else f"row_{r}"
+            if dedup_key in seen_keys:
+                return
+            seen_keys.add(dedup_key)
+
+            if _has_id(e_id):
+                target_err_fids.append(e_id)
+            if spatial_fid is not None:
+                target_fids.append(spatial_fid)
+            elif not best_uuid and _has_id(best_fid):
+                target_fids.append(best_fid)
+            else:
+                target_fids.append(None)
+            target_uuids.append(best_uuid)
+
         for r in range(table.rowCount()):
             item0 = table.item(r, 0)
             if item0 and item0.checkState() == Qt.Checked:
-                s_id = item0.data(Qt.UserRole)
-                u = item0.data(Qt.UserRole + 1)
-                e_id = item0.data(Qt.UserRole + 3)
-                df_f = item0.data(Qt.UserRole + 4)
-                df_u = item0.data(Qt.UserRole + 5)
-                sf_f = item0.data(Qt.UserRole + 6)
-                sf_u = item0.data(Qt.UserRole + 7)
+                _collect_row_target(r, item0)
 
-                # Resolve spatial layer FID (0-based GeoJSON $id / sf_fid) without falsiness on 0
-                if not _is_empty_val(sf_f):
-                    spatial_fid = sf_f
-                elif not _is_empty_val(s_id) and _is_empty_val(df_f) and s_id != e_id:
-                    spatial_fid = s_id
-                else:
-                    spatial_fid = None
+        if not target_rows:
+            # Fallback: if no checkboxes are ticked, check if rows are highlighted / selected via selectionModel
+            if hasattr(table, "selectionModel") and table.selectionModel():
+                sel_rows = sorted(set(idx.row() for idx in table.selectionModel().selectedRows()))
+                for r in sel_rows:
+                    item0 = table.item(r, 0)
+                    if item0:
+                        _collect_row_target(r, item0)
 
-                if spatial_fid is not None:
-                    best_fid = spatial_fid
-                elif not _is_empty_val(df_f):
-                    best_fid = df_f
-                elif not _is_empty_val(s_id):
-                    best_fid = s_id
-                else:
-                    best_fid = e_id
-
-                best_uuid = ""
-                for cand_u in (sf_u, u, df_u):
-                    if not _is_empty_val(cand_u):
-                        best_uuid = str(cand_u).strip()
-                        break
-
-                ukey = make_unique_feature_key(best_fid, best_uuid)
-                if ukey:
-                    target_keys.add(ukey)
-                    target_keys.add(ukey.lower())
-                if spatial_fid is None and best_uuid:
-                    uuid_only_key = make_unique_feature_key(None, best_uuid)
-                    if uuid_only_key:
-                        target_keys.add(uuid_only_key)
-                        target_keys.add(uuid_only_key.lower())
-
-                target_rows.append(r)
-
-                # Deduplicate: Only process unique features once
-                dedup_key = ukey if ukey else f"row_{r}"
-                if dedup_key in seen_keys:
-                    continue
-                seen_keys.add(dedup_key)
-
-                if not _is_empty_val(e_id):
-                    target_err_fids.append(e_id)
-                if spatial_fid is not None:
-                    target_fids.append(spatial_fid)
-                elif not best_uuid and not _is_empty_val(best_fid):
-                    target_fids.append(best_fid)
-                if best_uuid:
-                    target_uuids.append(best_uuid)
-
-        if not target_fids and not target_uuids and not target_rows and not target_err_fids:
-            QMessageBox.information(self, "Nothing Selected", "Please tick the box of at least one row first.")
+        if not target_fids and not target_uuids and not target_rows:
+            QMessageBox.information(self, "Nothing Selected", "Please tick the checkbox or select at least one row first.")
             return
 
         self._execute_fix(
@@ -3204,45 +3341,48 @@ class CbmsmvDialog(QDialog):
         updated_values = res.get("updated_values", {})
         fixed_count = res.get("fixed_count", len(updated_values))
 
+        def _non_empty(v: Any) -> bool:
+            return v is not None and str(v).strip().lower() not in ("", "null", "none", "nan")
+
+        target_rows_set = set(target_rows) if target_rows else set()
+        target_err_set = {str(x).strip() for x in (target_err_fids or []) if _non_empty(x)}
+        has_any_err_keys = any(isinstance(k, str) and k.startswith("err_") for k in updated_values)
+        has_structured_keys = any(
+            isinstance(k, str) and (k.startswith(("sf_", "err_", "df_", "row_", "uuid_")) or "_" in k)
+            for k in updated_values
+        )
         # Synchronize table cells and layer across all rows matching unique features
         table.setProperty("is_populating", True)
         try:
             if not layer.isEditable():
                 layer.startEditing()
 
-            target_rows_set = set(target_rows) if target_rows else set()
-            target_err_set = {str(x).strip() for x in (target_err_fids or []) if not _is_empty_val(x)}
-            has_any_err_keys = any(isinstance(k, str) and k.startswith("err_") for k in updated_values)
-            has_structured_keys = any(
-                isinstance(k, str) and (k.startswith(("sf_", "err_", "df_", "row_", "uuid_")) or "_" in k)
-                for k in updated_values
-            )
-
-            # Check all rows in table so any duplicate or matching row sharing the unique key updates
             for r in range(table.rowCount()):
+                if target_rows is not None and r not in target_rows_set:
+                    continue
                 item0 = table.item(r, 0)
                 if not item0:
                     continue
                 r_fid = item0.data(Qt.UserRole)
-                r_uuid = str(item0.data(Qt.UserRole + 1)).strip() if not _is_empty_val(item0.data(Qt.UserRole + 1)) else ""
+                r_uuid = str(item0.data(Qt.UserRole + 1)).strip() if _non_empty(item0.data(Qt.UserRole + 1)) else ""
                 r_err_fid = item0.data(Qt.UserRole + 3)
                 r_df_fid = item0.data(Qt.UserRole + 4)
-                r_df_uuid = str(item0.data(Qt.UserRole + 5)).strip() if not _is_empty_val(item0.data(Qt.UserRole + 5)) else ""
+                r_df_uuid = str(item0.data(Qt.UserRole + 5)).strip() if _non_empty(item0.data(Qt.UserRole + 5)) else ""
                 r_sf_fid = item0.data(Qt.UserRole + 6)
-                r_sf_uuid = str(item0.data(Qt.UserRole + 7)).strip() if not _is_empty_val(item0.data(Qt.UserRole + 7)) else ""
+                r_sf_uuid = str(item0.data(Qt.UserRole + 7)).strip() if _non_empty(item0.data(Qt.UserRole + 7)) else ""
 
-                if not _is_empty_val(r_sf_fid):
+                if _non_empty(r_sf_fid):
                     r_spatial_fid = r_sf_fid
-                elif not _is_empty_val(r_fid) and _is_empty_val(r_df_fid) and r_fid != r_err_fid:
+                elif _non_empty(r_fid) and not _non_empty(r_df_fid) and r_fid != r_err_fid:
                     r_spatial_fid = r_fid
                 else:
                     r_spatial_fid = None
 
                 if r_spatial_fid is not None:
                     best_rfid = r_spatial_fid
-                elif not _is_empty_val(r_df_fid):
+                elif _non_empty(r_df_fid):
                     best_rfid = r_df_fid
-                elif not _is_empty_val(r_fid):
+                elif _non_empty(r_fid):
                     best_rfid = r_fid
                 else:
                     best_rfid = r_err_fid
@@ -3250,17 +3390,15 @@ class CbmsmvDialog(QDialog):
                 best_ruuid = r_sf_uuid or r_uuid or r_df_uuid
                 is_checked_row = (
                     (r in target_rows_set)
-                    or (not _is_empty_val(r_err_fid) and str(r_err_fid).strip() in target_err_set)
+                    or (_non_empty(r_err_fid) and str(r_err_fid).strip() in target_err_set)
                     or (not target_rows_set and not target_err_set)
                 )
 
-                # Collect namespace-safe candidate keys for matching updated_values
                 col_updates = None
                 fid_candidates = []
-
                 if is_checked_row:
                     fid_candidates.append(f"row_{r}")
-                    if not _is_empty_val(r_err_fid):
+                    if _non_empty(r_err_fid):
                         fid_candidates.append(f"err_{r_err_fid}")
 
                 if r_spatial_fid is not None:
@@ -3268,7 +3406,7 @@ class CbmsmvDialog(QDialog):
                     if sf_uk:
                         fid_candidates.extend([f"sf_{sf_uk}", f"sf_{sf_uk.lower()}", sf_uk, sf_uk.lower()])
                 else:
-                    if not _is_empty_val(r_df_fid):
+                    if _non_empty(r_df_fid):
                         df_uk = make_unique_feature_key(r_df_fid, r_df_uuid or best_ruuid)
                         if df_uk:
                             fid_candidates.extend([f"df_{df_uk}", f"df_{df_uk.lower()}"])
@@ -3281,7 +3419,7 @@ class CbmsmvDialog(QDialog):
                 if is_checked_row and not has_structured_keys:
                     if r_spatial_fid is not None:
                         fid_candidates.extend([r_spatial_fid, str(r_spatial_fid)])
-                    elif not _is_empty_val(best_rfid):
+                    elif _non_empty(best_rfid):
                         fid_candidates.extend([best_rfid, str(best_rfid)])
                     if best_ruuid:
                         fid_candidates.extend([best_ruuid, best_ruuid.lower()])
@@ -3309,8 +3447,10 @@ class CbmsmvDialog(QDialog):
                                 f_idx = layer.fields().indexOf(fname)
                                 if f_idx != -1:
                                     layer.changeAttributeValue(r_err_fid if r_err_fid is not None else r_fid, f_idx, new_text)
-                                # If fname is df_*, buffer into pending JSON edits
-                                if fname.lower().startswith("df_"):
+                                # If fname is df_* or uuid/mapid, buffer into pending JSON edits
+                                fname_l = fname.lower()
+                                is_fix_uuid = fname_l in ("map_uuid", "mapid", "sf_map_uuid", "df_map_uuid", "df_mapid", "uuid")
+                                if fname_l.startswith("df_") or is_fix_uuid:
                                     r_df_fid = c_item.data(Qt.UserRole + 4)
                                     r_df_uuid = c_item.data(Qt.UserRole + 5)
                                     rec_k = f"fid_{r_df_fid}" if r_df_fid is not None else f"uuid_{r_df_uuid or r_uuid}"
@@ -3320,7 +3460,70 @@ class CbmsmvDialog(QDialog):
                                             "uuid": r_df_uuid or r_uuid,
                                             "props": {},
                                         }
-                                    self._pending_json_edits[rec_k]["props"][fname[3:]] = new_text
+                                    if is_fix_uuid:
+                                        self._pending_json_edits[rec_k]["props"]["map_uuid"] = new_text
+                                        self._pending_json_edits[rec_k]["props"]["mapid"] = new_text
+                                        self._pending_json_edits[rec_k]["props"]["df_map_uuid"] = new_text
+                                        self._pending_json_edits[rec_k]["props"]["df_mapid"] = new_text
+                                    else:
+                                        self._pending_json_edits[rec_k]["props"][fname[3:] if fname_l.startswith("df_") else fname] = new_text
+
+                    # Always ensure col_updates for df_* and map_uuid/bsn_geoid/ea_geocode are buffered for CSV persistence
+                    r_df_fid_buf = (
+                        item0.data(Qt.UserRole + 4)
+                        if (item0.data(Qt.UserRole + 4) is not None and str(item0.data(Qt.UserRole + 4)).strip() not in ("", "NULL", "None"))
+                        else item0.data(Qt.UserRole + 2)
+                    )
+                    r_df_uuid_buf = str(item0.data(Qt.UserRole + 5) or r_uuid or "").strip()
+                    rec_k_buf = f"fid_{r_df_fid_buf}" if r_df_fid_buf is not None else f"uuid_{r_df_uuid_buf}"
+                    if r_df_fid_buf is not None or r_df_uuid_buf:
+                        buf_props: Dict[str, str] = {}
+                        for col_k, col_v in col_updates.items():
+                            col_kl = str(col_k).lower()
+                            if col_kl in ("map_uuid", "mapid", "df_map_uuid", "df_mapid", "uuid"):
+                                buf_props["map_uuid"] = str(col_v)
+                                buf_props["mapid"] = str(col_v)
+                                buf_props["df_map_uuid"] = str(col_v)
+                                buf_props["df_mapid"] = str(col_v)
+                            elif col_kl in ("bsn_geoid", "df_bsn_geoid"):
+                                buf_props["bsn_geoid"] = str(col_v)
+                                buf_props["df_bsn_geoid"] = str(col_v)
+                            elif col_kl in ("ea_geocode", "df_ea_geocode"):
+                                buf_props["ea_geocode"] = str(col_v)
+                                buf_props["df_ea_geocode"] = str(col_v)
+                            elif col_kl in ("bsn", "df_bsn", "bsn_code", "df_bsn_code"):
+                                buf_props["bsn"] = str(col_v)
+                                buf_props["df_bsn"] = str(col_v)
+                                buf_props["bsn_code"] = str(col_v)
+                                buf_props["df_bsn_code"] = str(col_v)
+                            elif col_kl in ("region_code", "df_region_code", "reg_code", "df_reg_code"):
+                                buf_props["region_code"] = str(col_v)
+                                buf_props["df_region_code"] = str(col_v)
+                            elif col_kl in ("province_code", "df_province_code"):
+                                buf_props["province_code"] = str(col_v)
+                                buf_props["df_province_code"] = str(col_v)
+                            elif col_kl in ("city_mun_code", "df_city_mun_code"):
+                                buf_props["city_mun_code"] = str(col_v)
+                                buf_props["df_city_mun_code"] = str(col_v)
+                            elif col_kl in ("barangay_code", "df_barangay_code", "barangay__code", "df_barangay__code"):
+                                buf_props["barangay_code"] = str(col_v)
+                                buf_props["df_barangay_code"] = str(col_v)
+                                buf_props["barangay__code"] = str(col_v)
+                                buf_props["df_barangay__code"] = str(col_v)
+                            elif col_kl in ("ean", "df_ean"):
+                                buf_props["ean"] = str(col_v)
+                                buf_props["df_ean"] = str(col_v)
+                            elif col_kl.startswith("df_"):
+                                buf_props[col_k[3:]] = str(col_v)
+                                buf_props[col_k] = str(col_v)
+                        if buf_props:
+                            if rec_k_buf not in self._pending_json_edits:
+                                self._pending_json_edits[rec_k_buf] = {
+                                    "df_fid": r_df_fid_buf,
+                                    "uuid": r_df_uuid_buf,
+                                    "props": {},
+                                }
+                            self._pending_json_edits[rec_k_buf]["props"].update(buf_props)
 
                     # Uncheck row after successful fix
                     item0.setCheckState(Qt.Unchecked)
@@ -3353,8 +3556,7 @@ class CbmsmvDialog(QDialog):
             )
             return
 
-        if hasattr(self, "_mark_unsaved_table_edit"):
-            self._mark_unsaved_table_edit()
+        getattr(self, "_mark_unsaved_table_edit", lambda: None)()
         self.lbl_footer_status.setText(
             f"Fixed {fixed_count} record(s) for '{val_id}'. Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo."
         )
@@ -3397,7 +3599,7 @@ class CbmsmvDialog(QDialog):
             prompt_confirm=prompt_confirm,
             target_status=target_status,
         )
-        self._update_save_discard_ui_state()
+        getattr(self, "_update_save_discard_ui_state", lambda: None)()
 
     def _sync_feature_status(
         self,
@@ -3415,7 +3617,7 @@ class CbmsmvDialog(QDialog):
             map_uuid=map_uuid,
             new_status=new_status,
         )
-        self._update_save_discard_ui_state()
+        getattr(self, "_update_save_discard_ui_state", lambda: None)()
 
     # -----------------------------------------------------------------------
     # Process: Unsaved Dirty State & Contextual Save/Discard Synchronization
@@ -3444,7 +3646,7 @@ class CbmsmvDialog(QDialog):
     def _on_watched_layer_dirty_changed(self, *args, **kwargs) -> None:
         """Slot called whenever a watched QGIS layer's edit buffer state changes."""
         if is_valid_qobject(self):
-            self._update_save_discard_ui_state()
+            getattr(self, "_update_save_discard_ui_state", lambda: None)()
 
     def _has_unsaved_changes(self) -> bool:
         """Return True if any in-memory table, Form 2, or QGIS layer buffer has unsaved edits."""
@@ -3477,7 +3679,7 @@ class CbmsmvDialog(QDialog):
     def _mark_unsaved_table_edit(self) -> None:
         """Mark that an in-memory table or fix edit occurred and refresh Save/Discard buttons."""
         self._has_unsaved_table_edits = True
-        self._update_save_discard_ui_state()
+        getattr(self, "_update_save_discard_ui_state", lambda: None)()
 
     def _update_save_discard_ui_state(self) -> None:
         """Show/hide contextual Discard button and enable/disable Save Changes across all result tabs."""
@@ -3560,7 +3762,7 @@ class CbmsmvDialog(QDialog):
                 break
 
         uuid_idx = None
-        for target in ("map_uuid", "df_map_uuid"):
+        for target in ("mapid", "df_mapid", "map_uuid", "df_map_uuid", "uuid", "df_uuid"):
             if target in header_lower:
                 uuid_idx = header_lower.index(target)
                 break
@@ -3620,6 +3822,47 @@ class CbmsmvDialog(QDialog):
                         if h == clean_p or h == clean_df_p:
                             col_idx = idx
                             break
+                        # Map map_uuid / mapid to CSV column headers
+                        if clean_p in ("map_uuid", "mapid", "uuid", "df_map_uuid", "df_mapid"):
+                            if h in ("mapid", "df_mapid", "map_uuid", "df_map_uuid", "uuid"):
+                                col_idx = idx
+                                break
+                        # Map bsn_geoid / df_bsn_geoid to CSV column headers
+                        if clean_p in ("bsn_geoid", "df_bsn_geoid"):
+                            if h in ("bsn_geoid", "df_bsn_geoid"):
+                                col_idx = idx
+                                break
+                        # Map ea_geocode / df_ea_geocode to CSV column headers
+                        if clean_p in ("ea_geocode", "df_ea_geocode"):
+                            if h in ("ea_geocode", "df_ea_geocode"):
+                                col_idx = idx
+                                break
+                        # Map bsn / df_bsn / bsn_code to CSV column headers
+                        if clean_p in ("bsn", "df_bsn", "bsn_code", "df_bsn_code"):
+                            if h in ("bsn", "df_bsn", "bsn_code", "df_bsn_code"):
+                                col_idx = idx
+                                break
+                        # Map region_code / df_region_code / reg_code to CSV column headers
+                        if clean_p in ("region_code", "df_region_code", "reg_code", "df_reg_code"):
+                            if h in ("region_code", "df_region_code", "reg_code", "df_reg_code"):
+                                col_idx = idx
+                                break
+
+                    # If column does not exist in CSV header, append it dynamically
+                    if col_idx is None:
+                        if clean_p in ("bsn_geoid", "df_bsn_geoid"):
+                            header.append("bsn_geoid")
+                            header_lower.append("bsn_geoid")
+                            col_idx = len(header) - 1
+                            for r_item in rows:
+                                r_item.append("")
+                        elif clean_p in ("ea_geocode", "df_ea_geocode"):
+                            header.append("ea_geocode")
+                            header_lower.append("ea_geocode")
+                            col_idx = len(header) - 1
+                            for r_item in rows:
+                                r_item.append("")
+
                     if col_idx is not None:
                         actual_col_name = header[col_idx]
                         row[col_idx] = str(new_val) if new_val is not None else ""
@@ -3737,7 +3980,7 @@ class CbmsmvDialog(QDialog):
                         candidate = records[idx]
                         c_props = candidate.get("properties", candidate) if isinstance(candidate, dict) else candidate
                         if isinstance(c_props, dict):
-                            c_uuid = str(c_props.get("map_uuid") or c_props.get("df_map_uuid") or "").strip()
+                            c_uuid = str(c_props.get("map_uuid") or c_props.get("df_map_uuid") or c_props.get("mapid") or c_props.get("df_mapid") or c_props.get("uuid") or "").strip()
                             if not t_uuid or not c_uuid or c_uuid == t_uuid:
                                 target_rec = candidate
                 except (ValueError, TypeError):
@@ -3759,7 +4002,7 @@ class CbmsmvDialog(QDialog):
                     if target_rec is not None:
                         break
 
-            # 3. Match by map_uuid
+            # 3. Match by map_uuid or mapid
             if target_rec is None and t_uuid:
                 for rec in records:
                     if not isinstance(rec, dict):
@@ -3768,7 +4011,7 @@ class CbmsmvDialog(QDialog):
                     if not isinstance(c_props, dict):
                         continue
                     for k, v in c_props.items():
-                        if str(k).strip().lower() in ("map_uuid", "df_map_uuid") and str(v).strip() == t_uuid:
+                        if str(k).strip().lower() in ("map_uuid", "df_map_uuid", "mapid", "df_mapid", "uuid") and str(v).strip() == t_uuid:
                             target_rec = rec
                             break
                     if target_rec is not None:
@@ -3789,6 +4032,11 @@ class CbmsmvDialog(QDialog):
                     if not matched_key:
                         for existing_k in target_dict.keys():
                             if existing_k == f"df_{prop_name}" or existing_k.lower() == f"df_{prop_name}".lower():
+                                matched_key = existing_k
+                                break
+                    if not matched_key and prop_name.lower() in ("map_uuid", "mapid", "df_map_uuid", "df_mapid", "uuid"):
+                        for existing_k in target_dict.keys():
+                            if existing_k.lower() in ("map_uuid", "mapid", "df_map_uuid", "df_mapid", "uuid"):
                                 matched_key = existing_k
                                 break
 
@@ -3873,14 +4121,29 @@ class CbmsmvDialog(QDialog):
         """
         # Ensure any active cell editor in the table commits its value
         focus_w = QApplication.focusWidget()
-        if focus_w and isinstance(focus_w, QLineEdit) and focus_w.parent():
-            p = focus_w.parent()
-            if isinstance(p, QTableWidget):
-                p.clearFocus()
-                p.setFocus()
-            elif p.parent() and isinstance(p.parent(), QTableWidget):
-                p.parent().clearFocus()
-                p.parent().setFocus()
+        if focus_w:
+            if isinstance(focus_w, QLineEdit):
+                parent_table = None
+                curr = focus_w.parent() if hasattr(focus_w, "parent") else None
+                for _ in range(32):
+                    if not curr:
+                        break
+                    if isinstance(curr, QTableWidget):
+                        parent_table = curr
+                        break
+                    curr = curr.parent() if hasattr(curr, "parent") else None
+                if parent_table:
+                    parent_table.setFocus()
+            focus_w.clearFocus()
+
+        if hasattr(self, "results_tab_widget"):
+            try:
+                cur_tab = self.results_tab_widget.currentWidget()
+                if cur_tab:
+                    for tbl in cur_tab.findChildren(QTableWidget):
+                        tbl.setCurrentCell(-1, -1)
+            except Exception:
+                pass
 
         main_layer = self._get_or_load_main_building_layer()
         geojson_saved = False
@@ -3911,7 +4174,12 @@ class CbmsmvDialog(QDialog):
         form2_saved = False
         form2_updated_count = 0
         form2_path = self.file_form2.filePath().strip() if hasattr(self, "file_form2") else ""
-        form2_layer = self._find_existing_form2_layer() if hasattr(self, "_find_existing_form2_layer") else None
+        if isinstance(self, CbmsmvDialog) or "_find_existing_form2_layer" in getattr(self, "__dict__", {}):
+            form2_layer = self._find_existing_form2_layer()
+        else:
+            form2_layer = None
+        if form2_layer is None and "_get_or_load_form2_layer" in getattr(self, "__dict__", {}):
+            form2_layer = self._get_or_load_form2_layer()
 
         if form2_path.lower().endswith(".csv"):
             if self._pending_json_edits:
@@ -4000,7 +4268,7 @@ class CbmsmvDialog(QDialog):
                         except Exception:
                             pass
         self._has_unsaved_table_edits = False
-        self._update_save_discard_ui_state()
+        getattr(self, "_update_save_discard_ui_state", lambda: None)()
 
         # 4. Determine validation ID to re-run
         val_id = target_val_id
@@ -4023,9 +4291,16 @@ class CbmsmvDialog(QDialog):
                         val_id = r["id"]
                         break
 
-        # 5. Re-run validation check if a valid val_id is active
+        # 5. Re-run validation check if a valid val_id is active (skip when dialog is closing)
+        if getattr(self, "_is_closing", False):
+            return True
+
         if val_id:
-            self._rerun_validation_check(val_id, saved_msg=saved_msg)
+            self._rerun_validation_check(
+                val_id,
+                saved_msg=saved_msg,
+                trigger_full_rerun_on_clean=True,
+            )
         else:
             self.lbl_footer_status.setText(saved_msg)
             QMessageBox.information(
@@ -4034,7 +4309,7 @@ class CbmsmvDialog(QDialog):
                 saved_msg,
             )
 
-        self._update_save_discard_ui_state()
+        getattr(self, "_update_save_discard_ui_state", lambda: None)()
         return True
 
     def _save_main_layer_changes(self):
@@ -4051,7 +4326,7 @@ class CbmsmvDialog(QDialog):
         if not self._has_unsaved_changes():
             if hasattr(self, "lbl_footer_status") and self.lbl_footer_status:
                 self.lbl_footer_status.setText("There are no unsaved changes to save.")
-            self._update_save_discard_ui_state()
+            getattr(self, "_update_save_discard_ui_state", lambda: None)()
             return False
 
         reply = QMessageBox.question(
@@ -4075,7 +4350,7 @@ class CbmsmvDialog(QDialog):
             return False
 
         if not self._has_unsaved_changes():
-            self._update_save_discard_ui_state()
+            getattr(self, "_update_save_discard_ui_state", lambda: None)()
             return False
 
         reply = QMessageBox.question(
@@ -4141,7 +4416,12 @@ class CbmsmvDialog(QDialog):
                 pass
 
         # 2. Roll back Form 2 layer edits if active
-        form2_layer = self._find_existing_form2_layer() if hasattr(self, "_find_existing_form2_layer") else None
+        if isinstance(self, CbmsmvDialog) or "_find_existing_form2_layer" in getattr(self, "__dict__", {}):
+            form2_layer = self._find_existing_form2_layer()
+        else:
+            form2_layer = None
+        if form2_layer is None and "_get_or_load_form2_layer" in getattr(self, "__dict__", {}):
+            form2_layer = self._get_or_load_form2_layer()
         if form2_layer and form2_layer.isValid() and form2_layer.isEditable():
             try:
                 form2_layer.rollBack()
@@ -4164,7 +4444,7 @@ class CbmsmvDialog(QDialog):
         # 4. Clear pending in-memory Form 2 edits and table dirty flag
         self._pending_json_edits.clear()
         self._has_unsaved_table_edits = False
-        self._update_save_discard_ui_state()
+        getattr(self, "_update_save_discard_ui_state", lambda: None)()
 
         # 5. Refresh map canvas
         if self.iface and self.iface.mapCanvas():
@@ -4208,9 +4488,16 @@ class CbmsmvDialog(QDialog):
         except Exception:
             pass
 
+        if getattr(self, "_is_closing", False):
+            return True
+
         discard_msg = "Changes discarded. The files are back to how they were."
         if val_id:
-            self._rerun_validation_check(val_id, saved_msg=discard_msg)
+            self._rerun_validation_check(
+                val_id,
+                saved_msg=discard_msg,
+                trigger_full_rerun_on_clean=False,
+            )
         else:
             self.lbl_footer_status.setText(discard_msg)
             QMessageBox.information(
@@ -4219,13 +4506,18 @@ class CbmsmvDialog(QDialog):
                 "All unsaved changes were undone.",
             )
 
-        self._update_save_discard_ui_state()
+        getattr(self, "_update_save_discard_ui_state", lambda: None)()
         return True
 
     # -----------------------------------------------------------------------
     # Process: Single-Check Validation Re-run & Live Refresh
     # -----------------------------------------------------------------------
-    def _rerun_validation_check(self, val_id: str, saved_msg: str = ""):
+    def _rerun_validation_check(
+        self,
+        val_id: str,
+        saved_msg: str = "",
+        trigger_full_rerun_on_clean: bool = False,
+    ):
         """
         Execute a single validation rule using fresh disk data and update its
         corresponding tab in the Results Workspace as well as the Summary Overview.
@@ -4309,6 +4601,37 @@ class CbmsmvDialog(QDialog):
             new_count = 0
             out_layer = QgsVectorLayer("none", val_id, "memory")
 
+        # If saving resolved all remaining issues for this rule, re-run full validation
+        # so the Summary Overview reflects updated counts across all enabled checks.
+        if new_count == 0 and trigger_full_rerun_on_clean:
+            if getattr(self, "_active_review_dock", None):
+                dock = self._active_review_dock
+                if getattr(dock, "val_id", None) in (None, val_id):
+                    self._active_review_dock = None
+                    try:
+                        try:
+                            dock.dock_closed.disconnect(self._on_review_dock_closed)
+                        except Exception:
+                            pass
+                        dock.parent_dialog = None
+                        dock.close()
+                    except Exception:
+                        pass
+
+            self._log_success(
+                f"'{val_id}' re-run complete: 0 flagged issues! Re-running full validation to refresh summary..."
+            )
+            self.lbl_footer_status.setText(
+                f"'{val_id}' has 0 remaining issues. Re-running full validation to update summary..."
+            )
+            QApplication.processEvents()
+            self.run_validation(
+                auto_rerun=True,
+                resolved_val_id=val_id,
+                saved_msg=saved_msg,
+            )
+            return
+
         # Update result layers dictionary
         self._result_layers[val_id] = {
             "layer": out_layer,
@@ -4365,7 +4688,7 @@ class CbmsmvDialog(QDialog):
         # Update Results Workspace (rebuilds Two-tier Category Tabs & Summary Scorecard, then jumps to check)
         self._populate_results_workspace(self._execution_summary, self._result_layers)
         self._jump_to_result_tab(val_id)
-        self._update_save_discard_ui_state()
+        getattr(self, "_update_save_discard_ui_state", lambda: None)()
 
         # User feedback
         if new_count == 0:
@@ -4513,15 +4836,11 @@ class CbmsmvDialog(QDialog):
         if combo_actions:
             combo_actions.setItemText(0, "Actions")
         if btn_update_selected:
-            is_dup_action = bool(
-                combo_actions
-                and (
-                    combo_actions.currentData(Qt.UserRole) == "deduplicate_features"
-                    or "duplicate" in combo_actions.currentText().lower()
-                )
+            is_dedup_selected = bool(
+                combo_actions and str(combo_actions.currentData(Qt.UserRole) or "") == "deduplicate_features"
             )
             btn_update_selected.setText(f"Apply Fix Action ({checked_count})" if checked_count > 0 else "Apply Fix Action")
-            btn_update_selected.setEnabled(checked_count > 0 or is_dup_action)
+            btn_update_selected.setEnabled(checked_count > 0 or is_dedup_selected)
 
         # Trigger canvas zoom and feature flash
         self._on_table_row_clicked(layer, table, row_idx)
@@ -4615,24 +4934,7 @@ class CbmsmvDialog(QDialog):
                         self._connect_layer_dirty_signals(layer)
                         return layer
 
-        # 2. Search existing project layers by geometry and key fields
-        for layer in proj.mapLayers().values():
-            if isinstance(layer, QgsVectorLayer) and layer.isValid():
-                is_point = False
-                try:
-                    is_point = (layer.geometryType() == QgsWkbTypes.PointGeometry)
-                except Exception:
-                    try:
-                        is_point = (layer.geometryType() == Qgis.GeometryType.Point)
-                    except Exception:
-                        pass
-                if is_point:
-                    fnames = [f.name().lower() for f in layer.fields()]
-                    if "sf_map_uuid" in fnames or "map_uuid" in fnames:
-                        self._connect_layer_dirty_signals(layer)
-                        return layer
-
-        # 3. Load from points_path if file exists
+        # 2. Load from points_path if file exists on disk
         if points_path and os.path.exists(points_path):
             try:
                 layer_name = f"Building Points ({os.path.basename(points_path)})"
@@ -4647,6 +4949,25 @@ class CbmsmvDialog(QDialog):
                     return pt_layer
             except Exception as exc:
                 self._log_error(f"Error loading building points layer: {exc}")
+
+        # 3. Fallback: Search existing persistent project layers by geometry and key fields (excluding memory/error layers)
+        for layer in proj.mapLayers().values():
+            if isinstance(layer, QgsVectorLayer) and layer.isValid():
+                if layer.providerType() == "memory":
+                    continue
+                is_point = False
+                try:
+                    is_point = (layer.geometryType() == QgsWkbTypes.PointGeometry)
+                except Exception:
+                    try:
+                        is_point = (layer.geometryType() == Qgis.GeometryType.Point)
+                    except Exception:
+                        pass
+                if is_point:
+                    fnames = [f.name().lower() for f in layer.fields()]
+                    if "sf_map_uuid" in fnames or "map_uuid" in fnames:
+                        self._connect_layer_dirty_signals(layer)
+                        return layer
 
         if is_valid_qobject(self):
             QMessageBox.warning(
@@ -4800,7 +5121,7 @@ class CbmsmvDialog(QDialog):
         """Slot triggered when review dock is closed."""
         self._active_review_dock = None
         if is_valid_qobject(self):
-            self._update_save_discard_ui_state()
+            getattr(self, "_update_save_discard_ui_state", lambda: None)()
             try:
                 if getattr(self, "_is_docked", False) and self._dock_widget:
                     self._dock_widget.show()
@@ -4837,15 +5158,20 @@ class CbmsmvDialog(QDialog):
                     self._dock_widget.setWidget(None)
 
             self._central_container.setParent(self)
+            self._central_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            self._central_container.setMinimumSize(0, 0)
+            self._central_container.setMaximumSize(16777215, 16777215)
+            self._central_container.setGeometry(self.rect())
             if hasattr(self, "_dialog_layout") and self._dialog_layout:
-                if self._dialog_layout.indexOf(self._central_container) == -1:
-                    self._dialog_layout.addWidget(self._central_container)
+                self._dialog_layout.removeWidget(self._central_container)
+                self._dialog_layout.addWidget(self._central_container, 1)
+                self._dialog_layout.activate()
             self._central_container.setVisible(True)
             self._central_container.show()
             if self._central_container.layout():
                 self._central_container.layout().activate()
-            if hasattr(self, "_dialog_layout") and self._dialog_layout:
-                self._dialog_layout.activate()
+            self._central_container.updateGeometry()
+            self._central_container.update()
         except Exception:
             pass
 
@@ -4874,6 +5200,8 @@ class CbmsmvDialog(QDialog):
             # Reparent central container to dock widget
             self._dialog_layout.removeWidget(self._central_container)
             self._central_container.setParent(self._dock_widget)
+            self._central_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            self._central_container.setMinimumSize(0, 0)
             self._dock_widget.setWidget(self._central_container)
             self._central_container.setVisible(True)
             self._central_container.show()
@@ -4890,10 +5218,9 @@ class CbmsmvDialog(QDialog):
 
             self._is_docked = True
             if hasattr(self, "btn_dock"):
-                self.btn_dock.setText("Undock Window")
+                self.btn_dock.setText("Switch to Window Mode")
                 self.btn_dock.setToolTip("Undock to a floating standalone window (Ctrl+D)")
             self.settings.setValue("cbms_mv/is_docked", True)
-            #self.lbl_footer_status.setText("Docked at bottom of QGIS workspace.")
         finally:
             self._is_switching_dock = False
 
@@ -4914,19 +5241,31 @@ class CbmsmvDialog(QDialog):
             if hasattr(self, "main_stack") and self.main_stack.currentWidget():
                 self.main_stack.currentWidget().show()
                 self.main_stack.currentWidget().setVisible(True)
+                if self.main_stack.currentWidget().layout():
+                    self.main_stack.currentWidget().layout().activate()
                 self.main_stack.show()
 
             self._is_docked = False
             if hasattr(self, "btn_dock"):
-                self.btn_dock.setText("Dock at Bottom")
+                self.btn_dock.setText("Switch to Dock Mode")
                 self.btn_dock.setToolTip("Dock this window at the bottom of the QGIS interface (like Attribute Table) (Ctrl+D)")
 
             self.showNormal()
             self.raise_()
             self.activateWindow()
+            if hasattr(self, "_central_container") and is_valid_qobject(self._central_container):
+                self._central_container.setGeometry(self.rect())
+                if self._central_container.layout():
+                    self._central_container.layout().activate()
+            self.updateGeometry()
             self.update()
+            if self._dialog_layout:
+                self._dialog_layout.activate()
+            if self._central_container and self._central_container.layout():
+                self._central_container.layout().activate()
             self.settings.setValue("cbms_mv/is_docked", False)
-            #self.lbl_footer_status.setText("Undocked as floating window.")
+            if hasattr(self, "lbl_footer_status") and self.lbl_footer_status:
+                self.lbl_footer_status.setText("")
         finally:
             self._is_switching_dock = False
 
@@ -4944,16 +5283,85 @@ class CbmsmvDialog(QDialog):
             return
         if getattr(self, "_is_switching_dock", False) or getattr(self, "_is_closing", False):
             return
-        if floating:
-            self.lbl_footer_status.setText("Floating dock window.")
-        else:
-            self.lbl_footer_status.setText("Docked in QGIS workspace.")
+        # If the tool is currently in standalone dialog mode (undocked), ignore dock widget signals
+        if not getattr(self, "_is_docked", False):
+            return
+        try:
+            if hasattr(self, "_central_container") and is_valid_qobject(self._central_container):
+                self._central_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                self._central_container.setMinimumSize(0, 0)
+                if self._central_container.layout():
+                    self._central_container.layout().activate()
+                self._central_container.updateGeometry()
+                self._central_container.update()
+            if self._dock_widget and is_valid_qobject(self._dock_widget):
+                w = self._dock_widget.widget()
+                if w and is_valid_qobject(w):
+                    w.setGeometry(self._dock_widget.rect())
+                    if w.layout():
+                        w.layout().activate()
+        except Exception:
+            pass
+        if hasattr(self, "lbl_footer_status") and self.lbl_footer_status:
+            if floating:
+                self.lbl_footer_status.setText(" ")
+            else:
+                self.lbl_footer_status.setText(" ")
+
+    def resizeEvent(self, event):
+        """Ensure child layout and stacked widgets recalibrate dimensions on dialog resize."""
+        super().resizeEvent(event)
+        try:
+            if hasattr(self, "_central_container") and is_valid_qobject(self._central_container):
+                self._central_container.setGeometry(self.rect())
+                if self._central_container.layout():
+                    self._central_container.layout().activate()
+                self._central_container.updateGeometry()
+            if hasattr(self, "main_stack") and is_valid_qobject(self.main_stack):
+                if self.main_stack.layout():
+                    self.main_stack.layout().activate()
+                cur = self.main_stack.currentWidget()
+                if cur and is_valid_qobject(cur):
+                    if cur.layout():
+                        cur.layout().activate()
+                    cur.updateGeometry()
+            if hasattr(self, "results_tab_widget") and is_valid_qobject(self.results_tab_widget):
+                cur_tab = self.results_tab_widget.currentWidget()
+                if cur_tab and is_valid_qobject(cur_tab) and cur_tab.layout():
+                    cur_tab.layout().activate()
+            if hasattr(self, "_dialog_layout") and self._dialog_layout:
+                self._dialog_layout.activate()
+        except Exception:
+            pass
+
+    def changeEvent(self, event):
+        """Handle window state changes (e.g. Maximized, Normalized) and recalibrate layout."""
+        super().changeEvent(event)
+        try:
+            if event.type() == QEvent.WindowStateChange:
+                if hasattr(self, "_central_container") and is_valid_qobject(self._central_container):
+                    self._central_container.setGeometry(self.rect())
+                    if self._central_container.layout():
+                        self._central_container.layout().activate()
+                    self._central_container.updateGeometry()
+                if hasattr(self, "_dialog_layout") and self._dialog_layout:
+                    self._dialog_layout.activate()
+        except Exception:
+            pass
 
     def showEvent(self, event):
         """Re-check theme when dialog is shown, update styling if changed, and sync load inputs checkbox default."""
         if not is_valid_qobject(self):
             return
         super().showEvent(event)
+        try:
+            if hasattr(self, "_central_container") and is_valid_qobject(self._central_container):
+                self._central_container.setGeometry(self.rect())
+                if self._central_container.layout():
+                    self._central_container.layout().activate()
+                self._central_container.updateGeometry()
+        except Exception:
+            pass
         try:
             if not getattr(self, "_user_toggled_load_inputs", False) and not getattr(self, "_is_switching_dock", False):
                 self._update_load_inputs_default()
@@ -6234,11 +6642,12 @@ class CbmsmvDialog(QDialog):
     # Form Reset
     # -----------------------------------------------------------------------
     def _reset_form(self):
-        """Reset inputs, table selections, and results to defaults."""
+        """Reset inputs, table selections, and results to defaults after user confirmation."""
         reply = QMessageBox.question(
             self,
             "Reset Form",
-            "Are you sure you want to reset the form?\n\nThis will clear all current inputs, rule selections, and validation results.",
+            "Are you sure you want to reset the form?\n\n"
+            "This will clear all selected input files, validation results, and reset rule selections.",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -6262,7 +6671,7 @@ class CbmsmvDialog(QDialog):
         self._execution_summary.clear()
         if hasattr(self, "results_tab_widget"):
             self.results_tab_widget.clear()
-        self._update_save_discard_ui_state()
+        getattr(self, "_update_save_discard_ui_state", lambda: None)()
         if hasattr(self, "results_stack"):
             self.results_stack.setCurrentIndex(0)
         self._on_inputs_changed()
@@ -6477,7 +6886,13 @@ class CbmsmvDialog(QDialog):
     # -----------------------------------------------------------------------
     # Execution Logic: Iterating Selected Algorithms
     # -----------------------------------------------------------------------
-    def run_validation(self):
+    def run_validation(
+        self,
+        checked: bool = False,
+        auto_rerun: bool = False,
+        resolved_val_id: Optional[str] = None,
+        saved_msg: str = "",
+    ):
         """
         Execute the validation pipeline by iterating through the enabled
         algorithms in gmd_scripts/cbms_mv and passing the three standardized
@@ -6550,28 +6965,30 @@ class CbmsmvDialog(QDialog):
         # 3. Check Base Layer dependency
         rules_requiring_base = [r for r in selected_rules if r["has_base"]]
         if rules_requiring_base and (not base_path or not os.path.exists(base_path)):
-            rule_list = "\n".join(f"  • [{r['id']}] {r['name']}" for r in rules_requiring_base)
-            reply = QMessageBox.question(
-                self,
-                "Base Layers File Missing",
-                f"These {len(rules_requiring_base)} check(s) need the Base Layers file:\n\n"
-                f"{rule_list}\n\n"
-                f"Do you want to continue and skip these {len(rules_requiring_base)} check(s)?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if reply == QMessageBox.No:
-                self._switch_to_config(0)
-                return
+            if not auto_rerun:
+                rule_list = "\n".join(f"  • [{r['id']}] {r['name']}" for r in rules_requiring_base)
+                reply = QMessageBox.question(
+                    self,
+                    "Base Layers File Missing",
+                    f"These {len(rules_requiring_base)} check(s) need the Base Layers file:\n\n"
+                    f"{rule_list}\n\n"
+                    f"Do you want to continue and skip these {len(rules_requiring_base)} check(s)?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No,
+                )
+                if reply == QMessageBox.No:
+                    self._switch_to_config(0)
+                    return
 
             selected_rules = [r for r in selected_rules if not r["has_base"]]
             if not selected_rules:
-                QMessageBox.warning(
-                    self,
-                    "No Checks to Run",
-                    "All selected checks need the Base Layers file. Please choose the Base Layers file to continue.",
-                )
-                self._switch_to_config(0)
+                if not auto_rerun:
+                    QMessageBox.warning(
+                        self,
+                        "No Checks to Run",
+                        "All selected checks need the Base Layers file. Please choose the Base Layers file to continue.",
+                    )
+                    self._switch_to_config(0)
                 return
 
         # 4. Switch to Execution Logs tab and initialize session
@@ -6795,7 +7212,7 @@ class CbmsmvDialog(QDialog):
             self._has_unsaved_table_edits = False
         self._execution_summary = execution_summary
         self._populate_results_workspace(execution_summary, self._result_layers)
-        self._update_save_discard_ui_state()
+        getattr(self, "_update_save_discard_ui_state", lambda: None)()
         self._switch_to_results()
 
         # Generate summary audit report file if selected
@@ -6841,3 +7258,26 @@ class CbmsmvDialog(QDialog):
                 self._log_warning(f"Could not write audit report file: {r_exc}")
 
         self.lbl_footer_status.setText(f"Validation complete • {total_flagged_issues:,} issue(s) flagged")
+
+        if auto_rerun:
+            msg_lines = []
+            if saved_msg:
+                msg_lines.append(saved_msg)
+            if resolved_val_id:
+                msg_lines.append(
+                    f"All issues for '{resolved_val_id}' are now resolved (0 remaining)."
+                )
+            if total_flagged_issues == 0:
+                msg_lines.append(
+                    "Full validation was re-run: 0 issues remaining across all enabled checks."
+                )
+            else:
+                msg_lines.append(
+                    f"Full validation was re-run to update the summary:\n"
+                    f"{total_flagged_issues:,} total issue(s) remaining across {total_output_layers} check(s)."
+                )
+            QMessageBox.information(
+                self,
+                "All Issues Resolved — Summary Updated",
+                "\n\n".join(msg_lines),
+            )

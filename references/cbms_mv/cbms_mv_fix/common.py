@@ -200,9 +200,9 @@ def _flatten_ids(item: Any) -> set:
             if k in item and not isinstance(item[k], (dict, list, set, tuple)):
                 res.update(_flatten_ids(item[k]))
     else:
-        res.add(item)
         s = str(item).strip()
-        if s and not s.startswith(("<", "Mock")):
+        if s and s.lower() not in ("none", "null", "nan") and not s.startswith(("<", "Mock")):
+            res.add(item)
             res.add(s)
             res.add(s.lower())
     return res

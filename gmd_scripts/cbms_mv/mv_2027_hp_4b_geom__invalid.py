@@ -27,7 +27,7 @@ from .. import gmdhelpers
 
 
 
-TARGET_FIELDS = ["sf_longitude", "sf_latitude"]
+TARGET_FIELDS = ["sf_longitude", "sf_latitude", "x_geometry", "y_geometry"]
 SUGGESTED_FIX = ["copy_geometry_to_coordinates", "generate_point_geometry"]
 
 class mv_2027_hp_4b_geom__invalid(QgsProcessingAlgorithm):
@@ -51,8 +51,8 @@ class mv_2027_hp_4b_geom__invalid(QgsProcessingAlgorithm):
 
     def shortHelpString(self) -> str:
         return (
-            "List of geotagged points with mismatched values in the geometry and Longitude and Latitude columns. \n \n"
-            "Values in the geometry of the geotagged points should be identical to the values in the Longitude and Latitude columns.\n"
+            "List of geotagged points with mismatched values in the geometry and Longitude and Latitude columns \n \n"
+            "Values in the geometry of the geotagged points should be identical to the values in the Longitude and Latitude columns\n"
         )
 
     def initAlgorithm(self, config: Optional[Dict[str, Any]] = None):
@@ -109,7 +109,54 @@ class mv_2027_hp_4b_geom__invalid(QgsProcessingAlgorithm):
             "native:extractbyexpression",
             {
                 "INPUT": geojson_data,
-                "EXPRESSION": "geometry_type( $geometry) != 'Point' OR round($X,7) != round(\"sf_longitude\",7) OR round($Y,7) != round(\"sf_latitude\",7)",
+                "EXPRESSION": (
+                    "is_empty_or_null($geometry) "
+                    "OR geometry_type($geometry) != 'Point' "
+                    'OR try(to_real("sf_longitude")) IS NULL '
+                    'OR try(to_real("sf_latitude")) IS NULL '
+                    'OR round(coalesce($x, x(centroid($geometry))), 7) != round(try(to_real("sf_longitude")), 7) '
+                    'OR round(coalesce($y, y(centroid($geometry))), 7) != round(try(to_real("sf_latitude")), 7)'
+                ),
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+
+        layer_with_x = processing.run(
+            "native:fieldcalculator",
+            {
+                "INPUT": filtered_layer,
+                "FIELD_NAME": "x_geometry",
+                "FIELD_TYPE": 2,  # String
+                "FIELD_LENGTH": 50,
+                "FIELD_PRECISION": 0,
+                "FORMULA": (
+                    "CASE "
+                    "WHEN is_empty_or_null($geometry) THEN 'No Geometry' "
+                    "ELSE coalesce(to_string($x), to_string(x(centroid($geometry))), 'No Geometry') "
+                    "END"
+                ),
+                "OUTPUT": "memory:",
+            },
+            context=context,
+            feedback=feedback,
+        )["OUTPUT"]
+
+        layer_with_xy = processing.run(
+            "native:fieldcalculator",
+            {
+                "INPUT": layer_with_x,
+                "FIELD_NAME": "y_geometry",
+                "FIELD_TYPE": 2,  # String
+                "FIELD_LENGTH": 50,
+                "FIELD_PRECISION": 0,
+                "FORMULA": (
+                    "CASE "
+                    "WHEN is_empty_or_null($geometry) THEN 'No Geometry' "
+                    "ELSE coalesce(to_string($y), to_string(y(centroid($geometry))), 'No Geometry') "
+                    "END"
+                ),
                 "OUTPUT": "memory:",
             },
             context=context,
@@ -117,8 +164,8 @@ class mv_2027_hp_4b_geom__invalid(QgsProcessingAlgorithm):
         )["OUTPUT"]
 
         final_output = gmdhelpers.select_mv(
-            filtered_layer,
-            ["sf_longitude", "sf_latitude"],
+            layer_with_xy,
+            ["sf_longitude", "sf_latitude", "x_geometry", "y_geometry"],
             context=context,
             feedback=feedback,
         )
