@@ -14,6 +14,11 @@ from .copy_geometry_to_coordinates_fix import copy_geometry_to_coordinates, run_
 from .update_datafile_coordinates_fix import update_datafile_coordinates, run_fix as _run_update_coord_fix
 from .update_point_geometry_fix import update_point_geometry, run_fix as _run_update_geom_fix
 from .common import is_valid_qobject, make_unique_feature_key
+from ..cbms_mv_targets import (
+    CBMS_MV_FIX_ACTIONS,
+    normalize_fix_action_id,
+    resolve_suggested_fixes,
+)
 
 _DIRECT_FIX_MAP = {
     "concatenate_ea_geocode": _run_ea_fix,
@@ -94,4 +99,7 @@ __all__ = [
     "has_fix",
     "is_valid_qobject",
     "make_unique_feature_key",
+    "CBMS_MV_FIX_ACTIONS",
+    "normalize_fix_action_id",
+    "resolve_suggested_fixes",
 ]

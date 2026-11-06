@@ -33,6 +33,7 @@ except (ImportError, ValueError):
 
 
 TARGET_FIELDS = ["sf_longitude", "sf_latitude"]
+SUGGESTED_FIX = ["copy_geometry_to_coordinates", "delete_selected_features"]
 
 class mv_2027_hp_4a_longitude__invalid(QgsProcessingAlgorithm):
 

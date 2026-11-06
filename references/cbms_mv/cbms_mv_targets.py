@@ -5,11 +5,90 @@ Resolves target fields defined directly in algorithm scripts (via TARGET_FIELDS)
 against actual layer attribute columns for UI highlighting, focus chips,
 auto-scrolling, and Review Dock guidance.
 """
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import re
 
 # Optional dictionary for legacy / external overrides if needed
 CBMS_MV_RULE_TARGET_FIELDS: Dict[str, List[str]] = {}
+
+# Canonical Fix Actions Registry for 2027 CBMS Map Validation
+CBMS_MV_FIX_ACTIONS: Dict[str, Dict[str, Any]] = {
+    "concatenate_ea_geocode": {
+        "label": "Concatenate the ea_geocode",
+        "icon": "mActionCalculateField.svg",
+        "aliases": ["concat_ea_geocode", "ea_geocode"],
+    },
+    "concatenate_bsn_geoid": {
+        "label": "Concatenate the bsn_geoid",
+        "icon": "mActionCalculateField.svg",
+        "aliases": ["concat_bsn_geoid", "bsn_geoid"],
+    },
+    "generate_point_geometry": {
+        "label": "Generate point geometry",
+        "icon": "mActionAddPtSymbol.svg",
+        "aliases": ["generate_point", "point_geometry", "create_point_geometry"],
+    },
+    "deduplicate_features": {
+        "label": "Deduplicate features",
+        "icon": "mActionFilter2.svg",
+        "aliases": ["deduplicate", "dedup_features"],
+    },
+    "copy_geometry_to_coordinates": {
+        "label": "Copy geometry to coordinate fields",
+        "icon": "mActionCapturePoint.svg",
+        "aliases": ["copy_geometry", "copy_geom_to_coords", "geometry_to_coordinates"],
+    },
+    "update_datafiles_coordinates": {
+        "label": "Update datafile's coordinates",
+        "icon": "mActionCalculateField.svg",
+        "aliases": ["update_datafile_coordinates", "update_coordinates", "datafile_coordinates"],
+    },
+    "update_point_geometry": {
+        "label": "Update point geometry using sf_longitude and sf_latitude",
+        "icon": "mActionMoveVertex.svg",
+        "aliases": [
+            "update_point_geometry_using_sf_longitude_and_sf_latitude",
+            "update_geometry_using_sf_longitude_and_sf_latitude",
+            "update_coordinates_using_sf_longitude_and_sf_latitude",
+        ],
+    },
+    "delete_selected_features": {
+        "label": "Delete Selected Feature(s)",
+        "icon": "mActionDeleteSelectedFeatures.svg",
+        "aliases": ["delete_features", "delete_selected", "soft_delete"],
+    },
+}
+
+
+def normalize_fix_action_id(raw_id: str) -> Optional[str]:
+    """Normalize a raw action identifier or alias into a canonical CBMS_MV_FIX_ACTIONS key."""
+    if not raw_id:
+        return None
+    clean = str(raw_id).strip().lower()
+    if clean in CBMS_MV_FIX_ACTIONS:
+        return clean
+    for canonical_id, meta in CBMS_MV_FIX_ACTIONS.items():
+        if clean == str(meta.get("label", "")).strip().lower():
+            return canonical_id
+        for alias in meta.get("aliases", []):
+            if clean == str(alias).strip().lower():
+                return canonical_id
+    return None
+
+
+def resolve_suggested_fixes(custom_suggested_fixes: Optional[List[str]] = None) -> List[str]:
+    """
+    Resolve and deduplicate a list of suggested fix action IDs (from SUGGESTED_FIX in scripts)
+    into canonical action IDs while preserving script-defined priority order.
+    """
+    if not custom_suggested_fixes:
+        return []
+    resolved: List[str] = []
+    for raw in custom_suggested_fixes:
+        norm = normalize_fix_action_id(raw)
+        if norm and norm not in resolved:
+            resolved.append(norm)
+    return resolved
 
 # Canonical category metadata for 2027 CBMS Form 2 Map Validation checks
 CBMS_MV_CATEGORIES: Dict[str, Dict[str, str]] = {

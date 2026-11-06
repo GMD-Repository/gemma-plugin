@@ -36,6 +36,7 @@ from qgis.PyQt.QtWidgets import (
     QMessageBox,
     QApplication,
     QSizePolicy,
+    QTableWidget,
 )
 
 try:
@@ -189,6 +190,7 @@ class CbmsMvReviewDock(QDockWidget):
                 "title": "#8AB4F8",
                 "accent": "#1A73E8",
                 "accent_hover": "#1765CC",
+                "accent_pressed": "#1557B0",
                 "accent_light": "#1C355E",
                 "accent_light_text": "#8AB4F8",
                 "danger_bg": "#3D1F1F",
@@ -223,6 +225,7 @@ class CbmsMvReviewDock(QDockWidget):
                 "title": "#1A365D",
                 "accent": "#2B6CB0",
                 "accent_hover": "#2C5282",
+                "accent_pressed": "#1A365D",
                 "accent_light": "#EBF8FF",
                 "accent_light_text": "#2B6CB0",
                 "danger_bg": "#FFF5F5",
@@ -390,13 +393,25 @@ class CbmsMvReviewDock(QDockWidget):
         self.btn_delete_feat.setToolTip("Mark this building point as 'deleted' in status column")
         self.btn_delete_feat.clicked.connect(self._on_delete_feature)
 
+        # Contextual Discard Layer Changes Button (hidden when clean, shown beside Save when dirty)
+        self.btn_discard_layer = QPushButton("Discard")
+        disc_ic = QgsApplication.getThemeIcon("mActionUndo.svg")
+        if not disc_ic.isNull():
+            self.btn_discard_layer.setIcon(disc_ic)
+        self.btn_discard_layer.setObjectName("btnDiscardLayer")
+        self.btn_discard_layer.setToolTip("Discard all unsaved edits and restore records to their last saved state")
+        self.btn_discard_layer.setVisible(False)
+        self.btn_discard_layer.setEnabled(False)
+        self.btn_discard_layer.clicked.connect(self._on_discard_layer_changes)
+
         # Save Layer Changes Button
         self.btn_save_layer = QPushButton("Save")
         save_ic = QgsApplication.getThemeIcon("mActionSaveEdits.svg")
         if not save_ic.isNull():
             self.btn_save_layer.setIcon(save_ic)
         self.btn_save_layer.setObjectName("btnSaveLayer")
-        self.btn_save_layer.setToolTip("Save layer edits permanently to disk")
+        self.btn_save_layer.setToolTip("No unsaved changes to save")
+        self.btn_save_layer.setEnabled(False)
         self.btn_save_layer.clicked.connect(self._on_save_layer_changes)
 
         # Return Button
@@ -410,6 +425,7 @@ class CbmsMvReviewDock(QDockWidget):
 
         action_layout.addWidget(self.btn_edit_form)
         action_layout.addWidget(self.btn_delete_feat)
+        action_layout.addWidget(self.btn_discard_layer)
         action_layout.addWidget(self.btn_save_layer)
         action_layout.addWidget(self.btn_return)
         layout.addWidget(action_frame)
@@ -418,8 +434,10 @@ class CbmsMvReviewDock(QDockWidget):
 
         self.setWidget(main_widget)
 
-        # Connect combo signal after full UI layout is constructed
+        # Connect combo signal and layer dirty signals after full UI layout is constructed
         self.feature_combo.currentIndexChanged.connect(self._on_combo_selected)
+        self._connect_layer_signals()
+        self._update_save_discard_ui_state()
 
     # -----------------------------------------------------------------------
     # Navigation & Canvas Sync
@@ -671,7 +689,7 @@ class CbmsMvReviewDock(QDockWidget):
             # Open native QGIS Feature Form dialog (modal=True waits for user input)
             accepted = self.iface.openFeatureForm(target_layer, target_feat, False, True)
 
-            # Refresh canvas and feature data if edits were accepted
+            # Refresh canvas, feature data, and button states if edits were accepted
             if accepted:
                 try:
                     f_refreshed = target_layer.getFeature(target_feat.id())
@@ -682,38 +700,149 @@ class CbmsMvReviewDock(QDockWidget):
                             current_item["uuid"] = str(f_refreshed[u_col] or "").strip()
                 except Exception:
                     pass
+                self.jump_to_index(self.current_index)
                 if self.iface.mapCanvas():
                     self.iface.mapCanvas().refresh()
+            self._update_save_discard_ui_state()
+            if is_valid_qobject(self.parent_dialog) and hasattr(self.parent_dialog, "_update_save_discard_ui_state"):
+                self.parent_dialog._update_save_discard_ui_state()
+
+    def _connect_layer_signals(self):
+        """Connect layer edit buffer signals to keep Save and Discard buttons synchronized."""
+        for lyr in (self.main_layer, self.error_layer):
+            if lyr and hasattr(lyr, "isValid") and lyr.isValid():
+                for sig_name in ("layerModified", "editingStarted", "editingStopped", "attributeValueChanged", "geometryChanged"):
+                    sig = getattr(lyr, sig_name, None)
+                    if sig is not None and hasattr(sig, "connect"):
+                        try:
+                            sig.connect(self._on_layer_dirty_changed)
+                        except Exception:
+                            pass
+
+    def _on_layer_dirty_changed(self, *args, **kwargs):
+        """Slot called when watched layer buffer changes."""
+        if is_valid_qobject(self):
+            self._update_save_discard_ui_state()
+
+    def _has_unsaved_changes(self) -> bool:
+        """Return True if main_layer, error_layer, or parent_dialog has unsaved changes."""
+        if self.main_layer and self.main_layer.isValid() and self.main_layer.isEditable() and self.main_layer.isModified():
+            return True
+        if self.error_layer and self.error_layer.isValid() and self.error_layer.isEditable() and self.error_layer.isModified():
+            return True
+        if is_valid_qobject(self.parent_dialog):
+            if getattr(self.parent_dialog, "_pending_json_edits", None) or getattr(self.parent_dialog, "_has_unsaved_table_edits", False):
+                return True
+        return False
+
+    def _update_save_discard_ui_state(self):
+        """Update visibility of Discard and enabled state of Save based on unsaved edits."""
+        if not is_valid_qobject(self):
+            return
+        dirty = self._has_unsaved_changes()
+        if hasattr(self, "btn_discard_layer") and is_valid_qobject(self.btn_discard_layer):
+            self.btn_discard_layer.setVisible(dirty)
+            self.btn_discard_layer.setEnabled(dirty)
+        if hasattr(self, "btn_save_layer") and is_valid_qobject(self.btn_save_layer):
+            self.btn_save_layer.setEnabled(dirty)
+            self.btn_save_layer.setToolTip(
+                "Save layer edits permanently to disk"
+                if dirty
+                else "No unsaved changes to save"
+            )
 
     def _on_save_layer_changes(self):
         """Commit layer editing changes to the physical GeoJSON file on disk."""
         if not self.main_layer or not self.main_layer.isValid():
             return
 
-        if not self.main_layer.isEditable():
-            QMessageBox.information(self, "Nothing to Save", "There are no changes to save.")
+        if not self._has_unsaved_changes():
+            self._update_save_discard_ui_state()
             return
 
         reply = QMessageBox.question(
             self,
             "Save Changes",
-            f"Save all changes to '{self.main_layer.name()}'?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
+            f"Do you want to save all changes to '{self.main_layer.name()}'?",
+            QMessageBox.Save | QMessageBox.Cancel,
+            QMessageBox.Save,
         )
-        if reply == QMessageBox.Yes:
-            success = self.main_layer.commitChanges()
-            if success:
-                # Re-open editing buffer for seamless continued editing
+        if reply == QMessageBox.Save:
+            if self.main_layer.isEditable() and self.main_layer.isModified():
+                success = self.main_layer.commitChanges()
+                if not success:
+                    commit_errors = self.main_layer.commitErrors()
+                    QMessageBox.critical(
+                        self,
+                        "Save Failed",
+                        f"Your changes could not be saved:\n{commit_errors}",
+                    )
+                    return
                 self.main_layer.startEditing()
-                QMessageBox.information(self, "Saved", "Your changes have been saved.")
-            else:
-                commit_errors = self.main_layer.commitErrors()
-                QMessageBox.critical(
-                    self,
-                    "Save Failed",
-                    f"Your changes could not be saved:\n{commit_errors}",
-                )
+            if self.error_layer and self.error_layer.isValid() and self.error_layer.isEditable() and self.error_layer.isModified():
+                try:
+                    self.error_layer.commitChanges()
+                    self.error_layer.startEditing()
+                except Exception:
+                    pass
+            if is_valid_qobject(self.parent_dialog):
+                if not getattr(self.parent_dialog, "_pending_json_edits", None):
+                    self.parent_dialog._has_unsaved_table_edits = False
+                if hasattr(self.parent_dialog, "_update_save_discard_ui_state"):
+                    self.parent_dialog._update_save_discard_ui_state()
+            self._update_save_discard_ui_state()
+            QMessageBox.information(self, "Saved", "Your changes have been saved.")
+
+    def _on_discard_layer_changes(self):
+        """Discard unsaved layer edits and restore records to their last saved state."""
+        if not self._has_unsaved_changes():
+            self._update_save_discard_ui_state()
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Discard Changes",
+            "Do you want to discard all unsaved changes?\n\n"
+            "All unsaved edits will be undone and restored to the last saved state.",
+            QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Cancel,
+        )
+        if reply != QMessageBox.Discard:
+            return
+
+        if self.main_layer and self.main_layer.isValid() and self.main_layer.isEditable():
+            try:
+                self.main_layer.rollBack()
+                self.main_layer.startEditing()
+            except Exception:
+                pass
+        if self.error_layer and self.error_layer.isValid() and self.error_layer.isEditable():
+            try:
+                self.error_layer.rollBack()
+                self.error_layer.startEditing()
+            except Exception:
+                pass
+
+        if is_valid_qobject(self.parent_dialog):
+            try:
+                if hasattr(self.parent_dialog, "_pending_json_edits"):
+                    self.parent_dialog._pending_json_edits.clear()
+                self.parent_dialog._has_unsaved_table_edits = False
+                if hasattr(self.parent_dialog, "results_tab_widget") and hasattr(self.parent_dialog, "_revert_table_cells_to_original"):
+                    cur_w = self.parent_dialog.results_tab_widget.currentWidget()
+                    if cur_w:
+                        tbl = cur_w.findChild(QTableWidget)
+                        if tbl:
+                            self.parent_dialog._revert_table_cells_to_original(tbl, self.val_id)
+                if hasattr(self.parent_dialog, "_update_save_discard_ui_state"):
+                    self.parent_dialog._update_save_discard_ui_state()
+            except Exception:
+                pass
+
+        self._update_save_discard_ui_state()
+        self.jump_to_index(self.current_index)
+        if self.iface and self.iface.mapCanvas():
+            self.iface.mapCanvas().refresh()
 
     def _on_delete_feature(self):
         """Mark the active building point as 'deleted' in its status column."""
@@ -794,6 +923,9 @@ class CbmsMvReviewDock(QDockWidget):
             self.parent_dialog._sync_feature_status(self.val_id, current_fid, current_uuid, new_status)
 
         # Refresh UI
+        self._update_save_discard_ui_state()
+        if is_valid_qobject(self.parent_dialog) and hasattr(self.parent_dialog, "_update_save_discard_ui_state"):
+            self.parent_dialog._update_save_discard_ui_state()
         self.jump_to_index(self.current_index)
         if self.iface and self.iface.mapCanvas():
             self.iface.mapCanvas().refresh()
@@ -956,6 +1088,24 @@ class CbmsMvReviewDock(QDockWidget):
                 background-color: {colors['danger_hover']};
                 color: {colors['danger_active_text']};
             }}
+            #btnDiscardLayer {{
+                background-color: {colors['danger_bg']};
+                color: {colors['danger_text']};
+                font-weight: 600;
+                padding: 6px 10px;
+                border-radius: 4px;
+                border: 1px solid {colors['danger_border']};
+                font-size: 11px;
+            }}
+            #btnDiscardLayer:hover {{
+                background-color: {colors['danger_hover']};
+                color: {colors['danger_active_text']};
+            }}
+            #btnDiscardLayer:disabled {{
+                background-color: {colors['disabled_bg']};
+                color: {colors['disabled_text']};
+                border: 1px solid {colors['disabled_border']};
+            }}
             #btnSaveLayer {{
                 background-color: {colors['success_bg'] if self.is_dark else '#27AE60'};
                 color: {colors['success_text'] if self.is_dark else '#FFFFFF'};
@@ -967,6 +1117,11 @@ class CbmsMvReviewDock(QDockWidget):
             }}
             #btnSaveLayer:hover {{
                 background-color: {colors['success_hover'] if self.is_dark else '#219653'};
+            }}
+            #btnSaveLayer:disabled {{
+                background-color: {colors['disabled_bg']};
+                color: {colors['disabled_text']};
+                border: 1px solid {colors['disabled_border']};
             }}
             #btnReturn {{
                 background-color: {colors['btn_return_bg']};

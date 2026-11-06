@@ -31,6 +31,7 @@ from .. import gmdhelpers
 
 
 TARGET_FIELDS = ["sf_remarks"]
+SUGGESTED_FIX = ["delete_selected_features"]
 
 class mv_2027_hp_4c_remarks__invalid(QgsProcessingAlgorithm):
 

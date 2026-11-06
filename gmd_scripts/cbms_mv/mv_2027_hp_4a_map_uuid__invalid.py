@@ -29,6 +29,7 @@ from .. import gmdhelpers
 
 
 TARGET_FIELDS = ["sf_map_uuid", "ref_map_uuid"]
+SUGGESTED_FIX = ["delete_selected_features"]
 
 class mv_2027_hp_4a_map_uuid__invalid(QgsProcessingAlgorithm):
 

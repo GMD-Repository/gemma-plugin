@@ -322,11 +322,14 @@ def _extract_row_data(
                     if u_data and str(u_data).strip().lower() not in ("null", "none", "nan", ""):
                         row_info["uuid"] = str(u_data).strip()
                         break
-            row_info["df_fid"] = (
-                it0.data(0x0100 + 4) or it0.data(4) or
-                it0.data(0x0100 + 2) or it0.data(2)
+            row_info["df_fid"] = next(
+                (
+                    v for v in (it0.data(0x0100 + 4), it0.data(4), it0.data(0x0100 + 2), it0.data(2))
+                    if v is not None and str(v).strip() not in ("", "NULL", "None")
+                ),
+                None,
             )
-            row_info["err_fid"] = it0.data(0x0100 + 3) or it0.data(3)
+            row_info["err_fid"] = it0.data(0x0100 + 3) if it0.data(0x0100 + 3) is not None else it0.data(3)
 
         # Extract other table attributes
         for col_name, c_idx in header_map.items():
@@ -406,7 +409,7 @@ def _extract_row_data(
             if f2_layer and f2_layer.isValid() and hasattr(dialog, "_find_form2_feature"):
                 f2_feat = dialog._find_form2_feature(
                     f2_layer,
-                    fid=row_info.get("df_fid") or row_info.get("source_fid"),
+                    fid=row_info.get("df_fid") if row_info.get("df_fid") is not None else row_info.get("source_fid"),
                     map_uuid=row_info.get("uuid"),
                 )
                 if f2_feat and f2_feat.isValid():
@@ -524,7 +527,13 @@ def _run_fix_map_uuid_missing(
         deduped_rows = []
         for r in rows_to_process:
             row_info = _extract_row_data(r, table, error_layer, target_fids, target_uuids, target_rows=target_rows, dialog=dialog)
-            r_fid = row_info.get("source_fid") or row_info.get("df_fid") or row_info.get("err_fid")
+            r_fid = next(
+                (
+                    v for v in (row_info.get("source_fid"), row_info.get("df_fid"), row_info.get("err_fid"))
+                    if v is not None and str(v).strip() not in ("", "NULL", "None")
+                ),
+                None,
+            )
             r_uuid = row_info.get("uuid")
             uk = make_unique_feature_key(r_fid, r_uuid)
             if uk and uk in seen_row_keys:

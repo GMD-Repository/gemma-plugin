@@ -31,6 +31,7 @@ from .. import gmdhelpers
 
 
 TARGET_FIELDS = ["sf_map_uuid", "ref_map_uuid"]
+SUGGESTED_FIX = ["copy_geometry_to_coordinates", "update_datafiles_coordinates"]
 
 class mv_2027_hp_4a_geom__invalid(QgsProcessingAlgorithm):
 

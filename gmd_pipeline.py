@@ -194,7 +194,7 @@ class GMDPipeline(object):
         create_ea_icon = QIcon(os.path.dirname(__file__) + "/icons/create_ea.svg")
         geom_toolkit_icon = QIcon(os.path.dirname(__file__) + "/icons/repair_geom.svg")
         others_icon = QIcon(os.path.dirname(__file__) + "/icons/others.svg")
-        cbmsmv_icon = QIcon(os.path.dirname(__file__) + "/icons/others.svg")
+        cbmsmv_icon = QIcon(os.path.dirname(__file__) + "/icons/cbms_mv.svg")
         updating_boundaries_icon = QIcon(os.path.dirname(__file__) + "/icons/updating_boundaries.svg")
         check_and_update_icon = QIcon(os.path.dirname(__file__) + "/icons/check_and_update.svg")
         compare_boundaries_icon = QIcon(os.path.dirname(__file__) + "/icons/compare_boundaries.svg")

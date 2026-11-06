@@ -499,7 +499,8 @@ def _run_fix_update_point_geometry(
 
             best_fid = sf_fid if _clean_id_str(sf_fid) else s_fid
             best_uuid = sf_uuid or u_str
-            ukey = make_unique_feature_key(best_fid or df_fid or e_fid, best_uuid)
+            ukey_fid = best_fid if _clean_id_str(best_fid) else (df_fid if _clean_id_str(df_fid) else e_fid)
+            ukey = make_unique_feature_key(ukey_fid, best_uuid)
 
             if ukey and ukey in seen_ukeys:
                 primary_r = seen_ukeys[ukey]

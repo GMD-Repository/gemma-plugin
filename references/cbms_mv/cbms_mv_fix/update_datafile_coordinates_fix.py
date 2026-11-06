@@ -236,14 +236,29 @@ def _run_fix_update_datafile_coordinates(
             sf_u = str(item0.data(Qt.UserRole + 7) or "").strip() if item0 else ""
 
             target_idx = target_rows.index(r) if (target_rows and r in target_rows) else r
-            if not s_fid and target_fids and target_idx < len(target_fids):
+            if (s_fid is None or str(s_fid).strip() in ("", "NULL", "None")) and target_fids and target_idx < len(target_fids):
                 s_fid = target_fids[target_idx]
             if not u_str and target_uuids and target_idx < len(target_uuids):
                 u_str = str(target_uuids[target_idx] or "").strip()
 
-            row_main_fid = sf_f if (sf_f is not None and str(sf_f).strip() not in ("", "NULL", "None")) else s_fid
+            if sf_f is not None and str(sf_f).strip() not in ("", "NULL", "None"):
+                row_main_fid = sf_f
+            elif (
+                s_fid is not None
+                and str(s_fid).strip() not in ("", "NULL", "None")
+                and (df_f is None or str(df_f).strip() in ("", "NULL", "None"))
+                and s_fid != e_fid
+            ):
+                row_main_fid = s_fid
+            else:
+                row_main_fid = None
             row_uuid = df_u or u_str or sf_u
-            row_ukey = make_unique_feature_key(row_main_fid or df_f or e_fid, row_uuid)
+            key_fid = (
+                row_main_fid
+                if row_main_fid is not None
+                else (df_f if (df_f is not None and str(df_f).strip() not in ("", "NULL", "None")) else e_fid)
+            )
+            row_ukey = make_unique_feature_key(key_fid, row_uuid)
 
             # 1. Extract source coordinates (sf_longitude, sf_latitude) from table cells
             lon_val = None
@@ -386,6 +401,16 @@ def _run_fix_update_datafile_coordinates(
                 updated_values[row_ukey] = payload
                 updated_values[row_ukey.lower()] = payload
             if df_f is not None and str(df_f).strip() not in ("", "NULL", "None"):
+                df_uk = make_unique_feature_key(df_f, row_uuid)
+                if df_uk:
+                    updated_values[f"df_{df_uk}"] = payload
+                    updated_values[f"df_{df_uk.lower()}"] = payload
+            if row_main_fid is not None:
+                sf_uk = make_unique_feature_key(row_main_fid, sf_u or row_uuid)
+                if sf_uk:
+                    updated_values[f"sf_{sf_uk}"] = payload
+                    updated_values[f"sf_{sf_uk.lower()}"] = payload
+            if df_f is not None and str(df_f).strip() not in ("", "NULL", "None"):
                 updated_values[df_f] = payload
                 updated_values[f"fid_{df_f}"] = payload
             if row_main_fid is not None and str(row_main_fid).strip() not in ("", "NULL", "None"):
@@ -409,7 +434,7 @@ def _run_fix_update_datafile_coordinates(
                 break
 
             f_id = feat.id()
-            feat_ids = _flatten_ids(f_id)
+            attr_ids = set()
             feat_uuid = ""
             df_fid_val = None
             df_uuid_val = ""
@@ -419,7 +444,7 @@ def _run_fix_update_datafile_coordinates(
                     try:
                         val = feat.attribute(col)
                         if val is not None and val != NULL:
-                            feat_ids.update(_flatten_ids(val))
+                            attr_ids.update(_flatten_ids(val))
                             if col in ("sf_map_uuid", "map_uuid", "uuid") and not feat_uuid:
                                 feat_uuid = str(val).strip()
                             if col == "df_fid" and df_fid_val is None:
@@ -428,6 +453,7 @@ def _run_fix_update_datafile_coordinates(
                                 df_uuid_val = str(val).strip()
                     except Exception:
                         pass
+            feat_ids = set(attr_ids) if attr_ids else _flatten_ids(f_id)
 
             cand_keys = {make_unique_feature_key(fid_val, feat_uuid) for fid_val in feat_ids}
             cand_keys.discard("")
@@ -485,18 +511,19 @@ def _run_fix_update_datafile_coordinates(
                 idx_err_lon = error_layer.fields().indexOf("df_x_current")
                 idx_err_lat = error_layer.fields().indexOf("df_y_current")
                 for ef in error_layer.getFeatures():
-                    ef_ids = _flatten_ids(ef.id())
+                    ef_attr_ids = set()
                     ef_uuid = ""
                     for col in ("sf_fid", "fid", "df_fid", "sf_map_uuid", "map_uuid", "uuid"):
                         if col in error_layer.fields().names():
                             try:
                                 val = ef.attribute(col)
                                 if val is not None and val != NULL:
-                                    ef_ids.update(_flatten_ids(val))
+                                    ef_attr_ids.update(_flatten_ids(val))
                                     if col in ("sf_map_uuid", "map_uuid", "uuid") and not ef_uuid:
                                         ef_uuid = str(val).strip()
                             except Exception:
                                 pass
+                    ef_ids = ef_attr_ids if ef_attr_ids else _flatten_ids(ef.id())
                     cand_ef_keys = {make_unique_feature_key(fid_val, ef_uuid) for fid_val in ef_ids}
                     cand_ef_keys.discard("")
                     cand_ef_keys_lower = {k.lower() for k in cand_ef_keys}
