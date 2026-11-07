@@ -67,6 +67,15 @@ jobs:
             --bump-type "${{ inputs.bump_type || 'auto' }}" \
             --custom-version "${{ inputs.custom_version || '' }}"
 
+      # ── 5b. Sync docs to public stable repo (Vercel deploys from it) ─
+      - name: Sync docs to public stable repo
+        if: steps.release.outputs.released == 'true' && success()
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token || secrets.AI_TOKEN }}
+        run: |
+          bash scripts/release/sync_public_repo.sh \
+            "chore(release): sync docs for v${{ steps.release.outputs.version }}"
+
       # ── 5a. Fetch recipients from Google Sheet (Secured) ───────────
       - name: Fetch email recipients from Google Sheet
         id: gsheet-emails
@@ -95,7 +104,7 @@ jobs:
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
           ZIP_NAME: ${{ steps.release.outputs.zip_name }}
           RELEASE_BODY: ${{ steps.release.outputs.release_body_html || steps.release.outputs.release_body }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REPOSITORY: ${{ steps.release.outputs.stable_repository }}
           CHANGELOG_URL: "https://gemma-plugin.vercel.app/changelog.html"
         run: |
           python scripts/release/send_release_email.py \
@@ -115,5 +124,5 @@ jobs:
             --version "${{ steps.release.outputs.version }}" \
             --zip-name "${{ steps.release.outputs.zip_name }}" \
             --actor "${{ github.actor }}" \
-            --repo "${{ github.repository }}"
+            --repo "${{ steps.release.outputs.stable_repository }}"
 

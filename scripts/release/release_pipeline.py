@@ -67,6 +67,10 @@ logger = logging.getLogger(__name__)
 
 METADATA_PATH = "metadata.txt"
 
+# Public repo that hosts stable release ZIPs and the docs site Vercel deploys,
+# so the source repo can stay private.
+STABLE_REPOSITORY = os.environ.get("STABLE_REPOSITORY", "GMD-Repository/gemma-plugin-stable")
+
 
 # ── Stable Release Pipeline ──────────────────────────────────────────────────
 
@@ -119,6 +123,22 @@ def commit_and_push_stable_release(
         raise
 
 
+def push_source_tag(tag: str, token: str, repo_full: str, dry_run: bool = False) -> None:
+    """Tag the release commit in the source repo.
+
+    The GitHub Release lives in the public stable repo, but version checks and
+    changelog ranges read tags from the source repo, so the tag must exist here too.
+    """
+    if dry_run:
+        logger.info("[DRY RUN] Skipping source tag push for %s", tag)
+        return
+
+    remote = f"https://x-access-token:{token}@github.com/{repo_full}.git" if token else "origin"
+    subprocess.run(["git", "tag", "-f", tag], check=True)
+    subprocess.run(["git", "push", "--force", remote, f"refs/tags/{tag}"], check=True)
+    logger.info("✅ Pushed tag %s to %s", tag, repo_full)
+
+
 def run_stable_pipeline(args: argparse.Namespace) -> None:
     """Execute the full stable release pipeline.
 
@@ -139,6 +159,8 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
     github_token = os.environ.get("GITHUB_TOKEN", "")
     repo_full = os.environ.get("GITHUB_REPOSITORY", "GMD-Repository/gemma-plugin")
     owner, repo = repo_full.split("/")
+    stable_owner, stable_repo = STABLE_REPOSITORY.split("/")
+    set_github_output("stable_repository", STABLE_REPOSITORY)
     today = date.today().isoformat()
 
     # ── Step 1: Resolve version ───────────────────────────────────────────
@@ -216,12 +238,12 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
     logger.info("═══ Step 6: Update docs, release JSON, and sync web icons ═══")
     sync_docs_icons()
     update_changelogs(version, today, changelog.changes)
-    update_latest_json(version, tag, today, owner, repo)
-    update_releases_json(version, tag, today, changelog.changes, owner=owner, repo=repo)
+    update_latest_json(version, tag, today, stable_owner, stable_repo)
+    update_releases_json(version, tag, today, changelog.changes, owner=stable_owner, repo=stable_repo)
 
     # ── Step 7: Update gemma.xml ──────────────────────────────────────────
     logger.info("═══ Step 7: Update gemma.xml ═══")
-    update_stable_xml(METADATA_PATH, version, tag, owner, repo)
+    update_stable_xml(METADATA_PATH, version, tag, stable_owner, stable_repo)
 
     # ── Step 8: Update VitePress navbar version ───────────────────────────
     logger.info("═══ Step 8: Update VitePress navbar version ═══")
@@ -235,7 +257,7 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
     # ── Step 9: Update index.md download link ────────────────────────────
     logger.info("═══ Step 9: Update index.md download link ═══")
     try:
-        update_index_download_link(version, owner, repo)
+        update_index_download_link(version, stable_owner, stable_repo)
     except Exception as err:
         logger.warning("Failed to update index.md download link: %s", err)
         if not args.dry_run:
@@ -243,6 +265,7 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
 
     # ── Step 9b: Commit & Push release metadata directly to main ─────────
     commit_and_push_stable_release(version, github_token, repo_full, dry_run=args.dry_run)
+    push_source_tag(tag, github_token, repo_full, dry_run=args.dry_run)
 
     # ── Step 10: Build plugin ZIP ──────────────────────────────────────────
     logger.info("═══ Step 10: Build plugin ZIP ═══")
@@ -257,8 +280,8 @@ def run_stable_pipeline(args: argparse.Namespace) -> None:
         release_url = "https://github.com/dry-run"
     else:
         release_result = create_github_release(
-            owner=owner,
-            repo=repo,
+            owner=stable_owner,
+            repo=stable_repo,
             tag=tag,
             version=version,
             highlights=changelog.highlights,
