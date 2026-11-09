@@ -398,6 +398,37 @@ class SortableTableWidgetItem(QTableWidgetItem):
                     pass
         return super().__lt__(other)
 
+
+class FeatureTableWidgetItem(QTableWidgetItem):
+    """
+    QTableWidgetItem for validation feature tables across all category tabs.
+    Performs numeric comparison when both cell strings represent numbers (e.g., df_fid,
+    sf_fid, coordinates, distances, counts), keeps NULL/empty values grouped consistently,
+    and falls back to case-insensitive text comparison.
+    """
+    _EMPTY_TOKENS = {"", "null", "none", "nan"}
+
+    def __lt__(self, other):
+        if not isinstance(other, QTableWidgetItem):
+            return super().__lt__(other)
+        s_a = self.text().strip()
+        s_b = other.text().strip()
+        empty_a = s_a.lower() in self._EMPTY_TOKENS
+        empty_b = s_b.lower() in self._EMPTY_TOKENS
+        if empty_a and empty_b:
+            return False
+        if empty_a:
+            return False
+        if empty_b:
+            return True
+        try:
+            return int(s_a) < int(s_b)
+        except (ValueError, TypeError):
+            try:
+                return float(s_a) < float(s_b)
+            except (ValueError, TypeError):
+                return s_a.lower() < s_b.lower()
+
 class CbmsmvDockWidget(QDockWidget):
     """
     Dedicated QDockWidget wrapper for docking the CBMS MV tool into QGIS.
@@ -2353,8 +2384,11 @@ class CbmsmvDialog(QDialog):
                 for col_idx, fname in enumerate(field_names):
                     val = feat[fname]
                     val_str = "" if val is None else str(val)
-                    item = QTableWidgetItem(val_str)
                     fn_lower = fname.lower()
+                    if fn_lower in ("sf_fid", "df_fid"):
+                        item = FeatureTableWidgetItem(val_str)
+                    else:
+                        item = QTableWidgetItem(val_str)
                     if (fn_lower in ("status", "sf_status") and val_str.strip().lower() == "deleted") or (
                         fn_lower in ("is_deleted", "sf_is_deleted") and (val is True or val_str.strip().lower() in ("true", "1", "deleted"))
                     ):
@@ -2411,6 +2445,12 @@ class CbmsmvDialog(QDialog):
                 # table.setCellWidget(row_idx, action_col, action_widget)
 
             table.setSortingEnabled(True)
+            if (
+                field_names
+                and field_names[0].lower() in ("df_fid", "sf_fid")
+                and "duplicate" not in str(val_id).lower()
+            ):
+                table.sortItems(1, Qt.AscendingOrder)
 
         table.setProperty("is_populating", False)
 
@@ -3205,13 +3245,14 @@ class CbmsmvDialog(QDialog):
                     target_keys.add(uuid_only_key.lower())
 
             target_rows.append(r)
+            if _has_id(e_id):
+                target_err_fids.append(e_id)
+
             dedup_key = ukey if ukey else f"row_{r}"
             if dedup_key in seen_keys:
                 return
             seen_keys.add(dedup_key)
 
-            if _has_id(e_id):
-                target_err_fids.append(e_id)
             if spatial_fid is not None:
                 target_fids.append(spatial_fid)
             elif not best_uuid and _has_id(best_fid):
@@ -3354,6 +3395,9 @@ class CbmsmvDialog(QDialog):
         # Synchronize table cells and layer across all rows matching unique features
         table.setProperty("is_populating", True)
         was_table_signals_blocked = table.blockSignals(True) if hasattr(table, "blockSignals") else False
+        was_sorting_enabled = table.isSortingEnabled() if hasattr(table, "isSortingEnabled") else False
+        if was_sorting_enabled:
+            table.setSortingEnabled(False)
         self._suppress_dirty_ui_refresh = True
         if hasattr(table, "setUpdatesEnabled"):
             table.setUpdatesEnabled(False)
@@ -3368,6 +3412,7 @@ class CbmsmvDialog(QDialog):
             )
             rows_to_iter = target_rows if target_rows is not None else range(table.rowCount())
             col_count = table.columnCount()
+            rows_updated_in_table = 0
 
             for r in rows_to_iter:
                 item0 = table.item(r, 0)
@@ -3444,6 +3489,7 @@ class CbmsmvDialog(QDialog):
                         pass
 
                 if col_updates:
+                    rows_updated_in_table += 1
                     target_layer_fid = r_err_fid if r_err_fid is not None else r_fid
                     for c in range(1, col_count - 1):
                         c_item = table.item(r, c)
@@ -3549,6 +3595,8 @@ class CbmsmvDialog(QDialog):
                                 self._style_row_fix_button(btn, enabled=False, fixed=True)
         finally:
             self._suppress_dirty_ui_refresh = False
+            if was_sorting_enabled and hasattr(table, "setSortingEnabled"):
+                table.setSortingEnabled(True)
             if hasattr(table, "blockSignals"):
                 table.blockSignals(was_table_signals_blocked)
             if hasattr(table, "setUpdatesEnabled"):
@@ -3558,6 +3606,10 @@ class CbmsmvDialog(QDialog):
         # Refresh map canvas if available
         if self.iface:
             self.iface.mapCanvas().refresh()
+
+        if target_rows is not None and rows_updated_in_table > 0:
+            fixed_count = rows_updated_in_table
+        selected_total = len(target_rows) if target_rows is not None else 0
 
         if fixed_count == 0:
             self.lbl_footer_status.setText(f"No records were fixed for '{val_id}'.")
@@ -3582,15 +3634,20 @@ class CbmsmvDialog(QDialog):
             return
 
         getattr(self, "_mark_unsaved_table_edit", lambda: None)()
+        count_summary = (
+            f"{fixed_count} of {selected_total} selected record(s)"
+            if (selected_total > fixed_count)
+            else f"{fixed_count} record(s)"
+        )
         self.lbl_footer_status.setText(
-            f"Fixed {fixed_count} record(s) for '{val_id}'. Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo."
+            f"Fixed {count_summary} for '{val_id}'. Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo."
         )
         null_cols_warn = res.get("null_columns_warning", "")
         if null_cols_warn:
             QMessageBox.warning(
                 self,
                 res.get("title", "Check all columns"),
-                f"Fixed {fixed_count} record(s) for:\n{val_id}\n\n"
+                f"Fixed {count_summary} for:\n{val_id}\n\n"
                 f"However, {null_cols_warn}\n\n"
                 f"Fixed changes are not saved yet. Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo.",
             )
@@ -3598,7 +3655,7 @@ class CbmsmvDialog(QDialog):
             QMessageBox.information(
                 self,
                 "Fix Applied",
-                f"Fixed {fixed_count} record(s) for:\n{val_id}\n\n"
+                f"Fixed {count_summary} for:\n{val_id}\n\n"
                 f"These changes are not saved yet.\n"
                 f"Click 'Save Changes' (or press Ctrl+S) to keep them, or click 'Discard' to undo.",
             )
@@ -4459,6 +4516,9 @@ class CbmsmvDialog(QDialog):
         if not table or not is_valid_qobject(table):
             return
         table.setProperty("is_populating", True)
+        was_sorting = table.isSortingEnabled() if hasattr(table, "isSortingEnabled") else False
+        if was_sorting:
+            table.setSortingEnabled(False)
         try:
             rule = next((r for r in self._rules if r["id"] == val_id), None) if val_id else None
             target_cols = [rule["target_column"]] if (rule and rule.get("target_column")) else []
@@ -4490,6 +4550,8 @@ class CbmsmvDialog(QDialog):
                             btn.setText("Delete")
                             btn.setEnabled(True)
         finally:
+            if was_sorting and hasattr(table, "setSortingEnabled"):
+                table.setSortingEnabled(True)
             table.setProperty("is_populating", False)
 
     def _discard_changes(self, target_val_id: Optional[str] = None, skip_rerun: bool = False) -> bool:

@@ -718,7 +718,7 @@ def _run_fix_update_point_geometry(
                     updated_values[uuid_cand] = payload
                     updated_values[uuid_cand.lower()] = payload
 
-            fixed_count += 1
+            fixed_count += len(all_rows_for_feat)
 
         if fixed_count > 0:
             active_layer.triggerRepaint()

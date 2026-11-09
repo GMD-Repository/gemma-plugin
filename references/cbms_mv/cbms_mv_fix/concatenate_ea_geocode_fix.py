@@ -131,6 +131,40 @@ def compute_ea_geocode_field_calculator(
     return ""
 
 
+def _compute_ea_geocode_from_dict(attrs: Dict[str, Any]) -> str:
+    """Compute EA Geocode from a row attribute dictionary using the 4-step priority cascade."""
+    a_lower = {}
+    for k, v in attrs.items():
+        if v is not None and v != NULL:
+            s = str(v).strip()
+            if s and s.upper() not in ("", "NULL", "NONE", "NAN"):
+                a_lower[str(k).strip().lower()] = s
+
+    p1 = a_lower.get("sf_province_code")
+    m1 = a_lower.get("sf_city_mun_code")
+    b1 = a_lower.get("sf_barangay_code")
+    e1 = a_lower.get("sf_ean")
+    if p1 and m1 and b1 and e1:
+        return f"{p1}{m1}{b1}{e1}"
+
+    p2 = a_lower.get("province_code") or a_lower.get("df_province_code")
+    m2 = a_lower.get("city_mun_code") or a_lower.get("df_city_mun_code")
+    b2 = a_lower.get("barangay_code") or a_lower.get("df_barangay_code")
+    e2 = a_lower.get("ean") or a_lower.get("df_ean")
+    if p2 and m2 and b2 and e2:
+        return f"{p2}{m2}{b2}{e2}"
+
+    bsn1 = a_lower.get("sf_bsn_geoid")
+    if bsn1:
+        return bsn1[:14]
+
+    bsn2 = a_lower.get("bsn_geoid") or a_lower.get("df_bsn_geoid")
+    if bsn2:
+        return bsn2[:14]
+
+    return ""
+
+
 def _inspect_missing_ea_geocode_columns(
     feat: Optional[QgsFeature] = None,
     row_attrs: Optional[Dict[str, Any]] = None,
@@ -272,14 +306,30 @@ def _run_fix_ea_geocode(
     dialog = kwargs.get("dialog")
     target_rows = kwargs.get("target_rows")
 
-    # Pre-index table row labels and row attributes so Affected Record(s) matches Row #N (FID: ...)
-    row_info_by_key: Dict[str, Dict[str, Any]] = {}
-    row_info_by_fid: Dict[str, Dict[str, Any]] = {}
-    if table is not None and is_valid_qobject(table) and Qt is not None:
-        rows_iter = list(target_rows) if target_rows else list(range(table.rowCount()))
-        for r in rows_iter:
-            if r < 0 or r >= table.rowCount():
-                continue
+    rows_to_process: List[int] = []
+    if target_rows is not None:
+        rows_to_process = [r for r in target_rows if r is not None]
+    elif table is not None and is_valid_qobject(table):
+        for r in range(table.rowCount()):
+            item0 = table.item(r, 0)
+            if item0:
+                is_checked = (
+                    (item0.checkState() == (Qt.Checked if Qt else 2))
+                    if hasattr(item0, "checkState")
+                    else getattr(item0, "isChecked", lambda: False)()
+                )
+                if is_checked:
+                    rows_to_process.append(r)
+        if not rows_to_process and hasattr(table, "selectionModel") and table.selectionModel():
+            selected_indexes = table.selectionModel().selectedRows()
+            if selected_indexes:
+                rows_to_process = [idx.row() for idx in selected_indexes]
+
+    # Branch A: Process strictly by selected table rows (1-to-1 row counting)
+    if rows_to_process and table is not None and is_valid_qobject(table):
+        for r in rows_to_process:
+            if feedback and feedback.isCanceled():
+                break
             item0 = table.item(r, 0)
             s_fid = item0.data(Qt.UserRole) if item0 else None
             u_str = str(item0.data(Qt.UserRole + 1) or "").strip() if item0 else ""
@@ -288,17 +338,33 @@ def _run_fix_ea_geocode(
             df_u = str(item0.data(Qt.UserRole + 5) or "").strip() if item0 else ""
             sf_f = item0.data(Qt.UserRole + 6) if item0 else None
             sf_u = str(item0.data(Qt.UserRole + 7) or "").strip() if item0 else ""
+
+            target_idx = target_rows.index(r) if (target_rows and r in target_rows) else r
+            if (s_fid is None or str(s_fid).strip() in ("", "NULL", "None")) and target_fids and target_idx < len(target_fids):
+                s_fid = target_fids[target_idx]
+            if not u_str and target_uuids and target_idx < len(target_uuids):
+                u_str = str(target_uuids[target_idx] or "").strip()
+
+            if sf_f is not None and str(sf_f).strip() not in ("", "NULL", "None"):
+                row_main_fid = sf_f
+            elif (
+                s_fid is not None
+                and str(s_fid).strip() not in ("", "NULL", "None")
+                and (df_f is None or str(df_f).strip() in ("", "NULL", "None"))
+                and s_fid != e_fid
+            ):
+                row_main_fid = s_fid
+            else:
+                row_main_fid = None
+
             row_uuid = sf_u or u_str or df_u
             key_fid = (
-                sf_f
-                if (sf_f is not None and str(sf_f).strip() not in ("", "NULL", "None"))
-                else (
-                    s_fid
-                    if (s_fid is not None and str(s_fid).strip() not in ("", "NULL", "None"))
-                    else (df_f if (df_f is not None and str(df_f).strip() not in ("", "NULL", "None")) else e_fid)
-                )
+                row_main_fid
+                if row_main_fid is not None
+                else (df_f if (df_f is not None and str(df_f).strip() not in ("", "NULL", "None")) else e_fid)
             )
-            fid_disp = key_fid if key_fid is not None else (r + 1)
+            row_ukey = make_unique_feature_key(key_fid, row_uuid)
+
             row_attrs = {}
             for c in range(table.columnCount()):
                 h_item = table.horizontalHeaderItem(c)
@@ -306,184 +372,257 @@ def _run_fix_ea_geocode(
                 it = table.item(r, c)
                 if it and col_name:
                     row_attrs[col_name] = it.text().strip()
-            r_info = {
-                "row": r,
-                "label": f"Row #{r + 1} (FID: {fid_disp})",
-                "row_attrs": row_attrs,
-            }
-            uk = make_unique_feature_key(key_fid, row_uuid)
-            if uk:
-                row_info_by_key[uk.lower()] = r_info
-            for fc in _flatten_ids(key_fid):
-                row_info_by_fid[str(fc)] = r_info
 
-    for feat in active_layer.getFeatures():
-        if feedback and feedback.isCanceled():
-            break
+            feat = None
+            if active_layer and active_layer.isValid():
+                lookup_fid = e_fid if is_error_active else row_main_fid
+                if lookup_fid is not None:
+                    try:
+                        cand_feat = active_layer.getFeature(lookup_fid)
+                        if cand_feat and cand_feat.isValid():
+                            if row_uuid and not is_error_active:
+                                f_u = ""
+                                for col in ("sf_map_uuid", "map_uuid", "uuid"):
+                                    if col in field_names:
+                                        v = cand_feat.attribute(col)
+                                        if v and str(v).strip().lower() not in ("", "null", "none"):
+                                            f_u = str(v).strip()
+                                            break
+                                if not f_u or f_u.lower() == row_uuid.lower():
+                                    feat = cand_feat
+                            else:
+                                feat = cand_feat
+                    except Exception:
+                        feat = None
+                if (not feat or not feat.isValid()) and row_uuid:
+                    for f in active_layer.getFeatures():
+                        u_cand = ""
+                        for col in ("sf_map_uuid", "map_uuid", "uuid"):
+                            if col in field_names:
+                                v = f.attribute(col)
+                                if v and str(v).strip().lower() not in ("", "null", "none"):
+                                    u_cand = str(v).strip()
+                                    break
+                        if u_cand and u_cand.lower() == row_uuid.lower():
+                            feat = f
+                            break
 
-        f_id = feat.id()
-        spatial_ids = _flatten_ids(f_id)
-        feat_ids = set(spatial_ids)
-        feat_uuid = ""
+            ef = None
+            if error_layer and error_layer.isValid():
+                if e_fid is not None:
+                    try:
+                        ef = error_layer.getFeature(e_fid)
+                    except Exception:
+                        ef = None
+                if (not ef or not ef.isValid()) and row_uuid:
+                    err_fnames = error_layer.fields().names() if hasattr(error_layer.fields(), "names") else []
+                    for f in error_layer.getFeatures():
+                        u_cand = ""
+                        for col in ("sf_map_uuid", "map_uuid", "uuid"):
+                            if col in err_fnames:
+                                v = f.attribute(col)
+                                if v and str(v).strip().lower() not in ("", "null", "none"):
+                                    u_cand = str(v).strip()
+                                    break
+                        if u_cand and u_cand.lower() == row_uuid.lower():
+                            ef = f
+                            break
 
-        if "sf_fid" in field_names:
-            try:
-                sf_val = feat.attribute("sf_fid")
-                if sf_val is not None and sf_val != NULL:
-                    if is_error_active:
-                        spatial_ids = _flatten_ids(sf_val)
-                    else:
-                        spatial_ids.update(_flatten_ids(sf_val))
-                    feat_ids.update(_flatten_ids(sf_val))
-            except Exception:
-                pass
+            target_feat = feat if (feat and feat.isValid()) else (ef if (ef and ef.isValid()) else None)
+            concat_geocode = ""
+            if target_feat:
+                concat_geocode = compute_ea_geocode_field_calculator(target_feat, active_layer if feat else error_layer)
+            if not concat_geocode and row_attrs:
+                concat_geocode = _compute_ea_geocode_from_dict(row_attrs)
+            if not concat_geocode and ef and ef.isValid():
+                concat_geocode = compute_ea_geocode_field_calculator(ef, error_layer)
 
-        for col in ("sf_map_uuid", "map_uuid", "uuid"):
-            if col in field_names:
+            if not concat_geocode:
+                fid_disp = key_fid if key_fid is not None else (r + 1)
+                null_records.append({
+                    "label": f"Row #{r + 1} (FID: {fid_disp})",
+                    "missing_cols": _inspect_missing_ea_geocode_columns(target_feat, row_attrs, ef),
+                })
+                continue
+
+            if feat and feat.isValid():
+                for tf_name in target_fields:
+                    idx = active_layer.fields().indexOf(tf_name)
+                    if idx != -1:
+                        active_layer.changeAttributeValue(feat.id(), idx, concat_geocode)
+
+            if error_layer and error_layer.isValid() and ef and ef.isValid() and error_layer != active_layer:
+                err_target_fields = [f for f in ("sf_ea_geocode", "ea_geocode", "geocode") if f in error_layer.fields().names()]
+                for tf_name in err_target_fields:
+                    idx = error_layer.fields().indexOf(tf_name)
+                    if idx != -1:
+                        error_layer.changeAttributeValue(ef.id(), idx, concat_geocode)
+
+            payload = {"sf_ea_geocode": concat_geocode, "ea_geocode": concat_geocode}
+            updated_values[f"row_{r}"] = payload
+            if row_ukey:
+                updated_values[row_ukey] = payload
+                updated_values[row_ukey.lower()] = payload
+                updated_values[f"sf_{row_ukey}"] = payload
+                updated_values[f"sf_{row_ukey.lower()}"] = payload
+            if row_main_fid is not None and str(row_main_fid).strip() not in ("", "NULL", "None"):
+                updated_values[row_main_fid] = payload
+                updated_values[f"fid_{row_main_fid}"] = payload
+            if row_uuid:
+                updated_values[row_uuid] = payload
+                updated_values[row_uuid.lower()] = payload
+                updated_values[f"uuid_{row_uuid.lower()}"] = payload
+            if e_fid is not None and str(e_fid).strip() not in ("", "NULL", "None"):
+                updated_values[f"err_{e_fid}"] = payload
+
+            fixed_count += 1
+
+    # Branch B: Headless / direct layer iteration fallback
+    else:
+        for feat in active_layer.getFeatures():
+            if feedback and feedback.isCanceled():
+                break
+
+            f_id = feat.id()
+            spatial_ids = _flatten_ids(f_id)
+            feat_ids = set(spatial_ids)
+            feat_uuid = ""
+
+            if "sf_fid" in field_names:
                 try:
-                    val = feat.attribute(col)
-                    if val is not None and val != NULL:
-                        s_val = str(val).strip()
-                        if s_val and s_val.lower() not in ("null", "none"):
-                            feat_ids.update(_flatten_ids(s_val))
-                            if not feat_uuid:
-                                feat_uuid = s_val
+                    sf_val = feat.attribute("sf_fid")
+                    if sf_val is not None and sf_val != NULL:
+                        if is_error_active:
+                            spatial_ids = _flatten_ids(sf_val)
+                        else:
+                            spatial_ids.update(_flatten_ids(sf_val))
+                        feat_ids.update(_flatten_ids(sf_val))
                 except Exception:
                     pass
 
-        if is_error_active or not target_keys_set or (f_id is not None and f_id < 0):
-            for col in ("fid", "df_fid"):
+            for col in ("sf_map_uuid", "map_uuid", "uuid"):
                 if col in field_names:
                     try:
                         val = feat.attribute(col)
                         if val is not None and val != NULL:
-                            feat_ids.update(_flatten_ids(val))
-                            if is_error_active or (f_id is not None and f_id < 0):
-                                spatial_ids.update(_flatten_ids(val))
+                            s_val = str(val).strip()
+                            if s_val and s_val.lower() not in ("null", "none"):
+                                feat_ids.update(_flatten_ids(s_val))
+                                if not feat_uuid:
+                                    feat_uuid = s_val
                     except Exception:
                         pass
 
-        cand_keys = {make_unique_feature_key(fid_val, feat_uuid) for fid_val in spatial_ids}
-        if feat_uuid:
-            cand_keys.add(make_unique_feature_key(None, feat_uuid))
-        cand_keys.discard("")
-        cand_keys_lower = {k.lower() for k in cand_keys}
-
-        if is_targeted:
-            if is_error_active and target_err_set:
-                matched = bool(_flatten_ids(f_id) & target_err_set)
-            elif target_keys_set:
-                matched = bool(cand_keys & target_keys_set) or bool(cand_keys_lower & target_keys_lower)
-                if not matched and not feat_uuid and target_set:
-                    matched = bool(spatial_ids & target_set)
-            else:
-                matched = bool(target_set and (feat_ids & target_set))
-            if not matched:
-                continue
-
-        concat_geocode = compute_ea_geocode_field_calculator(feat, active_layer)
-        if not concat_geocode:
-            matched_r_info = None
-            for ck_l in cand_keys_lower:
-                if ck_l in row_info_by_key:
-                    matched_r_info = row_info_by_key[ck_l]
-                    break
-            if not matched_r_info:
-                for fid_c in spatial_ids:
-                    if str(fid_c) in row_info_by_fid:
-                        matched_r_info = row_info_by_fid[str(fid_c)]
-                        break
-            label = matched_r_info["label"] if matched_r_info else f"FID: {f_id}"
-            r_attrs = matched_r_info["row_attrs"] if matched_r_info else None
-            null_records.append({
-                "label": label,
-                "missing_cols": _inspect_missing_ea_geocode_columns(feat, r_attrs, None),
-            })
-            continue
-
-        for tf_name in target_fields:
-            idx = active_layer.fields().indexOf(tf_name)
-            if idx != -1:
-                active_layer.changeAttributeValue(f_id, idx, concat_geocode)
-
-        payload = {"sf_ea_geocode": concat_geocode, "ea_geocode": concat_geocode}
-        if is_error_active:
-            updated_values[f"err_{f_id}"] = payload
-        sf_keys = {make_unique_feature_key(fid_val, feat_uuid) for fid_val in spatial_ids} - {""}
-        for uk in sf_keys:
-            updated_values[uk] = payload
-            updated_values[uk.lower()] = payload
-            updated_values[f"sf_{uk}"] = payload
-            updated_values[f"sf_{uk.lower()}"] = payload
-        if feat_uuid:
-            updated_values[f"uuid_{feat_uuid.lower()}"] = payload
-        for k in feat_ids:
-            updated_values[k] = payload
-        for ck in cand_keys:
-            updated_values[ck] = payload
-            updated_values[ck.lower()] = payload
-
-        fixed_count += 1
-
-    # Also synchronize error_layer if active_layer is main_layer
-    if error_layer and error_layer.isValid() and error_layer != active_layer:
-        err_fields = error_layer.fields().names() if hasattr(error_layer.fields(), "names") else []
-        err_target_fields = [f for f in ("sf_ea_geocode", "ea_geocode", "geocode") if f in err_fields]
-        has_err_sf_fid = ("sf_fid" in err_fields or "fid" in err_fields)
-        if err_target_fields:
-            for ef in error_layer.getFeatures():
-                ef_uuid = ""
-                for col in ("sf_map_uuid", "map_uuid", "uuid", "df_map_uuid"):
-                    if col in err_fields:
+            if is_error_active or not target_keys_set or (f_id is not None and f_id < 0):
+                for col in ("fid", "df_fid"):
+                    if col in field_names:
                         try:
-                            val = ef.attribute(col)
-                            if val is not None and val != NULL and str(val).strip():
-                                ef_uuid = str(val).strip()
-                                break
+                            val = feat.attribute(col)
+                            if val is not None and val != NULL:
+                                feat_ids.update(_flatten_ids(val))
+                                if is_error_active or (f_id is not None and f_id < 0):
+                                    spatial_ids.update(_flatten_ids(val))
                         except Exception:
                             pass
 
-                matched_payload = None
-                if has_err_sf_fid:
-                    sf_col_name = "sf_fid" if "sf_fid" in err_fields else "fid"
-                    try:
-                        ef_sf_val = ef.attribute(sf_col_name)
-                    except Exception:
-                        ef_sf_val = None
-                    if ef_sf_val is not None and ef_sf_val != NULL:
-                        for fid_c in _flatten_ids(ef_sf_val):
-                            uk = make_unique_feature_key(fid_c, ef_uuid)
-                            if uk and f"sf_{uk}" in updated_values:
-                                matched_payload = updated_values[f"sf_{uk}"]
-                                break
-                            if uk and f"sf_{uk.lower()}" in updated_values:
-                                matched_payload = updated_values[f"sf_{uk.lower()}"]
-                                break
-                elif ef_uuid and f"uuid_{ef_uuid.lower()}" in updated_values:
-                    matched_payload = updated_values[f"uuid_{ef_uuid.lower()}"]
+            cand_keys = {make_unique_feature_key(fid_val, feat_uuid) for fid_val in spatial_ids}
+            if feat_uuid:
+                cand_keys.add(make_unique_feature_key(None, feat_uuid))
+            cand_keys.discard("")
+            cand_keys_lower = {k.lower() for k in cand_keys}
 
-                if matched_payload:
-                    gc = matched_payload["sf_ea_geocode"]
-                    for etf in err_target_fields:
-                        idx = error_layer.fields().indexOf(etf)
-                        if idx != -1:
-                            error_layer.changeAttributeValue(ef.id(), idx, gc)
+            if is_targeted:
+                if is_error_active and target_err_set:
+                    matched = bool(_flatten_ids(f_id) & target_err_set)
+                elif target_keys_set:
+                    matched = bool(cand_keys & target_keys_set) or bool(cand_keys_lower & target_keys_lower)
+                    if not matched and not feat_uuid and target_set:
+                        matched = bool(spatial_ids & target_set)
+                else:
+                    matched = bool(target_set and (feat_ids & target_set))
+                if not matched:
+                    continue
+
+            concat_geocode = compute_ea_geocode_field_calculator(feat, active_layer)
+            if not concat_geocode:
+                null_records.append({
+                    "label": f"FID: {f_id}",
+                    "missing_cols": _inspect_missing_ea_geocode_columns(feat, None, None),
+                })
+                continue
+
+            for tf_name in target_fields:
+                idx = active_layer.fields().indexOf(tf_name)
+                if idx != -1:
+                    active_layer.changeAttributeValue(f_id, idx, concat_geocode)
+
+            payload = {"sf_ea_geocode": concat_geocode, "ea_geocode": concat_geocode}
+            if is_error_active:
+                updated_values[f"err_{f_id}"] = payload
+            sf_keys = {make_unique_feature_key(fid_val, feat_uuid) for fid_val in spatial_ids} - {""}
+            for uk in sf_keys:
+                updated_values[uk] = payload
+                updated_values[uk.lower()] = payload
+                updated_values[f"sf_{uk}"] = payload
+                updated_values[f"sf_{uk.lower()}"] = payload
+            if feat_uuid:
+                updated_values[f"uuid_{feat_uuid.lower()}"] = payload
+            for k in feat_ids:
+                updated_values[k] = payload
+            for ck in cand_keys:
+                updated_values[ck] = payload
+                updated_values[ck.lower()] = payload
+
+            fixed_count += 1
+
+        # Also synchronize error_layer if active_layer is main_layer
+        if error_layer and error_layer.isValid() and error_layer != active_layer:
+            err_fields = error_layer.fields().names() if hasattr(error_layer.fields(), "names") else []
+            err_target_fields = [f for f in ("sf_ea_geocode", "ea_geocode", "geocode") if f in err_fields]
+            has_err_sf_fid = ("sf_fid" in err_fields or "fid" in err_fields)
+            if err_target_fields:
+                for ef in error_layer.getFeatures():
+                    ef_uuid = ""
+                    for col in ("sf_map_uuid", "map_uuid", "uuid", "df_map_uuid"):
+                        if col in err_fields:
+                            try:
+                                val = ef.attribute(col)
+                                if val is not None and val != NULL and str(val).strip():
+                                    ef_uuid = str(val).strip()
+                                    break
+                            except Exception:
+                                pass
+
+                    matched_payload = None
+                    if has_err_sf_fid:
+                        sf_col_name = "sf_fid" if "sf_fid" in err_fields else "fid"
+                        try:
+                            ef_sf_val = ef.attribute(sf_col_name)
+                        except Exception:
+                            ef_sf_val = None
+                        if ef_sf_val is not None and ef_sf_val != NULL:
+                            for fid_c in _flatten_ids(ef_sf_val):
+                                uk = make_unique_feature_key(fid_c, ef_uuid)
+                                if uk and f"sf_{uk}" in updated_values:
+                                    matched_payload = updated_values[f"sf_{uk}"]
+                                    break
+                                if uk and f"sf_{uk.lower()}" in updated_values:
+                                    matched_payload = updated_values[f"sf_{uk.lower()}"]
+                                    break
+                    elif ef_uuid and f"uuid_{ef_uuid.lower()}" in updated_values:
+                        matched_payload = updated_values[f"uuid_{ef_uuid.lower()}"]
+
+                    if matched_payload:
+                        gc = matched_payload["sf_ea_geocode"]
+                        for etf in err_target_fields:
+                            idx = error_layer.fields().indexOf(etf)
+                            if idx != -1:
+                                error_layer.changeAttributeValue(ef.id(), idx, gc)
 
     if feedback:
         feedback.pushInfo(f"Calculated and assigned EA geocode for {fixed_count} feature(s).")
 
-    # If no active_layer feature matched a selected table row when fixed_count == 0, still populate null_records from the table
-    if fixed_count == 0 and not null_records and row_info_by_fid:
-        seen_rows = set()
-        for r_info in row_info_by_fid.values():
-            if r_info["row"] not in seen_rows:
-                seen_rows.add(r_info["row"])
-                null_records.append({
-                    "label": r_info["label"],
-                    "missing_cols": _inspect_missing_ea_geocode_columns(None, r_info["row_attrs"], None),
-                })
-
-    selected_count = len(target_rows or target_fids or target_uuids or [])
+    selected_count = len(rows_to_process or target_rows or target_fids or target_uuids or [])
     null_warning_msg = (
         _build_null_ea_geocode_message(null_records, selected_count=selected_count)
         if (null_records or fixed_count == 0)

@@ -216,6 +216,7 @@ def _run_fix_update_datafile_coordinates(
 
     updated_values: Dict[Any, Dict[str, str]] = {}
     fixed_count = 0
+    skipped_count = 0
 
     # Branch A: Process by selected table rows (UI selection scope)
     if rows_to_process and table is not None and is_valid_qobject(table):
@@ -264,10 +265,11 @@ def _run_fix_update_datafile_coordinates(
             )
             row_ukey = make_unique_feature_key(key_fid, row_uuid)
 
-            # 1. Extract source coordinates (sf_longitude, sf_latitude) from table cells
+            # 1. Extract source spatial coordinates (sf_longitude, sf_latitude) from table cells
+            # Never fall back to df_x_current / df_y_current (the target columns themselves)
             lon_val = None
             lat_val = None
-            for cand in ("sf_longitude", "longitude", "pos_longitude", "pos_longit", "x_current", "df_x_current", "x"):
+            for cand in ("sf_longitude", "longitude", "pos_longitude", "pos_longit", "x_geometry", "x"):
                 if cand in header_map:
                     it = table.item(r, header_map[cand])
                     if it and it.text().strip():
@@ -280,7 +282,7 @@ def _run_fix_update_datafile_coordinates(
                             except (ValueError, TypeError):
                                 pass
 
-            for cand in ("sf_latitude", "latitude", "pos_latitude", "pos_latitu", "y_current", "df_y_current", "y"):
+            for cand in ("sf_latitude", "latitude", "pos_latitude", "pos_latitu", "y_geometry", "y"):
                 if cand in header_map:
                     it = table.item(r, header_map[cand])
                     if it and it.text().strip():
@@ -322,6 +324,7 @@ def _run_fix_update_datafile_coordinates(
                     lat_val = lat_val or m_lat
 
             if not lon_val or not lat_val:
+                skipped_count += 1
                 continue
 
             lon_str = str(lon_val).strip()
@@ -614,6 +617,8 @@ def _run_fix_update_datafile_coordinates(
     return {
         "success": True,
         "fixed_count": fixed_count,
+        "selected_count": len(rows_to_process) if rows_to_process else fixed_count + skipped_count,
+        "skipped_count": skipped_count,
         "updated_values": updated_values,
         "message": (
             f"Updated Datafile coordinates for {fixed_count} record(s)."

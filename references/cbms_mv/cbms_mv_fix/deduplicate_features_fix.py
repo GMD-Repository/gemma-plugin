@@ -82,10 +82,6 @@ DEDUPLICATION_CHECK_COLS = {
     "longitud",
     "latitude",
     "latitud",
-    "pos_longit",
-    "pos_longitude",
-    "pos_latitu",
-    "pos_latitude",
 }
 
 
@@ -161,8 +157,10 @@ def deduplicate_features(
             h_it = table.horizontalHeaderItem(c)
             h_name = h_it.text().strip() if h_it else ""
             c_low = h_name.lower()
+            base_low = c_low[3:] if c_low.startswith(("sf_", "df_")) else c_low
             if not c_low.startswith(("dup_", "sf_status", "status", "fid", "err_fid", "_orig", "action")) \
-               and c_low not in ("", "#", "distance", "sf_en_code", "en_code", "df_en_code", "sf_remarks", "remarks"):
+               and c_low not in ("", "#", "distance", "sf_en_code", "en_code", "df_en_code", "sf_remarks", "remarks") \
+               and base_low not in ("pos_longitude", "pos_latitude", "pos_longit", "pos_latitu"):
                 compared_cols.append((c, h_name))
 
     lon_cols = []
@@ -179,9 +177,9 @@ def deduplicate_features(
         c_low = h_name.lower()
         base_c = c_low[3:] if c_low.startswith(("sf_", "df_")) else c_low
 
-        if base_c in ("longitude", "longitud", "pos_longitude", "pos_longit"):
+        if base_c in ("longitude", "longitud"):
             lon_cols.append(c)
-        elif base_c in ("latitude", "latitud", "pos_latitude", "pos_latitu"):
+        elif base_c in ("latitude", "latitud"):
             lat_cols.append(c)
         elif base_c in ("map_uuid", "uuid"):
             uuid_cols.append(c)
@@ -369,8 +367,7 @@ def deduplicate_features(
             '"map_uuid",\n    "bsn_geoid",\n    "geocode",\n    "ea_geocode",\n    '
             '"region_code",\n    "province_code",\n    "city_mun_code",\n    "barangay_code",\n    '
             '"ean",\n    "bsn",\n    "status",\n    "longitude",\n    "longitud",\n    '
-            '"latitude",\n    "latitud",\n    "pos_longit",\n    "pos_longitude",\n    '
-            '"pos_latitu",\n    "pos_latitude"'
+            '"latitude",\n    "latitud"'
         )
 
         msg = (
@@ -581,6 +578,8 @@ def _run_fix_longitude_duplicate(
             f.name() for f in active_layer.fields()
             if not f.name().lower().startswith(("dup_", "sf_status", "status", "fid", "err_fid", "_orig"))
             and f.name().lower() not in ("distance", "sf_en_code", "en_code", "df_en_code", "sf_remarks", "remarks")
+            and (f.name().lower()[3:] if f.name().lower().startswith(("sf_", "df_")) else f.name().lower())
+            not in ("pos_longitude", "pos_latitude", "pos_longit", "pos_latitu")
         ]
 
     # Check A: Coordinate duplicate check

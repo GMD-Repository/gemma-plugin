@@ -762,6 +762,8 @@ def _run_fix_bsn_geoid(
     return {
         "success": True,
         "fixed_count": fixed_count,
+        "selected_count": selected_count,
+        "skipped_count": len(null_records),
         "updated_values": updated_values,
         "title": "Check all columns" if null_warning_msg else "Fix Applied",
         "null_columns_warning": null_warning_msg,
