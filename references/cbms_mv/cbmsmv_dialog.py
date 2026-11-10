@@ -553,6 +553,43 @@ class CbmsmvDialog(QDialog):
         if was_docked and self.iface and hasattr(self.iface, "addDockWidget"):
             QTimer.singleShot(50, lambda: self.dock_window() if is_valid_qobject(self) else None)
 
+    def _count_layer_flagged_features(self, val_id: str, layer: Optional[QgsVectorLayer]) -> int:
+        """
+        Count distinct flagged issues for a validation rule's output layer.
+        For mv_2027_hp_4a_longitude__duplicate, counts unique Building Point features (by sf_fid or map_uuid)
+        because joinbynearest emits multiple duplicate rows per nearby neighbor.
+        """
+        if not layer or not layer.isValid():
+            return 0
+
+        raw_count = layer.featureCount()
+        if raw_count <= 0:
+            return 0
+
+        if str(val_id).strip().lower() == "mv_2027_hp_4a_longitude__duplicate":
+            field_map = {f.name().lower(): f.name() for f in layer.fields()}
+            fid_col = field_map.get("sf_fid") or field_map.get("fid")
+            uuid_col = field_map.get("sf_map_uuid") or field_map.get("map_uuid")
+            if fid_col:
+                seen_keys = set()
+                unique_count = 0
+                for f in layer.getFeatures():
+                    fv = f[fid_col]
+                    if fv is None or fv == NULL or str(fv).strip().lower() in ("", "null", "none"):
+                        uv = f[uuid_col] if uuid_col else None
+                        if uv is None or uv == NULL or str(uv).strip().lower() in ("", "null", "none"):
+                            unique_count += 1
+                            continue
+                        key = f"uuid_{str(uv).strip().lower()}"
+                    else:
+                        key = f"fid_{str(fv).strip()}"
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        unique_count += 1
+                return unique_count
+
+        return raw_count
+
     @property
     def should_load_canvas(self) -> bool:
         """Safely determine if validation result layers should be added to QGIS canvas."""
@@ -2329,6 +2366,34 @@ class CbmsmvDialog(QDialog):
 
         if layer and layer.isValid():
             features = list(layer.getFeatures())
+
+            # mv_2027_hp_4a_longitude__duplicate uses native:joinbynearest (NEIGHBORS: 10), which
+            # emits one row per nearby neighbor. Keep only the first row per sf_fid so each
+            # Building Point feature appears once in the table.
+            if str(val_id).strip().lower() == "mv_2027_hp_4a_longitude__duplicate":
+                _dedup_lmap = {f.name().lower(): f.name() for f in layer.fields()}
+                _dedup_fid_col = _dedup_lmap.get("sf_fid") or _dedup_lmap.get("fid")
+                _dedup_uuid_col = _dedup_lmap.get("sf_map_uuid") or _dedup_lmap.get("map_uuid")
+                if _dedup_fid_col:
+                    _seen_dedup_keys = set()
+                    _unique_features = []
+                    for _f in features:
+                        _fv = _f[_dedup_fid_col]
+                        if _fv is None or _fv == NULL or str(_fv).strip().lower() in ("", "null", "none"):
+                            _uv = _f[_dedup_uuid_col] if _dedup_uuid_col else None
+                            if _uv is None or _uv == NULL or str(_uv).strip().lower() in ("", "null", "none"):
+                                # No sf_fid or map_uuid to identify the feature: keep the row as-is
+                                _unique_features.append(_f)
+                                continue
+                            _key = f"uuid_{str(_uv).strip().lower()}"
+                        else:
+                            _key = f"fid_{str(_fv).strip()}"
+                        if _key in _seen_dedup_keys:
+                            continue
+                        _seen_dedup_keys.add(_key)
+                        _unique_features.append(_f)
+                    features = _unique_features
+
             table.setRowCount(len(features))
             table.setSortingEnabled(False)
 
@@ -3570,6 +3635,9 @@ class CbmsmvDialog(QDialog):
                             elif col_kl in ("ean", "df_ean"):
                                 buf_props["ean"] = str(col_v)
                                 buf_props["df_ean"] = str(col_v)
+                            elif col_kl in ("correspondence_code", "df_correspondence_code"):
+                                buf_props["correspondence_code"] = str(col_v)
+                                buf_props["df_correspondence_code"] = str(col_v)
                             elif col_kl.startswith("df_"):
                                 buf_props[col_k[3:]] = str(col_v)
                                 buf_props[col_k] = str(col_v)
@@ -4782,7 +4850,7 @@ class CbmsmvDialog(QDialog):
                     out_layer = QgsVectorLayer(out_dest, val_id, "ogr")
 
         if out_layer and out_layer.isValid():
-            new_count = out_layer.featureCount()
+            new_count = self._count_layer_flagged_features(val_id, out_layer)
         else:
             new_count = 0
             out_layer = QgsVectorLayer("none", val_id, "memory")
@@ -7356,7 +7424,7 @@ class CbmsmvDialog(QDialog):
                         out_layer = QgsVectorLayer(out_dest, val_id, "ogr")
 
             if out_layer and out_layer.isValid():
-                flagged_count = out_layer.featureCount()
+                flagged_count = self._count_layer_flagged_features(val_id, out_layer)
                 total_flagged_issues += flagged_count
 
                 if flagged_count > 0:
