@@ -183,6 +183,10 @@ def _extract_padded_boundary_codes(
         attrs,
         ["df_bsn", "bsn", "df_bsn_code", "bsn_code", "ref_bsn", "sf_bsn", "sf_bsn_code", "df_bldg_sn", "bldg_sn", "sf_bldg_sn", "bsn_num"],
     )
+    raw_corr = _extract_first_matching(
+        attrs,
+        ["df_correspondence_code", "correspondence_code", "ref_correspondence_code", "sf_correspondence_code"],
+    )
 
     reg = _pad_code(raw_reg, 2)
     prov = _pad_code(raw_prov, 3)
@@ -190,6 +194,7 @@ def _extract_padded_boundary_codes(
     brgy = _pad_code(raw_brgy, 3)
     ean = _pad_code(raw_ean, 6)
     bsn = _pad_code(raw_bsn, 5)
+    corr = _pad_code(raw_corr, 9)
 
     ea_geo = _extract_first_matching(
         attrs,
@@ -241,6 +246,7 @@ def _extract_padded_boundary_codes(
         "bsn": bsn,
         "ea_geocode": ea_geo,
         "bsn_geoid": bsn_geoid,
+        "correspondence_code": corr,
     }
 
 
@@ -442,18 +448,32 @@ def _extract_feature_xy(feat: Any) -> Tuple[Optional[float], Optional[float]]:
     if hasattr(feat, "fields") and feat.fields():
         fnames_map = {f.name().lower(): f.name() for f in feat.fields()}
         fx, fy = None, None
-        for xk in ("longitude", "ref_longitude", "sf_longitude", "pos_longit", "x_current", "df_x_current", "x"):
+        for xk in ("sf_longitude", "longitude", "ref_longitude", "df_x_current", "x_current"):
             v = _safe_get_attr(feat, fnames_map[xk]) if xk in fnames_map else None
             if _is_valid_coord(v):
                 fx = float(str(v).strip())
                 break
-        for yk in ("latitude", "ref_latitude", "sf_latitude", "pos_latitu", "y_current", "df_y_current", "y"):
+        for yk in ("sf_latitude", "latitude", "ref_latitude", "df_y_current", "y_current"):
             v = _safe_get_attr(feat, fnames_map[yk]) if yk in fnames_map else None
             if _is_valid_coord(v):
                 fy = float(str(v).strip())
                 break
         return fx, fy
     return None, None
+
+
+def _same_5_digits_after_dot(val_a: Optional[float], val_b: Optional[float]) -> bool:
+    """Return True if two coordinates share the same 5 digits after the dot (or differ by <= 1e-5)."""
+    if val_a is None or val_b is None:
+        return False
+    try:
+        fa = float(val_a)
+        fb = float(val_b)
+        if int(fa * 100000) == int(fb * 100000):
+            return True
+        return abs(fa - fb) <= (1e-5 + 1e-9)
+    except (ValueError, TypeError):
+        return False
 
 
 def _extract_row_data(
@@ -492,6 +512,8 @@ def _extract_row_data(
         target_idx = target_rows.index(r) if (target_rows and r in target_rows) else r
 
     # 1. Read from table widget if provided
+    has_table_x_col = False
+    has_table_y_col = False
     if table is not None:
         if header_map is None:
             header_map = {}
@@ -501,23 +523,19 @@ def _extract_row_data(
                 if h_text and h_text not in ("", "action", "actions"):
                     header_map[h_text] = c
 
-        # Extract X coordinate
-        for candidate in (
-            "df_x_current", "x_current", "sf_longitude", "longitude", "ref_longitude", "x",
-            "pos_longit", "sf_pos_longit", "df_longitude", "df_x"
-        ):
+        # Extract X coordinate strictly from df_x_current (or x_current)
+        for candidate in ("df_x_current", "x_current"):
             if candidate in header_map:
+                has_table_x_col = True
                 it = table.item(r, header_map[candidate])
                 if it and _is_valid_coord(it.text()):
                     row_info["x"] = float(it.text().strip())
                     break
 
-        # Extract Y coordinate
-        for candidate in (
-            "df_y_current", "y_current", "sf_latitude", "latitude", "ref_latitude", "y",
-            "pos_latitu", "sf_pos_latitu", "df_latitude", "df_y"
-        ):
+        # Extract Y coordinate strictly from df_y_current (or y_current)
+        for candidate in ("df_y_current", "y_current"):
             if candidate in header_map:
+                has_table_y_col = True
                 it = table.item(r, header_map[candidate])
                 if it and _is_valid_coord(it.text()):
                     row_info["y"] = float(it.text().strip())
@@ -620,17 +638,19 @@ def _extract_row_data(
 
         if _is_usable_feature(matching_feat):
             err_fnames = matching_feat.fields().names()
-            for x_col_candidate in ("df_x_current", "x_current", "sf_longitude", "longitude", "ref_longitude", "x"):
-                if row_info["x"] is None and x_col_candidate in err_fnames:
-                    val = _safe_get_attr(matching_feat, x_col_candidate)
-                    if _is_valid_coord(val):
-                        row_info["x"] = float(str(val).strip())
+            if not has_table_x_col:
+                for x_col_candidate in ("df_x_current", "x_current"):
+                    if row_info["x"] is None and x_col_candidate in err_fnames:
+                        val = _safe_get_attr(matching_feat, x_col_candidate)
+                        if _is_valid_coord(val):
+                            row_info["x"] = float(str(val).strip())
 
-            for y_col_candidate in ("df_y_current", "y_current", "sf_latitude", "latitude", "ref_latitude", "y"):
-                if row_info["y"] is None and y_col_candidate in err_fnames:
-                    val = _safe_get_attr(matching_feat, y_col_candidate)
-                    if _is_valid_coord(val):
-                        row_info["y"] = float(str(val).strip())
+            if not has_table_y_col:
+                for y_col_candidate in ("df_y_current", "y_current"):
+                    if row_info["y"] is None and y_col_candidate in err_fnames:
+                        val = _safe_get_attr(matching_feat, y_col_candidate)
+                        if _is_valid_coord(val):
+                            row_info["y"] = float(str(val).strip())
 
             if not row_info["uuid"]:
                 for u_candidate in ("df_map_uuid", "ref_map_uuid", "map_uuid", "sf_map_uuid", "df_mapid", "mapid", "uuid"):
@@ -682,13 +702,13 @@ def _extract_row_data(
     if isinstance(f2_feat, dict):
         try:
             f2_fnames = f2_fnames_map if f2_fnames_map is not None else {k.lower(): k for k in f2_feat}
-            if row_info["x"] is None:
-                for xc in ("x_current", "df_x_current", "longitude", "pos_longit", "x"):
+            if row_info["x"] is None and not has_table_x_col:
+                for xc in ("df_x_current", "x_current"):
                     if xc in f2_fnames and _is_valid_coord(f2_feat.get(f2_fnames[xc])):
                         row_info["x"] = float(str(f2_feat[f2_fnames[xc]]).strip())
                         break
-            if row_info["y"] is None:
-                for yc in ("y_current", "df_y_current", "latitude", "pos_latitu", "y"):
+            if row_info["y"] is None and not has_table_y_col:
+                for yc in ("df_y_current", "y_current"):
                     if yc in f2_fnames and _is_valid_coord(f2_feat.get(f2_fnames[yc])):
                         row_info["y"] = float(str(f2_feat[f2_fnames[yc]]).strip())
                         break
@@ -710,13 +730,13 @@ def _extract_row_data(
     elif _is_usable_feature(f2_feat):
         try:
             f2_fnames = f2_fnames_map if f2_fnames_map is not None else {f.name().lower(): f.name() for f in f2_feat.fields()}
-            if row_info["x"] is None:
-                for xc in ("x_current", "df_x_current", "longitude", "pos_longit", "x"):
+            if row_info["x"] is None and not has_table_x_col:
+                for xc in ("df_x_current", "x_current"):
                     if xc in f2_fnames and _is_valid_coord(_safe_get_attr(f2_feat, f2_fnames[xc])):
                         row_info["x"] = float(str(_safe_get_attr(f2_feat, f2_fnames[xc])).strip())
                         break
-            if row_info["y"] is None:
-                for yc in ("y_current", "df_y_current", "latitude", "pos_latitu", "y"):
+            if row_info["y"] is None and not has_table_y_col:
+                for yc in ("df_y_current", "y_current"):
                     if yc in f2_fnames and _is_valid_coord(_safe_get_attr(f2_feat, f2_fnames[yc])):
                         row_info["y"] = float(str(_safe_get_attr(f2_feat, f2_fnames[yc])).strip())
                         break
@@ -954,10 +974,8 @@ def _run_fix_map_uuid_missing(
             except Exception:
                 pass
 
-    # Extract row data once per row and deduplicate by unique composite key (fid + map_uuid)
+    # Extract row data once per selected row (1-to-1 with rows_to_process)
     row_info_cache: Dict[int, Dict[str, Any]] = {}
-    seen_row_keys = set()
-    deduped_rows = []
     for r in rows_to_process:
         row_info = _extract_row_data(
             r,
@@ -978,22 +996,6 @@ def _run_fix_map_uuid_missing(
             f2_fnames_map=f2_fnames_map,
         )
         row_info_cache[r] = row_info
-        if table is not None and len(rows_to_process) > 1:
-            r_fid = next(
-                (
-                    v for v in (row_info.get("source_fid"), row_info.get("df_fid"), row_info.get("err_fid"))
-                    if v is not None and str(v).strip() not in ("", "NULL", "None")
-                ),
-                None,
-            )
-            r_uuid = row_info.get("uuid")
-            uk = make_unique_feature_key(r_fid, r_uuid)
-            if uk and uk in seen_row_keys:
-                continue
-            if uk:
-                seen_row_keys.add(uk)
-        deduped_rows.append(r)
-    rows_to_process = deduped_rows
 
     # Load Reference Building Points layer (*_bldg_point in .gpkg) if available (cached per layer source)
     ref_layer = _load_reference_bldg_layer(dlg, kwargs)
@@ -1160,15 +1162,16 @@ def _run_fix_map_uuid_missing(
         bsn_geoid = padded_dict["bsn_geoid"]
         bsn_val = padded_dict["bsn"]
 
-        # Match in Reference Layer (*_bldg_point) by map_uuid, bsn_geoid, or coordinates
+        # Match in Reference Layer (*_bldg_point) when BOTH selected map_uuid AND 5 digits after the dot match
         ref_feat = None
-        if clean_uuid and clean_uuid.lower() in ref_by_uuid:
-            ref_feat = ref_by_uuid[clean_uuid.lower()]
-        elif bsn_geoid and _is_regular_bsn(bsn_val) and bsn_geoid in ref_by_bsn_geoid:
-            ref_feat = ref_by_bsn_geoid[bsn_geoid]
-        elif _is_valid_coord(x) and _is_valid_coord(y) and not clean_uuid and ref_features_list:
-            for cand_rf, rx, ry, _, _ in ref_features_list:
-                if rx is not None and ry is not None and abs(rx - float(x)) <= 1e-5 and abs(ry - float(y)) <= 1e-5:
+        if clean_uuid and _is_valid_coord(x) and _is_valid_coord(y) and ref_features_list:
+            for cand_rf, rx, ry, r_u, _ in ref_features_list:
+                if (
+                    r_u
+                    and r_u.strip().lower() == clean_uuid.strip().lower()
+                    and _same_5_digits_after_dot(rx, float(x))
+                    and _same_5_digits_after_dot(ry, float(y))
+                ):
                     ref_feat = cand_rf
                     break
 
@@ -1185,23 +1188,6 @@ def _run_fix_map_uuid_missing(
                 val = _safe_get_attr(ref_feat, fn)
                 if _format_clean_code(val) and not _format_clean_code(row_info["attributes"].get(fn)):
                     row_info["attributes"][fn] = val
-            if not (_is_valid_coord(x) and _is_valid_coord(y)):
-                rx, ry = _extract_feature_xy(ref_feat)
-                if _is_valid_coord(rx) and _is_valid_coord(ry):
-                    x, y = rx, ry
-
-        # If coordinates still missing, check if feature already exists in active_layer by UUID or bsn_geoid (O(1) lookup)
-        if not (_is_valid_coord(x) and _is_valid_coord(y)):
-            search_u = (ref_uuid or clean_uuid).lower()
-            matched_active = None
-            if search_u and search_u in active_by_uuid:
-                matched_active = active_by_uuid[search_u][0]
-            elif padded_dict["bsn_geoid"] and padded_dict["bsn_geoid"] in active_by_bsn_geoid:
-                matched_active = active_by_bsn_geoid[padded_dict["bsn_geoid"]][0]
-            if matched_active is not None:
-                ex_x, ex_y = _extract_feature_xy(matched_active)
-                if _is_valid_coord(ex_x) and _is_valid_coord(ex_y):
-                    x, y = ex_x, ex_y
 
         bsn_geoid = padded_dict["bsn_geoid"]
         ea_geo = padded_dict["ea_geocode"]
@@ -1222,12 +1208,12 @@ def _run_fix_map_uuid_missing(
                 parent_w,
                 "Cannot Generate Point Geometry",
                 f"None of the {len(rows_to_process)} selected row(s) contain valid coordinates "
-                "(x_current, y_current).\n\n"
+                "(df_x_current, df_y_current, x_current, y_current).\n\n"
                 "Please verify that the selected rows have valid GPS coordinates to create points on the map.",
             )
         return {
             "success": False,
-            "message": "The selected row(s) lack valid coordinates (x_current, y_current).",
+            "message": "The selected row(s) lack valid coordinates (df_x_current, df_y_current, x_current, y_current).",
             "fixed_count": 0,
             "updated_values": {},
         }
@@ -1249,7 +1235,7 @@ def _run_fix_map_uuid_missing(
         transform = QgsCoordinateTransform(src_crs, dest_crs, QgsProject.instance())
 
     is_geo = dest_crs.isGeographic() if (dest_crs and hasattr(dest_crs, "isGeographic") and dest_crs.isValid()) else True
-    tol = 1e-5 if is_geo else 0.5
+    tol = 1e-7 if is_geo else 0.01
 
     updated_values: Dict[Any, Dict[str, Any]] = {}
     fixed_count = 0
@@ -1258,6 +1244,7 @@ def _run_fix_map_uuid_missing(
     failed_rows = []
     created_batch_fids = set()
     created_batch_features: List[Tuple[Any, Any, float, float, str]] = []  # (assigned_fid, pt, x, y, target_uuid)
+    used_uuids_in_layer: Set[str] = set(active_by_uuid.keys())
 
     def _set_layer_attr_if_changed(fid_val: int, feat_obj: Optional[QgsFeature], field_name: str, new_val: Any) -> None:
         idx = field_idx_map.get(field_name, -1)
@@ -1285,8 +1272,6 @@ def _run_fix_map_uuid_missing(
             if feedback and feedback.isCanceled():
                 break
 
-            effective_search_uuid = ref_uuid or clean_uuid
-
             pt = QgsPointXY(x, y)
             if transform:
                 try:
@@ -1304,88 +1289,36 @@ def _run_fix_map_uuid_missing(
             existing_uuid = None
             is_reused_from_batch = False
 
-            # 1a. O(1) Match by explicit existing UUID (reference UUID or Form 2 UUID) in active_layer
-            for search_u in ([effective_search_uuid, clean_uuid] if (effective_search_uuid and clean_uuid and effective_search_uuid != clean_uuid) else [effective_search_uuid]):
-                if not search_u:
-                    continue
-                u_low = search_u.strip().lower()
-                if u_low in active_by_uuid:
-                    cand_f, cand_u = active_by_uuid[u_low]
-                    if cand_f.id() not in created_batch_fids:
-                        existing_feat = cand_f
-                        existing_feat_id = cand_f.id()
-                        existing_uuid = cand_u
-                        break
-
-            # 1b. O(1) Match by explicit sf_fid if present (e.g. mv_2027_hp_4b_geom__missing)
-            if existing_feat_id is None and _format_clean_code(row_info.get("sf_fid")):
+            # Strict New-Point Generation:
+            # Never hijack or overwrite an existing point that already has geometry on the map.
+            # Only populate an existing feature in place if the selected row explicitly points to an
+            # sf_fid in active_layer whose geometry is currently missing/empty (e.g. geom__missing).
+            if _format_clean_code(row_info.get("sf_fid")):
                 try:
                     sf_fid_int = int(str(row_info["sf_fid"]).strip())
+                    cand_f = None
+                    cand_u = ""
                     if sf_fid_int in active_by_fid:
                         cand_f, cand_u = active_by_fid[sf_fid_int]
-                        if cand_f.id() not in created_batch_fids:
-                            existing_feat = cand_f
-                            existing_feat_id = cand_f.id()
-                            existing_uuid = cand_u
                     else:
-                        cand_f = active_layer.getFeature(sf_fid_int)
-                        if _is_usable_feature(cand_f) and cand_f.id() not in created_batch_fids:
-                            existing_feat = cand_f
-                            existing_feat_id = cand_f.id()
+                        f_lookup = active_layer.getFeature(sf_fid_int)
+                        if _is_usable_feature(f_lookup):
+                            cand_f = f_lookup
                             for uf in uuid_fields:
                                 val_u = _safe_get_attr(cand_f, uf)
                                 if _is_valid_uuid(val_u):
-                                    existing_uuid = str(val_u).strip()
+                                    cand_u = str(val_u).strip()
                                     break
+                    if (
+                        cand_f is not None
+                        and cand_f.id() not in created_batch_fids
+                        and (not cand_f.hasGeometry() or cand_f.geometry().isEmpty())
+                    ):
+                        existing_feat = cand_f
+                        existing_feat_id = cand_f.id()
+                        existing_uuid = cand_u
                 except Exception:
                     pass
-
-            # 1c. O(1) Match by regular bsn_geoid in active_layer if UUID wasn't matched
-            if existing_feat_id is None and bsn_geoid and _is_regular_bsn(padded_dict.get("bsn", "")):
-                if bsn_geoid in active_by_bsn_geoid:
-                    cand_f, cand_u = active_by_bsn_geoid[bsn_geoid]
-                    if cand_f.id() not in created_batch_fids:
-                        if not cand_u or (effective_search_uuid and cand_u.lower() == effective_search_uuid.lower()) or (cand_u.lower() not in ref_valid_uuids):
-                            existing_feat = cand_f
-                            existing_feat_id = cand_f.id()
-                            existing_uuid = cand_u
-
-            # 2a. Check if a feature was created earlier in current batch with the same UUID or compatible coordinates
-            if existing_feat_id is None and effective_search_uuid:
-                for c_fid, c_pt, c_x, c_y, c_uuid in created_batch_features:
-                    if c_uuid and c_uuid.strip().lower() == effective_search_uuid.strip().lower():
-                        existing_feat_id = c_fid
-                        existing_uuid = c_uuid
-                        is_reused_from_batch = True
-                        break
-
-            if existing_feat_id is None:
-                for c_fid, c_pt, c_x, c_y, c_uuid in created_batch_features:
-                    if (abs(c_x - x) <= 1e-5 and abs(c_y - y) <= 1e-5) or (abs(c_pt.x() - pt.x()) <= tol and abs(c_pt.y() - pt.y()) <= tol):
-                        if not effective_search_uuid or not c_uuid or c_uuid.lower() == effective_search_uuid.lower():
-                            existing_feat_id = c_fid
-                            existing_uuid = c_uuid
-                            is_reused_from_batch = True
-                            break
-
-            # 2b. Fast in-memory match of existing feature in active_layer by (X, Y) coordinates
-            if existing_feat_id is None:
-                for feat, feat_x, feat_y, cand_uuid in active_coords_list:
-                    if feat.id() in created_batch_fids:
-                        continue
-                    if feat_x is not None and feat_y is not None:
-                        if abs(feat_x - x) <= 1e-5 and abs(feat_y - y) <= 1e-5:
-                            if (
-                                effective_search_uuid
-                                and cand_uuid
-                                and cand_uuid.lower() != effective_search_uuid.lower()
-                                and cand_uuid.lower() in ref_valid_uuids
-                            ):
-                                continue
-                            existing_feat = feat
-                            existing_feat_id = feat.id()
-                            existing_uuid = cand_uuid
-                            break
 
             if existing_feat_id is not None:
                 assigned_fid = existing_feat_id
@@ -1485,6 +1418,11 @@ def _run_fix_map_uuid_missing(
                         for bf in ("bsn", "sf_bsn", "df_bsn", "bsn_code", "sf_bsn_code", "df_bsn_code", "bldg_sn", "sf_bldg_sn", "df_bldg_sn"):
                             _set_layer_attr_if_changed(existing_feat_id, existing_feat, bf, p_bsn)
 
+                    p_corr = padded_dict.get("correspondence_code")
+                    if p_corr:
+                        for cf in ("correspondence_code", "sf_correspondence_code", "df_correspondence_code"):
+                            _set_layer_attr_if_changed(existing_feat_id, existing_feat, cf, p_corr)
+
                     # Populate any missing non-boundary attributes (e.g. en_code) onto existing_feat
                     for attr_k, attr_v in row_info["attributes"].items():
                         if not _format_clean_code(attr_v):
@@ -1499,7 +1437,7 @@ def _run_fix_map_uuid_missing(
                             "map_uuid", "mapid", "uuid", "x_current", "y_current", "longitude", "latitude", "x", "y",
                             "bsn_geoid", "ea_geocode", "region_code", "reg_code", "province_code", "city_mun_code", "barangay_code",
                             "barangay__code", "ean", "bsn", "bsn_code", "prov_code", "mun_code", "brgy_code",
-                            "bldg_sn", "bsn_num", "is_deleted", "sf_is_deleted", "status", "sf_status",
+                            "bldg_sn", "bsn_num", "correspondence_code", "is_deleted", "sf_is_deleted", "status", "sf_status",
                         ):
                             continue
                         for target_k in (attr_k, clean_k, f"sf_{clean_k}"):
@@ -1511,7 +1449,51 @@ def _run_fix_map_uuid_missing(
                 reused_count += 1
 
             else:
-                target_uuid = ref_uuid or clean_uuid or str(uuid.uuid4())
+                # 1. Compare Selected Row (df_map_uuid, df_x_current, df_y_current) against Existing Points (.geojson):
+                #    Copy map_uuid ONLY when BOTH selected map_uuid AND 5 digits after the dot match.
+                # 2. Else if no matching point in .geojson, compare Selected Row against Reference Points (*_bldg_point in .gpkg):
+                #    Copy map_uuid ONLY when BOTH selected map_uuid AND 5 digits after the dot match.
+                # 3. Else: generate new map_uuid.
+                matched_existing_uuid = ""
+                matched_existing_feat = None
+                if clean_uuid:
+                    clean_u_low = clean_uuid.strip().lower()
+                    for c_item in created_batch_features:
+                        c_x, c_y, c_uuid = c_item[2], c_item[3], c_item[4]
+                        c_feat = c_item[5] if len(c_item) > 5 else None
+                        if (
+                            c_uuid
+                            and c_uuid.strip().lower() == clean_u_low
+                            and _same_5_digits_after_dot(c_x, x)
+                            and _same_5_digits_after_dot(c_y, y)
+                        ):
+                            matched_existing_uuid = clean_uuid.strip()
+                            matched_existing_feat = c_feat
+                            break
+                    if not matched_existing_uuid:
+                        for cand_feat, feat_x, feat_y, cand_uuid in active_coords_list:
+                            if (
+                                cand_uuid
+                                and cand_uuid.strip().lower() == clean_u_low
+                                and _same_5_digits_after_dot(feat_x, x)
+                                and _same_5_digits_after_dot(feat_y, y)
+                            ):
+                                matched_existing_uuid = clean_uuid.strip()
+                                matched_existing_feat = cand_feat
+                                break
+
+                if matched_existing_uuid:
+                    target_uuid = matched_existing_uuid
+                    if matched_existing_feat is not None:
+                        ex_padded = _extract_padded_boundary_codes({}, extra_feat=matched_existing_feat)
+                        if ex_padded.get("correspondence_code"):
+                            padded_dict["correspondence_code"] = ex_padded["correspondence_code"]
+                elif ref_uuid and clean_uuid and ref_uuid.strip().lower() == clean_uuid.strip().lower():
+                    target_uuid = clean_uuid.strip()
+                else:
+                    target_uuid = str(uuid.uuid4())
+                used_uuids_in_layer.add(target_uuid.lower())
+
                 new_feat = QgsFeature(main_fields)
                 new_geom = QgsGeometry.fromPointXY(pt)
                 new_feat.setGeometry(new_geom)
@@ -1587,6 +1569,12 @@ def _run_fix_map_uuid_missing(
                         if bf in main_field_names:
                             _set_feat_attr(new_feat, bf, p_bsn)
 
+                p_corr = padded_dict.get("correspondence_code")
+                if p_corr:
+                    for cf in ("correspondence_code", "sf_correspondence_code", "df_correspondence_code"):
+                        if cf in main_field_names:
+                            _set_feat_attr(new_feat, cf, p_corr)
+
                 for attr_k, attr_v in row_info["attributes"].items():
                     if not _format_clean_code(attr_v):
                         continue
@@ -1600,7 +1588,7 @@ def _run_fix_map_uuid_missing(
                         "map_uuid", "mapid", "uuid", "x_current", "y_current", "longitude", "latitude", "x", "y",
                         "bsn_geoid", "ea_geocode", "region_code", "reg_code", "province_code", "city_mun_code", "barangay_code",
                         "barangay__code", "ean", "bsn", "bsn_code", "prov_code", "mun_code", "brgy_code",
-                        "bldg_sn", "bsn_num", "is_deleted", "sf_is_deleted", "status", "sf_status",
+                        "bldg_sn", "bsn_num", "correspondence_code", "is_deleted", "sf_is_deleted", "status", "sf_status",
                     ):
                         continue
                     for target_k in (attr_k, clean_k, f"sf_{clean_k}"):
@@ -1631,7 +1619,7 @@ def _run_fix_map_uuid_missing(
                     if isinstance(assigned_fid, int) and assigned_fid < 0:
                         uncommitted_fid_map[assigned_fid] = display_sf_fid
                     created_batch_fids.add(assigned_fid)
-                    created_batch_features.append((assigned_fid, pt, x, y, target_uuid))
+                    created_batch_features.append((assigned_fid, pt, x, y, target_uuid, new_feat))
 
                 created_count += 1
 
@@ -1692,6 +1680,11 @@ def _run_fix_map_uuid_missing(
             if p_bsn:
                 for bf in ("bsn", "sf_bsn", "df_bsn", "bsn_code", "sf_bsn_code", "df_bsn_code", "bldg_sn", "sf_bldg_sn", "df_bldg_sn"):
                     col_dict[bf] = p_bsn
+
+            p_corr = padded_dict.get("correspondence_code")
+            if p_corr:
+                for cf in ("correspondence_code", "sf_correspondence_code", "df_correspondence_code"):
+                    col_dict[cf] = p_corr
 
             # Populate other non-empty attributes (such as sf_en_code, en_code) into col_dict so table cells update from NULL
             if _is_usable_feature(existing_feat):

@@ -153,7 +153,7 @@ def delete_selected_features(
                     row_del_btn = child
                     break
 
-        mark_feature_deleted(
+        was_marked = mark_feature_deleted(
             dialog,
             val_id,
             layer,
@@ -172,9 +172,7 @@ def delete_selected_features(
             seen_unique_keys.add(ukey)
             seen_unique_keys.add(ukey.lower())
 
-        feat_ident = (best_f, best_u)
-        if feat_ident not in processed_features:
-            processed_features.add(feat_ident)
+        if was_marked is not False:
             deleted_count += 1
 
     # Synchronize all other rows in the table that share any seen_unique_keys
@@ -221,6 +219,7 @@ def delete_selected_features(
         )
     if hasattr(dialog, "iface") and dialog.iface and dialog.iface.mapCanvas():
         dialog.iface.mapCanvas().refresh()
+    return True
 
 
 def mark_feature_deleted(
@@ -447,6 +446,7 @@ def mark_feature_deleted(
 
     if hasattr(dialog, "iface") and dialog.iface and dialog.iface.mapCanvas():
         dialog.iface.mapCanvas().refresh()
+    return True
 
 
 def sync_feature_status(

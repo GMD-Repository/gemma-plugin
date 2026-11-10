@@ -226,6 +226,9 @@ def get_rule_workflow_info(val_id: str, flags: int = 0, status: str = "") -> Tup
     """
     clean_id = str(val_id).strip().lower()
 
+    if clean_id == "mv_2027_hp_1a_map_uuid__missing" or "hp_1a_map_uuid__missing" in clean_id:
+        return 0, "Phase 1: Missing Points & Links"
+
     if "duplicate" in clean_id or "deduplicate" in clean_id:
         phase_label = "Phase 1: Duplicates & Retain"
         base_priority = 100

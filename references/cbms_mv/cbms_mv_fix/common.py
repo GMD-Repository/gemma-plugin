@@ -97,9 +97,9 @@ def _is_coord_col(col_name: str, coord_type: str) -> bool:
     c = str(col_name).strip().lower()
     base_c = c[3:] if c.startswith(("sf_", "df_")) else c
     if coord_type == "lon":
-        return base_c in ("longitude", "longitud", "pos_longitude", "pos_longit")
+        return base_c in ("longitude", "longitud")
     elif coord_type == "lat":
-        return base_c in ("latitude", "latitud", "pos_latitude", "pos_latitu")
+        return base_c in ("latitude", "latitud")
     return False
 
 
