@@ -319,7 +319,7 @@ def run_phase_4(alg, parameters, context, feedback, multi_feedback, p1, p2, prev
         if (gap_source is not None or overlap_source is not None) and feat.id() in special_ea_ids:
             spec_info = special_ea_info[feat.id()]
             ea_dict['is_special_ea'] = True
-            ea_dict['ea_type'] = spec_info.get('special_type', 'SPECIAL')
+            ea_dict['ea_type'] = 'RETAINED'
             ea_dict['special_type'] = spec_info.get('special_type', 'SPECIAL')
             ea_dict['source_id'] = spec_info.get('source_id', '')
             ea_dict['remarks'] = spec_info.get('remarks', '')

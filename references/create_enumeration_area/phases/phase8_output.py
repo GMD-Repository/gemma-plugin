@@ -1416,15 +1416,13 @@ def run_phase_8(
 
         ea_type_idx = out_fields.indexOf("ea_type")
         if ea_type_idx != -1:
-            explicit_ea_type = ea.get('ea_type')
-            if explicit_ea_type and str(explicit_ea_type).strip() not in ('RETAINED', '', 'None', 'NULL'):
-                ea_type_val = str(explicit_ea_type).strip()
+            explicit_ea_type = str(ea.get('ea_type') or '').strip().upper()
+            if explicit_ea_type in ('DELINEATED', 'MERGED'):
+                ea_type_val = explicit_ea_type
             elif ea.get('from_split', False):
                 ea_type_val = 'DELINEATED'
             elif ea.get('from_merge', False):
                 ea_type_val = 'MERGED'
-            elif ea.get('is_special_ea', False):
-                ea_type_val = str(ea.get('special_type', 'SPECIAL'))
             else:
                 ea_type_val = 'RETAINED'
             out_feat.setAttribute(ea_type_idx, ea_type_val)
@@ -2026,7 +2024,7 @@ def run_phase_8(
                     _gc_prefix = _bar_geocode if len(_bar_geocode) <= 8 else _bar_geocode[:8]
                     _gap_feat.setAttribute(_geocode_idx, _gc_prefix + _sp_ean)
                 if _ea_type_idx != -1:
-                    _gap_feat.setAttribute(_ea_type_idx, "GAP")
+                    _gap_feat.setAttribute(_ea_type_idx, "RETAINED")
                 if _special_type_idx != -1:
                     _gap_feat.setAttribute(_special_type_idx, "GAP")
                 if _sy_idx != -1:
@@ -2092,7 +2090,7 @@ def run_phase_8(
                     _gc_prefix = _bar_geocode if len(_bar_geocode) <= 8 else _bar_geocode[:8]
                     _ov_feat.setAttribute(_geocode_idx, _gc_prefix + _sp_ean)
                 if _ea_type_idx != -1:
-                    _ov_feat.setAttribute(_ea_type_idx, "OVERLAP")
+                    _ov_feat.setAttribute(_ea_type_idx, "RETAINED")
                 if _special_type_idx != -1:
                     _ov_feat.setAttribute(_special_type_idx, "OVERLAP")
                 if _sy_idx != -1:

@@ -569,13 +569,13 @@ class TestEAMergeProcessor(unittest.TestCase):
             gc.collect()
 
     def test_ea_type_derived_from_layer_name_suffix(self):
-        """Test derivation of ea_type from layer name suffixes."""
+        """Test derivation of ea_type from layer name suffixes (only DELINEATED and MERGED are valid; others fall back to RETAINED)."""
         from references.create_enumeration_area.ea_merge_processor import _ea_type_from_layer_name
         self.assertEqual(_ea_type_from_layer_name("01728011_delineated_ea2026"), "DELINEATED")
         self.assertEqual(_ea_type_from_layer_name("01728001_merged_ea2026"), "MERGED")
-        self.assertEqual(_ea_type_from_layer_name("01728009_special_ea"), "SPECIAL")
-        self.assertEqual(_ea_type_from_layer_name("01728009_gap_ea"), "GAP")
-        self.assertEqual(_ea_type_from_layer_name("01728009_overlap_ea"), "OVERLAP")
+        self.assertEqual(_ea_type_from_layer_name("01728009_special_ea"), "RETAINED")
+        self.assertEqual(_ea_type_from_layer_name("01728009_gap_ea"), "RETAINED")
+        self.assertEqual(_ea_type_from_layer_name("01728009_overlap_ea"), "RETAINED")
         self.assertEqual(_ea_type_from_layer_name("01728000"), "RETAINED")
 
     def test_ghost_ea_remarks_and_empty_counts(self):

@@ -162,7 +162,7 @@ _FIELD_CANDIDATE_MAP = {
     "bldg_count": (
         "bldg_count", "new_bldg_count", "calc_bldg_count", "bldg_cnt", "bldg"
     ),
-    "ea_type": ("ea_type", "type", "eatype", "special_type"),
+    "ea_type": ("ea_type", "type", "eatype"),
     "eacount": ("eacount", "ea_count", "eacnt", "total_ea", "ea_total"),
     "remarks": ("remarks", "remark", "delin_remarks", "delin_remark", "comments", "comment"),
 }
@@ -201,12 +201,6 @@ def _ea_type_from_layer_name(layer_name: str) -> str:
         return "DELINEATED"
     if "merged" in name_lower:
         return "MERGED"
-    if "special" in name_lower:
-        return "SPECIAL"
-    if "gap" in name_lower:
-        return "GAP"
-    if "overlap" in name_lower:
-        return "OVERLAP"
     return "RETAINED"
 
 
@@ -1092,6 +1086,9 @@ class EAMergeProcessor:
                                         val = str(int(round(f_val)))
                                     except (ValueError, TypeError):
                                         val = s_val
+                                elif ea_field_name == "ea_type":
+                                    s_val = str(val).strip().upper()
+                                    val = s_val if s_val in ("DELINEATED", "MERGED") else "RETAINED"
                                 else:
                                     val = str(val)
                         except (ValueError, TypeError):
