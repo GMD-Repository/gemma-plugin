@@ -49,21 +49,18 @@ The **Pre-Processing** tab contains a 3-step sequential interface (`Georeferenci
 
 ### Geometry Check & Repair Workflow
 
-The **Geometry Check & Repair** tab provides a 3-step chronological workflow for scanning, inspecting, and repairing defective polygon geometries:
+The **Geometry Check & Repair** tab embeds the complete [Geometry Repair Toolkit](/tools/geometry-repair-toolkit) suite directly into the Check and Update dialog, providing a unified tabbed interface for in-place polygon validation, repair, and multipart merging:
 
-1. **Target Layer & Check Error Options**: Choose the target polygon vector layer and select error types to evaluate (Null, Empty, Invalid GEOS, Self-Intersections, Wrong Geometry Type, Duplicate Geometries).
-2. **Step 1: Scan Geometry Errors**:
-   - Executes `gmd_pipeline:scangeometryerrors`.
-   - Populates an interactive **Detected Errors Table** (`FID`, `Layer`, `Error Type`, `Description`, `Auto-fixable`).
-   - Loads a Point Error Layer (`Geometry_Errors_<layer_name>`) into QGIS for spatial visualization.
-3. **Interactive Table Selection & Canvas Zoom**:
-   - **Double-click** any table row to zoom the QGIS map canvas directly to that defect.
-   - **Multi-select** specific table rows to target specific error features for repair.
-4. **Step 2: Repair Polygon Geometries**:
-   - Executes `gmd_pipeline:repairpolygongeometries`.
-   - If specific table rows are highlighted, repairs **only those selected features**.
-   - If no rows are selected, repairs **all detected errors** across the layer.
-5. **Step 3: UPSERT Repaired Features to Layer**:
-   - Merges clean repaired geometries into a complete updated version of the target polygon layer (`Updated_<layer_name>`).
-   - Replaces defective features while preserving all untouched valid features.
+1. **Geometry Fixer (Tab 1)**:
+   - Evaluates polygon layers for topological invalidities (Null/Empty Geometries, Invalid GEOS, Self-Intersections, Wrong Geometry Types, Duplicate Vertices, and Ring/Structure Errors).
+   - Populates an interactive results table with auto-fixable classification. Double-clicking any error row zooms the canvas and renders red rubber-band boundary highlights and vertex markers at the defect location.
+   - Executes multi-threaded automated repairs in-place directly on the source layer in QGIS edit mode, with detailed diagnostic logging for unfixable features (e.g. zero-area geometries collapsing to lines).
+2. **Merge Polygon Parts (Tab 2)**:
+   - Bridges disconnected components of multipart polygon features (such as fragmented barangays) by filling only the gaps between parts.
+   - Supports interactive map picking (`Pick Feature on Map`) and layer-wide batch evaluation (`Scan All Features`).
+   - Features automated gap width calculation (capped at $100\text{ m}$ to protect islands), seam despiking ($10.0^\circ$), sliver hole filling ($< 10.0\text{ m}^2$ or compactness $< 0.1$), and live color-coded canvas previews (orange bridge, dashed red outline, red X spike markers, magenta hole fills).
+   - Applies in-place modifications as single-transaction edits with one-click **Undo** and **Save Edits** controls.
+3. **Help and Information (Tab 3)**:
+   - Embedded HTML reference documentation detailing error types, repair mechanisms, and operational best practices with adaptive light/dark theming.
+
 

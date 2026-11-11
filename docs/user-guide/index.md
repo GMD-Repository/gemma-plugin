@@ -65,7 +65,7 @@ features:
   - icon:
       src: /icons/repair_geom.svg
     title: Geometry Repair Toolkit
-    details: Validate and repair polygon geometries — detect duplicates, null geometries, invalid shapes, and wrong-type features with auto-fix capabilities.
+    details: Validate and repair polygon geometries in-place — detect invalid shapes, fix duplicate vertices, recover null geometries, and merge multipart polygon parts.
     link: /tools/geometry-repair-toolkit
   - icon:
       src: /icons/scan_errors.svg
