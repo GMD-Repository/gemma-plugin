@@ -68,7 +68,7 @@ def extract_proposed_cut_line(split_parts: List[Dict[str, Any]], parent_geom: Qg
                 geom_j = split_parts[p_j].get('geom')
                 if not geom_i or not geom_j or geom_i.isEmpty() or geom_j.isEmpty():
                     continue
-                buf_inter = geom_i.boundary().intersection(geom_j.buffer(0.05, 3))
+                buf_inter = QgsGeometry(geom_i.constGet().boundary()).intersection(geom_j.buffer(0.05, 3))
                 if buf_inter and not buf_inter.isEmpty():
                     flat = QgsWkbTypes.flatType(buf_inter.wkbType())
                     if flat in (QgsWkbTypes.LineString, QgsWkbTypes.MultiLineString):
