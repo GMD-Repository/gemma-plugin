@@ -391,7 +391,7 @@ class EARFWriter:
                 "new_ean":    new_ean_val,
                 "hh_count":   _num(feat, "hh_count"),
                 "bldg_count": _num(feat, "bldg_count"),
-                "ea_type":    _str(feat, "ea_type")  or "RETAINED",
+                "ea_type":    _str(feat, "ea_type") if (_str(feat, "ea_type") or "").strip().upper() in ("DELINEATED", "MERGED") else "RETAINED",
                 "sy":         _clean_sy(_str(feat, "sy"), default=2026),
                 "remarks":    remarks_val,
                 # Row type
