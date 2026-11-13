@@ -14,7 +14,7 @@
     <file_name>gemma-plugin.zip</file_name>
     <upload_date>2026-10-26</upload_date>
     <update_date>2026-10-26</update_date>
-    <experimental>True</experimental>
+    <experimental>False</experimental>
     <deprecated>False</deprecated>
     <tracker>https://github.com/GMD-Repository/gemma-plugin/issues</tracker>
     <repository>https://github.com/GMD-Repository/gemma-plugin</repository>
