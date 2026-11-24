@@ -2873,23 +2873,30 @@ class CbmsmvDialog(QDialog):
         u_col = m_flds.get("map_uuid") or m_flds.get("sf_map_uuid") or m_flds.get("mapid") or m_flds.get("uuid")
 
         # 1. Primary: Locate by native QGIS internal feature ID ($id)
+        fid_fallback_feat = None
         if clean_fid is not None:
             try:
                 feat = main_layer.getFeature(int(clean_fid))
                 if feat.isValid():
-                    clean_u = str(map_uuid).strip() if map_uuid else ""
+                    fid_fallback_feat = feat
+                    clean_u = str(map_uuid).strip() if (map_uuid is not None and map_uuid != NULL) else ""
+                    if clean_u.lower() in ("null", "none", "nan"):
+                        clean_u = ""
                     if not clean_u or not u_col:
                         return feat
-                    feat_u = str(feat[u_col] or "").strip()
-                    if feat_u == clean_u:
+                    raw_feat_u = feat[u_col]
+                    feat_u = "" if (raw_feat_u is None or raw_feat_u == NULL) else str(raw_feat_u).strip()
+                    if feat_u.lower() in ("null", "none", "nan"):
+                        feat_u = ""
+                    if not feat_u or feat_u.lower() == clean_u.lower():
                         return feat
             except Exception:
                 pass
 
         # 2. Fallback: Locate by map_uuid / mapid across all alias columns
-        if map_uuid:
+        if map_uuid is not None and map_uuid != NULL:
             clean_uuid = str(map_uuid).strip().replace("'", "''")
-            if clean_uuid and clean_uuid.lower() not in ("null", "none"):
+            if clean_uuid and clean_uuid.lower() not in ("null", "none", "nan"):
                 for cand_col in ("map_uuid", "sf_map_uuid", "mapid", "sf_mapid", "uuid"):
                     if cand_col in m_flds:
                         real_col = m_flds[cand_col]
@@ -2899,18 +2906,24 @@ class CbmsmvDialog(QDialog):
                         except Exception:
                             pass
 
-        # 3. Fallback: Locate by fid attribute if 'fid' field exists in main_layer
-        if clean_fid is not None and "fid" in m_flds:
-            try:
-                fid_attr = m_flds["fid"]
-                if isinstance(clean_fid, int):
-                    expr = f'"{fid_attr}" = {clean_fid}'
-                else:
-                    expr = f'"{fid_attr}" = \'{str(clean_fid).replace(chr(39), chr(39)+chr(39))}\''
-                for f in main_layer.getFeatures(QgsFeatureRequest().setFilterExpression(expr)):
-                    return f
-            except Exception:
-                pass
+        # 3. Fallback: Locate by fid / sf_fid attribute if present in main_layer
+        if clean_fid is not None:
+            for fid_key in ("fid", "sf_fid"):
+                if fid_key in m_flds:
+                    try:
+                        fid_attr = m_flds[fid_key]
+                        if isinstance(clean_fid, int):
+                            expr = f'"{fid_attr}" = {clean_fid}'
+                        else:
+                            expr = f'"{fid_attr}" = \'{str(clean_fid).replace(chr(39), chr(39)+chr(39))}\''
+                        for f in main_layer.getFeatures(QgsFeatureRequest().setFilterExpression(expr)):
+                            return f
+                    except Exception:
+                        pass
+
+        # 4. Final fallback: if native FID matched a valid feature even when map_uuid differed (e.g. df_map_uuid mismatch)
+        if fid_fallback_feat is not None and fid_fallback_feat.isValid():
+            return fid_fallback_feat
 
         return None
 
@@ -3590,15 +3603,23 @@ class CbmsmvDialog(QDialog):
                                     else:
                                         self._pending_json_edits[rec_k]["props"][fname[3:] if fname_l.startswith("df_") else fname] = new_text
 
-                    # Always ensure col_updates for df_* and map_uuid/bsn_geoid/ea_geocode are buffered for CSV persistence
+                    # Buffer Form 2 CSV/JSON persistence only for Form 2-targeted updates (never fall back to sf_fid as df_fid)
+                    raw_df_fid_item = item0.data(Qt.UserRole + 4)
                     r_df_fid_buf = (
-                        item0.data(Qt.UserRole + 4)
-                        if (item0.data(Qt.UserRole + 4) is not None and str(item0.data(Qt.UserRole + 4)).strip() not in ("", "NULL", "None"))
-                        else item0.data(Qt.UserRole)
+                        raw_df_fid_item
+                        if (raw_df_fid_item is not None and str(raw_df_fid_item).strip() not in ("", "NULL", "None"))
+                        else None
                     )
-                    r_df_uuid_buf = str(item0.data(Qt.UserRole + 5) or r_uuid or "").strip()
-                    rec_k_buf = f"fid_{r_df_fid_buf}" if r_df_fid_buf is not None else f"uuid_{r_df_uuid_buf}"
-                    if r_df_fid_buf is not None or r_df_uuid_buf:
+                    r_df_uuid_buf = str(item0.data(Qt.UserRole + 5) or "").strip()
+                    if not r_df_uuid_buf and r_df_fid_buf is not None:
+                        r_df_uuid_buf = str(r_uuid or "").strip()
+                    rec_k_buf = f"fid_{r_df_fid_buf}" if r_df_fid_buf is not None else (f"uuid_{r_df_uuid_buf}" if r_df_uuid_buf else None)
+                    is_form2_action = str(val_id or "").strip().lower() in (
+                        "update_datafiles_coordinates",
+                        "update_datafile_coordinates",
+                        "generate_point_geometry",
+                    )
+                    if rec_k_buf and (is_form2_action or r_df_fid_buf is not None):
                         buf_props: Dict[str, str] = {}
                         for col_k, col_v in col_updates.items():
                             col_kl = str(col_k).lower()

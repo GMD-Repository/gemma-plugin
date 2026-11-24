@@ -438,8 +438,23 @@ def _run_fix_update_point_geometry(
             else {}
         )
 
-        has_sf_lon_col = ("sf_longitude" in header_map) or ("sf_longitude" in err_fields_map)
-        has_sf_lat_col = ("sf_latitude" in header_map) or ("sf_latitude" in err_fields_map)
+        active_fields_map = (
+            {f.name().lower(): f.name() for f in active_layer.fields()}
+            if (active_layer and active_layer.isValid())
+            else {}
+        )
+        has_sf_lon_col = (
+            ("sf_longitude" in header_map)
+            or ("sf_longitude" in err_fields_map)
+            or ("sf_longitude" in active_fields_map)
+            or ("longitude" in active_fields_map)
+        )
+        has_sf_lat_col = (
+            ("sf_latitude" in header_map)
+            or ("sf_latitude" in err_fields_map)
+            or ("sf_latitude" in active_fields_map)
+            or ("latitude" in active_fields_map)
+        )
 
         if not (has_sf_lon_col and has_sf_lat_col):
             missing_cols = []
@@ -533,6 +548,27 @@ def _run_fix_update_point_geometry(
                     ef = error_layer.getFeature(int(lookup_efid))
                     if ef and ef.isValid():
                         raw_lat = _clean_id_str(ef[err_fields_map["sf_latitude"]])
+
+            # Fallback: read longitude/latitude from active_layer (Building Points) when table omits sf_longitude/sf_latitude
+            if (not _clean_id_str(raw_lon) or not _clean_id_str(raw_lat)) and active_layer is not None:
+                cand_active_feat = _locate_target_feature(
+                    active_layer,
+                    sf_fid=sf_fid,
+                    source_fid=s_fid,
+                    sf_uuid=sf_uuid,
+                    fallback_uuid=u_str,
+                    dialog=dialog,
+                    error_layer=error_layer,
+                )
+                if cand_active_feat is not None and cand_active_feat.isValid():
+                    if not _clean_id_str(raw_lon):
+                        lon_col_a = active_fields_map.get("sf_longitude") or active_fields_map.get("longitude")
+                        if lon_col_a:
+                            raw_lon = _clean_id_str(cand_active_feat[lon_col_a])
+                    if not _clean_id_str(raw_lat):
+                        lat_col_a = active_fields_map.get("sf_latitude") or active_fields_map.get("latitude")
+                        if lat_col_a:
+                            raw_lat = _clean_id_str(cand_active_feat[lat_col_a])
 
             lon_f = _parse_valid_lon(raw_lon)
             lat_f = _parse_valid_lat(raw_lat)

@@ -94,9 +94,14 @@ def delete_selected_features(
         if item0 and item0.checkState() == Qt.Checked:
             checked_rows.append(r)
 
+    if not checked_rows and hasattr(table, "selectionModel") and table.selectionModel():
+        sel_rows = sorted(set(idx.row() for idx in table.selectionModel().selectedRows()))
+        if sel_rows:
+            checked_rows = sel_rows
+
     if not checked_rows:
         if QMessageBox:
-            QMessageBox.information(dialog, "Nothing Selected", "Please tick the box of at least one row first.")
+            QMessageBox.information(dialog, "Nothing Selected", "Please tick the box or select at least one row first.")
         return
 
     if QMessageBox:
@@ -127,8 +132,12 @@ def delete_selected_features(
             pass
 
     deleted_count = 0
+    unmatched_count = 0
     seen_unique_keys = set()
     processed_features = set()
+
+    def _has_valid_id(v: Any) -> bool:
+        return v is not None and str(v).strip().lower() not in ("", "null", "none", "nan")
 
     for r in checked_rows:
         item0 = table.item(r, 0)
@@ -137,12 +146,18 @@ def delete_selected_features(
         s_fid = item0.data(Qt.UserRole)
         u_str = item0.data(Qt.UserRole + 1)
         e_fid = item0.data(Qt.UserRole + 3)
+        df_f = item0.data(Qt.UserRole + 4)
         sf_f = item0.data(Qt.UserRole + 6)
         sf_u = item0.data(Qt.UserRole + 7)
 
-        best_f = sf_f if (sf_f is not None and str(sf_f).strip() not in ("", "NULL", "None")) else s_fid
-        best_u = sf_u or u_str
-        ukey = make_unique_feature_key(best_f, best_u)
+        if _has_valid_id(sf_f):
+            best_f = sf_f
+        elif _has_valid_id(s_fid) and not _has_valid_id(df_f) and s_fid != e_fid:
+            best_f = s_fid
+        else:
+            best_f = None
+        best_u = sf_u if _has_valid_id(sf_u) else (u_str if _has_valid_id(u_str) else "")
+        ukey = make_unique_feature_key(best_f if best_f is not None else s_fid, best_u)
 
         # Find action button if present in row
         row_del_btn = None
@@ -158,8 +173,8 @@ def delete_selected_features(
             val_id,
             layer,
             table,
-            source_fid=best_f if (best_f is not None and str(best_f).strip() not in ("", "NULL", "None")) else s_fid,
-            map_uuid=best_u or u_str,
+            source_fid=best_f,
+            map_uuid=best_u,
             err_fid=e_fid,
             button=row_del_btn,
             prompt_confirm=False,
@@ -168,12 +183,13 @@ def delete_selected_features(
         )
         item0.setCheckState(Qt.Unchecked)
 
-        if ukey:
-            seen_unique_keys.add(ukey)
-            seen_unique_keys.add(ukey.lower())
-
-        if was_marked is not False:
+        if was_marked is True:
+            if ukey:
+                seen_unique_keys.add(ukey)
+                seen_unique_keys.add(ukey.lower())
             deleted_count += 1
+        else:
+            unmatched_count += 1
 
     # Synchronize all other rows in the table that share any seen_unique_keys
     if seen_unique_keys:
@@ -211,12 +227,34 @@ def delete_selected_features(
         btn_update_selected.setText("Apply Fix Action")
         btn_update_selected.setEnabled(False)
 
+    if deleted_count == 0:
+        msg = (
+            "No selected record(s) could be marked as deleted because no matching feature was found "
+            "in the Building Points (.geojson) layer."
+        )
+        if QMessageBox:
+            QMessageBox.warning(dialog, "Delete Not Applied", msg)
+        if hasattr(dialog, "lbl_footer_status") and dialog.lbl_footer_status:
+            dialog.lbl_footer_status.setText("No records were marked as deleted (not found in Building Points layer).")
+        return False
+
     if hasattr(dialog, "_mark_unsaved_table_edit"):
         dialog._mark_unsaved_table_edit()
-    if hasattr(dialog, "lbl_footer_status") and dialog.lbl_footer_status:
-        dialog.lbl_footer_status.setText(
-            f"Marked {deleted_count} record(s) as deleted (is_deleted = true). Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo."
+    if unmatched_count > 0:
+        status_msg = (
+            f"Marked {deleted_count} of {len(checked_rows)} record(s) as deleted (is_deleted = true); "
+            f"{unmatched_count} record(s) had no matching point in Building Points (.geojson). "
+            f"Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo."
         )
+        if QMessageBox:
+            QMessageBox.warning(dialog, "Partial Delete Applied", status_msg)
+    else:
+        status_msg = (
+            f"Marked {deleted_count} record(s) as deleted (is_deleted = true). "
+            f"Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo."
+        )
+    if hasattr(dialog, "lbl_footer_status") and dialog.lbl_footer_status:
+        dialog.lbl_footer_status.setText(status_msg)
     if hasattr(dialog, "iface") and dialog.iface and dialog.iface.mapCanvas():
         dialog.iface.mapCanvas().refresh()
     return True
@@ -332,6 +370,48 @@ def mark_feature_deleted(
     bool_val = True if to_delete else False
     bool_str = "true" if to_delete else "false"
 
+    # 6. Update Primary Geotagged Building Points Layer (main_layer) FIRST so we verify persistence
+    main_layer = dialog._get_or_load_main_building_layer() if hasattr(dialog, "_get_or_load_main_building_layer") else None
+    has_main_layer = bool(main_layer and hasattr(main_layer, "isValid") and main_layer.isValid())
+    main_updated = False
+    if has_main_layer:
+        main_feat = dialog._find_main_feature(main_layer, fid=source_fid, map_uuid=map_uuid) if hasattr(dialog, "_find_main_feature") else None
+        if main_feat and main_feat.isValid():
+            if not main_layer.isEditable():
+                try:
+                    main_layer.startEditing()
+                except Exception:
+                    pass
+
+            m_del_indices = [
+                main_layer.fields().indexOf(fld.name())
+                for fld in main_layer.fields()
+                if fld.name().lower() in ("is_deleted", "sf_is_deleted")
+            ]
+            if not m_del_indices:
+                try:
+                    new_fld = QgsField("is_deleted", QVariant.Bool)
+                    if hasattr(main_layer, "addAttribute") and main_layer.isEditable() and getattr(main_layer, "providerType", lambda: "memory")() != "memory":
+                        main_layer.addAttribute(new_fld)
+                    else:
+                        main_layer.dataProvider().addAttributes([new_fld])
+                        main_layer.updateFields()
+                    idx = main_layer.fields().indexOf("is_deleted")
+                    if idx != -1:
+                        m_del_indices.append(idx)
+                except Exception:
+                    pass
+
+            for m_idx in m_del_indices:
+                f_type = main_layer.fields().at(m_idx).type()
+                val_to_set = bool_val if f_type == QVariant.Bool else bool_str
+                if main_layer.changeAttributeValue(main_feat.id(), m_idx, val_to_set):
+                    main_updated = True
+
+        if not main_updated:
+            # Do not falsify table/dirty state when the Building Points layer had no matching feature
+            return False
+
     # 4. Update QTableWidget is_deleted cells
     if target_row is not None:
         if hasattr(table, "setProperty"):
@@ -380,41 +460,6 @@ def mark_feature_deleted(
                 f_type = layer.fields().at(f_idx).type()
                 val_to_set = bool_val if f_type == QVariant.Bool else bool_str
                 layer.changeAttributeValue(target_f_id, f_idx, val_to_set)
-
-    # 6. Update Primary Geotagged Building Points Layer (main_layer)
-    main_layer = dialog._get_or_load_main_building_layer() if hasattr(dialog, "_get_or_load_main_building_layer") else None
-    if main_layer and hasattr(main_layer, "isValid") and main_layer.isValid():
-        main_feat = dialog._find_main_feature(main_layer, fid=source_fid, map_uuid=map_uuid) if hasattr(dialog, "_find_main_feature") else None
-        if main_feat:
-            if not main_layer.isEditable():
-                try:
-                    main_layer.startEditing()
-                except Exception:
-                    pass
-
-            m_del_indices = [
-                main_layer.fields().indexOf(fld.name())
-                for fld in main_layer.fields()
-                if fld.name().lower() in ("is_deleted", "sf_is_deleted")
-            ]
-            if not m_del_indices:
-                try:
-                    new_fld = QgsField("is_deleted", QVariant.Bool)
-                    if hasattr(main_layer, "addAttribute") and main_layer.isEditable() and getattr(main_layer, "providerType", lambda: "memory")() != "memory":
-                        main_layer.addAttribute(new_fld)
-                    else:
-                        main_layer.dataProvider().addAttributes([new_fld])
-                        main_layer.updateFields()
-                    idx = main_layer.fields().indexOf("is_deleted")
-                    if idx != -1:
-                        m_del_indices.append(idx)
-                except Exception:
-                    pass
-
-            for m_idx in m_del_indices:
-                f_type = main_layer.fields().at(m_idx).type()
-                val_to_set = bool_val if f_type == QVariant.Bool else bool_str
-                main_layer.changeAttributeValue(main_feat.id(), m_idx, val_to_set)
 
     # 7. Update Button Text & Style
     if not button and target_row is not None:

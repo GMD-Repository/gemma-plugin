@@ -376,16 +376,24 @@ def _run_fix_ea_geocode(
             feat = None
             if active_layer and active_layer.isValid():
                 lookup_fid = e_fid if is_error_active else row_main_fid
-                if lookup_fid is not None:
+                if not is_error_active and dialog and hasattr(dialog, "_find_main_feature"):
                     try:
-                        cand_feat = active_layer.getFeature(lookup_fid)
+                        cand_f = dialog._find_main_feature(active_layer, fid=lookup_fid, map_uuid=sf_u or row_uuid)
+                        if cand_f and cand_f.isValid():
+                            feat = cand_f
+                    except Exception:
+                        feat = None
+                if (not feat or not feat.isValid()) and lookup_fid is not None:
+                    try:
+                        fid_int = int(str(lookup_fid).strip()) if str(lookup_fid).strip().lstrip("-").isdigit() else lookup_fid
+                        cand_feat = active_layer.getFeature(fid_int)
                         if cand_feat and cand_feat.isValid():
                             if row_uuid and not is_error_active:
                                 f_u = ""
                                 for col in ("sf_map_uuid", "map_uuid", "uuid"):
                                     if col in field_names:
                                         v = cand_feat.attribute(col)
-                                        if v and str(v).strip().lower() not in ("", "null", "none"):
+                                        if v is not None and v != NULL and str(v).strip().lower() not in ("", "null", "none"):
                                             f_u = str(v).strip()
                                             break
                                 if not f_u or f_u.lower() == row_uuid.lower():
@@ -400,7 +408,7 @@ def _run_fix_ea_geocode(
                         for col in ("sf_map_uuid", "map_uuid", "uuid"):
                             if col in field_names:
                                 v = f.attribute(col)
-                                if v and str(v).strip().lower() not in ("", "null", "none"):
+                                if v is not None and v != NULL and str(v).strip().lower() not in ("", "null", "none"):
                                     u_cand = str(v).strip()
                                     break
                         if u_cand and u_cand.lower() == row_uuid.lower():
@@ -442,6 +450,14 @@ def _run_fix_ea_geocode(
                 null_records.append({
                     "label": f"Row #{r + 1} (FID: {fid_disp})",
                     "missing_cols": _inspect_missing_ea_geocode_columns(target_feat, row_attrs, ef),
+                })
+                continue
+
+            if not is_error_active and (not feat or not feat.isValid()):
+                fid_disp = key_fid if key_fid is not None else (r + 1)
+                null_records.append({
+                    "label": f"Row #{r + 1} (FID: {fid_disp})",
+                    "missing_cols": ["matching feature in Building Points (.geojson)"],
                 })
                 continue
 

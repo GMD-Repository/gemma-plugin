@@ -312,9 +312,15 @@ def _run_fix_update_datafile_coordinates(
             # 3. Fallback to main_layer feature
             mf = None
             if (not lon_val or not lat_val) and main_layer and main_layer.isValid():
-                if row_main_fid is not None:
+                if dialog and hasattr(dialog, "_find_main_feature"):
                     try:
-                        mf = main_layer.getFeature(row_main_fid)
+                        mf = dialog._find_main_feature(main_layer, fid=row_main_fid, map_uuid=sf_u or row_uuid)
+                    except Exception:
+                        mf = None
+                if (not mf or not mf.isValid()) and row_main_fid is not None:
+                    try:
+                        fid_int = int(str(row_main_fid).strip()) if str(row_main_fid).strip().lstrip("-").isdigit() else row_main_fid
+                        mf = main_layer.getFeature(fid_int)
                     except Exception:
                         mf = None
                 if mf and mf.isValid():
@@ -326,6 +332,16 @@ def _run_fix_update_datafile_coordinates(
             if not lon_val or not lat_val:
                 skipped_count += 1
                 continue
+
+            # Ensure we have a valid Form 2 record anchor (df_fid or uuid) when running inside dialog
+            if dialog and hasattr(dialog, "_pending_json_edits"):
+                has_df_anchor = (
+                    (df_f is not None and str(df_f).strip().lower() not in ("", "null", "none", "nan"))
+                    or bool(row_uuid and row_uuid.lower() not in ("null", "none", "nan"))
+                )
+                if not has_df_anchor:
+                    skipped_count += 1
+                    continue
 
             lon_str = str(lon_val).strip()
             lat_str = str(lat_val).strip()
