@@ -296,6 +296,10 @@ def _run_fix_copy_geometry_to_coordinates(
                 if coords is not None and feat and feat.isValid() and hasattr(active_layer, "changeGeometry"):
                     active_layer.changeGeometry(feat.id(), ef.geometry())
 
+            if not is_error_active and (not feat or not feat.isValid()):
+                skipped_no_geom += 1
+                continue
+
             if coords is None:
                 skipped_no_geom += 1
                 continue
@@ -334,10 +338,6 @@ def _run_fix_copy_geometry_to_coordinates(
                 "longitude": lon_str,
                 "sf_latitude": lat_str,
                 "latitude": lat_str,
-                "x_current": lon_str,
-                "y_current": lat_str,
-                "df_x_current": lon_str,
-                "df_y_current": lat_str,
             }
             updated_values[f"row_{r}"] = payload
             if e_fid is not None and str(e_fid).strip() not in ("", "NULL", "None"):

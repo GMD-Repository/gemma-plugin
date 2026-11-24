@@ -467,19 +467,28 @@ def _run_fix_bsn_geoid(
                     row_attrs[col_name] = it.text().strip()
 
             # Locate feature in active_layer (main building layer or fallback error_layer)
+            is_error_active_row = bool(error_layer is not None and active_layer == error_layer)
             feat = None
             if active_layer and active_layer.isValid():
-                lookup_fid = e_fid if (error_layer is not None and active_layer == error_layer) else row_main_fid
-                if lookup_fid is not None:
+                lookup_fid = e_fid if is_error_active_row else row_main_fid
+                if not is_error_active_row and dialog and hasattr(dialog, "_find_main_feature"):
                     try:
-                        cand_feat = active_layer.getFeature(lookup_fid)
+                        cand_f = dialog._find_main_feature(active_layer, fid=lookup_fid, map_uuid=sf_u or row_uuid)
+                        if cand_f and cand_f.isValid():
+                            feat = cand_f
+                    except Exception:
+                        feat = None
+                if (not feat or not feat.isValid()) and lookup_fid is not None:
+                    try:
+                        fid_int = int(str(lookup_fid).strip()) if str(lookup_fid).strip().lstrip("-").isdigit() else lookup_fid
+                        cand_feat = active_layer.getFeature(fid_int)
                         if cand_feat and cand_feat.isValid():
-                            if row_uuid and active_layer != error_layer:
+                            if row_uuid and not is_error_active_row:
                                 f_u = ""
                                 for col in ("sf_map_uuid", "map_uuid", "uuid"):
                                     if col in field_names:
                                         v = cand_feat.attribute(col)
-                                        if v and str(v).strip().lower() not in ("", "null", "none"):
+                                        if v is not None and v != NULL and str(v).strip().lower() not in ("", "null", "none"):
                                             f_u = str(v).strip()
                                             break
                                 if not f_u or f_u.lower() == row_uuid.lower():
@@ -494,7 +503,7 @@ def _run_fix_bsn_geoid(
                         for col in ("sf_map_uuid", "map_uuid", "uuid"):
                             if col in field_names:
                                 v = f.attribute(col)
-                                if v and str(v).strip().lower() not in ("", "null", "none"):
+                                if v is not None and v != NULL and str(v).strip().lower() not in ("", "null", "none"):
                                     u_cand = str(v).strip()
                                     break
                         if u_cand and u_cand.lower() == row_uuid.lower():
@@ -539,6 +548,14 @@ def _run_fix_bsn_geoid(
                 })
                 continue
 
+            if not is_error_active_row and (not feat or not feat.isValid()):
+                fid_disp = key_fid if key_fid is not None else (r + 1)
+                null_records.append({
+                    "label": f"Row #{r + 1} (FID: {fid_disp})",
+                    "missing_cols": ["matching feature in Building Points (.geojson)"],
+                })
+                continue
+
             # Update active_layer feature strictly
             if feat and feat.isValid():
                 for tf_name in target_fields:
@@ -554,7 +571,9 @@ def _run_fix_bsn_geoid(
                     if idx != -1:
                         error_layer.changeAttributeValue(ef.id(), idx, concat_bsn_geoid)
 
-            payload = {"sf_bsn_geoid": concat_bsn_geoid, "bsn_geoid": concat_bsn_geoid, "df_bsn_geoid": concat_bsn_geoid}
+            payload = {"sf_bsn_geoid": concat_bsn_geoid, "bsn_geoid": concat_bsn_geoid}
+            if df_f is not None and str(df_f).strip() not in ("", "NULL", "None"):
+                payload["df_bsn_geoid"] = concat_bsn_geoid
             updated_values[f"row_{r}"] = payload
             if row_ukey:
                 updated_values[row_ukey] = payload
