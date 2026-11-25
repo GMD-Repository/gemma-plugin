@@ -37,11 +37,25 @@ from qgis.core import (
     QgsFeature,
     QgsFeatureRequest,
     QgsField,
+    QgsGeometry,
+    QgsRectangle,
+    QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
+    QgsPalLayerSettings,
+    QgsVectorLayerSimpleLabeling,
+    QgsTextFormat,
+    QgsTextBufferSettings,
     QgsWkbTypes,
 )
 from qgis.gui import QgsFileWidget
-from qgis.PyQt.QtCore import Qt, QTimer, pyqtSignal, QSize, QEvent, QObject, QVariant
-from qgis.PyQt.QtGui import QIcon, QColor, QBrush, QFont, QTextCursor, QKeySequence, QPalette
+try:
+    from qgis.gui import QgsMapCanvas, QgsRubberBand, QgsMapToolPan
+except ImportError:
+    QgsMapCanvas = None
+    QgsRubberBand = None
+    QgsMapToolPan = None
+from qgis.PyQt.QtCore import Qt, QTimer, pyqtSignal, QSize, QEvent, QObject, QVariant, QPoint
+from qgis.PyQt.QtGui import QIcon, QColor, QBrush, QFont, QTextCursor, QKeySequence, QPalette, QCursor
 from qgis.PyQt.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -55,6 +69,7 @@ from qgis.PyQt.QtWidgets import (
     QButtonGroup,
     QTabWidget,
     QStackedWidget,
+    QSplitter,
     QWidget,
     QFrame,
     QMessageBox,
@@ -218,6 +233,11 @@ except (ImportError, ValueError):
 # ---------------------------------------------------------------------------
 # Dynamic Rule Discovery from gmd_scripts/cbms_mv
 # ---------------------------------------------------------------------------
+HIDDEN_VALIDATION_RULES = {
+    "mv_2027_hp_4a_pos_longit__invalid",
+}
+
+
 def discover_cbms_mv_rules(cbms_mv_dir: str) -> List[Dict[str, Any]]:
     """
     Dynamically scan the gmd_scripts/cbms_mv directory and extract:
@@ -239,6 +259,8 @@ def discover_cbms_mv_rules(cbms_mv_dir: str) -> List[Dict[str, Any]]:
             continue
 
         val_id = filename[:-3]
+        if val_id in HIDDEN_VALIDATION_RULES:
+            continue
         file_path = os.path.join(cbms_mv_dir, filename)
 
         help_str = ""
@@ -884,20 +906,33 @@ class CbmsmvDialog(QDialog):
         nav_bar = self._create_top_bar()
         container_layout.addWidget(nav_bar)
 
-        # 2. Main View Stack: Page 0 = Results Workspace, Page 1 = Configuration View
+        # 2. Main View Stack: Page 0 = Results Workspace, Page 1 = Configuration View, Page 2 = Restore Deleted View
         self.main_stack = QStackedWidget()
         self.main_stack.setObjectName("mainStack")
 
         self.page_results = self._create_page_results()
         self.page_config = self._create_page_config()
+        self.page_deleted = self._create_page_deleted()
 
         self.main_stack.addWidget(self.page_results)  # index 0: Results
         self.main_stack.addWidget(self.page_config)   # index 1: Configuration
+        self.main_stack.addWidget(self.page_deleted)  # index 2: Restore Deleted
 
         # Backward compatibility alias
         self.tab_widget = self.config_tab_widget
 
-        container_layout.addWidget(self.main_stack, stretch=1)
+        # Horizontal splitter: Left = Main Stack (Results / Config / Deleted), Right = Collapsible Features Preview
+        self._main_splitter = QSplitter(Qt.Horizontal)
+        self._main_splitter.setChildrenCollapsible(False)
+        self._main_splitter.addWidget(self.main_stack)
+
+        self._preview_panel = self._create_feature_preview_panel()
+        self._preview_panel.setVisible(False)
+        self._main_splitter.addWidget(self._preview_panel)
+        self._main_splitter.setStretchFactor(0, 3)
+        self._main_splitter.setStretchFactor(1, 2)
+
+        container_layout.addWidget(self._main_splitter, stretch=1)
 
         # 3. Bottom Action Bar
         bottom_bar = self._create_bottom_action_bar()
@@ -936,6 +971,30 @@ class CbmsmvDialog(QDialog):
         self.btn_dock.clicked.connect(self.toggle_dock)
         bar_layout.addWidget(self.btn_dock)
 
+        # Restore Deleted Building Points Button (in-window Page 2 toggle — no popup window)
+        self.btn_restore_deleted = QPushButton("Restore Deleted")
+        self.btn_restore_deleted.setObjectName("btnRestoreDeleted")
+        restore_hdr_icon = QgsApplication.getThemeIcon("mActionUndo.svg")
+        if not restore_hdr_icon.isNull():
+            self.btn_restore_deleted.setIcon(restore_hdr_icon)
+            self.btn_restore_deleted.setIconSize(QSize(16, 16))
+        self.btn_restore_deleted.setToolTip("Inspect and restore soft-deleted Building Points (is_deleted = true)")
+        self.btn_restore_deleted.clicked.connect(self._toggle_deleted_view)
+        bar_layout.addWidget(self.btn_restore_deleted)
+
+        # Map View Toggle Button (Live mini-map side panel across all tabs & Restore Deleted)
+        self.btn_feature_preview = QPushButton("Map View")
+        self.btn_feature_preview.setObjectName("btnFeaturePreview")
+        self.btn_feature_preview.setCheckable(True)
+        self.btn_feature_preview.setChecked(False)
+        preview_hdr_icon = QgsApplication.getThemeIcon("mActionZoomToSelected.svg")
+        if not preview_hdr_icon.isNull():
+            self.btn_feature_preview.setIcon(preview_hdr_icon)
+            self.btn_feature_preview.setIconSize(QSize(16, 16))
+        self.btn_feature_preview.setToolTip("Show or hide the live Map View side panel")
+        self.btn_feature_preview.clicked.connect(self._toggle_feature_preview)
+        bar_layout.addWidget(self.btn_feature_preview)
+
         # View Switch Button
         self.btn_header_config = QPushButton("Configuration")
         self.btn_header_config.setObjectName("btnHeaderConfig")
@@ -954,10 +1013,17 @@ class CbmsmvDialog(QDialog):
     # -----------------------------------------------------------------------
     def _toggle_view(self):
         """Toggle between Results Workspace and Configuration View."""
-        if self.main_stack.currentIndex() == 0:
-            self._switch_to_config()
-        else:
+        if self.main_stack.currentIndex() == 1:
             self._switch_to_results()
+        else:
+            self._switch_to_config()
+
+    def _toggle_deleted_view(self):
+        """Toggle between Results Workspace (Page 0) and Restore Deleted View (Page 2)."""
+        if self.main_stack.currentIndex() == 2:
+            self._switch_to_results()
+        else:
+            self._switch_to_deleted()
 
     def _switch_to_results(self):
         """Switch to Results Workspace (Page 0)."""
@@ -968,6 +1034,7 @@ class CbmsmvDialog(QDialog):
             if not cfg_icon.isNull():
                 self.btn_header_config.setIcon(cfg_icon)
             self.btn_header_config.setToolTip("Configure input files, validation rules, and inspect logs")
+        self._refresh_deleted_records_button()
 
     def _switch_to_config(self, tab_index: Optional[int] = None):
         """Switch to Configuration View (Page 1), optionally selecting a tab."""
@@ -980,6 +1047,23 @@ class CbmsmvDialog(QDialog):
             if not res_icon.isNull():
                 self.btn_header_config.setIcon(res_icon)
             self.btn_header_config.setToolTip("Return to Results Workspace")
+        self._refresh_deleted_records_button()
+
+    def _switch_to_deleted(self):
+        """Switch to in-window Restore Deleted View (Page 2) and lazily load deleted features."""
+        self._populate_deleted_page()
+        self.main_stack.setCurrentIndex(2)
+        if hasattr(self, "btn_restore_deleted"):
+            self.btn_restore_deleted.setText("Back to Results")
+            res_icon = QgsApplication.getThemeIcon("mActionShowTable.svg")
+            if not res_icon.isNull():
+                self.btn_restore_deleted.setIcon(res_icon)
+            self.btn_restore_deleted.setToolTip("Return to Validation Results")
+        if hasattr(self, "btn_header_config"):
+            self.btn_header_config.setText("Configuration")
+            cfg_icon = QgsApplication.getThemeIcon("mActionOptions.svg")
+            if not cfg_icon.isNull():
+                self.btn_header_config.setIcon(cfg_icon)
 
     # -----------------------------------------------------------------------
     # Page 1: Configuration View
@@ -1354,6 +1438,9 @@ class CbmsmvDialog(QDialog):
                 f"{cat_info['label']} — {cat_flag_count:,} flagged feature(s) across {len(cat_items)} check(s)",
             )
 
+        # Update top-bar Restore Deleted (N) button count (keep deleted items out of validation tabs)
+        self._refresh_deleted_records_button()
+
         # Ensure tabs do not elide, do not compress, and show scroll buttons when needed
         tb = self.results_tab_widget.tabBar()
         if tb is not None:
@@ -1364,6 +1451,1120 @@ class CbmsmvDialog(QDialog):
         # Switch subpage of results_stack to show the tab widget
         self.results_stack.setCurrentIndex(1)
         self.results_tab_widget.setCurrentIndex(0)
+
+    def _get_deleted_building_features(
+        self, count_only: bool = False
+    ) -> Tuple[Optional[QgsVectorLayer], List[QgsFeature]]:
+        """
+        Fast, NoGeometry query returning (main_layer, list of soft-deleted features where is_deleted is True).
+        Uses native QgsFeatureRequest expression filtering + NoGeometry + attribute subset to avoid lag.
+        """
+        main_layer = self._get_or_load_main_building_layer() if hasattr(self, "_get_or_load_main_building_layer") else None
+        if not main_layer or not main_layer.isValid():
+            return None, []
+
+        del_col = None
+        del_idx = -1
+        for idx, fld in enumerate(main_layer.fields()):
+            if fld.name().lower() in ("is_deleted", "sf_is_deleted"):
+                del_col = fld.name()
+                del_idx = idx
+                break
+        if not del_col:
+            return main_layer, []
+
+        req = QgsFeatureRequest()
+        req.setFlags(QgsFeatureRequest.NoGeometry)
+        req.setFilterExpression(
+            f'"{del_col}" IS TRUE OR lower(to_string("{del_col}")) IN (\'true\', \'1\', \'t\', \'yes\', \'deleted\')'
+        )
+        if count_only and del_idx != -1:
+            req.setSubsetOfAttributes([del_idx])
+
+        try:
+            deleted_feats = list(main_layer.getFeatures(req))
+        except Exception:
+            try:
+                from .cbms_mv_fix.delete_selected_features_fix import _is_deleted_val
+            except ImportError:
+                from cbms_mv_fix.delete_selected_features_fix import _is_deleted_val
+            fb_req = QgsFeatureRequest().setFlags(QgsFeatureRequest.NoGeometry)
+            if count_only and del_idx != -1:
+                fb_req.setSubsetOfAttributes([del_idx])
+            deleted_feats = [f for f in main_layer.getFeatures(fb_req) if _is_deleted_val(f[del_col])]
+
+        return main_layer, deleted_feats
+
+    def _refresh_deleted_records_button(self) -> int:
+        """Update the top-bar 'Restore Deleted (N)' button count using a fast NoGeometry query."""
+        if not is_valid_qobject(self) or not hasattr(self, "btn_restore_deleted"):
+            return 0
+        _, deleted_feats = self._get_deleted_building_features(count_only=True)
+        del_count = len(deleted_feats)
+        if hasattr(self, "main_stack") and self.main_stack.currentIndex() == 2:
+            self.btn_restore_deleted.setText("Back to Results")
+            return del_count
+        restore_ic = QgsApplication.getThemeIcon("mActionUndo.svg")
+        if not restore_ic.isNull():
+            self.btn_restore_deleted.setIcon(restore_ic)
+        self.btn_restore_deleted.setText(
+            f"Restore Deleted ({del_count:,})" if del_count > 0 else "Restore Deleted"
+        )
+        self.btn_restore_deleted.setToolTip(
+            f"{del_count:,} soft-deleted Building Point(s) (is_deleted = true). Click to review and restore."
+            if del_count > 0
+            else "No soft-deleted Building Points (is_deleted = true) found."
+        )
+        return del_count
+
+    def _create_page_deleted(self) -> QWidget:
+        """Create the lightweight, reusable in-window Restore Deleted View (Page 2 of main_stack)."""
+        colors = self._get_theme_colors()
+        page = QWidget()
+        page.setObjectName("pageDeleted")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(8)
+
+        # Header Card
+        header_box = QFrame(page)
+        header_box.setStyleSheet(f"""
+            QFrame {{
+                background-color: {colors['surface_elevated']};
+                border: 1px solid {colors['border']};
+                border-radius: 6px;
+            }}
+        """)
+        header_l = QVBoxLayout(header_box)
+        header_l.setContentsMargins(10, 8, 10, 8)
+        header_l.setSpacing(2)
+
+        lbl_title = QLabel("Soft-Deleted Building Points (is_deleted = true)")
+        lbl_title.setStyleSheet(f"font-weight: bold; font-size: 12px; color: {colors['title']}; border: none;")
+        header_l.addWidget(lbl_title)
+
+        self._lbl_deleted_sub = QLabel("No soft-deleted features loaded.")
+        self._lbl_deleted_sub.setWordWrap(True)
+        self._lbl_deleted_sub.setStyleSheet(f"font-size: 11px; color: {colors['text_secondary']}; border: none;")
+        header_l.addWidget(self._lbl_deleted_sub)
+        layout.addWidget(header_box)
+
+        # Toolbar
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(6)
+
+        self._edit_deleted_filter = QLineEdit(page)
+        self._edit_deleted_filter.setPlaceholderText("Filter deleted rows...")
+        self._edit_deleted_filter.setClearButtonEnabled(True)
+        self._edit_deleted_filter.setMaximumWidth(240)
+        toolbar.addWidget(self._edit_deleted_filter)
+
+        self._btn_deleted_select_all = QPushButton("Select All", page)
+        sel_all_ic = QgsApplication.getThemeIcon("mActionSelectAll.svg")
+        if not sel_all_ic.isNull():
+            self._btn_deleted_select_all.setIcon(sel_all_ic)
+        self._btn_deleted_select_all.setCursor(Qt.PointingHandCursor)
+        toolbar.addWidget(self._btn_deleted_select_all)
+
+        self._btn_deleted_restore = QPushButton("Restore Selected", page)
+        restore_ic = QgsApplication.getThemeIcon("mActionUndo.svg")
+        if not restore_ic.isNull():
+            self._btn_deleted_restore.setIcon(restore_ic)
+        self._btn_deleted_restore.setCursor(Qt.PointingHandCursor)
+        self._btn_deleted_restore.setEnabled(False)
+        self._btn_deleted_restore.setToolTip("Set is_deleted = false for all checked/selected rows")
+        self._btn_deleted_restore.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {colors['accent_light']};
+                color: {colors['accent_light_text']};
+                font-weight: bold;
+                padding: 5px 10px;
+                border-radius: 4px;
+                border: 1px solid {colors['accent_light_border']};
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                background-color: {colors['surface_hover']};
+                color: {colors['title']};
+            }}
+            QPushButton:disabled {{
+                background-color: {colors['disabled_bg']};
+                color: {colors['disabled_text']};
+                border-color: {colors['disabled_border']};
+            }}
+        """)
+        toolbar.addWidget(self._btn_deleted_restore)
+
+        self._btn_deleted_discard = QPushButton("Discard", page)
+        self._btn_deleted_discard.setObjectName("btnDiscardChanges")
+        if not restore_ic.isNull():
+            self._btn_deleted_discard.setIcon(restore_ic)
+        self._btn_deleted_discard.setVisible(False)
+        self._btn_deleted_discard.setEnabled(False)
+        self._btn_deleted_discard.setCursor(Qt.PointingHandCursor)
+        self._btn_deleted_discard.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {colors['danger_bg']};
+                color: {colors['danger_text']};
+                font-weight: bold;
+                padding: 5px 10px;
+                border-radius: 4px;
+                border: 1px solid {colors['danger_border']};
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                background-color: {colors['danger_hover']};
+                color: {colors['danger_active_text']};
+            }}
+        """)
+        self._btn_deleted_discard.clicked.connect(
+            lambda: (self._prompt_discard_confirmation(), self._populate_deleted_page())
+            if hasattr(self, "_prompt_discard_confirmation")
+            else None
+        )
+        toolbar.addWidget(self._btn_deleted_discard)
+
+        self._btn_deleted_save = QPushButton("Save Changes", page)
+        self._btn_deleted_save.setObjectName("btnSaveChanges")
+        save_ic = QgsApplication.getThemeIcon("mActionFileSave.svg")
+        if not save_ic.isNull():
+            self._btn_deleted_save.setIcon(save_ic)
+        self._btn_deleted_save.setCursor(Qt.PointingHandCursor)
+        self._btn_deleted_save.setEnabled(False)
+        toolbar.addWidget(self._btn_deleted_save)
+
+        toolbar.addStretch(1)
+
+        btn_back = QPushButton("Back to Results", page)
+        back_ic = QgsApplication.getThemeIcon("mActionShowTable.svg")
+        if not back_ic.isNull():
+            btn_back.setIcon(back_ic)
+        btn_back.setCursor(Qt.PointingHandCursor)
+        btn_back.clicked.connect(self._switch_to_results)
+        toolbar.addWidget(btn_back)
+
+        layout.addLayout(toolbar)
+
+        # Reusable Table (lazily populated when switching to Page 2)
+        self._deleted_table = QTableWidget(0, 0, page)
+        self._deleted_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._deleted_table.setAlternatingRowColors(True)
+        self._deleted_table.verticalHeader().setVisible(True)
+        self._deleted_table.verticalHeader().setCursor(Qt.PointingHandCursor)
+        self._deleted_table.verticalHeader().setToolTip("Click row number to select row, toggle checkbox, and zoom to feature")
+        self._deleted_main_layer = None
+
+        def _sync_restore_btn():
+            t = self._deleted_table
+            if not is_valid_qobject(t) or not is_valid_qobject(self._btn_deleted_restore):
+                return
+            cnt = sum(
+                1 for r in range(t.rowCount())
+                if not t.isRowHidden(r) and t.item(r, 0) and t.item(r, 0).checkState() == Qt.Checked
+            )
+            self._btn_deleted_restore.setText(f"Restore Selected ({cnt})" if cnt > 0 else "Restore Selected")
+            self._btn_deleted_restore.setEnabled(cnt > 0)
+
+        self._sync_deleted_restore_btn = _sync_restore_btn
+
+        def _zoom_to_del_row(r: int):
+            t = self._deleted_table
+            ml = self._deleted_main_layer
+            it0 = t.item(r, 0)
+            if not it0 or not ml or not ml.isValid():
+                return
+            fid_val = it0.data(Qt.UserRole)
+            try:
+                fid_int = int(fid_val)
+                feat_obj = ml.getFeature(fid_int)
+                if feat_obj and feat_obj.isValid():
+                    self._schedule_feature_preview(ml, feat_obj)
+                if self.iface:
+                    canvas = self.iface.mapCanvas()
+                    self.iface.setActiveLayer(ml)
+                    ml.selectByIds([fid_int])
+                    if ml.isSpatial() and feat_obj and feat_obj.isValid():
+                        self._zoom_main_canvas_to_feature(ml, feat_obj)
+                        canvas.flashFeatureIds(ml, [fid_int])
+                self.lbl_footer_status.setText(f"Zoomed to deleted feature FID #{fid_int} in '{ml.name()}'")
+            except Exception:
+                pass
+
+        def _sync_del_row_checkbox(row_idx: int, from_header: bool = False):
+            t = self._deleted_table
+            if t.property("is_populating"):
+                return
+            item0 = t.item(row_idx, 0)
+            if not item0:
+                return
+            modifiers = QApplication.keyboardModifiers() if QApplication else Qt.NoModifier
+            is_multi_modifier = bool(modifiers & (Qt.ShiftModifier | Qt.ControlModifier))
+            sel_rows = (
+                sorted(set(idx.row() for idx in t.selectionModel().selectedRows()))
+                if t.selectionModel()
+                else [row_idx]
+            )
+            is_multi_selection = is_multi_modifier or (len(sel_rows) > 1 and row_idx in sel_rows)
+
+            t.setProperty("is_populating", True)
+            try:
+                if is_multi_selection:
+                    rows_to_check = sel_rows if (row_idx in sel_rows and len(sel_rows) > 1) else [row_idx]
+                    for r in rows_to_check:
+                        it = t.item(r, 0)
+                        if it:
+                            it.setCheckState(Qt.Checked)
+                else:
+                    is_already_only_checked = (
+                        item0.checkState() == Qt.Checked
+                        and sum(
+                            1 for r in range(t.rowCount())
+                            if t.item(r, 0) and t.item(r, 0).checkState() == Qt.Checked
+                        ) == 1
+                    )
+                    if from_header and is_already_only_checked:
+                        item0.setCheckState(Qt.Unchecked)
+                    else:
+                        for r in range(t.rowCount()):
+                            it = t.item(r, 0)
+                            if it:
+                                it.setCheckState(Qt.Checked if r == row_idx else Qt.Unchecked)
+            finally:
+                t.setProperty("is_populating", False)
+
+            _sync_restore_btn()
+            _zoom_to_del_row(row_idx)
+
+        def _on_del_item_changed(item):
+            if self._deleted_table.property("is_populating"):
+                return
+            if item.column() == 0:
+                _sync_restore_btn()
+
+        def _on_del_row_clicked(item):
+            if item.column() > 0:
+                _sync_del_row_checkbox(item.row(), from_header=False)
+            else:
+                _zoom_to_del_row(item.row())
+
+        def _on_del_select_all():
+            t = self._deleted_table
+            visible = [r for r in range(t.rowCount()) if not t.isRowHidden(r)]
+            all_chk = all(t.item(r, 0) and t.item(r, 0).checkState() == Qt.Checked for r in visible) if visible else False
+            state = Qt.Unchecked if all_chk else Qt.Checked
+            t.setProperty("is_populating", True)
+            try:
+                for r in visible:
+                    it0 = t.item(r, 0)
+                    if it0:
+                        it0.setCheckState(state)
+            finally:
+                t.setProperty("is_populating", False)
+            self._btn_deleted_select_all.setText("Select None" if state == Qt.Checked else "Select All")
+            _sync_restore_btn()
+
+        def _on_del_filter(text: str):
+            t = self._deleted_table
+            q = text.strip().lower()
+            t.setUpdatesEnabled(False)
+            try:
+                for r in range(t.rowCount()):
+                    if not q:
+                        t.setRowHidden(r, False)
+                        continue
+                    hit = any(
+                        t.item(r, c) and q in t.item(r, c).text().lower()
+                        for c in range(1, t.columnCount())
+                    )
+                    t.setRowHidden(r, not hit)
+            finally:
+                t.setUpdatesEnabled(True)
+            _sync_restore_btn()
+
+        def _on_restore_clicked():
+            self._start_process_progress("Restoring selected deleted features...", maximum=100, initial=25)
+            try:
+                from .cbms_mv_fix.delete_selected_features_fix import restore_selected_features
+                restore_selected_features(
+                    self, self._deleted_main_layer, self._deleted_table, btn_restore_selected=self._btn_deleted_restore
+                )
+                _sync_restore_btn()
+                getattr(self, "_update_save_discard_ui_state", lambda: None)()
+            finally:
+                self._finish_process_progress()
+
+        def _on_save_clicked():
+            if self._save_changes(skip_rerun=True):
+                self._populate_deleted_page()
+                rem = self._deleted_table.rowCount()
+                QMessageBox.information(
+                    self,
+                    "Restored & Saved",
+                    "Restored feature(s) have been saved to Building Points (.geojson).\n"
+                    f"Remaining soft-deleted feature(s): {rem:,}.\n\n"
+                    "Re-run validation to include the restored feature(s) in the latest checks.",
+                )
+
+        self._deleted_table.itemChanged.connect(_on_del_item_changed)
+        self._deleted_table.itemClicked.connect(_on_del_row_clicked)
+        self._deleted_table.verticalHeader().sectionClicked.connect(lambda row: _sync_del_row_checkbox(row, from_header=True))
+        self._deleted_table.horizontalHeader().sectionClicked.connect(lambda col: _on_del_select_all() if col == 0 else None)
+        self._btn_deleted_select_all.clicked.connect(_on_del_select_all)
+        self._btn_deleted_restore.clicked.connect(_on_restore_clicked)
+        self._btn_deleted_save.clicked.connect(_on_save_clicked)
+        self._edit_deleted_filter.textChanged.connect(_on_del_filter)
+
+        layout.addWidget(self._deleted_table, stretch=1)
+        return page
+
+    def _populate_deleted_page(self) -> None:
+        """Lazily populate the in-window Restore Deleted table using fast NoGeometry filtering."""
+        if not is_valid_qobject(self) or not hasattr(self, "_deleted_table"):
+            return
+        colors = self._get_theme_colors()
+        main_layer, deleted_feats = self._get_deleted_building_features(count_only=False)
+        self._deleted_main_layer = main_layer
+        t = self._deleted_table
+
+        t.setUpdatesEnabled(False)
+        t.blockSignals(True)
+        t.setSortingEnabled(False)
+        t.setProperty("is_populating", True)
+        try:
+            t.clearContents()
+            if not main_layer or not main_layer.isValid():
+                t.setRowCount(0)
+                t.setColumnCount(0)
+                self._lbl_deleted_sub.setText(
+                    "Please select a valid Building Points (.geojson) file in Configuration first."
+                )
+                self._btn_deleted_select_all.setEnabled(False)
+                return
+
+            all_fields = [f.name() for f in main_layer.fields()]
+            priority_order = ["map_uuid", "bsn_geoid", "ea_geocode", "is_deleted", "longitude", "latitude", "en_code", "remarks"]
+            ordered_fields = [fn for fn in priority_order if fn in all_fields]
+            for fn in all_fields:
+                if fn not in ordered_fields:
+                    ordered_fields.append(fn)
+
+            headers = ["", "fid"] + ordered_fields
+            t.setColumnCount(len(headers))
+            t.setHorizontalHeaderLabels(headers)
+            t.setRowCount(len(deleted_feats))
+            t.setColumnWidth(0, 38)
+
+            flds_lower = {fn.lower(): fn for fn in ordered_fields}
+            uuid_col_name = flds_lower.get("map_uuid") or flds_lower.get("sf_map_uuid") or flds_lower.get("uuid")
+
+            for r_idx, feat in enumerate(deleted_feats):
+                f_id = feat.id()
+                u_raw = feat[uuid_col_name] if uuid_col_name else ""
+                u_str = "" if (u_raw is None or u_raw == NULL) else str(u_raw).strip()
+
+                chk = QTableWidgetItem()
+                chk.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable)
+                chk.setCheckState(Qt.Unchecked)
+                chk.setData(Qt.UserRole, f_id)
+                chk.setData(Qt.UserRole + 1, u_str)
+                chk.setData(Qt.UserRole + 6, f_id)
+                chk.setData(Qt.UserRole + 7, u_str)
+                t.setItem(r_idx, 0, chk)
+
+                fid_item = FeatureTableWidgetItem(str(f_id))
+                fid_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                t.setItem(r_idx, 1, fid_item)
+
+                for c_offset, fname in enumerate(ordered_fields):
+                    raw_v = feat[fname]
+                    val_str = "" if (raw_v is None or raw_v == NULL) else str(raw_v)
+                    it = QTableWidgetItem(val_str)
+                    it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                    if fname.lower() in ("is_deleted", "sf_is_deleted"):
+                        self._style_table_cell(it, "deleted")
+                    t.setItem(r_idx, c_offset + 2, it)
+
+            self._lbl_deleted_sub.setText(
+                f"<b style='color:{colors['danger_text']};'>{len(deleted_feats):,}</b> deleted feature(s) in Building Points (.geojson). "
+                "Click a row to select & zoom on the map; click 'Restore Selected', then 'Save Changes'."
+                if deleted_feats
+                else "No soft-deleted Building Points (is_deleted = true) found."
+            )
+            self._btn_deleted_select_all.setText("Select All")
+            self._btn_deleted_select_all.setEnabled(len(deleted_feats) > 0)
+            self._edit_deleted_filter.clear()
+        finally:
+            t.setSortingEnabled(True)
+            t.setProperty("is_populating", False)
+            t.blockSignals(False)
+            t.setUpdatesEnabled(True)
+
+        self._sync_deleted_restore_btn()
+        getattr(self, "_update_save_discard_ui_state", lambda: None)()
+
+    # -----------------------------------------------------------------------
+    # Collapsible Live Features Preview Side Panel (All Tabs + Restore Deleted)
+    # -----------------------------------------------------------------------
+    def _create_feature_preview_panel(self) -> QWidget:
+        """
+        Create the collapsible right-hand Features Preview card with live QGIS project layers
+        (including basemap/satellite imagery), Selected/Nearby legend, Labels dropdown, and footer.
+        """
+        colors = self._get_theme_colors()
+        panel = QFrame()
+        panel.setObjectName("featurePreviewPanel")
+        panel.setMinimumWidth(290)
+        panel.setStyleSheet(f"""
+            QFrame#featurePreviewPanel {{
+                background-color: {colors['surface_bg']};
+                border: 1px solid {colors['border']};
+                border-radius: 6px;
+            }}
+        """)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(6)
+
+        # Header Row: Title + Close button
+        hdr_row = QHBoxLayout()
+        hdr_row.setSpacing(6)
+        lbl_hdr = QLabel("Map View")
+        lbl_hdr.setStyleSheet(f"font-weight: bold; font-size: 12px; color: {colors['title']}; border: none;")
+        hdr_row.addWidget(lbl_hdr)
+        hdr_row.addStretch(1)
+
+        btn_close = QPushButton("Close")
+        btn_close.setCursor(Qt.PointingHandCursor)
+        btn_close.setFixedHeight(24)
+        btn_close.clicked.connect(lambda: self._toggle_feature_preview(force_visible=False))
+        hdr_row.addWidget(btn_close)
+        layout.addLayout(hdr_row)
+
+        # Legend Row: Selected + Nearby
+        legend_row = QHBoxLayout()
+        legend_row.setSpacing(12)
+        lbl_leg = QLabel(
+            "<span style='color:#10B981; font-size:13px;'>&#9679;</span> "
+            f"<span style='color:{colors['text_secondary']}; font-size:11px;'>Selected</span>"
+            "&nbsp;&nbsp;&nbsp;"
+            "<span style='color:#94A3B8; font-size:13px;'>&#9679;</span> "
+            f"<span style='color:{colors['text_secondary']}; font-size:11px;'>Nearby (50m)</span>"
+        )
+        lbl_leg.setStyleSheet("border: none;")
+        legend_row.addWidget(lbl_leg)
+        legend_row.addStretch(1)
+        layout.addLayout(legend_row)
+
+        # Inspect Layer Selector Row (controls which layer snaps & shows details in the bubble)
+        layer_row = QHBoxLayout()
+        layer_row.setSpacing(6)
+        lbl_lyr = QLabel("Inspect Layer")
+        lbl_lyr.setStyleSheet(f"font-size: 11px; color: {colors['text_secondary']}; border: none;")
+        layer_row.addWidget(lbl_lyr)
+
+        self._combo_preview_layer = QComboBox()
+        self._combo_preview_layer.setToolTip("Choose which vector layer to snap to and inspect in the hover bubble")
+        self._combo_preview_layer.addItem("Auto (Active / Building Points)", "")
+        self._combo_preview_layer.currentIndexChanged.connect(lambda _: self._hide_preview_snap_bubble())
+        layer_row.addWidget(self._combo_preview_layer, stretch=1)
+        layout.addLayout(layer_row)
+
+        # Embedded Native QgsMapCanvas
+        self._preview_canvas = None
+        self._preview_pan_tool = None
+        self._preview_rb_selected = None
+        self._preview_rb_ring = None
+        self._preview_rb_nearby = None
+        self._preview_rb_snap = None
+        self._preview_bubble = None
+        self._preview_bubble_lbl = None
+        self._preview_last_snap_key = None
+        self._preview_hover_pt = None
+        self._preview_last_target = None  # Tuple (source_layer, QgsFeature)
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(60)
+        self._preview_timer.timeout.connect(self._update_feature_preview)
+
+        self._preview_hover_timer = QTimer(self)
+        self._preview_hover_timer.setSingleShot(True)
+        self._preview_hover_timer.setInterval(30)
+        self._preview_hover_timer.timeout.connect(self._process_preview_hover_snap)
+
+        if QgsMapCanvas is not None:
+            canvas = QgsMapCanvas(panel)
+            canvas.setCanvasColor(QColor("#1E1E1E" if self.is_dark else "#FFFFFF"))
+            canvas.enableAntiAliasing(True)
+            canvas.setRenderFlag(False)
+            canvas.setMinimumHeight(240)
+            canvas.setStyleSheet(f"border: 1px solid {colors['border']}; border-radius: 4px;")
+            if QgsMapToolPan is not None:
+                self._preview_pan_tool = QgsMapToolPan(canvas)
+                canvas.setMapTool(self._preview_pan_tool)
+            self._syncing_preview_extent = False
+
+            def _on_preview_extent_changed():
+                if self._syncing_preview_extent or not self._preview_panel.isVisible():
+                    return
+                if self.iface and self.iface.mapCanvas():
+                    try:
+                        self._syncing_preview_extent = True
+                        main_c = self.iface.mapCanvas()
+                        ext = canvas.extent()
+                        if ext and not ext.isEmpty():
+                            main_c.setExtent(ext)
+                            main_c.refresh()
+                    except Exception:
+                        pass
+                    finally:
+                        self._syncing_preview_extent = False
+
+            canvas.extentsChanged.connect(_on_preview_extent_changed)
+
+            def _on_preview_xy_moved(map_pt):
+                if not self._preview_panel.isVisible():
+                    return
+                self._preview_hover_pt = map_pt
+                self._preview_hover_timer.start()
+
+            canvas.xyCoordinates.connect(_on_preview_xy_moved)
+            canvas.installEventFilter(self)
+            self._preview_canvas = canvas
+            layout.addWidget(canvas, stretch=1)
+
+            # Floating Cloud / Bubble Callout for snapped point attributes
+            bubble = QFrame(self, Qt.ToolTip | Qt.FramelessWindowHint)
+            bubble.setObjectName("previewPointBubble")
+            bubble.setAttribute(Qt.WA_ShowWithoutActivating, True)
+            bubble.setStyleSheet(f"""
+                QFrame#previewPointBubble {{
+                    background-color: {colors['surface_elevated']};
+                    border: 1px solid {colors['border_focus']};
+                    border-radius: 10px;
+                }}
+            """)
+            b_layout = QVBoxLayout(bubble)
+            b_layout.setContentsMargins(10, 8, 10, 8)
+            b_lbl = QLabel(bubble)
+            b_lbl.setTextFormat(Qt.RichText)
+            b_lbl.setWordWrap(False)
+            b_lbl.setStyleSheet(f"border: none; color: {colors['text_primary']}; font-size: 11px;")
+            b_layout.addWidget(b_lbl)
+            bubble.hide()
+            self._preview_bubble = bubble
+            self._preview_bubble_lbl = b_lbl
+
+            if QgsRubberBand is not None:
+                # Outer ring around selected point
+                rb_ring = QgsRubberBand(canvas, QgsWkbTypes.PointGeometry)
+                rb_ring.setColor(QColor(16, 185, 129, 210))
+                rb_ring.setFillColor(QColor(16, 185, 129, 55))
+                rb_ring.setIcon(QgsRubberBand.ICON_CIRCLE)
+                rb_ring.setIconSize(22)
+                rb_ring.setWidth(2)
+                self._preview_rb_ring = rb_ring
+
+                # Core selected point marker
+                rb_sel = QgsRubberBand(canvas, QgsWkbTypes.PointGeometry)
+                rb_sel.setColor(QColor("#065F46"))
+                rb_sel.setFillColor(QColor("#10B981"))
+                rb_sel.setIcon(QgsRubberBand.ICON_CIRCLE)
+                rb_sel.setIconSize(10)
+                rb_sel.setWidth(2)
+                self._preview_rb_selected = rb_sel
+
+                # Nearby points within 50m
+                rb_near = QgsRubberBand(canvas, QgsWkbTypes.PointGeometry)
+                rb_near.setColor(QColor("#64748B"))
+                rb_near.setFillColor(QColor(148, 163, 184, 150))
+                rb_near.setIcon(QgsRubberBand.ICON_CIRCLE)
+                rb_near.setIconSize(7)
+                rb_near.setWidth(1)
+                self._preview_rb_nearby = rb_near
+
+                # Magnetic 12px hover snap ring
+                rb_snap = QgsRubberBand(canvas, QgsWkbTypes.PointGeometry)
+                rb_snap.setColor(QColor("#F59E0B"))
+                rb_snap.setFillColor(QColor(245, 158, 11, 60))
+                rb_snap.setIcon(QgsRubberBand.ICON_CIRCLE)
+                rb_snap.setIconSize(18)
+                rb_snap.setWidth(2)
+                self._preview_rb_snap = rb_snap
+        else:
+            fallback_lbl = QLabel("Map canvas preview is unavailable in headless mode.")
+            fallback_lbl.setAlignment(Qt.AlignCenter)
+            layout.addWidget(fallback_lbl, stretch=1)
+
+        # Footer Info Row
+        self._lbl_preview_footer = QLabel("Click any row to preview its location.")
+        self._lbl_preview_footer.setWordWrap(True)
+        self._lbl_preview_footer.setStyleSheet(f"font-size: 11px; color: {colors['text_secondary']}; border: none;")
+        layout.addWidget(self._lbl_preview_footer)
+
+        return panel
+
+    def _toggle_feature_preview(self, force_visible: Optional[bool] = None) -> None:
+        """Show or hide the collapsible Features Preview panel (zero rendering cost when hidden)."""
+        if not is_valid_qobject(self) or not hasattr(self, "_preview_panel"):
+            return
+        new_vis = (not self._preview_panel.isVisible()) if force_visible is None else bool(force_visible)
+        self._preview_panel.setVisible(new_vis)
+        if hasattr(self, "btn_feature_preview") and is_valid_qobject(self.btn_feature_preview):
+            self.btn_feature_preview.setChecked(new_vis)
+        if self._preview_canvas is not None and is_valid_qobject(self._preview_canvas):
+            self._preview_canvas.setRenderFlag(new_vis)
+        if not new_vis:
+            self._hide_preview_snap_bubble()
+        if new_vis:
+            self._refresh_preview_layer_combo()
+            if hasattr(self, "_main_splitter"):
+                total_w = max(self._main_splitter.width(), 900)
+                self._main_splitter.setSizes([int(total_w * 0.65), int(total_w * 0.35)])
+            if self._preview_last_target is not None:
+                self._update_feature_preview()
+
+    def _refresh_preview_layer_combo(self) -> None:
+        """Populate the Map View 'Inspect Layer' dropdown with available spatial vector layers."""
+        if not hasattr(self, "_combo_preview_layer") or not is_valid_qobject(self._combo_preview_layer):
+            return
+        combo = self._combo_preview_layer
+        prev_id = str(combo.currentData() or "")
+        proj = self.project if self.project else QgsProject.instance()
+
+        vec_layers: List[QgsVectorLayer] = []
+        seen_ids = set()
+        if self.iface and self.iface.mapCanvas():
+            for lyr in self.iface.mapCanvas().layers():
+                if isinstance(lyr, QgsVectorLayer) and lyr.isValid() and lyr.isSpatial() and lyr.id() not in seen_ids:
+                    vec_layers.append(lyr)
+                    seen_ids.add(lyr.id())
+        if proj:
+            for lyr in proj.mapLayers().values():
+                if isinstance(lyr, QgsVectorLayer) and lyr.isValid() and lyr.isSpatial() and lyr.id() not in seen_ids:
+                    vec_layers.append(lyr)
+                    seen_ids.add(lyr.id())
+
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            combo.addItem("Auto (Active / Building Points)", "")
+            for lyr in vec_layers:
+                combo.addItem(lyr.name(), lyr.id())
+            if prev_id:
+                idx = combo.findData(prev_id)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+        finally:
+            combo.blockSignals(False)
+
+    def _resolve_preview_inspect_layer(self) -> Optional[QgsVectorLayer]:
+        """Return the vector layer chosen in the 'Inspect Layer' dropdown (or Auto active/main layer)."""
+        proj = self.project if self.project else QgsProject.instance()
+        if hasattr(self, "_combo_preview_layer") and is_valid_qobject(self._combo_preview_layer):
+            chosen_id = str(self._combo_preview_layer.currentData() or "").strip()
+            if chosen_id and proj:
+                lyr = proj.mapLayer(chosen_id)
+                if isinstance(lyr, QgsVectorLayer) and lyr.isValid() and lyr.isSpatial():
+                    return lyr
+        if self._preview_last_target and self._preview_last_target[0] and self._preview_last_target[0].isValid():
+            return self._preview_last_target[0]
+        if hasattr(self, "_get_or_load_main_building_layer"):
+            return self._get_or_load_main_building_layer()
+        return None
+
+    def _schedule_feature_preview(self, source_layer: Optional[QgsVectorLayer], feat: Optional[QgsFeature]) -> None:
+        """Record the selected feature and schedule a debounced preview refresh if the panel is open."""
+        if not is_valid_qobject(self):
+            return
+        if source_layer is not None and feat is not None and feat.isValid():
+            self._preview_last_target = (source_layer, QgsFeature(feat))
+        if hasattr(self, "_preview_panel") and self._preview_panel.isVisible():
+            if hasattr(self, "_preview_timer"):
+                self._preview_timer.start()
+
+    def _update_feature_preview(self) -> None:
+        """Render the live QGIS project layers (including basemap/satellite) zoomed to the selected feature."""
+        if not is_valid_qobject(self) or not hasattr(self, "_preview_panel") or not self._preview_panel.isVisible():
+            return
+        if self._preview_canvas is None or not is_valid_qobject(self._preview_canvas):
+            return
+        if not self._preview_last_target:
+            return
+
+        self._refresh_preview_layer_combo()
+        source_layer, feat = self._preview_last_target
+        if not source_layer or not source_layer.isValid() or not feat or not feat.isValid():
+            return
+
+        geom = feat.geometry()
+        if not geom or geom.isEmpty():
+            if self._preview_rb_selected:
+                self._preview_rb_selected.reset(QgsWkbTypes.PointGeometry)
+            if self._preview_rb_ring:
+                self._preview_rb_ring.reset(QgsWkbTypes.PointGeometry)
+            if self._preview_rb_nearby:
+                self._preview_rb_nearby.reset(QgsWkbTypes.PointGeometry)
+            self._lbl_preview_footer.setText(f"FID #{feat.id()} has no geometry to preview.")
+            return
+
+        proj = self.project if self.project else QgsProject.instance()
+        # Collect live visible project layers (including satellite/basemap tiles)
+        live_layers: List[QgsMapLayer] = []
+        if self.iface and self.iface.mapCanvas():
+            live_layers = [l for l in self.iface.mapCanvas().layers() if l and l.isValid()]
+            dest_crs = self.iface.mapCanvas().mapSettings().destinationCrs()
+        else:
+            root = proj.layerTreeRoot() if proj else None
+            if root:
+                live_layers = [l for l in root.checkedLayers() if l and l.isValid()]
+            dest_crs = proj.crs() if (proj and proj.crs().isValid()) else source_layer.crs()
+
+        if not dest_crs or not dest_crs.isValid():
+            dest_crs = QgsCoordinateReferenceSystem("EPSG:3857")
+        if source_layer not in live_layers:
+            live_layers = [source_layer] + live_layers
+
+        src_crs = source_layer.crs() if source_layer.crs().isValid() else QgsCoordinateReferenceSystem("EPSG:4326")
+        g_disp = QgsGeometry(geom)
+        if src_crs != dest_crs:
+            try:
+                xform = QgsCoordinateTransform(src_crs, dest_crs, proj.transformContext() if proj else QgsProject.instance().transformContext())
+                g_disp.transform(xform)
+            except Exception:
+                pass
+
+        layers_for_canvas = list(live_layers)
+
+        # Compute nearby features within ~50m using fast spatial bounding-box filter
+        nearby_count = 0
+        if self._preview_rb_nearby is not None:
+            self._preview_rb_nearby.reset(QgsWkbTypes.PointGeometry)
+            try:
+                is_src_geo = src_crs.isGeographic()
+                near_buf = 0.0005 if is_src_geo else 50.0
+                bb = geom.boundingBox()
+                search_rect = QgsRectangle(
+                    bb.xMinimum() - near_buf,
+                    bb.yMinimum() - near_buf,
+                    bb.xMaximum() + near_buf,
+                    bb.yMaximum() + near_buf,
+                )
+                req = QgsFeatureRequest().setFilterRect(search_rect).setSubsetOfAttributes([])
+                xform_n = (
+                    QgsCoordinateTransform(src_crs, dest_crs, proj.transformContext() if proj else QgsProject.instance().transformContext())
+                    if src_crs != dest_crs
+                    else None
+                )
+                for nf in source_layer.getFeatures(req):
+                    if nf.id() == feat.id():
+                        continue
+                    ng = nf.geometry()
+                    if ng and not ng.isEmpty():
+                        ng_c = QgsGeometry(ng)
+                        if xform_n is not None:
+                            ng_c.transform(xform_n)
+                        self._preview_rb_nearby.addGeometry(ng_c, None)
+                        nearby_count += 1
+            except Exception:
+                pass
+
+        # Update Selected rubber bands
+        if self._preview_rb_ring is not None:
+            self._preview_rb_ring.reset(QgsWkbTypes.PointGeometry)
+            self._preview_rb_ring.setToGeometry(g_disp, None)
+        if self._preview_rb_selected is not None:
+            self._preview_rb_selected.reset(QgsWkbTypes.PointGeometry)
+            self._preview_rb_selected.setToGeometry(g_disp, None)
+
+        # Configure canvas CRS, layers, and zoom extent (~45m around point) — synced with main QGIS map canvas
+        self._syncing_preview_extent = True
+        try:
+            self._preview_canvas.setDestinationCrs(dest_crs)
+            self._preview_canvas.setLayers(layers_for_canvas)
+
+            disp_bb = g_disp.boundingBox()
+            pad = 0.00045 if dest_crs.isGeographic() else 45.0
+            if disp_bb.width() < pad * 2 or disp_bb.height() < pad * 2:
+                cx, cy = disp_bb.center().x(), disp_bb.center().y()
+                zoom_rect = QgsRectangle(cx - pad, cy - pad, cx + pad, cy + pad)
+            else:
+                zoom_rect = disp_bb.buffered(max(disp_bb.width(), disp_bb.height()) * 0.25)
+
+            self._preview_canvas.setExtent(zoom_rect)
+            self._preview_canvas.setRenderFlag(True)
+            self._preview_canvas.refresh()
+
+            # Keep the main QGIS map canvas at the exact same extent as Map View
+            if self.iface and self.iface.mapCanvas():
+                main_c = self.iface.mapCanvas()
+                main_c.setExtent(zoom_rect)
+                main_c.refresh()
+        finally:
+            self._syncing_preview_extent = False
+
+        # Update footer coordinates & nearby count
+        coord_txt = ""
+        try:
+            wgs84 = QgsCoordinateReferenceSystem("EPSG:4326")
+            g_wgs = QgsGeometry(geom)
+            if src_crs != wgs84:
+                g_wgs.transform(QgsCoordinateTransform(src_crs, wgs84, proj.transformContext() if proj else QgsProject.instance().transformContext()))
+            pt_w = g_wgs.centroid().asPoint() if g_wgs.type() != QgsWkbTypes.PointGeometry else g_wgs.asPoint()
+            coord_txt = f" • ({pt_w.x():.6f}, {pt_w.y():.6f})"
+        except Exception:
+            pass
+
+        self._lbl_preview_footer.setText(
+            f"FID #{feat.id()}{coord_txt} • {nearby_count} nearby feature(s) within 50m."
+        )
+
+    def _zoom_main_canvas_to_feature(self, source_layer: QgsVectorLayer, feat: QgsFeature) -> None:
+        """Zoom the main QGIS map canvas to the exact same ~45m buffered extent used by Map View."""
+        if not self.iface or not self.iface.mapCanvas() or not feat or not feat.isValid():
+            return
+        geom = feat.geometry()
+        if not geom or geom.isEmpty():
+            return
+        canvas = self.iface.mapCanvas()
+        proj = self.project if self.project else QgsProject.instance()
+        dest_crs = canvas.mapSettings().destinationCrs()
+        if not dest_crs or not dest_crs.isValid():
+            dest_crs = source_layer.crs()
+        src_crs = source_layer.crs() if source_layer.crs().isValid() else QgsCoordinateReferenceSystem("EPSG:4326")
+        g_disp = QgsGeometry(geom)
+        if src_crs != dest_crs and dest_crs.isValid():
+            try:
+                xform = QgsCoordinateTransform(src_crs, dest_crs, proj.transformContext() if proj else QgsProject.instance().transformContext())
+                g_disp.transform(xform)
+            except Exception:
+                pass
+        disp_bb = g_disp.boundingBox()
+        pad = 0.00045 if (dest_crs and dest_crs.isGeographic()) else 45.0
+        if disp_bb.width() < pad * 2 or disp_bb.height() < pad * 2:
+            cx, cy = disp_bb.center().x(), disp_bb.center().y()
+            zoom_rect = QgsRectangle(cx - pad, cy - pad, cx + pad, cy + pad)
+        else:
+            zoom_rect = disp_bb.buffered(max(disp_bb.width(), disp_bb.height()) * 0.25)
+        canvas.setExtent(zoom_rect)
+        canvas.refresh()
+
+    def eventFilter(self, obj, event):
+        """Hide the Map View snap bubble immediately when the cursor leaves the Map View canvas."""
+        if obj is getattr(self, "_preview_canvas", None) and event.type() in (QEvent.Leave, QEvent.Hide):
+            self._hide_preview_snap_bubble()
+        return super().eventFilter(obj, event)
+
+    def _hide_preview_snap_bubble(self) -> None:
+        """Clear the 12px snap ring and hide the floating point attribute bubble."""
+        self._preview_last_snap_key = None
+        try:
+            if hasattr(self, "_preview_rb_snap") and self._preview_rb_snap is not None and is_valid_qobject(self._preview_rb_snap):
+                self._preview_rb_snap.reset(QgsWkbTypes.PointGeometry)
+            if hasattr(self, "_preview_bubble") and self._preview_bubble is not None and is_valid_qobject(self._preview_bubble):
+                self._preview_bubble.hide()
+        except Exception:
+            pass
+
+    def _process_preview_hover_snap(self) -> None:
+        """Snap to the nearest Building Point within 12 px of the cursor and display the floating attribute bubble."""
+        if not is_valid_qobject(self) or not hasattr(self, "_preview_panel") or not self._preview_panel.isVisible():
+            self._hide_preview_snap_bubble()
+            return
+        canvas = getattr(self, "_preview_canvas", None)
+        map_pt = getattr(self, "_preview_hover_pt", None)
+        if canvas is None or not is_valid_qobject(canvas) or map_pt is None:
+            self._hide_preview_snap_bubble()
+            return
+
+        source_layer = self._resolve_preview_inspect_layer()
+        if not source_layer or not source_layer.isValid() or not source_layer.isSpatial():
+            self._hide_preview_snap_bubble()
+            return
+
+        proj = self.project if self.project else QgsProject.instance()
+        dest_crs = canvas.mapSettings().destinationCrs()
+        src_crs = source_layer.crs() if source_layer.crs().isValid() else QgsCoordinateReferenceSystem("EPSG:4326")
+        tol_dest = max(canvas.mapUnitsPerPixel() * 12.0, 1e-9)
+        is_poly_layer = source_layer.geometryType() == QgsWkbTypes.PolygonGeometry
+
+        # Build 12 px search rectangle in source_layer CRS
+        rect_dest = QgsRectangle(
+            map_pt.x() - tol_dest,
+            map_pt.y() - tol_dest,
+            map_pt.x() + tol_dest,
+            map_pt.y() + tol_dest,
+        )
+        search_rect = rect_dest
+        xform_to_dest = None
+        if dest_crs and dest_crs.isValid() and src_crs != dest_crs:
+            try:
+                tctx = proj.transformContext() if proj else QgsProject.instance().transformContext()
+                xform_to_src = QgsCoordinateTransform(dest_crs, src_crs, tctx)
+                search_rect = xform_to_src.transformBoundingBox(rect_dest)
+                xform_to_dest = QgsCoordinateTransform(src_crs, dest_crs, tctx)
+            except Exception:
+                self._hide_preview_snap_bubble()
+                return
+
+        # Find nearest point within 12 px (or polygon containing cursor)
+        best_feat = None
+        best_geom_dest = None
+        best_dist_sq = tol_dest * tol_dest
+        cursor_geom_dest = QgsGeometry.fromPointXY(map_pt)
+        try:
+            req = QgsFeatureRequest().setFilterRect(search_rect)
+            for cand in source_layer.getFeatures(req):
+                cg = cand.geometry()
+                if not cg or cg.isEmpty():
+                    continue
+                cg_dest = QgsGeometry(cg)
+                if xform_to_dest is not None:
+                    cg_dest.transform(xform_to_dest)
+                if is_poly_layer:
+                    if cg_dest.contains(cursor_geom_dest) or cg_dest.intersects(cursor_geom_dest):
+                        best_feat = cand
+                        best_geom_dest = cursor_geom_dest
+                        break
+                else:
+                    cpt = cg_dest.centroid().asPoint() if cg_dest.type() != QgsWkbTypes.PointGeometry else cg_dest.asPoint()
+                    d_sq = (cpt.x() - map_pt.x()) ** 2 + (cpt.y() - map_pt.y()) ** 2
+                    if d_sq <= best_dist_sq:
+                        best_dist_sq = d_sq
+                        best_feat = cand
+                        best_geom_dest = cg_dest
+        except Exception:
+            self._hide_preview_snap_bubble()
+            return
+
+        if best_feat is None or best_geom_dest is None:
+            self._hide_preview_snap_bubble()
+            return
+
+        # Lock 12px snap ring onto exact point geometry (for point/line layers)
+        if self._preview_rb_snap is not None and is_valid_qobject(self._preview_rb_snap):
+            self._preview_rb_snap.reset(QgsWkbTypes.PointGeometry)
+            if not is_poly_layer:
+                self._preview_rb_snap.setToGeometry(best_geom_dest, None)
+
+        # Build floating bubble HTML only when snapped feature changes (zero lag while hovering same feature)
+        snap_key = (source_layer.id(), best_feat.id())
+        if snap_key != self._preview_last_snap_key and self._preview_bubble_lbl is not None:
+            self._preview_last_snap_key = snap_key
+            colors = self._get_theme_colors()
+            f_map = {f.name().lower(): f.name() for f in source_layer.fields()}
+            common_cols = [
+                ("map_uuid", ("map_uuid", "sf_map_uuid", "ref_map_uuid", "mapid", "uuid")),
+                ("en_code", ("en_code", "sf_en_code")),
+                ("bsn_geoid", ("bsn_geoid", "sf_bsn_geoid", "ref_bsn_geoid")),
+                ("ea_geocode", ("ea_geocode", "sf_ea_geocode", "ref_ea_geocode", "geocode")),
+                ("region_code", ("region_code", "sf_region_code", "reg_code")),
+                ("province_code", ("province_code", "sf_province_code", "prov_code")),
+                ("city_mun_code", ("city_mun_code", "sf_city_mun_code", "mun_code")),
+                ("barangay_code", ("barangay_code", "sf_barangay_code", "barangay__code", "bgy_code")),
+                ("ean", ("ean", "sf_ean", "ea_code")),
+                ("bsn", ("bsn", "sf_bsn", "bsn_code")),
+                ("longitude", ("longitude", "sf_longitude", "ref_longitude")),
+                ("latitude", ("latitude", "sf_latitude", "ref_latitude")),
+                ("pos_longit", ("pos_longit", "sf_pos_longit")),
+                ("pos_latitu", ("pos_latitu", "sf_pos_latitu")),
+                ("remarks", ("remarks", "sf_remarks")),
+                ("is_deleted", ("is_deleted", "sf_is_deleted")),
+            ]
+
+            def _esc(s: str) -> str:
+                return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+            rows_html = [
+                f"<tr><td style='color:{colors['text_secondary']}; padding:1px 8px 1px 0;'><b>FID</b></td>"
+                f"<td style='color:{colors['title']}; font-weight:bold;'>#{best_feat.id()}</td></tr>"
+            ]
+            shown_real_cols = set()
+            for label_key, aliases in common_cols:
+                real_col = next((f_map[a] for a in aliases if a in f_map), None)
+                if not real_col:
+                    continue
+                shown_real_cols.add(real_col)
+                raw_v = best_feat[real_col]
+                if raw_v is None or raw_v == NULL or str(raw_v).strip() == "":
+                    val_html = f"<span style='color:{colors['text_muted']};'>NULL</span>"
+                else:
+                    val_s = str(raw_v).strip()
+                    if label_key == "is_deleted" and val_s.lower() in ("true", "1", "t", "yes", "deleted"):
+                        val_html = f"<span style='color:{colors['danger_text']}; font-weight:bold;'>true</span>"
+                    else:
+                        val_html = _esc(val_s)
+                rows_html.append(
+                    f"<tr><td style='color:{colors['text_secondary']}; padding:1px 8px 1px 0;'>{label_key}</td>"
+                    f"<td style='color:{colors['text_primary']};'>{val_html}</td></tr>"
+                )
+
+            # If inspecting a custom/reference layer with few common columns, include up to 8 extra non-empty fields
+            if len(shown_real_cols) < 3:
+                extra_added = 0
+                for fld in source_layer.fields():
+                    fn = fld.name()
+                    if fn in shown_real_cols or fn.lower() == "fid":
+                        continue
+                    raw_v = best_feat[fn]
+                    if raw_v is None or raw_v == NULL or str(raw_v).strip() == "":
+                        continue
+                    rows_html.append(
+                        f"<tr><td style='color:{colors['text_secondary']}; padding:1px 8px 1px 0;'>{_esc(fn)}</td>"
+                        f"<td style='color:{colors['text_primary']};'>{_esc(str(raw_v).strip())}</td></tr>"
+                    )
+                    extra_added += 1
+                    if extra_added >= 8:
+                        break
+
+            html = (
+                f"<div style='font-weight:bold; color:{colors['title']}; margin-bottom:4px; "
+                f"border-bottom:1px solid {colors['border']}; padding-bottom:3px;'>"
+                f"{_esc(source_layer.name())}</div>"
+                f"<table cellspacing='0' cellpadding='0'>{''.join(rows_html)}</table>"
+            )
+            self._preview_bubble_lbl.setText(html)
+            self._preview_bubble.adjustSize()
+
+        # Position floating bubble cleanly beside the snapped point on screen
+        if self._preview_bubble is not None and is_valid_qobject(self._preview_bubble):
+            try:
+                spt = best_geom_dest.centroid().asPoint() if best_geom_dest.type() != QgsWkbTypes.PointGeometry else best_geom_dest.asPoint()
+                pix = canvas.getCoordinateTransform().transform(spt)
+                global_pt = canvas.mapToGlobal(QPoint(int(pix.x()), int(pix.y())))
+                bx = global_pt.x() + 16
+                by = global_pt.y() - self._preview_bubble.height() - 12
+                screen = QApplication.screenAt(global_pt) or QApplication.primaryScreen()
+                if screen:
+                    sg = screen.availableGeometry()
+                    if bx + self._preview_bubble.width() > sg.right():
+                        bx = global_pt.x() - self._preview_bubble.width() - 16
+                    if by < sg.top():
+                        by = global_pt.y() + 18
+                self._preview_bubble.move(bx, by)
+                if not self._preview_bubble.isVisible():
+                    self._preview_bubble.show()
+            except Exception:
+                pass
+
+    def _cleanup_feature_preview(self) -> None:
+        """Safely stop preview rendering and release rubber bands before dialog destruction."""
+        try:
+            if hasattr(self, "_preview_timer") and self._preview_timer:
+                self._preview_timer.stop()
+            if hasattr(self, "_preview_hover_timer") and self._preview_hover_timer:
+                self._preview_hover_timer.stop()
+            self._hide_preview_snap_bubble()
+            for rb_name in ("_preview_rb_selected", "_preview_rb_ring", "_preview_rb_nearby", "_preview_rb_snap"):
+                rb = getattr(self, rb_name, None)
+                if rb is not None and is_valid_qobject(rb):
+                    rb.reset(QgsWkbTypes.PointGeometry)
+            if hasattr(self, "_preview_canvas") and self._preview_canvas and is_valid_qobject(self._preview_canvas):
+                self._preview_canvas.stopRendering()
+                self._preview_canvas.setRenderFlag(False)
+                self._preview_canvas.setLayers([])
+            self._preview_last_target = None
+        except Exception:
+            pass
 
     def _create_summary_tab(
         self,
@@ -3045,16 +4246,20 @@ class CbmsmvDialog(QDialog):
         if not is_valid_qobject(table):
             return
 
-        from .cbms_mv_fix import cbms_mv_fix
-        cbms_mv_fix.delete_selected_features(
-            self,
-            layer,
-            table,
-            combo_actions=combo_actions,
-            btn_actions=btn_actions,
-            btn_update_selected=btn_update_selected,
-        )
-        getattr(self, "_update_save_discard_ui_state", lambda: None)()
+        self._start_process_progress("Marking selected features as deleted...", maximum=100, initial=20)
+        try:
+            from .cbms_mv_fix import cbms_mv_fix
+            cbms_mv_fix.delete_selected_features(
+                self,
+                layer,
+                table,
+                combo_actions=combo_actions,
+                btn_actions=btn_actions,
+                btn_update_selected=btn_update_selected,
+            )
+            getattr(self, "_update_save_discard_ui_state", lambda: None)()
+        finally:
+            self._finish_process_progress()
 
     def _on_concatenate_ea_geocode(
         self,
@@ -3247,16 +4452,20 @@ class CbmsmvDialog(QDialog):
         if not is_valid_qobject(table):
             return
 
-        from .cbms_mv_fix.deduplicate_features_fix import deduplicate_features
-        deduplicate_features(
-            self,
-            layer,
-            table,
-            combo_actions=combo_actions,
-            btn_actions=btn_actions,
-            btn_update_selected=btn_update_selected,
-            process_all=process_all,
-        )
+        self._start_process_progress("Checking and removing duplicates...", maximum=100, initial=20)
+        try:
+            from .cbms_mv_fix.deduplicate_features_fix import deduplicate_features
+            deduplicate_features(
+                self,
+                layer,
+                table,
+                combo_actions=combo_actions,
+                btn_actions=btn_actions,
+                btn_update_selected=btn_update_selected,
+                process_all=process_all,
+            )
+        finally:
+            self._finish_process_progress()
         if combo_actions:
             combo_actions.setItemText(0, "Actions")
         elif btn_actions:
@@ -3412,8 +4621,25 @@ class CbmsmvDialog(QDialog):
             except Exception:
                 pass
 
+        _fix_total = len(target_rows) if target_rows else (len(target_fids) if target_fids else 0)
+        self._start_process_progress(
+            f"Processing {_fix_total:,} selected record(s)..." if _fix_total > 0 else "Applying fix action...",
+            initial=0,
+            total_items=_fix_total if _fix_total > 0 else None,
+        )
         try:
             feedback = QgsProcessingFeedback()
+            try:
+                if _fix_total > 0:
+                    feedback.progressChanged.connect(
+                        lambda p: self._update_process_progress(int((float(p) / 100.0) * _fix_total), total_items=_fix_total)
+                    )
+                else:
+                    feedback.progressChanged.connect(
+                        lambda p: self._update_process_progress(10 + int(float(p) * 0.70))
+                    )
+            except Exception:
+                pass
             try:
                 res = handler(
                     active_target_layer,
@@ -3435,6 +4661,7 @@ class CbmsmvDialog(QDialog):
                     raise te
 
         except Exception as exc:
+            self._finish_process_progress()
             import traceback
             err_details = traceback.format_exc()
             try:
@@ -3450,12 +4677,18 @@ class CbmsmvDialog(QDialog):
             return
 
         if not res.get("success"):
+            self._finish_process_progress()
             QMessageBox.warning(
                 self,
                 res.get("title", "Fix Not Applied"),
                 res.get("message", "The fix could not be applied."),
             )
             return
+
+        self._update_process_progress(
+            max(1, _fix_total - 1) if _fix_total > 1 else (1 if _fix_total == 1 else 85),
+            f"Updating table ({_fix_total:,} record(s))..." if _fix_total > 0 else "Updating table...",
+        )
 
         updated_values = res.get("updated_values", {})
         fixed_count = res.get("fixed_count", len(updated_values))
@@ -3699,26 +4932,68 @@ class CbmsmvDialog(QDialog):
         if target_rows is not None and rows_updated_in_table > 0:
             fixed_count = rows_updated_in_table
         selected_total = len(target_rows) if target_rows is not None else 0
+        not_fixed_count = max(0, selected_total - fixed_count)
+
+        # Jargon-free action label and plain-English explanation for unfixed records
+        clean_act = str(val_id or "").strip().lower()
+        friendly_action_map = {
+            "concatenate_ea_geocode": "Fill EA Geocode",
+            "concatenate_bsn_geoid": "Fill Building Serial Number ID",
+            "generate_point_geometry": "Create Missing Map Points",
+            "copy_geometry_to_coordinates": "Copy Map Location to Coordinates",
+            "update_datafiles_coordinates": "Update Form 2 Coordinates",
+            "update_datafile_coordinates": "Update Form 2 Coordinates",
+            "update_point_geometry": "Move Map Point to Coordinates",
+            "delete_selected_features": "Mark Selected Records as Deleted",
+            "deduplicate_features": "Remove Duplicate Points",
+        }
+        action_label = friendly_action_map.get(clean_act, str(val_id or "Fix Action").replace("_", " ").title())
+
+        default_skip_reason_map = {
+            "concatenate_ea_geocode": (
+                "One or more required location codes (Province, City/Municipality, Barangay, or EA Number) "
+                "are blank, or no matching point was found on the map."
+            ),
+            "concatenate_bsn_geoid": (
+                "The EA Geocode, Building Serial Number (BSN), or location codes are blank, "
+                "or no matching point was found on the map."
+            ),
+            "generate_point_geometry": (
+                "The record already has a point on the map, or its coordinates are missing or invalid."
+            ),
+            "copy_geometry_to_coordinates": (
+                "No point is drawn on the map for that record yet, or no matching map point was found."
+            ),
+            "update_datafiles_coordinates": (
+                "The map coordinates are missing or invalid, or the record is not linked to a Form 2 entry."
+            ),
+            "update_datafile_coordinates": (
+                "The map coordinates are missing or invalid, or the record is not linked to a Form 2 entry."
+            ),
+            "update_point_geometry": (
+                "The longitude or latitude is blank or invalid, or no matching point was found on the map."
+            ),
+        }
+        default_skip_reason = default_skip_reason_map.get(
+            clean_act,
+            "Required information is missing or no matching record was found to update.",
+        )
+        null_cols_warn = str(res.get("null_columns_warning") or "").strip()
+        custom_skip_reason = str(res.get("skip_reason") or "").strip()
+        not_fixed_reason = custom_skip_reason or null_cols_warn or default_skip_reason
 
         if fixed_count == 0:
-            self.lbl_footer_status.setText(f"No records were fixed for '{val_id}'.")
-            default_zero_title = (
-                "Check all columns"
-                if (
-                    "bsn_geoid" in str(val_id).lower()
-                    or "ea_geocode" in str(val_id).lower()
-                    or res.get("null_columns_warning")
-                )
-                else "Fix Not Applied"
+            self._finish_process_progress(f"No records were updated ({action_label}).")
+            zero_msg = (
+                f"Action: {action_label}\n\n"
+                f"• Updated: 0 record(s)\n"
+                f"• Not updated: {selected_total if selected_total > 0 else 'Selected'} record(s)\n"
+                f"  Reason: {not_fixed_reason}"
             )
             QMessageBox.warning(
                 self,
-                res.get("title", default_zero_title),
-                res.get(
-                    "message",
-                    f"No records were fixed for '{val_id}'.\n\n"
-                    "Please check that the selected row has valid coordinates and is not already on the map.",
-                ),
+                "No Records Updated",
+                zero_msg,
             )
             return
 
@@ -3728,25 +5003,32 @@ class CbmsmvDialog(QDialog):
             if (selected_total > fixed_count)
             else f"{fixed_count} record(s)"
         )
-        self.lbl_footer_status.setText(
-            f"Fixed {count_summary} for '{val_id}'. Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo."
+        self._finish_process_progress(
+            f"Updated {count_summary} ({action_label}). Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo."
         )
-        null_cols_warn = res.get("null_columns_warning", "")
-        if null_cols_warn:
+
+        if not_fixed_count > 0 or null_cols_warn:
+            partial_msg = (
+                f"Action: {action_label}\n\n"
+                f"• Updated: {fixed_count} record(s)\n"
+                f"• Not updated: {not_fixed_count} record(s)\n"
+                f"  Reason: {not_fixed_reason}\n\n"
+                f"These changes are not saved yet.\n"
+                f"Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo."
+            )
             QMessageBox.warning(
                 self,
-                res.get("title", "Check all columns"),
-                f"Fixed {count_summary} for:\n{val_id}\n\n"
-                f"However, {null_cols_warn}\n\n"
-                f"Fixed changes are not saved yet. Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo.",
+                "Partially Applied",
+                partial_msg,
             )
         else:
             QMessageBox.information(
                 self,
                 "Fix Applied",
-                f"Fixed {count_summary} for:\n{val_id}\n\n"
+                f"Action: {action_label}\n\n"
+                f"• Updated: {fixed_count} record(s)\n\n"
                 f"These changes are not saved yet.\n"
-                f"Click 'Save Changes' (or press Ctrl+S) to keep them, or click 'Discard' to undo.",
+                f"Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo.",
             )
 
     # -----------------------------------------------------------------------
@@ -4041,21 +5323,7 @@ class CbmsmvDialog(QDialog):
                                 col_idx = idx
                                 break
 
-                    # If column does not exist in CSV header, append it dynamically
-                    if col_idx is None:
-                        if clean_p in ("bsn_geoid", "df_bsn_geoid"):
-                            header.append("bsn_geoid")
-                            header_lower.append("bsn_geoid")
-                            col_idx = len(header) - 1
-                            for r_item in rows:
-                                r_item.append("")
-                        elif clean_p in ("ea_geocode", "df_ea_geocode"):
-                            header.append("ea_geocode")
-                            header_lower.append("ea_geocode")
-                            col_idx = len(header) - 1
-                            for r_item in rows:
-                                r_item.append("")
-
+                    # Preserve original Form 2 CSV schema: only update columns that already exist in the CSV header
                     if col_idx is not None:
                         actual_col_name = header[col_idx]
                         row[col_idx] = str(new_val) if new_val is not None else ""
@@ -4350,6 +5618,8 @@ class CbmsmvDialog(QDialog):
         geojson_saved = False
         geojson_err = None
 
+        self._start_process_progress("Saving changes to disk...", maximum=100, initial=15)
+
         # 1. Commit GeoJSON Layer changes if dirty across all matching main building layers
         for main_layer in main_layers:
             if main_layer and main_layer.isValid() and main_layer.isEditable() and main_layer.isModified():
@@ -4367,12 +5637,15 @@ class CbmsmvDialog(QDialog):
                     break
 
         if geojson_err:
+            self._finish_process_progress("Save failed.")
             QMessageBox.critical(
                 self,
                 "Save Failed",
                 f"Could not save changes to the building points file:\n{geojson_err}",
             )
             return False
+
+        self._update_process_progress(55, "Saving Form 2 data...")
 
         # Reload any other non-modified duplicate layer instances pointing to the same file
         if geojson_saved:
@@ -4527,7 +5800,13 @@ class CbmsmvDialog(QDialog):
 
         # 5. Re-run validation check if a valid val_id is active (skip when dialog is closing or caller handles rerun)
         if getattr(self, "_is_closing", False) or skip_rerun:
+            self._refresh_deleted_records_button()
+            self._finish_process_progress(saved_msg)
             return True
+
+        # Keep top-bar Restore Deleted (N) button count synchronized
+        self._refresh_deleted_records_button()
+        self._update_process_progress(85, saved_msg)
 
         if val_id:
             self._rerun_validation_check(
@@ -4536,7 +5815,7 @@ class CbmsmvDialog(QDialog):
                 trigger_full_rerun_on_clean=True,
             )
         else:
-            self.lbl_footer_status.setText(saved_msg)
+            self._finish_process_progress(saved_msg)
             QMessageBox.information(
                 self,
                 "Changes Saved",
@@ -4825,8 +6104,7 @@ class CbmsmvDialog(QDialog):
 
         alg_target = alg if alg is not None else reg_id
 
-        self.lbl_footer_status.setText(f"Re-checking '{val_id}'...")
-        QApplication.processEvents()
+        self._start_process_progress(f"Re-checking '{val_id}'...", maximum=100, initial=20)
 
         params = {
             "INPUT_DATA": form2_path,
@@ -4843,10 +6121,17 @@ class CbmsmvDialog(QDialog):
             params["OPEN_FOR_EDITING"] = False
 
         feedback = ProcessingFeedbackBridge(self._log_info, self._log_warning, self._log_error)
+        try:
+            feedback.progressChanged.connect(
+                lambda p: self._update_process_progress(20 + int(float(p) * 0.70))
+            )
+        except Exception:
+            pass
         self._log_step("RERUN", f"Re-running validation check '{val_id}' after saving changes...")
 
         try:
             result = processing.run(alg_target, params, context=self.context, feedback=feedback)
+            self._update_process_progress(92, f"Refreshing results for '{val_id}'...")
         except Exception as exc:
             self._log_error(f"Execution error re-running '{val_id}': {exc}")
             QMessageBox.critical(
@@ -4964,6 +6249,7 @@ class CbmsmvDialog(QDialog):
         self._populate_results_workspace(self._execution_summary, self._result_layers)
         self._jump_to_result_tab(val_id)
         getattr(self, "_update_save_discard_ui_state", lambda: None)()
+        self._finish_process_progress()
 
         # User feedback
         if new_count == 0:
@@ -5013,10 +6299,6 @@ class CbmsmvDialog(QDialog):
         map_uuid = item0.data(Qt.UserRole + 1)
         err_fid = item0.data(Qt.UserRole + 3)
 
-        if not self.iface:
-            return
-
-        canvas = self.iface.mapCanvas()
         main_layer = self._get_or_load_main_building_layer()
         target_layer = main_layer if (main_layer and main_layer.isValid()) else layer
 
@@ -5030,13 +6312,16 @@ class CbmsmvDialog(QDialog):
             feat = layer.getFeature(int(err_fid))
 
         if feat and feat.isValid():
+            self._schedule_feature_preview(target_layer, feat)
+            if not self.iface:
+                return
             try:
+                canvas = self.iface.mapCanvas()
                 self.iface.setActiveLayer(target_layer)
                 target_layer.selectByIds([feat.id()])
                 if target_layer.isSpatial():
-                    canvas.zoomToFeatureIds(target_layer, [feat.id()])
+                    self._zoom_main_canvas_to_feature(target_layer, feat)
                     canvas.flashFeatureIds(target_layer, [feat.id()])
-                    canvas.refresh()
                 self.lbl_footer_status.setText(f"Zoomed to feature FID #{target_fid} in '{target_layer.name()}'")
             except Exception as exc:
                 self.lbl_footer_status.setText(f"Could not zoom to feature: {exc}")
@@ -5713,6 +6998,10 @@ class CbmsmvDialog(QDialog):
                     if getattr(self, "_is_docked", False) and self._dock_widget:
                         self._dock_widget.show()
                     return
+
+            # Clean up embedded Features Preview canvas safely before destroying dialog
+            if hasattr(self, "_cleanup_feature_preview"):
+                self._cleanup_feature_preview()
 
             # ALWAYS ensure central container is safely reparented back to self BEFORE destroying dock
             self._restore_central_container_to_dialog()
@@ -6562,6 +7851,39 @@ class CbmsmvDialog(QDialog):
         self.lbl_footer_status.setStyleSheet(f"color: {colors['text_secondary']}; font-size: 11px;")
         layout.addWidget(self.lbl_footer_status, stretch=1)
 
+        # Unified Footer Progress Bar (auto-shown for every plugin process)
+        self.footer_progress_bar = QProgressBar()
+        self.footer_progress_bar.setObjectName("footerProgressBar")
+        self.footer_progress_bar.setRange(0, 100)
+        self.footer_progress_bar.setValue(0)
+        self.footer_progress_bar.setTextVisible(True)
+        self.footer_progress_bar.setFixedWidth(210)
+        self.footer_progress_bar.setFixedHeight(18)
+        self.footer_progress_bar.setStyleSheet(f"""
+            QProgressBar#footerProgressBar {{
+                background-color: {colors['surface_elevated']};
+                border: 1px solid {colors['border']};
+                border-radius: 4px;
+                text-align: center;
+                font-size: 10px;
+                color: {colors['text_primary']};
+            }}
+            QProgressBar#footerProgressBar::chunk {{
+                background-color: {colors['accent']};
+                border-radius: 3px;
+            }}
+        """)
+        self.footer_progress_bar.setVisible(False)
+        self._footer_progress_hide_timer = QTimer(self)
+        self._footer_progress_hide_timer.setSingleShot(True)
+        self._footer_progress_hide_timer.setInterval(450)
+        self._footer_progress_hide_timer.timeout.connect(
+            lambda: self.footer_progress_bar.setVisible(False)
+            if (is_valid_qobject(self) and hasattr(self, "footer_progress_bar") and is_valid_qobject(self.footer_progress_bar))
+            else None
+        )
+        layout.addWidget(self.footer_progress_bar)
+
         self.btn_reset = QPushButton("Reset Form")
         ic_reset = QgsApplication.getThemeIcon("mActionUndo.svg")
         if not ic_reset.isNull():
@@ -6587,6 +7909,89 @@ class CbmsmvDialog(QDialog):
         layout.addWidget(self.btn_run)
 
         return footer
+
+    def _start_process_progress(
+        self,
+        label: str = "Processing...",
+        maximum: int = 100,
+        initial: int = 5,
+        total_items: Optional[int] = None,
+    ) -> None:
+        """Show and initialize the unified bottom progress bar with optional item count (e.g. '0 / 15 (0%)')."""
+        if not is_valid_qobject(self):
+            return
+        if hasattr(self, "_footer_progress_hide_timer") and self._footer_progress_hide_timer:
+            self._footer_progress_hide_timer.stop()
+        self._footer_progress_total = int(total_items) if (total_items is not None and int(total_items) > 0) else None
+        if hasattr(self, "footer_progress_bar") and is_valid_qobject(self.footer_progress_bar):
+            if self._footer_progress_total is not None:
+                self.footer_progress_bar.setRange(0, self._footer_progress_total)
+                init_c = max(0, min(int(initial), self._footer_progress_total))
+                self.footer_progress_bar.setValue(init_c)
+                pct = int((init_c / self._footer_progress_total) * 100)
+                self.footer_progress_bar.setFormat(f"{init_c:,} / {self._footer_progress_total:,} ({pct}%)")
+            else:
+                self.footer_progress_bar.setRange(0, maximum)
+                if maximum > 0:
+                    self.footer_progress_bar.setValue(max(0, min(initial, maximum)))
+                self.footer_progress_bar.setFormat("%p%")
+            self.footer_progress_bar.setVisible(True)
+        if label and hasattr(self, "lbl_footer_status") and is_valid_qobject(self.lbl_footer_status):
+            self.lbl_footer_status.setText(label)
+        QApplication.processEvents()
+
+    def _update_process_progress(
+        self,
+        value: int,
+        label: Optional[str] = None,
+        total_items: Optional[int] = None,
+    ) -> None:
+        """Update the unified bottom progress bar value, item count format ('current / total (%)'), and status."""
+        if not is_valid_qobject(self):
+            return
+        if total_items is not None and int(total_items) > 0:
+            self._footer_progress_total = int(total_items)
+        if hasattr(self, "footer_progress_bar") and is_valid_qobject(self.footer_progress_bar):
+            if not self.footer_progress_bar.isVisible():
+                self.footer_progress_bar.setVisible(True)
+            tot = getattr(self, "_footer_progress_total", None)
+            if tot is not None and tot > 0:
+                if self.footer_progress_bar.maximum() != tot:
+                    self.footer_progress_bar.setRange(0, tot)
+                cur = max(0, min(int(value), tot))
+                pct = int((cur / tot) * 100)
+                self.footer_progress_bar.setValue(cur)
+                self.footer_progress_bar.setFormat(f"{cur:,} / {tot:,} ({pct}%)")
+            else:
+                if self.footer_progress_bar.maximum() == 0:
+                    self.footer_progress_bar.setRange(0, 100)
+                self.footer_progress_bar.setValue(max(0, min(int(value), self.footer_progress_bar.maximum())))
+                self.footer_progress_bar.setFormat("%p%")
+        if label and hasattr(self, "lbl_footer_status") and is_valid_qobject(self.lbl_footer_status):
+            self.lbl_footer_status.setText(label)
+        QApplication.processEvents()
+
+    def _finish_process_progress(self, final_label: Optional[str] = None, hide_delay_ms: int = 450) -> None:
+        """Complete and smoothly auto-hide the unified bottom progress bar."""
+        if not is_valid_qobject(self):
+            return
+        if hasattr(self, "footer_progress_bar") and is_valid_qobject(self.footer_progress_bar):
+            tot = getattr(self, "_footer_progress_total", None)
+            if tot is not None and tot > 0:
+                self.footer_progress_bar.setRange(0, tot)
+                self.footer_progress_bar.setValue(tot)
+                self.footer_progress_bar.setFormat(f"{tot:,} / {tot:,} (100%)")
+            else:
+                if self.footer_progress_bar.maximum() == 0:
+                    self.footer_progress_bar.setRange(0, 100)
+                self.footer_progress_bar.setValue(100)
+                self.footer_progress_bar.setFormat("%p%")
+            if hasattr(self, "_footer_progress_hide_timer") and self._footer_progress_hide_timer:
+                self._footer_progress_hide_timer.start(hide_delay_ms)
+        self._footer_progress_total = None
+        if final_label and hasattr(self, "lbl_footer_status") and is_valid_qobject(self.lbl_footer_status):
+            self.lbl_footer_status.setText(final_label)
+        QApplication.processEvents()
 
     # -----------------------------------------------------------------------
     # Styling & Theming
@@ -7324,6 +8729,11 @@ class CbmsmvDialog(QDialog):
         self._switch_to_config(2)
         self.btn_run.setEnabled(False)
         self.progress_bar.setValue(0)
+        self._start_process_progress(
+            f"Starting {len(selected_rules):,} validation check(s)...",
+            initial=0,
+            total_items=len(selected_rules),
+        )
         self.lbl_progress_status.setText("Status: Initializing validation session...")
 
         self._log_step("INIT", "=== 2027 CBMS Form 2 Map Validation Session Started ===")
@@ -7365,6 +8775,7 @@ class CbmsmvDialog(QDialog):
 
             pct = int((i / total_rules) * 100)
             self.progress_bar.setValue(pct)
+            self._update_process_progress(i + 1, f"Running check {i+1} of {total_rules}...", total_items=total_rules)
             self.lbl_progress_status.setText(f"Status: Executing [{val_id}] ({i+1}/{total_rules})...")
             self._log_step("RUN", f"[{i+1}/{total_rules}] Running '{val_id}'")
             self._log_info(f"Check: {check_name}")
@@ -7528,6 +8939,7 @@ class CbmsmvDialog(QDialog):
 
         # 7. Finalize execution session
         self.progress_bar.setValue(100)
+        self._finish_process_progress("Validation complete!")
         self.lbl_progress_status.setText("Status: Validation complete!")
         self.btn_run.setEnabled(True)
 

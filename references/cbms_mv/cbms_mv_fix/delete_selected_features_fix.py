@@ -90,12 +90,20 @@ def delete_selected_features(
         return
     checked_rows = []
     for r in range(table.rowCount()):
+        if hasattr(table, "isRowHidden") and table.isRowHidden(r):
+            continue
         item0 = table.item(r, 0)
         if item0 and item0.checkState() == Qt.Checked:
             checked_rows.append(r)
 
     if not checked_rows and hasattr(table, "selectionModel") and table.selectionModel():
-        sel_rows = sorted(set(idx.row() for idx in table.selectionModel().selectedRows()))
+        sel_rows = sorted(
+            set(
+                idx.row()
+                for idx in table.selectionModel().selectedRows()
+                if not (hasattr(table, "isRowHidden") and table.isRowHidden(idx.row()))
+            )
+        )
         if sel_rows:
             checked_rows = sel_rows
 
@@ -104,26 +112,66 @@ def delete_selected_features(
             QMessageBox.information(dialog, "Nothing Selected", "Please tick the box or select at least one row first.")
         return
 
+    # Ensure main building points layer is loaded before confirmation so we can check Form 2 impact
+    try:
+        main_layer = dialog._get_or_load_main_building_layer() if hasattr(dialog, "_get_or_load_main_building_layer") else None
+    except Exception as exc:
+        if hasattr(dialog, "_log_error"):
+            dialog._log_error(f"Error accessing main building points layer: {exc}")
+        main_layer = None
+
+    def _has_valid_id(v: Any) -> bool:
+        return v is not None and str(v).strip().lower() not in ("", "null", "none", "nan")
+
+    # Check if any selected GeoJSON points are still linked to Form 2 CSV records (would create mv_2027_hp_1a_map_uuid__missing flags)
+    linked_form2_count = 0
+    try:
+        form2_layer = dialog._find_existing_form2_layer() if hasattr(dialog, "_find_existing_form2_layer") else None
+        if form2_layer is None and hasattr(dialog, "_get_or_load_form2_layer"):
+            form2_layer = dialog._get_or_load_form2_layer()
+        if form2_layer and form2_layer.isValid():
+            f2_flds = {f.name().lower(): f.name() for f in form2_layer.fields()}
+            f2_ucol = f2_flds.get("map_uuid") or f2_flds.get("df_map_uuid") or f2_flds.get("mapid") or f2_flds.get("uuid")
+            if f2_ucol:
+                sel_sf_uuids = set()
+                for r in checked_rows:
+                    it0 = table.item(r, 0)
+                    if not it0:
+                        continue
+                    sf_u_val = it0.data(Qt.UserRole + 7)
+                    if _has_valid_id(sf_u_val):
+                        sel_sf_uuids.add(str(sf_u_val).strip().lower())
+                if sel_sf_uuids:
+                    for f2_feat in form2_layer.getFeatures():
+                        f2_u = f2_feat.attribute(f2_ucol)
+                        if _has_valid_id(f2_u) and str(f2_u).strip().lower() in sel_sf_uuids:
+                            linked_form2_count += 1
+    except Exception:
+        linked_form2_count = 0
+
     if QMessageBox:
+        confirm_msg = f"Mark {len(checked_rows)} selected record(s) as deleted?"
+        if linked_form2_count > 0:
+            confirm_msg += (
+                f"\n\nHeads up: {linked_form2_count} Form 2 record(s) still use the selected point(s).\n"
+                "Deleting these map points will cause those Form 2 records to show up as Missing Map Points after saving."
+            )
         reply = QMessageBox.question(
             dialog,
             "Delete Selected Records",
-            f"Mark {len(checked_rows)} selected record(s) as deleted?",
+            confirm_msg,
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes,
         )
         if reply != QMessageBox.Yes:
             return
 
-    # Ensure main building points layer is loaded and editable
-    try:
-        main_layer = dialog._get_or_load_main_building_layer() if hasattr(dialog, "_get_or_load_main_building_layer") else None
-        if main_layer and main_layer.isValid() and not main_layer.isEditable():
+    if main_layer and main_layer.isValid() and not main_layer.isEditable():
+        try:
             main_layer.startEditing()
-    except Exception as exc:
-        if hasattr(dialog, "_log_error"):
-            dialog._log_error(f"Error accessing main building points layer: {exc}")
-        main_layer = None
+        except Exception as exc:
+            if hasattr(dialog, "_log_error"):
+                dialog._log_error(f"Error starting edit on main building points layer: {exc}")
 
     if layer and layer.isValid() and not layer.isEditable():
         try:
@@ -134,90 +182,121 @@ def delete_selected_features(
     deleted_count = 0
     unmatched_count = 0
     seen_unique_keys = set()
-    processed_features = set()
 
-    def _has_valid_id(v: Any) -> bool:
-        return v is not None and str(v).strip().lower() not in ("", "null", "none", "nan")
+    # Freeze table sorting, signals, and repaints during batch delete so row indices never shift mid-loop
+    was_sorting_enabled = table.isSortingEnabled() if hasattr(table, "isSortingEnabled") else False
+    if was_sorting_enabled:
+        table.setSortingEnabled(False)
+    was_signals_blocked = table.blockSignals(True) if hasattr(table, "blockSignals") else False
+    if hasattr(table, "setProperty"):
+        table.setProperty("is_populating", True)
+    if hasattr(table, "setUpdatesEnabled"):
+        table.setUpdatesEnabled(False)
+    if hasattr(dialog, "_suppress_dirty_ui_refresh"):
+        dialog._suppress_dirty_ui_refresh = True
 
-    for r in checked_rows:
-        item0 = table.item(r, 0)
-        if not item0:
-            continue
-        s_fid = item0.data(Qt.UserRole)
-        u_str = item0.data(Qt.UserRole + 1)
-        e_fid = item0.data(Qt.UserRole + 3)
-        df_f = item0.data(Qt.UserRole + 4)
-        sf_f = item0.data(Qt.UserRole + 6)
-        sf_u = item0.data(Qt.UserRole + 7)
-
-        if _has_valid_id(sf_f):
-            best_f = sf_f
-        elif _has_valid_id(s_fid) and not _has_valid_id(df_f) and s_fid != e_fid:
-            best_f = s_fid
-        else:
-            best_f = None
-        best_u = sf_u if _has_valid_id(sf_u) else (u_str if _has_valid_id(u_str) else "")
-        ukey = make_unique_feature_key(best_f if best_f is not None else s_fid, best_u)
-
-        # Find action button if present in row
-        row_del_btn = None
-        act_w = table.cellWidget(r, table.columnCount() - 1)
-        if act_w:
-            for child in act_w.findChildren(QPushButton):
-                if child.text() in ("Delete", "Deleted"):
-                    row_del_btn = child
-                    break
-
-        was_marked = mark_feature_deleted(
-            dialog,
-            val_id,
-            layer,
-            table,
-            source_fid=best_f,
-            map_uuid=best_u,
-            err_fid=e_fid,
-            button=row_del_btn,
-            prompt_confirm=False,
-            target_status="deleted",
-            target_row=r,
+    total_to_del = len(checked_rows)
+    if hasattr(dialog, "_start_process_progress"):
+        dialog._start_process_progress(
+            f"Deleting {total_to_del:,} selected record(s)...",
+            initial=0,
+            total_items=total_to_del,
         )
-        item0.setCheckState(Qt.Unchecked)
 
-        if was_marked is True:
-            if ukey:
-                seen_unique_keys.add(ukey)
-                seen_unique_keys.add(ukey.lower())
-            deleted_count += 1
-        else:
-            unmatched_count += 1
-
-    # Synchronize all other rows in the table that share any seen_unique_keys
-    if seen_unique_keys:
-        for r in range(table.rowCount()):
+    try:
+        for idx_i, r in enumerate(checked_rows, start=1):
             item0 = table.item(r, 0)
             if not item0:
                 continue
-            r_sf_f = item0.data(Qt.UserRole + 6)
-            r_s_fid = item0.data(Qt.UserRole)
-            r_sf_u = item0.data(Qt.UserRole + 7)
-            r_u = item0.data(Qt.UserRole + 1)
-            r_f = r_sf_f if (r_sf_f is not None and str(r_sf_f).strip() not in ("", "NULL", "None")) else r_s_fid
-            r_u_str = r_sf_u or r_u
-            r_ukey = make_unique_feature_key(r_f, r_u_str)
-            if r_ukey and (r_ukey in seen_unique_keys or r_ukey.lower() in seen_unique_keys):
-                for c in range(1, table.columnCount() - 1):
-                    h_it = table.horizontalHeaderItem(c)
-                    h_text = h_it.text().strip().lower() if h_it else ""
-                    if h_text in ("is_deleted", "sf_is_deleted"):
-                        cell_item = table.item(r, c)
-                        if cell_item:
-                            table.setProperty("is_populating", True)
-                            try:
+            s_fid = item0.data(Qt.UserRole)
+            u_str = item0.data(Qt.UserRole + 1)
+            e_fid = item0.data(Qt.UserRole + 3)
+            df_f = item0.data(Qt.UserRole + 4)
+            sf_f = item0.data(Qt.UserRole + 6)
+            sf_u = item0.data(Qt.UserRole + 7)
+
+            if _has_valid_id(sf_f):
+                best_f = sf_f
+                # When sf_fid is explicitly known, never pass df_map_uuid as map_uuid (prevents matching a different GeoJSON feature)
+                best_u = str(sf_u).strip() if _has_valid_id(sf_u) else ""
+            elif _has_valid_id(s_fid) and not _has_valid_id(df_f) and s_fid != e_fid:
+                best_f = s_fid
+                best_u = str(sf_u).strip() if _has_valid_id(sf_u) else (str(u_str).strip() if _has_valid_id(u_str) else "")
+            else:
+                best_f = None
+                best_u = str(sf_u).strip() if _has_valid_id(sf_u) else ""
+
+            ukey = make_unique_feature_key(best_f if best_f is not None else s_fid, best_u)
+
+            # Find action button if present in row
+            row_del_btn = None
+            act_w = table.cellWidget(r, table.columnCount() - 1)
+            if act_w:
+                for child in act_w.findChildren(QPushButton):
+                    if child.text() in ("Delete", "Deleted"):
+                        row_del_btn = child
+                        break
+
+            was_marked = mark_feature_deleted(
+                dialog,
+                val_id,
+                layer,
+                table,
+                source_fid=best_f,
+                map_uuid=best_u,
+                err_fid=e_fid,
+                button=row_del_btn,
+                prompt_confirm=False,
+                target_status="deleted",
+                target_row=r,
+                _batch_mode=True,
+            )
+            item0.setCheckState(Qt.Unchecked)
+
+            if was_marked is True:
+                if ukey:
+                    seen_unique_keys.add(ukey)
+                    seen_unique_keys.add(ukey.lower())
+                deleted_count += 1
+            else:
+                unmatched_count += 1
+            if hasattr(dialog, "_update_process_progress") and (idx_i % 5 == 0 or idx_i == total_to_del):
+                dialog._update_process_progress(idx_i, total_items=total_to_del)
+
+        # Synchronize all other rows in the table that share any seen_unique_keys
+        if seen_unique_keys:
+            for r in range(table.rowCount()):
+                item0 = table.item(r, 0)
+                if not item0:
+                    continue
+                r_sf_f = item0.data(Qt.UserRole + 6)
+                r_s_fid = item0.data(Qt.UserRole)
+                r_sf_u = item0.data(Qt.UserRole + 7)
+                r_u = item0.data(Qt.UserRole + 1)
+                r_f = r_sf_f if _has_valid_id(r_sf_f) else r_s_fid
+                r_u_str = r_sf_u if _has_valid_id(r_sf_u) else (r_u if _has_valid_id(r_u) else "")
+                r_ukey = make_unique_feature_key(r_f, r_u_str)
+                if r_ukey and (r_ukey in seen_unique_keys or r_ukey.lower() in seen_unique_keys):
+                    for c in range(1, table.columnCount() - 1):
+                        h_it = table.horizontalHeaderItem(c)
+                        h_text = h_it.text().strip().lower() if h_it else ""
+                        if h_text in ("is_deleted", "sf_is_deleted"):
+                            cell_item = table.item(r, c)
+                            if cell_item:
                                 cell_item.setText("true")
                                 if hasattr(dialog, "_style_table_cell"):
                                     dialog._style_table_cell(cell_item, "deleted")
-                            finally:
-                                table.setProperty("is_populating", False)
+    finally:
+        if hasattr(dialog, "_suppress_dirty_ui_refresh"):
+            dialog._suppress_dirty_ui_refresh = False
+        if was_sorting_enabled and hasattr(table, "setSortingEnabled"):
+            table.setSortingEnabled(True)
+        if hasattr(table, "blockSignals"):
+            table.blockSignals(was_signals_blocked)
+        if hasattr(table, "setUpdatesEnabled"):
+            table.setUpdatesEnabled(True)
+        if hasattr(table, "setProperty"):
+            table.setProperty("is_populating", False)
 
     if combo_actions:
         combo_actions.setItemText(0, "Actions")
@@ -229,32 +308,36 @@ def delete_selected_features(
 
     if deleted_count == 0:
         msg = (
-            "No selected record(s) could be marked as deleted because no matching feature was found "
-            "in the Building Points (.geojson) layer."
+            f"• Marked as deleted: 0 record(s)\n"
+            f"• Not deleted: {len(checked_rows)} record(s)\n"
+            "  Reason: These records do not have a matching point on the map layer."
         )
         if QMessageBox:
-            QMessageBox.warning(dialog, "Delete Not Applied", msg)
+            QMessageBox.warning(dialog, "No Records Deleted", msg)
         if hasattr(dialog, "lbl_footer_status") and dialog.lbl_footer_status:
-            dialog.lbl_footer_status.setText("No records were marked as deleted (not found in Building Points layer).")
+            dialog.lbl_footer_status.setText("No records were deleted (no matching point found on the map).")
         return False
 
     if hasattr(dialog, "_mark_unsaved_table_edit"):
         dialog._mark_unsaved_table_edit()
     if unmatched_count > 0:
         status_msg = (
-            f"Marked {deleted_count} of {len(checked_rows)} record(s) as deleted (is_deleted = true); "
-            f"{unmatched_count} record(s) had no matching point in Building Points (.geojson). "
-            f"Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo."
+            f"• Marked as deleted: {deleted_count} record(s)\n"
+            f"• Not deleted: {unmatched_count} record(s)\n"
+            "  Reason: Those records do not have a matching point on the map layer.\n\n"
+            "These changes are not saved yet.\n"
+            "Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo."
         )
         if QMessageBox:
-            QMessageBox.warning(dialog, "Partial Delete Applied", status_msg)
+            QMessageBox.warning(dialog, "Partially Deleted", status_msg)
+        footer_txt = f"Marked {deleted_count} of {len(checked_rows)} record(s) as deleted. Click 'Save Changes' (Ctrl+S) to keep them."
     else:
-        status_msg = (
-            f"Marked {deleted_count} record(s) as deleted (is_deleted = true). "
-            f"Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo."
+        footer_txt = (
+            f"Marked {deleted_count} record(s) as deleted. "
+            "Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo."
         )
     if hasattr(dialog, "lbl_footer_status") and dialog.lbl_footer_status:
-        dialog.lbl_footer_status.setText(status_msg)
+        dialog.lbl_footer_status.setText(footer_txt)
     if hasattr(dialog, "iface") and dialog.iface and dialog.iface.mapCanvas():
         dialog.iface.mapCanvas().refresh()
     return True
@@ -272,6 +355,7 @@ def mark_feature_deleted(
     prompt_confirm: bool = True,
     target_status: Optional[str] = None,
     target_row: Optional[int] = None,
+    _batch_mode: bool = False,
 ) -> None:
     """
     Mark a single feature as deleted by setting its boolean 'is_deleted' column to True
@@ -317,6 +401,7 @@ def mark_feature_deleted(
         if QTableWidgetItem:
             table.setHorizontalHeaderItem(act_col, QTableWidgetItem("is_deleted"))
         del_col_indices.append(act_col)
+        prev_pop_col = table.property("is_populating") if hasattr(table, "property") else False
         table.setProperty("is_populating", True)
         try:
             for r in range(table.rowCount()):
@@ -333,7 +418,7 @@ def mark_feature_deleted(
                         b_item.setData(Qt.UserRole + 7, item0.data(Qt.UserRole + 7))
                     table.setItem(r, act_col, b_item)
         finally:
-            table.setProperty("is_populating", False)
+            table.setProperty("is_populating", bool(prev_pop_col))
 
     # 3. Determine current status and decide to_delete
     is_currently_deleted = False
@@ -414,6 +499,7 @@ def mark_feature_deleted(
 
     # 4. Update QTableWidget is_deleted cells
     if target_row is not None:
+        prev_pop_cell = table.property("is_populating") if hasattr(table, "property") else False
         if hasattr(table, "setProperty"):
             table.setProperty("is_populating", True)
         try:
@@ -429,7 +515,7 @@ def mark_feature_deleted(
                         dialog._style_table_cell(cell_item, "deleted" if to_delete else "normal")
         finally:
             if hasattr(table, "setProperty"):
-                table.setProperty("is_populating", False)
+                table.setProperty("is_populating", bool(prev_pop_cell))
 
     # 5. Update Result Memory Layer
     if layer and hasattr(layer, "isValid") and layer.isValid():
@@ -456,10 +542,17 @@ def mark_feature_deleted(
                 except Exception:
                     pass
 
+            try:
+                tfid_int = int(str(target_f_id).strip()) if str(target_f_id).strip().lstrip("-").isdigit() else target_f_id
+            except Exception:
+                tfid_int = target_f_id
             for f_idx in del_f_indices:
                 f_type = layer.fields().at(f_idx).type()
                 val_to_set = bool_val if f_type == QVariant.Bool else bool_str
-                layer.changeAttributeValue(target_f_id, f_idx, val_to_set)
+                try:
+                    layer.changeAttributeValue(tfid_int, f_idx, val_to_set)
+                except Exception:
+                    pass
 
     # 7. Update Button Text & Style
     if not button and target_row is not None:
@@ -475,22 +568,23 @@ def mark_feature_deleted(
         if hasattr(dialog, "_style_row_delete_button"):
             dialog._style_row_delete_button(button, is_deleted=to_delete)
 
-    # 8. Update Footer Status
-    disp_fid = source_fid if source_fid is not None else err_fid
-    if hasattr(dialog, "_mark_unsaved_table_edit"):
-        dialog._mark_unsaved_table_edit()
-    if hasattr(dialog, "lbl_footer_status") and dialog.lbl_footer_status:
-        if to_delete:
-            dialog.lbl_footer_status.setText(
-                f"Marked record #{disp_fid} as deleted (is_deleted = true). Click 'Save Changes' (Ctrl+S) to keep it, or 'Discard' to undo."
-            )
-        else:
-            dialog.lbl_footer_status.setText(
-                f"Restored record #{disp_fid} (is_deleted = false). Click 'Save Changes' (Ctrl+S) to keep it, or 'Discard' to undo."
-            )
+    # 8. Update Footer Status (skip per-row refresh in batch mode; caller refreshes once at end)
+    if not _batch_mode:
+        disp_fid = source_fid if source_fid is not None else err_fid
+        if hasattr(dialog, "_mark_unsaved_table_edit"):
+            dialog._mark_unsaved_table_edit()
+        if hasattr(dialog, "lbl_footer_status") and dialog.lbl_footer_status:
+            if to_delete:
+                dialog.lbl_footer_status.setText(
+                    f"Marked record #{disp_fid} as deleted (is_deleted = true). Click 'Save Changes' (Ctrl+S) to keep it, or 'Discard' to undo."
+                )
+            else:
+                dialog.lbl_footer_status.setText(
+                    f"Restored record #{disp_fid} (is_deleted = false). Click 'Save Changes' (Ctrl+S) to keep it, or 'Discard' to undo."
+                )
 
-    if hasattr(dialog, "iface") and dialog.iface and dialog.iface.mapCanvas():
-        dialog.iface.mapCanvas().refresh()
+        if hasattr(dialog, "iface") and dialog.iface and dialog.iface.mapCanvas():
+            dialog.iface.mapCanvas().refresh()
     return True
 
 
@@ -651,3 +745,210 @@ def run_fix(
         "updated_values": updated_values,
         "message": f"Marked {fixed_count} record(s) as deleted (is_deleted = true).",
     }
+
+
+def restore_selected_features(
+    dialog: Any,
+    main_layer: Optional[QgsVectorLayer],
+    table: Any,
+    btn_restore_selected: Optional[Any] = None,
+    prompt_confirm: bool = True,
+) -> bool:
+    """
+    Batch restore checked/selected soft-deleted features in the Building Points (.geojson) layer
+    by setting their 'is_deleted' column back to False (never touches status or other columns).
+    Uses exact native main_layer feature IDs stored in Qt.UserRole.
+    """
+    if not is_valid_qobject(dialog) or not is_valid_qobject(table):
+        return False
+
+    checked_rows = []
+    for r in range(table.rowCount()):
+        if hasattr(table, "isRowHidden") and table.isRowHidden(r):
+            continue
+        item0 = table.item(r, 0)
+        if item0 and item0.checkState() == Qt.Checked:
+            checked_rows.append(r)
+
+    if not checked_rows and hasattr(table, "selectionModel") and table.selectionModel():
+        sel_rows = sorted(
+            set(
+                idx.row()
+                for idx in table.selectionModel().selectedRows()
+                if not (hasattr(table, "isRowHidden") and table.isRowHidden(idx.row()))
+            )
+        )
+        if sel_rows:
+            checked_rows = sel_rows
+
+    if not checked_rows:
+        if QMessageBox:
+            QMessageBox.information(dialog, "Nothing Selected", "Please tick the box or select at least one deleted row to restore.")
+        return False
+
+    if prompt_confirm and QMessageBox:
+        reply = QMessageBox.question(
+            dialog,
+            "Restore Deleted Records",
+            f"Restore {len(checked_rows)} selected deleted record(s) back to active?\n\n"
+            "Click 'Save Changes' (Ctrl+S) afterwards to keep these changes.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if reply != QMessageBox.Yes:
+            return False
+
+    if (main_layer is None or not main_layer.isValid()) and hasattr(dialog, "_get_or_load_main_building_layer"):
+        main_layer = dialog._get_or_load_main_building_layer()
+    if not main_layer or not main_layer.isValid():
+        if QMessageBox:
+            QMessageBox.critical(dialog, "Map Layer Missing", "The Building Points (.geojson) layer is not loaded.")
+        return False
+
+    if not main_layer.isEditable():
+        try:
+            main_layer.startEditing()
+        except Exception as exc:
+            if QMessageBox:
+                QMessageBox.critical(dialog, "Edit Failed", f"Could not open Building Points layer for editing:\n{exc}")
+            return False
+
+    m_del_indices = [
+        main_layer.fields().indexOf(fld.name())
+        for fld in main_layer.fields()
+        if fld.name().lower() in ("is_deleted", "sf_is_deleted")
+    ]
+    if not m_del_indices:
+        if QMessageBox:
+            QMessageBox.warning(dialog, "Restore Not Applied", "No 'is_deleted' field was found on the Building Points layer.")
+        return False
+
+    del_col_indices = []
+    for c in range(1, table.columnCount()):
+        h_it = table.horizontalHeaderItem(c)
+        h_text = h_it.text().strip().lower() if h_it else ""
+        if h_text in ("is_deleted", "sf_is_deleted"):
+            del_col_indices.append(c)
+
+    restored_count = 0
+    unmatched_count = 0
+
+    was_sorting = table.isSortingEnabled() if hasattr(table, "isSortingEnabled") else False
+    if was_sorting:
+        table.setSortingEnabled(False)
+    was_blocked = table.blockSignals(True) if hasattr(table, "blockSignals") else False
+    if hasattr(table, "setProperty"):
+        table.setProperty("is_populating", True)
+    if hasattr(table, "setUpdatesEnabled"):
+        table.setUpdatesEnabled(False)
+    if hasattr(dialog, "_suppress_dirty_ui_refresh"):
+        dialog._suppress_dirty_ui_refresh = True
+
+    total_to_restore = len(checked_rows)
+    if hasattr(dialog, "_start_process_progress"):
+        dialog._start_process_progress(
+            f"Restoring {total_to_restore:,} selected record(s)...",
+            initial=0,
+            total_items=total_to_restore,
+        )
+
+    try:
+        for idx_i, r in enumerate(checked_rows, start=1):
+            item0 = table.item(r, 0)
+            if not item0:
+                continue
+            raw_fid = item0.data(Qt.UserRole)
+            raw_uuid = str(item0.data(Qt.UserRole + 1) or "").strip()
+
+            feat = None
+            if raw_fid is not None and str(raw_fid).strip().lstrip("-").isdigit():
+                try:
+                    cand = main_layer.getFeature(int(str(raw_fid).strip()))
+                    if cand and cand.isValid():
+                        feat = cand
+                except Exception:
+                    feat = None
+            if (not feat or not feat.isValid()) and hasattr(dialog, "_find_main_feature"):
+                feat = dialog._find_main_feature(main_layer, fid=raw_fid, map_uuid=raw_uuid or None)
+
+            if not feat or not feat.isValid():
+                unmatched_count += 1
+                item0.setCheckState(Qt.Unchecked)
+                continue
+
+            row_ok = False
+            for m_idx in m_del_indices:
+                f_type = main_layer.fields().at(m_idx).type()
+                val_to_set = False if f_type == QVariant.Bool else "false"
+                if main_layer.changeAttributeValue(feat.id(), m_idx, val_to_set):
+                    row_ok = True
+
+            if row_ok:
+                restored_count += 1
+                for c in del_col_indices:
+                    cell_item = table.item(r, c)
+                    if cell_item:
+                        cell_item.setText("false")
+                        if hasattr(dialog, "_style_table_cell"):
+                            dialog._style_table_cell(cell_item, "fixed")
+            else:
+                unmatched_count += 1
+
+            item0.setCheckState(Qt.Unchecked)
+            if hasattr(dialog, "_update_process_progress") and (idx_i % 5 == 0 or idx_i == total_to_restore):
+                dialog._update_process_progress(idx_i, total_items=total_to_restore)
+    finally:
+        if hasattr(dialog, "_suppress_dirty_ui_refresh"):
+            dialog._suppress_dirty_ui_refresh = False
+        if was_sorting and hasattr(table, "setSortingEnabled"):
+            table.setSortingEnabled(True)
+        if hasattr(table, "blockSignals"):
+            table.blockSignals(was_blocked)
+        if hasattr(table, "setUpdatesEnabled"):
+            table.setUpdatesEnabled(True)
+        if hasattr(table, "setProperty"):
+            table.setProperty("is_populating", False)
+
+    if btn_restore_selected:
+        btn_restore_selected.setText("Restore Selected")
+        btn_restore_selected.setEnabled(False)
+
+    if restored_count == 0:
+        if QMessageBox:
+            QMessageBox.warning(
+                dialog,
+                "No Records Restored",
+                f"• Restored: 0 record(s)\n"
+                f"• Not restored: {len(checked_rows)} record(s)\n"
+                "  Reason: No matching deleted point was found on the map layer.",
+            )
+        return False
+
+    if hasattr(dialog, "_mark_unsaved_table_edit"):
+        dialog._mark_unsaved_table_edit()
+
+    if unmatched_count > 0:
+        if QMessageBox:
+            QMessageBox.warning(
+                dialog,
+                "Partially Restored",
+                f"• Restored: {restored_count} record(s)\n"
+                f"• Not restored: {unmatched_count} record(s)\n"
+                "  Reason: Those records could not be found on the map layer.\n\n"
+                "These changes are not saved yet.\n"
+                "Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo.",
+            )
+        status_msg = (
+            f"Restored {restored_count} of {len(checked_rows)} record(s). "
+            "Click 'Save Changes' (Ctrl+S) to keep them."
+        )
+    else:
+        status_msg = (
+            f"Restored {restored_count} record(s). "
+            "Click 'Save Changes' (Ctrl+S) to keep them, or 'Discard' to undo."
+        )
+    if hasattr(dialog, "lbl_footer_status") and dialog.lbl_footer_status:
+        dialog.lbl_footer_status.setText(status_msg)
+    if hasattr(dialog, "iface") and dialog.iface and dialog.iface.mapCanvas():
+        dialog.iface.mapCanvas().refresh()
+    return True

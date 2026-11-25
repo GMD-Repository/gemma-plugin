@@ -6,7 +6,7 @@ Direct action processes for all CBMS map validations.
 from typing import Any, Callable, Optional
 
 from .concatenate_ea_geocode_fix import concatenate_ea_geocode, run_fix as _run_ea_fix
-from .delete_selected_features_fix import delete_selected_features, run_fix as _run_del_fix
+from .delete_selected_features_fix import delete_selected_features, restore_selected_features, run_fix as _run_del_fix
 from .generate_point_geometry_fix import generate_point_geometry, run_fix as _run_geom_fix
 from .deduplicate_features_fix import deduplicate_features, run_fix as _run_dup_fix
 from .concatenate_bsn_geoid_fix import concatenate_bsn_geoid, run_fix as _run_bsn_fix

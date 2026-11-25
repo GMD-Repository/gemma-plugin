@@ -282,7 +282,11 @@ def load_cbms_geojson(alg, parameters, param_name, context, feedback=None, prefi
             "native:extractbyexpression",
             {
                 "INPUT": source,
-                "EXPRESSION": f'"{is_deleted_field}" IS NOT TRUE',
+                "EXPRESSION": (
+                    f'"{is_deleted_field}" IS NULL OR '
+                    f'("{is_deleted_field}" IS NOT TRUE AND '
+                    f'lower(to_string("{is_deleted_field}")) NOT IN (\'true\', \'1\', \'t\', \'yes\', \'deleted\'))'
+                ),
                 "OUTPUT": "memory:",
             },
             context=context,

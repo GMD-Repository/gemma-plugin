@@ -300,7 +300,8 @@ def _run_fix_update_datafile_coordinates(
             if (not lon_val or not lat_val) and error_layer and error_layer.isValid():
                 if e_fid is not None:
                     try:
-                        ef = error_layer.getFeature(e_fid)
+                        efid_int = int(str(e_fid).strip()) if str(e_fid).strip().lstrip("-").isdigit() else e_fid
+                        ef = error_layer.getFeature(efid_int)
                     except Exception:
                         ef = None
                 if ef and ef.isValid():
@@ -314,7 +315,8 @@ def _run_fix_update_datafile_coordinates(
             if (not lon_val or not lat_val) and main_layer and main_layer.isValid():
                 if dialog and hasattr(dialog, "_find_main_feature"):
                     try:
-                        mf = dialog._find_main_feature(main_layer, fid=row_main_fid, map_uuid=sf_u or row_uuid)
+                        lookup_uuid = sf_u if row_main_fid is not None else row_uuid
+                        mf = dialog._find_main_feature(main_layer, fid=row_main_fid, map_uuid=lookup_uuid)
                     except Exception:
                         mf = None
                 if (not mf or not mf.isValid()) and row_main_fid is not None:
@@ -348,21 +350,29 @@ def _run_fix_update_datafile_coordinates(
 
             # Update error_layer feature strictly
             if error_layer and error_layer.isValid() and e_fid is not None:
+                efid_int = int(str(e_fid).strip()) if str(e_fid).strip().lstrip("-").isdigit() else e_fid
                 idx_lon = error_layer.fields().indexOf("df_x_current")
                 idx_lat = error_layer.fields().indexOf("df_y_current")
-                if idx_lon != -1:
-                    error_layer.changeAttributeValue(e_fid, idx_lon, lon_str)
-                if idx_lat != -1:
-                    error_layer.changeAttributeValue(e_fid, idx_lat, lat_str)
+                try:
+                    if idx_lon != -1:
+                        error_layer.changeAttributeValue(efid_int, idx_lon, lon_str)
+                    if idx_lat != -1:
+                        error_layer.changeAttributeValue(efid_int, idx_lat, lat_str)
+                except Exception:
+                    pass
 
             # Update active_layer feature strictly (if distinct from error_layer)
             if active_layer and active_layer.isValid() and active_layer != error_layer and row_main_fid is not None:
+                rmfid_int = int(str(row_main_fid).strip()) if str(row_main_fid).strip().lstrip("-").isdigit() else row_main_fid
                 idx_lon = active_layer.fields().indexOf("df_x_current")
                 idx_lat = active_layer.fields().indexOf("df_y_current")
-                if idx_lon != -1:
-                    active_layer.changeAttributeValue(row_main_fid, idx_lon, lon_str)
-                if idx_lat != -1:
-                    active_layer.changeAttributeValue(row_main_fid, idx_lat, lat_str)
+                try:
+                    if idx_lon != -1:
+                        active_layer.changeAttributeValue(rmfid_int, idx_lon, lon_str)
+                    if idx_lat != -1:
+                        active_layer.changeAttributeValue(rmfid_int, idx_lat, lat_str)
+                except Exception:
+                    pass
 
             # Synchronize loaded Form 2 vector layer if present in project
             if dialog and hasattr(dialog, "project") and dialog.project:
