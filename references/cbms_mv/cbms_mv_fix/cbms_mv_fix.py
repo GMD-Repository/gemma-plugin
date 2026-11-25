@@ -80,6 +80,7 @@ from .generate_point_geometry_fix import (
 from .delete_selected_features_fix import (
     delete_selected_features,
     mark_feature_deleted,
+    restore_selected_features,
     sync_feature_status,
 )
 from .deduplicate_features_fix import (

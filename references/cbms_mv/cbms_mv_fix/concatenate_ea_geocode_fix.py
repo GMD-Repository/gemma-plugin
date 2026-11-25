@@ -378,7 +378,8 @@ def _run_fix_ea_geocode(
                 lookup_fid = e_fid if is_error_active else row_main_fid
                 if not is_error_active and dialog and hasattr(dialog, "_find_main_feature"):
                     try:
-                        cand_f = dialog._find_main_feature(active_layer, fid=lookup_fid, map_uuid=sf_u or row_uuid)
+                        lookup_uuid = sf_u if row_main_fid is not None else row_uuid
+                        cand_f = dialog._find_main_feature(active_layer, fid=lookup_fid, map_uuid=lookup_uuid)
                         if cand_f and cand_f.isValid():
                             feat = cand_f
                     except Exception:
@@ -419,7 +420,8 @@ def _run_fix_ea_geocode(
             if error_layer and error_layer.isValid():
                 if e_fid is not None:
                     try:
-                        ef = error_layer.getFeature(e_fid)
+                        efid_int = int(str(e_fid).strip()) if str(e_fid).strip().lstrip("-").isdigit() else e_fid
+                        ef = error_layer.getFeature(efid_int)
                     except Exception:
                         ef = None
                 if (not ef or not ef.isValid()) and row_uuid:

@@ -588,7 +588,9 @@ def _extract_row_data(
                 matching_feat = err_by_fid.get(row_info["err_fid"]) or err_by_fid.get(str(row_info["err_fid"]))
             if not matching_feat and err_by_fid is None:
                 try:
-                    cand_f = error_layer.getFeature(row_info["err_fid"])
+                    raw_ef = row_info["err_fid"]
+                    ef_int = int(str(raw_ef).strip()) if str(raw_ef).strip().lstrip("-").isdigit() else raw_ef
+                    cand_f = error_layer.getFeature(ef_int)
                     if _is_usable_feature(cand_f):
                         matching_feat = cand_f
                 except Exception:
@@ -618,7 +620,8 @@ def _extract_row_data(
                 matching_feat = err_by_fid.get(tfid) or err_by_fid.get(str(tfid))
             if not matching_feat and err_by_fid is None and tfid is not None:
                 try:
-                    cand_f = error_layer.getFeature(tfid)
+                    tfid_int = int(str(tfid).strip()) if str(tfid).strip().lstrip("-").isdigit() else tfid
+                    cand_f = error_layer.getFeature(tfid_int)
                     if _is_usable_feature(cand_f):
                         matching_feat = cand_f
                 except Exception:

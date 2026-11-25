@@ -241,7 +241,8 @@ def _run_fix_copy_geometry_to_coordinates(
             # Locate feature in active_layer
             feat = None
             if dialog and hasattr(dialog, "_find_main_feature"):
-                feat = dialog._find_main_feature(active_layer, fid=row_main_fid, map_uuid=row_uuid)
+                lookup_uuid = sf_u if row_main_fid is not None else row_uuid
+                feat = dialog._find_main_feature(active_layer, fid=row_main_fid, map_uuid=lookup_uuid)
             if not feat:
                 if row_main_fid is not None:
                     try:

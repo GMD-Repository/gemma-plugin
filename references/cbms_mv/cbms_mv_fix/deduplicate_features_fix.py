@@ -5,7 +5,8 @@ Action: "Delete duplicate features (retain one)"
 Validation ID: mv_2027_hp_4a_longitude__duplicate
 
 Checks all columns to see if features with duplicate coordinates are identical.
-Retains only one active feature and marks duplicate features as 'deleted' in sf_status / status.
+Retains only one active feature and marks duplicate features as deleted by setting is_deleted to True.
+Does not touch or modify the status column.
 """
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -72,7 +73,7 @@ FIX_ID = "mv_2027_hp_4a_longitude__duplicate"
 FIX_NAME = "Delete duplicate features (retain one)"
 FIX_DESCRIPTION = (
     "Checks all columns of features with duplicate coordinates to see if they are identical. "
-    "Retains only one active feature and marks duplicate features as 'deleted' in sf_status / status."
+    "Retains only one active feature and marks duplicate features as deleted (is_deleted = True)."
 )
 
 # Columns to check for identical values in deduplication:
@@ -369,9 +370,11 @@ def _is_table_row_already_deleted(table: Any, r: int, layer: Optional[Any] = Non
         try:
             feat = None
             if err_fid is not None:
-                feat = layer.getFeature(err_fid)
+                efid_int = int(str(err_fid).strip()) if str(err_fid).strip().lstrip("-").isdigit() else err_fid
+                feat = layer.getFeature(efid_int)
             if (not feat or not feat.isValid()) and source_fid is not None:
-                feat = layer.getFeature(source_fid)
+                sfid_int = int(str(source_fid).strip()) if str(source_fid).strip().lstrip("-").isdigit() else source_fid
+                feat = layer.getFeature(sfid_int)
             if _is_feature_already_deleted(feat):
                 return True
         except Exception:
@@ -500,9 +503,11 @@ def deduplicate_features(
         if layer and hasattr(layer, "getFeature"):
             try:
                 if err_fid is not None:
-                    feat = layer.getFeature(err_fid)
+                    efid_int = int(str(err_fid).strip()) if str(err_fid).strip().lstrip("-").isdigit() else err_fid
+                    feat = layer.getFeature(efid_int)
                 if (not feat or not feat.isValid()) and source_fid is not None:
-                    feat = layer.getFeature(source_fid)
+                    sfid_int = int(str(source_fid).strip()) if str(source_fid).strip().lstrip("-").isdigit() else source_fid
+                    feat = layer.getFeature(sfid_int)
             except Exception:
                 feat = None
 
@@ -796,46 +801,70 @@ def deduplicate_features(
         sorted_r_list = sorted(r_list, key=_row_completeness_key, reverse=True)
         retained_sf_fid = _get_row_distinct_sf_fid(sorted_r_list[0])
         # Retain sorted_r_list[0] and mark sorted_r_list[1:] as deleted
-        for r in sorted_r_list[1:]:
-            if _get_row_distinct_sf_fid(r) == retained_sf_fid:
-                continue
-            item0 = table.item(r, 0)
-            if not item0:
-                continue
-            s_fid = item0.data(Qt.UserRole)
-            u_str = item0.data(Qt.UserRole + 1)
-            e_fid = item0.data(Qt.UserRole + 3)
+        was_sorting = table.isSortingEnabled() if hasattr(table, "isSortingEnabled") else False
+        if was_sorting:
+            table.setSortingEnabled(False)
+        was_blocked = table.blockSignals(True) if hasattr(table, "blockSignals") else False
+        if hasattr(table, "setProperty"):
+            table.setProperty("is_populating", True)
+        try:
+            for r in sorted_r_list[1:]:
+                if _get_row_distinct_sf_fid(r) == retained_sf_fid:
+                    continue
+                item0 = table.item(r, 0)
+                if not item0:
+                    continue
+                s_fid = item0.data(Qt.UserRole)
+                u_str = item0.data(Qt.UserRole + 1)
+                e_fid = item0.data(Qt.UserRole + 3)
+                sf_f = item0.data(Qt.UserRole + 6)
+                sf_u = item0.data(Qt.UserRole + 7)
+                best_f = sf_f if _has_meaningful_val(sf_f) else s_fid
+                best_u = str(sf_u).strip() if _has_meaningful_val(sf_u) else ("" if _has_meaningful_val(sf_f) else str(u_str or "").strip())
 
-            row_del_btn = None
-            act_w = table.cellWidget(r, table.columnCount() - 1)
-            if act_w:
-                for child in act_w.findChildren(QPushButton):
-                    if child.text() in ("Delete", "Deleted"):
-                        row_del_btn = child
-                        break
+                row_del_btn = None
+                act_w = table.cellWidget(r, table.columnCount() - 1)
+                if act_w:
+                    for child in act_w.findChildren(QPushButton):
+                        if child.text() in ("Delete", "Deleted"):
+                            row_del_btn = child
+                            break
 
-            mark_feature_deleted(
-                dialog,
-                val_id,
-                layer,
-                table,
-                source_fid=s_fid,
-                map_uuid=u_str,
-                err_fid=e_fid,
-                button=row_del_btn,
-                prompt_confirm=False,
-                target_status="deleted",
-                target_row=r,
-            )
-            item0.setCheckState(Qt.Unchecked)
-            deleted_count += 1
-            updated_values[s_fid or r] = {"sf_status": "deleted"}
-            if u_str:
-                updated_values[u_str] = {"sf_status": "deleted"}
-            ukey = make_unique_feature_key(s_fid, u_str)
-            if ukey:
-                updated_values[ukey] = {"sf_status": "deleted"}
-                updated_values[ukey.lower()] = {"sf_status": "deleted"}
+                was_marked = mark_feature_deleted(
+                    dialog,
+                    val_id,
+                    layer,
+                    table,
+                    source_fid=best_f,
+                    map_uuid=best_u,
+                    err_fid=e_fid,
+                    button=row_del_btn,
+                    prompt_confirm=False,
+                    target_status="deleted",
+                    target_row=r,
+                    _batch_mode=True,
+                )
+                item0.setCheckState(Qt.Unchecked)
+                if was_marked is True:
+                    deleted_count += 1
+                    del_payload = {"is_deleted": True, "sf_is_deleted": True}
+                    updated_values[best_f or r] = del_payload
+                    if best_u:
+                        updated_values[best_u] = del_payload
+                    ukey = make_unique_feature_key(best_f, best_u)
+                    if ukey:
+                        updated_values[ukey] = del_payload
+                        updated_values[ukey.lower()] = del_payload
+        finally:
+            if was_sorting and hasattr(table, "setSortingEnabled"):
+                table.setSortingEnabled(True)
+            if hasattr(table, "blockSignals"):
+                table.blockSignals(was_blocked)
+            if hasattr(table, "setProperty"):
+                table.setProperty("is_populating", False)
+
+    if deleted_count > 0 and hasattr(dialog, "_mark_unsaved_table_edit"):
+        dialog._mark_unsaved_table_edit()
 
     if combo_actions:
         combo_actions.setItemText(0, "Actions")
@@ -998,27 +1027,28 @@ def _run_fix_longitude_duplicate(
             ),
         }
 
-    status_field_name = None
+    del_field_name = None
     for f in main_layer.fields():
-        if f.name().lower() in ("status", "sf_status"):
-            status_field_name = f.name()
+        if f.name().lower() in ("is_deleted", "sf_is_deleted"):
+            del_field_name = f.name()
             break
     if not main_layer.isEditable():
         main_layer.startEditing()
 
-    if status_field_name is None:
+    if del_field_name is None:
         try:
-            new_fld = QgsField("status", QVariant.String)
+            new_fld = QgsField("is_deleted", QVariant.Bool)
             if hasattr(main_layer, "addAttribute") and main_layer.isEditable() and getattr(main_layer, "providerType", lambda: "memory")() != "memory":
                 main_layer.addAttribute(new_fld)
             else:
                 main_layer.dataProvider().addAttributes([new_fld])
                 main_layer.updateFields()
-            status_field_name = "status"
+            del_field_name = "is_deleted"
         except Exception:
-            status_field_name = "status"
+            del_field_name = "is_deleted"
 
-    status_idx = main_layer.fields().indexOf(status_field_name)
+    del_idx = main_layer.fields().indexOf(del_field_name)
+    del_val_main = True if (del_idx != -1 and main_layer.fields().at(del_idx).type() == QVariant.Bool) else "true"
 
     ref_points = _load_ref_bldg_points(dialog, **kwargs)
     updated_values = {}
@@ -1084,27 +1114,29 @@ def _run_fix_longitude_duplicate(
                             target_feat = mf
                             break
 
-            if target_feat and status_idx != -1:
-                main_layer.changeAttributeValue(target_feat.id(), status_idx, "deleted")
+            if target_feat and del_idx != -1:
+                main_layer.changeAttributeValue(target_feat.id(), del_idx, del_val_main)
                 deleted_count += 1
-                updated_values[dup_id] = {status_field_name: "deleted"}
+                del_payload = {"is_deleted": True, "sf_is_deleted": True}
+                updated_values[dup_id] = del_payload
                 if dup_uuid:
-                    updated_values[dup_uuid] = {status_field_name: "deleted"}
+                    updated_values[dup_uuid] = del_payload
                 ukey = make_unique_feature_key(dup_id, dup_uuid)
                 if ukey:
-                    updated_values[ukey] = {status_field_name: "deleted"}
-                    updated_values[ukey.lower()] = {status_field_name: "deleted"}
+                    updated_values[ukey] = del_payload
+                    updated_values[ukey.lower()] = del_payload
 
             if active_layer and active_layer != main_layer and active_layer.isValid():
-                e_status_idx = -1
+                e_del_idx = -1
                 for f in active_layer.fields():
-                    if f.name().lower() in ("status", "sf_status"):
-                        e_status_idx = active_layer.fields().indexOf(f.name())
+                    if f.name().lower() in ("is_deleted", "sf_is_deleted"):
+                        e_del_idx = active_layer.fields().indexOf(f.name())
                         break
-                if e_status_idx != -1:
+                if e_del_idx != -1:
                     if not active_layer.isEditable():
                         active_layer.startEditing()
-                    active_layer.changeAttributeValue(dup_feat.id(), e_status_idx, "deleted")
+                    e_del_val = True if active_layer.fields().at(e_del_idx).type() == QVariant.Bool else "true"
+                    active_layer.changeAttributeValue(dup_feat.id(), e_del_idx, e_del_val)
 
     return {
         "success": True,
@@ -1112,7 +1144,7 @@ def _run_fix_longitude_duplicate(
         "updated_values": updated_values,
         "message": (
             f"Successfully deduplicated features: retained 1 active feature and marked "
-            f"{deleted_count} duplicate feature(s) as 'deleted' in {status_field_name}."
+            f"{deleted_count} duplicate feature(s) as deleted (is_deleted = true)."
         ),
     }
 
